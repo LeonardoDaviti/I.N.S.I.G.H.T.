@@ -11,3 +11,4 @@ google-generativeai
 google-genai
 fastapi
 uvicorn
+psycopg[binary]
