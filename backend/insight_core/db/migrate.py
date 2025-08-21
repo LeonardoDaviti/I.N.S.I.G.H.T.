@@ -8,24 +8,20 @@ from pathlib import Path
 from datetime import datetime
 from typing import Set, List
 
+
+
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
+from insight_core.db.ensure_db import ensure_database
+
 
 setup_logging(debug_mode=False)
 logger = get_component_logger("db_migrate")
 
 
 def get_conn() -> psycopg.Connection:
-    # try:
-    #     load_dotenv()
-    #     dsn = os.getenv("DATABASE_URL")
-    #     if not dsn:
-    #         logger.info("DATABASE_URL not set"); sys.exit(1)
-    #     return psycopg.connect(dsn)
-    # except Exception as e:
-    #     print(f"Error occured: {e}")
     load_dotenv()
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
@@ -66,6 +62,15 @@ def main():
     logger.info("Starting migration runner")
     logger.debug("Migrations Directory: %s", mig_dir)
 
+    # 2) Bootsrap DB / Database url
+    try:
+        db_url = ensure_database()
+        os.environ["DATABASE_URL"] = db_url
+        logger.info("Database was ensured and using")
+    except Exception as e:
+        logger.exception("Error {e}")
+        sys.exit(1)
+
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -86,7 +91,7 @@ def main():
                     return
                 
                 for version, path in pending:
-                    logger.infor("Applying %s...", version)
+                    logger.info("Applying %s...", version)
                     try:
                         apply_one(cur, path, version)
                         logger.info("Applied %s", version)
