@@ -294,3 +294,34 @@ async def health_check():
         "engine": "Mark I Foundation Engine",
         "timestamp": str(time.time())
     }
+
+
+# ============= POSTS ENDPOINTS (DATABASE-BACKED) =============
+
+@app.post("/api/ingest-posts")
+async def ingest_posts():
+    """Ingest posts from all sources."""
+    try:
+        logger.info("🚀 Ingesting posts from all sources")
+        result = await api_bridge.ingest_posts()
+        return {
+            "success": True,
+            "data": result
+        }
+    except Exception as e:
+        logger.exception("Failed to ingest posts")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/safe-ingest-posts")
+async def safe_ingest_posts():
+    """Ingest posts from all sources that need updating."""
+    try:
+        logger.info("🚀 Ingesting posts from all sources that need updating")
+        result = await api_bridge.safe_ingest_posts()
+        return {
+            "success": True,
+            "data": result
+        }
+    except Exception as e:
+        logger.exception("Failed to ingest posts from all sources that need updating")
+        return {"success": False, "error": str(e)}

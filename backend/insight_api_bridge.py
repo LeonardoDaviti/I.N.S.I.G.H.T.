@@ -2,6 +2,8 @@
 from insight_core.db.ensure_db import ensure_database
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.posts_service import PostsService
+from insight_core.scripts.ingest import ingest_posts
+from insight_core.scripts.safe_ingest import safe_ingest_posts
 from datetime import datetime, date
 # from insight_core.services.briefing_service import BriefingService
 
@@ -359,4 +361,28 @@ class InsightApiBridge:
                 "error": str(e),
                 "posts": [],
                 "total": 0
+            }
+
+    async def ingest_posts(self):
+        """Ingest posts from all sources."""
+        try:
+            return await ingest_posts()
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "posts_ingested": 0,
+                "sources_ingested": 0,
+            }
+
+    async def safe_ingest_posts(self):
+        """Ingest posts from all sources that need updating."""
+        try:
+            return await safe_ingest_posts()
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "posts_ingested": 0,
+                "sources_ingested": 0,
             }

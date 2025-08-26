@@ -151,5 +151,10 @@ async def ingest_posts():
         logger.debug(f"  {'TOTAL':12s} : {total_elapsed:6.2f}s")
         logger.debug("=" * 60)
 
+    return {
+        "posts_ingested": len(all_posts),
+        "sources_ingested": len(enabled_sources),
+    }
+
 if __name__ == "__main__":
     asyncio.run(ingest_posts())
