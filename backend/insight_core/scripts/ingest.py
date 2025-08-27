@@ -43,7 +43,10 @@ async def ingest_posts():
     
     if not enabled_sources:
         logger.warning("⚠️  No enabled sources found")
-        return
+        return {
+            "posts_ingested": 0,
+            "sources_ingested": 0,
+        }
 
     logger.info(f"📊 Found {len(enabled_sources)} enabled sources")
 

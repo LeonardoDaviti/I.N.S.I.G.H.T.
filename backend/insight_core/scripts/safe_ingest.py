@@ -109,7 +109,10 @@ async def safe_ingest_posts():
     
     if not enabled_sources:
         logger.warning("⚠️  No enabled sources found")
-        return
+        return {
+            "posts_ingested": 0,
+            "sources_ingested": 0,
+        }
 
     logger.info(f"📊 Found {len(enabled_sources)} enabled sources")
     
@@ -138,7 +141,10 @@ async def safe_ingest_posts():
     
     if not sources_to_fetch:
         logger.info("✨ All sources are up to date! Nothing to fetch.")
-        return
+        return {
+            "posts_ingested": 0,
+            "sources_ingested": 0,
+        }
     
     # 4. Group by platform and sort by priority within each platform
     by_platform = {}

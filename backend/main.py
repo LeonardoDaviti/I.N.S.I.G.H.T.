@@ -304,10 +304,16 @@ async def ingest_posts():
     try:
         logger.info("🚀 Ingesting posts from all sources")
         result = await api_bridge.ingest_posts()
-        return {
-            "success": True,
-            "data": result
-        }
+
+        if isinstance(result, dict) and "success" in result:
+            return result
+
+        if result is None:
+            return {
+                "success": False, 
+                "error": "Failed to ingest posts"
+            }
+        
     except Exception as e:
         logger.exception("Failed to ingest posts")
         return {"success": False, "error": str(e)}
@@ -318,10 +324,14 @@ async def safe_ingest_posts():
     try:
         logger.info("🚀 Ingesting posts from all sources that need updating")
         result = await api_bridge.safe_ingest_posts()
-        return {
-            "success": True,
-            "data": result
-        }
+        if isinstance(result, dict) and "success" in result:
+            return result
+
+        if result is None:
+            return {
+                "success": False, 
+                "error": "Failed to ingest posts"
+            }
     except Exception as e:
         logger.exception("Failed to ingest posts from all sources that need updating")
         return {"success": False, "error": str(e)}
