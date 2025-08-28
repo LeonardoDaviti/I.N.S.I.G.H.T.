@@ -56,6 +56,20 @@ export default function DailyBriefing() {
     source: string;
   } | null>(null);
 
+  // Ingestion state
+  const [isIngesting, setIsIngesting] = useState(false);
+  const [isSafeIngesting, setIsSafeIngesting] = useState(false);
+  const [ingestStats, setIngestStats] = useState<{
+    success: boolean;
+    message?: string;
+    date: string;
+  } | null>(null);
+  const [safeIngestStats, setSafeIngestStats] = useState<{
+    success: boolean;
+    message?: string;
+    date: string;
+  } | null>(null);
+
   // 🚀 CACHE: Store fetched posts to avoid re-fetching
   // Think of this as your "photocopy collection"
   const [postsCache, setPostsCache] = useState<{
@@ -357,6 +371,66 @@ export default function DailyBriefing() {
     }
   };
 
+  const handleIngestPosts = async () => {
+    setIsIngesting(true);
+    setError(null);
+    setIngestStats(null);
+    
+    try {
+      console.log('🚀 Ingesting posts from all sources');
+      const response = await apiService.ingestPosts();
+      
+      if (response.success) {
+        console.log('✅ Posts ingested successfully');
+        setIngestStats({
+          success: true,
+          message: response.message || 'Posts ingested successfully',
+          date: new Date().toISOString().split('T')[0]
+        });
+        // Refresh the sources list to show updated counts
+        await loadSourcesWithCounts();
+      } else {
+        console.error('❌ Ingestion failed:', response.error);
+        setError(response.error || 'Failed to ingest posts');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
+  const handleSafeIngestPosts = async () => {
+    setIsSafeIngesting(true);
+    setError(null);
+    setSafeIngestStats(null);
+    
+    try {
+      console.log('🚀 Safe ingesting posts from sources that need updating');
+      const response = await apiService.safeIngestPosts();
+      
+      if (response.success) {
+        console.log('✅ Posts safe ingested successfully');
+        setSafeIngestStats({
+          success: true,
+          message: response.message || 'Posts safely ingested',
+          date: new Date().toISOString().split('T')[0]
+        });
+        // Refresh the sources list to show updated counts
+        await loadSourcesWithCounts();
+      } else {
+        console.error('❌ Safe ingestion failed:', response.error);
+        setError(response.error || 'Failed to safe ingest posts');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setIsSafeIngesting(false);
+    }
+  };
+
   const briefingTitle = briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
 
   return (
@@ -458,6 +532,44 @@ export default function DailyBriefing() {
                 </>
               )}
             </button>
+            
+            {/* Ingest Posts Button */}
+            <button
+              onClick={handleIngestPosts}
+              disabled={isIngesting}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
+            >
+              {isIngesting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Ingesting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Ingest Posts
+                </>
+              )}
+            </button>
+
+            {/* Safe Ingest Posts Button */}
+            <button
+              onClick={handleSafeIngestPosts}
+              disabled={isSafeIngesting}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
+            >
+              {isSafeIngesting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Safe Ingesting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Safe Ingest Posts
+                </>
+              )}
+            </button>
           </div>
 
           {/* Briefing Stats */}
@@ -484,6 +596,34 @@ export default function DailyBriefing() {
               <div className="text-xs text-emerald-700 space-y-0.5">
                 <div>📊 Total: {databasePostsStats.total}</div>
                 <div>📅 Date: {databasePostsStats.date}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Ingest Stats */}
+          {ingestStats && (
+            <div className="mt-2.5 p-2.5 bg-orange-50 border border-orange-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-orange-600" />
+                <span className="text-xs font-medium text-orange-800">Posts Ingested</span>
+              </div>
+              <div className="text-xs text-orange-700 space-y-0.5">
+                <div>📊 Total: {sourcesData?.total_posts || 0}</div>
+                <div>📅 Date: {ingestStats.date}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Safe Ingest Stats */}
+          {safeIngestStats && (
+            <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+                <span className="text-xs font-medium text-amber-800">Posts Safely Ingested</span>
+              </div>
+              <div className="text-xs text-amber-700 space-y-0.5">
+                <div>📊 Total: {sourcesData?.total_posts || 0}</div>
+                <div>📅 Date: {safeIngestStats.date}</div>
               </div>
             </div>
           )}

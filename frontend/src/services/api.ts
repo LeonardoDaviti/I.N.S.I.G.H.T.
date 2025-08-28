@@ -342,6 +342,36 @@ class ApiService {
       };
     }
   }
+
+  async ingestPosts(): Promise<{ success: boolean; error?: string; message?: string }> {
+    try {
+      const response = await this.makeRequest<{ success: boolean; error?: string; message?: string }>('/api/ingest-posts', {
+        method: 'POST',
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to ingest posts:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async safeIngestPosts(): Promise<{ success: boolean; error?: string; message?: string }> {
+    try {
+      const response = await this.makeRequest<{ success: boolean; error?: string; message?: string }>('/api/safe-ingest-posts', {
+        method: 'POST',
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to safe ingest posts:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
 }
 
 // Export singleton instance

@@ -296,7 +296,7 @@ async def health_check():
     }
 
 
-# ============= POSTS ENDPOINTS (DATABASE-BACKED) =============
+# ============= INGESTION ENDPOINTS =============
 
 @app.post("/api/ingest-posts")
 async def ingest_posts():
