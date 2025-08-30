@@ -120,6 +120,7 @@ class TopicModelerTest:
         
         # Validate topic IDs are sequential starting from 0
         topic_ids = [int(tid) for tid in topic_names.keys() if tid != "-1"]
+        logger.info(f"Topic IDs: {topic_ids}")
         topic_ids.sort()
         if topic_ids:
             expected_ids = list(range(len(topic_ids)))
@@ -194,7 +195,7 @@ class TopicModelerTest:
         
         # Fetch posts from two dates
         date1 = date(2025, 11, 3)
-        date2 = date(2025, 11, 2)
+        date2 = date(2025, 11, 16)
         
         posts_date1 = self.fetch_posts_by_date(date1)
         posts_date2 = self.fetch_posts_by_date(date2)
