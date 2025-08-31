@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from insight_bridge import InsightBridge
 from insight_api_bridge import InsightApiBridge
+from typing import List, Dict, Any
 import logging
 
 # Configure logging
@@ -334,4 +335,17 @@ async def safe_ingest_posts():
             }
     except Exception as e:
         logger.exception("Failed to ingest posts from all sources that need updating")
+        return {"success": False, "error": str(e)}
+
+# ============= TOPIC MODELING ENDPOINTS =============
+
+@app.post("/api/model-topics")
+async def model_topics(posts: List[Dict[str, Any]]):
+    """Model topics from a list of posts."""
+    try:
+        logger.info("🚀 Modeling topics from a list of posts")
+        result = await api_bridge.model_topics(posts)
+        return result
+    except Exception as e:
+        logger.exception("Failed to model topics")
         return {"success": False, "error": str(e)}

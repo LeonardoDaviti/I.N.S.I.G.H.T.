@@ -1,9 +1,14 @@
 # backend/insight_api_bridge.py
 from insight_core.db.ensure_db import ensure_database
+
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.posts_service import PostsService
+
 from insight_core.scripts.ingest import ingest_posts
 from insight_core.scripts.safe_ingest import safe_ingest_posts
+
+from insight_core.processors.ai.gemini_processor import GeminiProcessor
+
 from datetime import datetime, date
 # from insight_core.services.briefing_service import BriefingService
 
@@ -14,6 +19,7 @@ class InsightApiBridge:
         self.db = ensure_database()
         self.sources_service = SourcesService(self.db)
         self.posts_service = PostsService(self.db)
+        self.processor = GeminiProcessor()
     # ============= SOURCES MANAGEMENT =============
 
     def get_all_sources(self) -> List[Dict[str, Any]]:
@@ -363,6 +369,9 @@ class InsightApiBridge:
                 "total": 0
             }
 
+
+    # ============= INGESTION =============
+
     async def ingest_posts(self):
         """Ingest posts from all sources."""
         try:
@@ -385,4 +394,25 @@ class InsightApiBridge:
                 "error": str(e),
                 "posts_ingested": 0,
                 "sources_ingested": 0,
+            }
+
+# ============= TOPIC MODELING =============
+
+    # Topic Modeling as well as ingestion should be script and should not be done in the API.
+    # But for the test purposes, we will keep it here.
+    
+    def model_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Model topics from a list of posts."""
+        try:
+            if not self.processor.is_setup:
+                self.processor.setup_processor()
+                return {
+                    "success": False,
+                    "error": "Processor not setup. Call setup_processor() first"
+                }
+            return self.processor.model_topics(posts)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
             }

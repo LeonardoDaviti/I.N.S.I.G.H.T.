@@ -29,7 +29,8 @@ class GeminiProcessor:
     def __init__(self):
         """Initialize Gemini processor"""
         self.llm = None
-        self.model = "gemini-2.0-flash"
+        # self.model = "gemini-2.0-flash"
+        self.model = "gemini-flash-latest"
         self.temperature = 0.1
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
