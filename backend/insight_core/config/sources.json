@@ -51,6 +51,10 @@
                 {
                     "id": "toshoseti",
                     "state": "disabled"
+                },
+                {
+                    "id": "netstalkers",
+                    "state": "enabled"
                 }
             ]
         },
@@ -63,19 +67,27 @@
                 },
                 {
                     "id": "https://www.oneusefulthing.org/feed",
-                    "state": "disabled"
+                    "state": "enabled"
                 },
                 {
                     "id": "https://tg.i-c-a.su/rss/denissexy?limit=50",
-                    "state": "disabled"
+                    "state": "enabled"
                 },
                 {
                     "id": "https://tg.i-c-a.su/rss/seeallochnaya?limit=50",
-                    "state": "disabled"
+                    "state": "enabled"
                 },
                 {
                     "id": "https://karpathy.bearblog.dev/feed/",
-                    "state": "disabled"
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.seangoedecke.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://lexfridman.com/feed/podcast/",
+                    "state": "enabled"
                 }
             ]
         },
