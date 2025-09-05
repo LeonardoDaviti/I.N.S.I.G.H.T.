@@ -8,8 +8,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Set, List
 
-
-
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
@@ -100,7 +98,7 @@ def main():
                         raise
                 
             conn.commit()
-            logger.infor("All Pending migrations applied successfully")
+            logger.info("All Pending migrations applied successfully")
         
     except Exception:
         # Psycopg context manager rolls back automatically on exception.
