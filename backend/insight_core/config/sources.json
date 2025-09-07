@@ -54,7 +54,7 @@
                 },
                 {
                     "id": "netstalkers",
-                    "state": "enabled"
+                    "state": "disabled"
                 }
             ]
         },

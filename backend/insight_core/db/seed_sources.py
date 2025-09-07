@@ -54,7 +54,7 @@ def upsert_sources(cur: Cursor, rows: List[Tuple[str, str, bool]]) -> Tuple[int,
             if existing[1] != enabled:
                 cur.execute("""
                     UPDATE sources SET enabled = %s, updated_at = now() WHERE id = %s
-                """, (enabled, existing[1]))
+                """, (enabled, existing[0]))
                 updated_count += 1
                 
         else:
