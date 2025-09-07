@@ -47,7 +47,7 @@ class LoggerConfig:
     def _setup_console_handler(self):
         """Set up console output handler with Unicode support."""
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.WARNING if not self.debug_mode else logging.DEBUG)
+        console_handler.setLevel(logging.INFO if not self.debug_mode else logging.WARNING)
         
         # Create a formatter that avoids emoji characters
         console_formatter = logging.Formatter(
