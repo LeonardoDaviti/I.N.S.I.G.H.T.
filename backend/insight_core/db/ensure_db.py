@@ -39,8 +39,10 @@ def _ensure_role(cur: Cursor, user: str, password: str) -> None:
         return
     logger.info("Creating role %s", user)
     cur.execute(
-        sql.SQL("CREATE USER {} WITH PASSWORD %s").format(sql.Identifier(user)),
-        (password,),
+        sql.SQL("CREATE USER {} WITH PASSWORD {}").format(
+            sql.Identifier(user),
+            sql.Literal(password)
+        )
     )
 
 def _ensure_database(cur: Cursor, dbname: str, owner: str) -> None:
@@ -52,7 +54,8 @@ def _ensure_database(cur: Cursor, dbname: str, owner: str) -> None:
     logger.info("Creating database %s owned by %s", dbname, owner)
     cur.execute(
         sql.SQL("CREATE DATABASE {} OWNER {}").format(
-            sql.Identifier(dbname), sql.Identifier(owner)
+            sql.Identifier(dbname),
+            sql.Identifier(owner)
         )
     )
 
@@ -63,11 +66,13 @@ def ensure_database() -> str:
     Otherwise, create role+db using ADMIN_DATABASE_URL (or a local default).
     """
     load_dotenv()
+    setup_logging(debug_mode=False)
 
     # 1) Respect existing DATABASE_URL
     db_url = env_get("DATABASE_URL")
     if db_url:
         logger.info("DATABASE_URL already set")
+        return db_url
 
     # 2) App DB parameters
     db_name = env_get("DB_NAME", "insight")
@@ -84,13 +89,13 @@ def ensure_database() -> str:
     if not is_port_open(host_for_probe, port_for_probe):
         logger.warning("PostgreSQL not reachable at %s:%s; ensure service is running", host_for_probe, port_for_probe)
 
-    # Create role/database if needed
+    # Create role/database if needed - USE AUTOCOMMIT
     try:
-        with psycopg.connect(admin_url) as conn:
-            with conn.cursor() as cur:
-                _ensure_role(cur, db_user, db_pass)
-                _ensure_database(cur, db_name, db_user)
-            conn.commit()
+        conn = psycopg.connect(admin_url, autocommit=True)
+        with conn.cursor() as cur:
+            _ensure_role(cur, db_user, db_pass)
+            _ensure_database(cur, db_name, db_user)
+        conn.close()
     except Exception as e:
         logger.exception("Admin bootstrap failed. Set ADMIN_DATABASE_URL or start Postgres. Error: %s", e)
         raise

@@ -15,7 +15,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db.ensure_db import ensure_database
 
 
-setup_logging(debug_mode=False)
+setup_logging(debug_mode=True)
 logger = get_component_logger("db_migrate")
 
 
@@ -86,6 +86,7 @@ def main():
 
                 if not pending:
                     logger.info("Up to date")
+                    # print("Up to date")
                     return
                 
                 for version, path in pending:

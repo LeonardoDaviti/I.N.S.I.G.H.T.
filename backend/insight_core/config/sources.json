@@ -106,26 +106,6 @@
                 {
                     "id": "r/LocalLLaMA",
                     "state": "enabled"
-                },
-                {
-                    "id": "denissexy",
-                    "state": "enabled"
-                },
-                {
-                    "id": "gonzo_ML",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://simonwillison.net/atom/everything/",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://sive.rs/feed",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.oneusefulthing.org/feed",
-                    "state": "enabled"
                 }
             ]
         }
