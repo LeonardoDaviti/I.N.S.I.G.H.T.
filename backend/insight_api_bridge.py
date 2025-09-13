@@ -3,6 +3,7 @@ from insight_core.db.ensure_db import ensure_database
 
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.posts_service import PostsService
+from insight_core.services.topics_service import TopicsService
 
 from insight_core.scripts.ingest import ingest_posts
 from insight_core.scripts.safe_ingest import safe_ingest_posts
@@ -19,7 +20,9 @@ class InsightApiBridge:
         self.db = ensure_database()
         self.sources_service = SourcesService(self.db)
         self.posts_service = PostsService(self.db)
+        self.topics_service = TopicsService(self.db)
         self.processor = GeminiProcessor()
+    
     # ============= SOURCES MANAGEMENT =============
 
     def get_all_sources(self) -> List[Dict[str, Any]]:
@@ -396,13 +399,225 @@ class InsightApiBridge:
                 "sources_ingested": 0,
             }
 
-# ============= TOPIC MODELING =============
+    # ============= TOPICS RETRIEVAL =============
 
-    # Topic Modeling as well as ingestion should be script and should not be done in the API.
-    # But for the test purposes, we will keep it here.
+    def get_topics_by_date(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get all topics for a specific date with their associated posts.
+        
+        Args:
+            date_str: Date string in format "YYYY-MM-DD"
+            
+        Returns:
+            Dict with success, topics (with posts), date, total
+        """
+        try:
+            # Parse date string to date object
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # Get topics from service
+            topics = self.topics_service.get_topics_by_date(date_obj)
+            
+            if not topics:
+                return {
+                    "success": True,
+                    "topics": [],
+                    "date": date_str,
+                    "total": 0,
+                    "message": f"No topics found for {date_str}"
+                }
+            
+            # Enrich each topic with its posts
+            enriched_topics = []
+            for topic in topics:
+                posts = self.topics_service.get_posts_for_topic(topic['id'])
+                
+                enriched_topics.append({
+                    "id": topic['id'],
+                    "title": topic['title'],
+                    "summary": topic.get('summary'),
+                    "is_outlier": topic['is_outlier'],
+                    "created_at": topic['created_at'].isoformat() if topic.get('created_at') else None,
+                    "post_count": len(posts),
+                    "posts": posts
+                })
+            
+            return {
+                "success": True,
+                "topics": enriched_topics,
+                "date": date_str,
+                "total": len(enriched_topics)
+            }
+            
+        except ValueError as e:
+            # Invalid date format
+            return {
+                "success": False,
+                "error": f"Invalid date format: {date_str}. Expected YYYY-MM-DD",
+                "topics": [],
+                "total": 0
+            }
+        except Exception as e:
+            # Database or other errors
+            return {
+                "success": False,
+                "error": str(e),
+                "topics": [],
+                "total": 0
+            }
+
+    def get_topic_by_id(self, topic_id: str) -> Dict[str, Any]:
+        """
+        Get a single topic with its posts.
+        
+        Args:
+            topic_id: UUID of the topic
+            
+        Returns:
+            Dict with success, topic data, and posts
+        """
+        try:
+            # Get topic from service
+            topic = self.topics_service.get_topic_by_id(topic_id)
+            
+            if not topic:
+                return {
+                    "success": False,
+                    "error": f"Topic not found: {topic_id}",
+                    "topic": None
+                }
+            
+            # Get posts for this topic
+            posts = self.topics_service.get_posts_for_topic(topic_id)
+            
+            # Build enriched topic response
+            enriched_topic = {
+                "id": topic['id'],
+                "title": topic['title'],
+                "summary": topic.get('summary'),
+                "is_outlier": topic['is_outlier'],
+                "date": topic['date'].isoformat() if topic.get('date') else None,
+                "created_at": topic['created_at'].isoformat() if topic.get('created_at') else None,
+                "post_count": len(posts),
+                "posts": posts
+            }
+            
+            return {
+                "success": True,
+                "topic": enriched_topic
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "topic": None
+            }
+
+    def get_posts_for_topic(self, topic_id: str) -> Dict[str, Any]:
+        """
+        Get all posts associated with a specific topic.
+        
+        Args:
+            topic_id: UUID of the topic
+            
+        Returns:
+            Dict with success, posts, topic_id, total
+        """
+        try:
+            # Get posts from service
+            posts = self.topics_service.get_posts_for_topic(topic_id)
+            
+            return {
+                "success": True,
+                "posts": posts,
+                "topic_id": topic_id,
+                "total": len(posts)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "posts": [],
+                "topic_id": topic_id,
+                "total": 0
+            }
+
+    def check_topics_exist(self, date_str: str) -> Dict[str, Any]:
+        """
+        Check if topics exist for a specific date.
+        
+        Args:
+            date_str: Date string in format "YYYY-MM-DD"
+            
+        Returns:
+            Dict with success and exists flag
+        """
+        try:
+            # Parse date string to date object
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # Check if topics exist
+            exists = self.topics_service.topics_exist_for_date(date_obj)
+            
+            return {
+                "success": True,
+                "exists": exists,
+                "date": date_str
+            }
+            
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": f"Invalid date format: {date_str}. Expected YYYY-MM-DD",
+                "exists": False
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "exists": False
+            }
+
+    def find_similar_topics(self, topic_id: str, threshold: float = 0.75, limit: int = 10) -> Dict[str, Any]:
+        """
+        Find topics similar to a given topic (future: when embeddings are added).
+        
+        Args:
+            topic_id: UUID of the source topic
+            threshold: Minimum similarity score (0-1)
+            limit: Maximum number of results
+            
+        Returns:
+            Dict with success, similar topics
+        """
+        try:
+            # Get similar topics from service
+            similar = self.topics_service.find_similar_topics(topic_id, threshold, limit)
+            
+            return {
+                "success": True,
+                "similar_topics": similar,
+                "source_topic_id": topic_id,
+                "total": len(similar)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "similar_topics": [],
+                "total": 0
+            }
+
+    # ============= TOPIC MODELING (FOR TESTING) =============
+
+    # Note: Topic generation should be done via scripts, not API
+    # But we keep this for testing purposes
     
     def model_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Model topics from a list of posts."""
+        """Model topics from a list of posts (testing only)."""
         try:
             if not self.processor.is_setup:
                 self.processor.setup_processor()

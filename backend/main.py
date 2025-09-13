@@ -337,11 +337,113 @@ async def safe_ingest_posts():
         logger.exception("Failed to ingest posts from all sources that need updating")
         return {"success": False, "error": str(e)}
 
-# ============= TOPIC MODELING ENDPOINTS =============
+# ============= TOPICS ENDPOINTS =============
+
+@app.get("/api/topics/{date}")
+async def get_topics(date: str):
+    """
+    Get all topics for a specific date with their associated posts.
+    This is the main endpoint for the topics view.
+    """
+    try:
+        logger.info(f"📋 Fetching topics for date: {date}")
+        
+        result = api_bridge.get_topics_by_date(date)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved {result.get('total', 0)} topics")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception("Failed to get topics")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/topics/topic/{topic_id}")
+async def get_topic(topic_id: str):
+    """Get a single topic with its posts."""
+    try:
+        logger.info(f"📋 Fetching topic: {topic_id}")
+        
+        result = api_bridge.get_topic_by_id(topic_id)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved topic: {topic_id}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to get topic {topic_id}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/topics/{topic_id}/posts")
+async def get_topic_posts(topic_id: str):
+    """Get all posts for a specific topic."""
+    try:
+        logger.info(f"📋 Fetching posts for topic: {topic_id}")
+        
+        result = api_bridge.get_posts_for_topic(topic_id)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved {result.get('total', 0)} posts for topic")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to get posts for topic {topic_id}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/topics/check/{date}")
+async def check_topics(date: str):
+    """Check if topics exist for a specific date."""
+    try:
+        logger.info(f"🔍 Checking if topics exist for date: {date}")
+        
+        result = api_bridge.check_topics_exist(date)
+        
+        # Log result
+        if result.get("success"):
+            exists = result.get("exists", False)
+            logger.info(f"✅ Topics exist for {date}: {exists}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to check topics for {date}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/topics/{topic_id}/similar")
+async def get_similar_topics(topic_id: str, threshold: float = 0.75, limit: int = 10):
+    """
+    Find topics similar to a given topic (future: when embeddings are added).
+    
+    Query params:
+        - threshold: Minimum similarity score (0-1), default 0.75
+        - limit: Maximum number of results, default 10
+    """
+    try:
+        logger.info(f"🔍 Finding similar topics for: {topic_id}")
+        
+        result = api_bridge.find_similar_topics(topic_id, threshold, limit)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Found {result.get('total', 0)} similar topics")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to find similar topics for {topic_id}")
+        return {"success": False, "error": str(e)}
+
+# ============= TOPIC MODELING ENDPOINTS (TESTING) =============
 
 @app.post("/api/model-topics")
 async def model_topics(posts: List[Dict[str, Any]]):
-    """Model topics from a list of posts."""
+    """Model topics from a list of posts (testing only)."""
     try:
         logger.info("🚀 Modeling topics from a list of posts")
         result = await api_bridge.model_topics(posts)
