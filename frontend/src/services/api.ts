@@ -92,8 +92,12 @@ export interface BriefingResponse {
 export interface Topic {
   id: string;
   title: string;
-  summary: string;
-  post_ids: string[]; // numeric IDs as strings: ["1","2",...]
+  summary: string | null;
+  post_ids?: string[]; // For AI-generated topics (legacy)
+  posts?: Post[]; // For database topics
+  is_outlier?: boolean;
+  created_at?: string;
+  post_count?: number;
 }
 
 export interface BriefingTopicsResponse {
@@ -108,6 +112,15 @@ export interface BriefingTopicsResponse {
   posts?: Record<string, Post>;
   // list of numeric post IDs not referenced by any topic
   unreferenced_posts?: string[];
+  error?: string;
+}
+
+export interface TopicsResponse {
+  success: boolean;
+  topics: Topic[];
+  date: string;
+  total: number;
+  message?: string;
   error?: string;
 }
 
@@ -368,6 +381,39 @@ class ApiService {
       console.error('Failed to safe ingest posts:', error);
       return {
         success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  // ============= TOPICS METHODS =============
+
+  async getTopicsByDate(date: string): Promise<TopicsResponse> {
+    try {
+      const response = await this.makeRequest<TopicsResponse>(`/api/topics/${date}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get topics:', error);
+      return {
+        success: false,
+        topics: [],
+        date,
+        total: 0,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async checkTopicsExist(date: string): Promise<{ success: boolean; exists: boolean; date: string; error?: string }> {
+    try {
+      const response = await this.makeRequest<{ success: boolean; exists: boolean; date: string; error?: string }>(`/api/topics/check/${date}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to check topics:', error);
+      return {
+        success: false,
+        exists: false,
+        date,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }

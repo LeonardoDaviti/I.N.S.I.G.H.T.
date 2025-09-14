@@ -56,6 +56,14 @@ export default function DailyBriefing() {
     source: string;
   } | null>(null);
 
+  // Topics fetched by date state
+  const [databaseTopics, setDatabaseTopics] = useState<Topic[]>([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+  const [topicsStats, setTopicsStats] = useState<{
+    total: number;
+    date: string;
+  } | null>(null);
+
   // Ingestion state
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSafeIngesting, setIsSafeIngesting] = useState(false);
@@ -170,6 +178,44 @@ export default function DailyBriefing() {
       setError(error instanceof Error ? error.message : 'Network error occurred');
     } finally {
       setIsLoadingPosts(false);
+    }
+  };
+
+  const handleLoadTopics = async () => {
+    setActiveView('briefing');  // Switch to briefing view to show topics
+    setSelectedSourceId(null);
+    
+    setIsLoadingTopics(true);
+    setError(null);
+    setDatabaseTopics([]);
+    setTopicsStats(null);
+    
+    try {
+      console.log(`📚 Loading topics from database for date: ${selectedDate}`);
+      const response = await apiService.getTopicsByDate(selectedDate);
+      
+      if (response.success) {
+        console.log(`✅ Loaded ${response.total} topics from database`);
+        
+        setDatabaseTopics(response.topics);
+        setTopicsStats({
+          total: response.total,
+          date: response.date
+        });
+        
+        // If no topics found, show helpful message
+        if (response.total === 0) {
+          setError(response.message || `No topics found for ${selectedDate}. Generate topics first using the backend script.`);
+        }
+      } else {
+        console.error('❌ Failed to load topics:', response.error);
+        setError(response.error || 'Failed to load topics from database');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setIsLoadingTopics(false);
     }
   };
 
@@ -533,6 +579,25 @@ export default function DailyBriefing() {
               )}
             </button>
             
+            {/* Fetch Topics Button */}
+            <button
+              onClick={handleLoadTopics}
+              disabled={isLoadingTopics}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
+            >
+              {isLoadingTopics ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <BarChart3 className="w-4 h-4" />
+                  Fetch Topics
+                </>
+              )}
+            </button>
+            
             {/* Ingest Posts Button */}
             <button
               onClick={handleIngestPosts}
@@ -596,6 +661,20 @@ export default function DailyBriefing() {
               <div className="text-xs text-emerald-700 space-y-0.5">
                 <div>📊 Total: {databasePostsStats.total}</div>
                 <div>📅 Date: {databasePostsStats.date}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Topics Stats */}
+          {topicsStats && (
+            <div className="mt-2.5 p-2.5 bg-teal-50 border border-teal-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+                <span className="text-xs font-medium text-teal-800">Topics Loaded</span>
+              </div>
+              <div className="text-xs text-teal-700 space-y-0.5">
+                <div>📚 Topics: {topicsStats.total}</div>
+                <div>📅 Date: {topicsStats.date}</div>
               </div>
             </div>
           )}
@@ -818,8 +897,104 @@ export default function DailyBriefing() {
                 </div>
               )}
 
+              {/* Database Topics */}
+              {databaseTopics.length > 0 && (
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">📚 Topics from Database</h3>
+                  <div className="space-y-3.5">
+                    {databaseTopics.map((topic, tIndex) => {
+                      const isOpen = openTopic === topic.id;
+                      const topicPosts = topic.posts || [];
+                      return (
+                        <div key={topic.id || `db_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                          <button
+                            onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                            className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
+                          >
+                            <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
+                              <span className="inline-block border-l-4 border-teal-600 pl-3">
+                                {tIndex + 1}. {topic.title || 'Untitled Topic'}
+                              </span>
+                              {topic.is_outlier && (
+                                <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
+                              )}
+                            </span>
+                            <span className="text-xs text-gray-500 flex items-center gap-2">
+                              <span>{topicPosts.length} posts</span>
+                              <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                            </span>
+                          </button>
+                          {isOpen && (
+                            <div className="px-4 pb-4">
+                              {topic.summary && (
+                                <div className="text-xs text-gray-700 leading-relaxed mb-3.5 bg-gray-50 p-3 rounded-lg">
+                                  <MarkdownRenderer content={topic.summary} />
+                                </div>
+                              )}
+                              <div className="space-y-2.5">
+                                {topicPosts.map((post, rIndex) => {
+                                  const key = `${topic.id}:${post.id ||rIndex}`;
+                                  const isExpanded = expandedPosts[key] ?? false;
+                                  const platformLabel = (post?.platform || 'unknown').toUpperCase();
+                                  let dateLabel = 'Unknown date';
+                                  try {
+                                    const d = new Date(post?.date as string);
+                                    if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
+                                  } catch {}
+                                  
+                                  return (
+                                    <div key={key} className="border border-gray-200 rounded-xl overflow-hidden">
+                                      <button
+                                        type="button"
+                                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
+                                        onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
+                                      >
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <span className="shrink-0 w-6 h-6 rounded-md bg-teal-50 text-teal-700 text-xs font-semibold flex items-center justify-center">{rIndex + 1}</span>
+                                            <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{post.title || `${platformLabel} Post`}</h4>
+                                          </div>
+                                          <div className="mt-1 text-xs text-gray-600 flex items-center gap-3 ml-8">
+                                            <span>📡 {post.source}</span>
+                                            <span>📅 {dateLabel}</span>
+                                            <span>🔗 {platformLabel}</span>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {post.url && (
+                                            <a
+                                              href={post.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-teal-600 hover:text-teal-800"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <ExternalLink className="w-4 h-4" />
+                                            </a>
+                                          )}
+                                          <span className="text-xs text-gray-500">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                        </div>
+                                      </button>
+                                      {isExpanded && (
+                                        <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none border-t border-gray-100">
+                                          <MarkdownRenderer content={post.content_html || post.content} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Empty state */}
-              {!briefingData && !topicsBriefing && (
+              {!briefingData && !topicsBriefing && databaseTopics.length === 0 && (
                 <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
                   <BarChart3 className="w-10 h-10 text-gray-400 mx-auto mb-3.5" />
                   <h3 className="text-base font-semibold text-gray-900 mb-2">
