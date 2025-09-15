@@ -524,9 +524,10 @@ class GeminiProcessor:
         - "assignments": Maps post ID to topic ID (as integer, use -1 for outliers)
         - If a post is a personal anecdote, a joke, or does not fit any technical or news-related group, assign it to topic ID **-1 (outlier)**.
         - Use the actual post IDs from the "Post X (ID: ...)" lines above
-        - DO NOT add "-1" to topic_names dictionary - outliers don't need a topic name
+        - DO NOT adwd "-1" to topic_names dictionary - outliers don't need a topic name
         - Only named topics (0, 1, 2, etc.) should appear in topic_names
         - **Self-Correction:** Before returning the JSON, review your generated topic names. Do they follow the "ONE TOPIC, ONE IDEA" rule? Are they specific? If not, correct them.
+        - Take your time, think longer than usual, think about the context of the posts and the relationships between them.
 
         Analyze now and return ONLY the JSON object:"""
     
