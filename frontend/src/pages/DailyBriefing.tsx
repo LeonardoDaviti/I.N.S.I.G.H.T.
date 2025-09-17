@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
 import type { BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
@@ -63,6 +63,11 @@ export default function DailyBriefing() {
     total: number;
     date: string;
   } | null>(null);
+
+  // Topic editing state
+  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
+  const [editingTopicTitle, setEditingTopicTitle] = useState<string>('');
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
 
   // Ingestion state
   const [isIngesting, setIsIngesting] = useState(false);
@@ -216,6 +221,65 @@ export default function DailyBriefing() {
       setError(error instanceof Error ? error.message : 'Network error occurred');
     } finally {
       setIsLoadingTopics(false);
+    }
+  };
+
+  const handleEditTopicTitle = (topicId: string, currentTitle: string) => {
+    setEditingTopicId(topicId);
+    setEditingTopicTitle(currentTitle);
+  };
+
+  const handleCancelEditTitle = () => {
+    setEditingTopicId(null);
+    setEditingTopicTitle('');
+    setIsSavingTitle(false);
+  };
+
+  const handleSaveTopicTitle = async (topicId: string) => {
+    const newTitle = editingTopicTitle.trim();
+    
+    // Validate
+    if (!newTitle) {
+      setError('Topic title cannot be empty');
+      return;
+    }
+    
+    // Find the topic to check if title actually changed
+    const topic = databaseTopics.find(t => t.id === topicId);
+    if (topic && topic.title === newTitle) {
+      // No change, just exit edit mode
+      handleCancelEditTitle();
+      return;
+    }
+    
+    setIsSavingTitle(true);
+    setError(null);
+    
+    try {
+      console.log(`✏️  Updating topic title: ${topicId}`);
+      const response = await apiService.updateTopicTitle(topicId, newTitle);
+      
+      if (response.success) {
+        console.log(`✅ Topic title updated successfully`);
+        
+        // Update local state
+        setDatabaseTopics(prevTopics =>
+          prevTopics.map(t =>
+            t.id === topicId ? { ...t, title: newTitle } : t
+          )
+        );
+        
+        // Exit edit mode
+        handleCancelEditTitle();
+      } else {
+        console.error('❌ Failed to update topic title:', response.error);
+        setError(response.error || 'Failed to update topic title');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setIsSavingTitle(false);
     }
   };
 
@@ -905,25 +969,90 @@ export default function DailyBriefing() {
                     {databaseTopics.map((topic, tIndex) => {
                       const isOpen = openTopic === topic.id;
                       const topicPosts = topic.posts || [];
+                      const isEditing = editingTopicId === topic.id;
+                      
                       return (
-                        <div key={topic.id || `db_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                          <button
-                            onClick={() => setOpenTopic(isOpen ? null : topic.id)}
-                            className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
-                          >
-                            <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
-                              <span className="inline-block border-l-4 border-teal-600 pl-3">
-                                {tIndex + 1}. {topic.title || 'Untitled Topic'}
+                        <div key={topic.id || `db_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm group">
+                          <div className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${isOpen ? 'bg-gray-50' : ''}`}>
+                            <div className="flex-1 flex items-center gap-2">
+                              <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
+                                <span className="inline-block border-l-4 border-teal-600 pl-3">
+                                  {tIndex + 1}.
+                                </span>
+                                
+                                {/* Edit Mode */}
+                                {isEditing ? (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="text"
+                                      value={editingTopicTitle}
+                                      onChange={(e) => setEditingTopicTitle(e.target.value)}
+                                      onBlur={() => !isSavingTitle && handleSaveTopicTitle(topic.id)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleSaveTopicTitle(topic.id);
+                                        } else if (e.key === 'Escape') {
+                                          handleCancelEditTitle();
+                                        }
+                                      }}
+                                      autoFocus
+                                      disabled={isSavingTitle}
+                                      className="flex-1 px-2 py-1 border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm font-normal disabled:opacity-50"
+                                    />
+                                    <button
+                                      onClick={() => handleSaveTopicTitle(topic.id)}
+                                      disabled={isSavingTitle}
+                                      className="p-1 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                                      title="Save"
+                                    >
+                                      {isSavingTitle ? (
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <Check className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={handleCancelEditTitle}
+                                      disabled={isSavingTitle}
+                                      className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                      title="Cancel"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  /* Display Mode */
+                                  <span className="flex items-center gap-2">
+                                    <span>{topic.title || 'Untitled Topic'}</span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEditTopicTitle(topic.id, topic.title || '');
+                                      }}
+                                      className="p-1 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Edit title"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                  </span>
+                                )}
+                                
+                                {topic.is_outlier && !isEditing && (
+                                  <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
+                                )}
                               </span>
-                              {topic.is_outlier && (
-                                <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
-                              )}
-                            </span>
-                            <span className="text-xs text-gray-500 flex items-center gap-2">
-                              <span>{topicPosts.length} posts</span>
-                              <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                            </span>
-                          </button>
+                            </div>
+                            
+                            {!isEditing && (
+                              <button
+                                onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                                className="text-xs text-gray-500 flex items-center gap-2 hover:text-gray-700"
+                              >
+                                <span>{topicPosts.length} posts</span>
+                                <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                              </button>
+                            )}
+                          </div>
                           {isOpen && (
                             <div className="px-4 pb-4">
                               {topic.summary && (

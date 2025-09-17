@@ -400,6 +400,35 @@ class TopicsRepository:
         cur.execute(query, (source_id, target_id, score))
         self.logger.debug(f"Inserted connection: {source_id[:8]}... -> {target_id[:8]}... (score={score:.3f})")
 
+    def update_topic_title(self, cur: Cursor, topic_id: str, new_title: str) -> bool:
+        """
+        Update the title of a topic.
+        
+        Args:
+            cur: Database cursor
+            topic_id: UUID of the topic
+            new_title: New title for the topic
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        query = """
+            UPDATE topics
+            SET title = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING id
+        """
+        
+        cur.execute(query, (new_title, topic_id))
+        result = cur.fetchone()
+        
+        if result:
+            self.logger.debug(f"Updated topic title: {topic_id[:8]}... -> '{new_title}'")
+            return True
+        else:
+            self.logger.warning(f"Topic not found for update: {topic_id}")
+            return False
+
     # ===============================
     # BATCH OPERATIONS
     # ===============================

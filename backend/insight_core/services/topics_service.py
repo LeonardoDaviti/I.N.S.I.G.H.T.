@@ -133,6 +133,29 @@ class TopicsService:
                 conn.commit()
 
     # ===============================
+    # UPDATE OPERATIONS
+    # ===============================
+
+    def update_topic_title(self, topic_id: str, new_title: str) -> bool:
+        """
+        Update the title of a topic.
+        
+        Args:
+            topic_id: UUID of the topic
+            new_title: New title for the topic
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                success = self.repo.update_topic_title(cur, topic_id, new_title)
+                if success:
+                    conn.commit()
+                    self.logger.info(f"Updated topic title: {topic_id}")
+                return success
+
+    # ===============================
     # COMBINED OPERATIONS
     # ===============================
 

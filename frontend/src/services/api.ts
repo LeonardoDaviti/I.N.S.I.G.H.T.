@@ -418,6 +418,22 @@ class ApiService {
       };
     }
   }
+
+  async updateTopicTitle(topicId: string, newTitle: string): Promise<{ success: boolean; topic_id?: string; title?: string; error?: string }> {
+    try {
+      const response = await this.makeRequest<{ success: boolean; topic_id?: string; title?: string; error?: string }>(`/api/topics/${topicId}/title`, {
+        method: 'PUT',
+        body: JSON.stringify({ title: newTitle }),
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to update topic title:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
 }
 
 // Export singleton instance

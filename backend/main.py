@@ -439,6 +439,33 @@ async def get_similar_topics(topic_id: str, threshold: float = 0.75, limit: int 
         logger.exception(f"Failed to find similar topics for {topic_id}")
         return {"success": False, "error": str(e)}
 
+@app.put("/api/topics/{topic_id}/title")
+async def update_topic_title(topic_id: str, data: dict):
+    """
+    Update the title of a topic.
+    
+    Request body:
+        - title: New title for the topic
+    """
+    try:
+        logger.info(f"✏️  Updating title for topic: {topic_id}")
+        
+        new_title = data.get("title")
+        if not new_title:
+            return {"success": False, "error": "Title is required"}
+        
+        result = api_bridge.update_topic_title(topic_id, new_title)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Updated topic title: {topic_id}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to update topic title for {topic_id}")
+        return {"success": False, "error": str(e)}
+
 # ============= TOPIC MODELING ENDPOINTS (TESTING) =============
 
 @app.post("/api/model-topics")

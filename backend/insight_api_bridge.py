@@ -611,6 +611,46 @@ class InsightApiBridge:
                 "total": 0
             }
 
+    def update_topic_title(self, topic_id: str, new_title: str) -> Dict[str, Any]:
+        """
+        Update the title of a topic.
+        
+        Args:
+            topic_id: UUID of the topic
+            new_title: New title for the topic
+            
+        Returns:
+            Dict with success status
+        """
+        try:
+            # Validate input
+            if not new_title or not new_title.strip():
+                return {
+                    "success": False,
+                    "error": "Title cannot be empty"
+                }
+            
+            # Update topic title
+            success = self.topics_service.update_topic_title(topic_id, new_title.strip())
+            
+            if success:
+                return {
+                    "success": True,
+                    "topic_id": topic_id,
+                    "title": new_title.strip()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Topic not found: {topic_id}"
+                }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     # ============= TOPIC MODELING (FOR TESTING) =============
 
     # Note: Topic generation should be done via scripts, not API
