@@ -429,6 +429,94 @@ class TopicsRepository:
             self.logger.warning(f"Topic not found for update: {topic_id}")
             return False
 
+    def move_post_between_topics(self, cur: Cursor, post_id: str, source_topic_id: str, target_topic_id: str) -> bool:
+        """
+        Move a post from one topic to another.
+        
+        Args:
+            cur: Database cursor
+            post_id: UUID of the post
+            source_topic_id: UUID of the source topic
+            target_topic_id: UUID of the target topic
+            
+        Returns:
+            True if move was successful, False otherwise
+        """
+        # Step 1: Remove from source topic
+        delete_query = """
+            DELETE FROM topic_posts
+            WHERE topic_id = %s AND post_id = %s
+            RETURNING post_id
+        """
+        cur.execute(delete_query, (source_topic_id, post_id))
+        deleted = cur.fetchone()
+        
+        if not deleted:
+            self.logger.warning(f"Post {post_id[:8]}... not found in source topic {source_topic_id[:8]}...")
+            return False
+        
+        # Step 2: Add to target topic
+        insert_query = """
+            INSERT INTO topic_posts (topic_id, post_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """
+        cur.execute(insert_query, (target_topic_id, post_id))
+        
+        self.logger.debug(f"Moved post {post_id[:8]}... from topic {source_topic_id[:8]}... to {target_topic_id[:8]}...")
+        return True
+
+    def move_post_to_outlier(self, cur: Cursor, post_id: str, source_topic_id: str, target_date: date) -> Dict[str, Any]:
+        """
+        Move a post from a topic to the outlier topic for a specific date.
+        Creates the outlier topic if it doesn't exist.
+        
+        Args:
+            cur: Database cursor
+            post_id: UUID of the post
+            source_topic_id: UUID of the source topic
+            target_date: Date for finding/creating outlier topic
+            
+        Returns:
+            Dict with success status and outlier topic ID
+        """
+        # Step 1: Find or create outlier topic for the date
+        find_query = """
+            SELECT id FROM topics
+            WHERE date = %s AND is_outlier = TRUE
+            LIMIT 1
+        """
+        cur.execute(find_query, (target_date,))
+        result = cur.fetchone()
+        
+        if result:
+            outlier_topic_id = str(result[0])
+            self.logger.debug(f"Found existing outlier topic: {outlier_topic_id[:8]}...")
+        else:
+            # Create outlier topic
+            create_query = """
+                INSERT INTO topics (date, title, embedding, is_outlier, summary)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """
+            cur.execute(create_query, (
+                target_date,
+                "Uncategorized Posts",
+                None,
+                True,
+                "Posts that didn't fit into any specific topic"
+            ))
+            outlier_topic_id = str(cur.fetchone()[0])
+            self.logger.info(f"Created outlier topic for {target_date}: {outlier_topic_id[:8]}...")
+        
+        # Step 2: Move post from source to outlier
+        success = self.move_post_between_topics(cur, post_id, source_topic_id, outlier_topic_id)
+        
+        return {
+            "success": success,
+            "outlier_topic_id": outlier_topic_id
+        }
+
     # ===============================
     # BATCH OPERATIONS
     # ===============================

@@ -466,6 +466,33 @@ async def update_topic_title(topic_id: str, data: dict):
         logger.exception(f"Failed to update topic title for {topic_id}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/topics/{topic_id}/posts/{post_id}/move-to-outlier")
+async def move_post_to_outlier(topic_id: str, post_id: str, data: dict):
+    """
+    Move a post from a topic to the outlier topic.
+    
+    Request body:
+        - date: Date string (YYYY-MM-DD) for finding/creating outlier topic
+    """
+    try:
+        logger.info(f"✂️  Moving post {post_id} from topic {topic_id} to outlier")
+        
+        date_str = data.get("date")
+        if not date_str:
+            return {"success": False, "error": "Date is required"}
+        
+        result = api_bridge.move_post_to_outlier(post_id, topic_id, date_str)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Moved post to outlier topic: {result.get('outlier_topic_id')}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to move post {post_id} to outlier")
+        return {"success": False, "error": str(e)}
+
 # ============= TOPIC MODELING ENDPOINTS (TESTING) =============
 
 @app.post("/api/model-topics")

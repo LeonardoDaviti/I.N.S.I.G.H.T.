@@ -155,6 +155,47 @@ class TopicsService:
                     self.logger.info(f"Updated topic title: {topic_id}")
                 return success
 
+    def move_post_between_topics(self, post_id: str, source_topic_id: str, target_topic_id: str) -> bool:
+        """
+        Move a post from one topic to another.
+        
+        Args:
+            post_id: UUID of the post
+            source_topic_id: UUID of the source topic
+            target_topic_id: UUID of the target topic
+            
+        Returns:
+            True if move was successful, False otherwise
+        """
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                success = self.repo.move_post_between_topics(cur, post_id, source_topic_id, target_topic_id)
+                if success:
+                    conn.commit()
+                    self.logger.info(f"Moved post {post_id} from topic {source_topic_id} to {target_topic_id}")
+                return success
+
+    def move_post_to_outlier(self, post_id: str, source_topic_id: str, target_date: date) -> Dict[str, Any]:
+        """
+        Move a post from a topic to the outlier topic for a specific date.
+        Creates the outlier topic if it doesn't exist.
+        
+        Args:
+            post_id: UUID of the post
+            source_topic_id: UUID of the source topic
+            target_date: Date for finding/creating outlier topic
+            
+        Returns:
+            Dict with success status and outlier topic ID
+        """
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                result = self.repo.move_post_to_outlier(cur, post_id, source_topic_id, target_date)
+                if result["success"]:
+                    conn.commit()
+                    self.logger.info(f"Moved post {post_id} to outlier topic {result['outlier_topic_id']}")
+                return result
+
     # ===============================
     # COMBINED OPERATIONS
     # ===============================

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X } from 'lucide-react';
+import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors } from 'lucide-react';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
 import type { BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
@@ -280,6 +280,64 @@ export default function DailyBriefing() {
       setError(error instanceof Error ? error.message : 'Network error occurred');
     } finally {
       setIsSavingTitle(false);
+    }
+  };
+
+  const handleMovePostToOutlier = async (topicId: string, postId: string) => {
+    // Confirmation
+    if (!confirm('Move this post to the outlier topic? This will remove it from the current topic.')) {
+      return;
+    }
+    
+    setError(null);
+    
+    try {
+      console.log(`✂️  Moving post ${postId} to outlier from topic ${topicId}`);
+      const response = await apiService.movePostToOutlier(topicId, postId, selectedDate);
+      
+      if (response.success) {
+        console.log(`✅ Post moved to outlier successfully`);
+        
+        // Update local state: Remove post from current topic
+        setDatabaseTopics(prevTopics =>
+          prevTopics.map(topic => {
+            if (topic.id === topicId) {
+              // Remove post from this topic
+              return {
+                ...topic,
+                posts: topic.posts?.filter(p => p.id !== postId) || []
+              };
+            } else if (topic.id === response.outlier_topic_id) {
+              // Add post to outlier topic (if it's already loaded)
+              // Find the post from the original topic
+              const postToMove = prevTopics
+                .find(t => t.id === topicId)
+                ?.posts?.find(p => p.id === postId);
+              
+              if (postToMove) {
+                return {
+                  ...topic,
+                  posts: [...(topic.posts || []), postToMove]
+                };
+              }
+            }
+            return topic;
+          })
+        );
+        
+        // If outlier topic doesn't exist in our list, we might want to reload
+        // For now, just show success message
+        setError(response.message || 'Post moved to outlier topic successfully');
+        
+        // Clear error after 3 seconds (since it's actually a success message)
+        setTimeout(() => setError(null), 3000);
+      } else {
+        console.error('❌ Failed to move post to outlier:', response.error);
+        setError(response.error || 'Failed to move post to outlier');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
     }
   };
 
@@ -1101,6 +1159,16 @@ export default function DailyBriefing() {
                                               <ExternalLink className="w-4 h-4" />
                                             </a>
                                           )}
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleMovePostToOutlier(topic.id, post.id);
+                                            }}
+                                            className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
+                                            title="Move to outlier topic"
+                                          >
+                                            <Scissors className="w-3.5 h-3.5" />
+                                          </button>
                                           <span className="text-xs text-gray-500">{isExpanded ? 'Collapse' : 'Expand'}</span>
                                         </div>
                                       </button>

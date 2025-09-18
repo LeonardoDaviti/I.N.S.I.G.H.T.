@@ -651,6 +651,51 @@ class InsightApiBridge:
                 "error": str(e)
             }
 
+    def move_post_to_outlier(self, post_id: str, source_topic_id: str, date_str: str) -> Dict[str, Any]:
+        """
+        Move a post from a topic to the outlier topic.
+        
+        Args:
+            post_id: UUID of the post
+            source_topic_id: UUID of the current topic
+            date_str: Date string (YYYY-MM-DD) for finding/creating outlier topic
+            
+        Returns:
+            Dict with success status and outlier topic ID
+        """
+        try:
+            # Parse date
+            from datetime import datetime
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # Move post to outlier
+            result = self.topics_service.move_post_to_outlier(post_id, source_topic_id, target_date)
+            
+            if result["success"]:
+                return {
+                    "success": True,
+                    "post_id": post_id,
+                    "source_topic_id": source_topic_id,
+                    "outlier_topic_id": result["outlier_topic_id"],
+                    "message": "Post moved to outlier topic"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to move post. Post may not exist in source topic."
+                }
+            
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": f"Invalid date format: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     # ============= TOPIC MODELING (FOR TESTING) =============
 
     # Note: Topic generation should be done via scripts, not API

@@ -434,6 +434,22 @@ class ApiService {
       };
     }
   }
+
+  async movePostToOutlier(topicId: string, postId: string, date: string): Promise<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }> {
+    try {
+      const response = await this.makeRequest<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }>(`/api/topics/${topicId}/posts/${postId}/move-to-outlier`, {
+        method: 'POST',
+        body: JSON.stringify({ date }),
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to move post to outlier:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
 }
 
 // Export singleton instance
