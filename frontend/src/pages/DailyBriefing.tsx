@@ -1130,7 +1130,7 @@ export default function DailyBriefing() {
                                   } catch {}
                                   
                                   return (
-                                    <div key={key} className="border border-gray-200 rounded-xl overflow-hidden">
+                                    <div key={key} className="border border-gray-200 rounded-xl overflow-hidden relative">
                                       <button
                                         type="button"
                                         className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
@@ -1169,9 +1169,29 @@ export default function DailyBriefing() {
                                           >
                                             <Scissors className="w-3.5 h-3.5" />
                                           </button>
-                                          <span className="text-xs text-gray-500">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                          <button
+                                            className="text-gray-600 hover:text-gray-900 p-1"
+                                            onClick={async (e) => {
+                                              e.stopPropagation();
+                                              try {
+                                                const tmp = document.createElement('div');
+                                                tmp.innerHTML = (post.content_html || post.content) as string;
+                                                const text = (tmp.textContent || tmp.innerText || '').trim();
+                                                await navigator.clipboard.writeText(text);
+                                                setCopied((prev) => ({ ...prev, [key]: true }));
+                                                setTimeout(() => setCopied((prev) => ({ ...prev, [key]: false })), 1500);
+                                              } catch {}
+                                            }}
+                                          >
+                                            <Copy className="w-3.5 h-3.5" />
+                                          </button>
                                         </div>
                                       </button>
+                                      {copied[key] && (
+                                        <div className="absolute right-3.5 top-3.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-1 shadow-sm">
+                                          Copied!
+                                        </div>
+                                      )}
                                       {isExpanded && (
                                         <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none border-t border-gray-100">
                                           <MarkdownRenderer content={post.content_html || post.content} />
