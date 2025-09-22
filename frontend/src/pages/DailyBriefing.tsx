@@ -720,43 +720,6 @@ export default function DailyBriefing() {
               )}
             </button>
             
-            {/* Ingest Posts Button */}
-            <button
-              onClick={handleIngestPosts}
-              disabled={isIngesting}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
-            >
-              {isIngesting ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Ingesting...
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4" />
-                  Ingest Posts
-                </>
-              )}
-            </button>
-
-            {/* Safe Ingest Posts Button */}
-            <button
-              onClick={handleSafeIngestPosts}
-              disabled={isSafeIngesting}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
-            >
-              {isSafeIngesting ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Safe Ingesting...
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4" />
-                  Safe Ingest Posts
-                </>
-              )}
-            </button>
           </div>
 
           {/* Briefing Stats */}
@@ -811,20 +774,6 @@ export default function DailyBriefing() {
               <div className="text-xs text-orange-700 space-y-0.5">
                 <div>📊 Total: {sourcesData?.total_posts || 0}</div>
                 <div>📅 Date: {ingestStats.date}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Safe Ingest Stats */}
-          {safeIngestStats && (
-            <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
-                <span className="text-xs font-medium text-amber-800">Posts Safely Ingested</span>
-              </div>
-              <div className="text-xs text-amber-700 space-y-0.5">
-                <div>📊 Total: {sourcesData?.total_posts || 0}</div>
-                <div>📅 Date: {safeIngestStats.date}</div>
               </div>
             </div>
           )}
@@ -1032,83 +981,86 @@ export default function DailyBriefing() {
                       return (
                         <div key={topic.id || `db_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm group">
                           <div className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${isOpen ? 'bg-gray-50' : ''}`}>
-                            <div className="flex-1 flex items-center gap-2">
-                              <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
-                                <span className="inline-block border-l-4 border-teal-600 pl-3">
+                            {/* Edit Mode - Full Width */}
+                            {isEditing ? (
+                              <div className="flex-1 flex items-center gap-2">
+                                <span className="inline-block border-l-4 border-teal-600 pl-3 text-gray-900 font-bold">
                                   {tIndex + 1}.
                                 </span>
-                                
-                                {/* Edit Mode */}
-                                {isEditing ? (
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="text"
-                                      value={editingTopicTitle}
-                                      onChange={(e) => setEditingTopicTitle(e.target.value)}
-                                      onBlur={() => !isSavingTitle && handleSaveTopicTitle(topic.id)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          handleSaveTopicTitle(topic.id);
-                                        } else if (e.key === 'Escape') {
-                                          handleCancelEditTitle();
-                                        }
-                                      }}
-                                      autoFocus
-                                      disabled={isSavingTitle}
-                                      className="flex-1 px-2 py-1 border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm font-normal disabled:opacity-50"
-                                    />
-                                    <button
-                                      onClick={() => handleSaveTopicTitle(topic.id)}
-                                      disabled={isSavingTitle}
-                                      className="p-1 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
-                                      title="Save"
-                                    >
-                                      {isSavingTitle ? (
-                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                      ) : (
-                                        <Check className="w-3.5 h-3.5" />
-                                      )}
-                                    </button>
-                                    <button
-                                      onClick={handleCancelEditTitle}
-                                      disabled={isSavingTitle}
-                                      className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                                      title="Cancel"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  /* Display Mode */
-                                  <span className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={editingTopicTitle}
+                                  onChange={(e) => setEditingTopicTitle(e.target.value)}
+                                  onBlur={() => !isSavingTitle && handleSaveTopicTitle(topic.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      handleSaveTopicTitle(topic.id);
+                                    } else if (e.key === 'Escape') {
+                                      handleCancelEditTitle();
+                                    }
+                                  }}
+                                  autoFocus
+                                  disabled={isSavingTitle}
+                                  className="flex-1 px-2 py-1 border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm font-normal disabled:opacity-50"
+                                />
+                                <button
+                                  onClick={() => handleSaveTopicTitle(topic.id)}
+                                  disabled={isSavingTitle}
+                                  className="p-1 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                                  title="Save"
+                                >
+                                  {isSavingTitle ? (
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={handleCancelEditTitle}
+                                  disabled={isSavingTitle}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              /* Display Mode */
+                              <>
+                                <button
+                                  onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                                  className="flex-1 flex items-center gap-2 text-left"
+                                >
+                                  <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
+                                    <span className="inline-block border-l-4 border-teal-600 pl-3">
+                                      {tIndex + 1}.
+                                    </span>
                                     <span>{topic.title || 'Untitled Topic'}</span>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleEditTopicTitle(topic.id, topic.title || '');
-                                      }}
-                                      className="p-1 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                      title="Edit title"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
+                                    {topic.is_outlier && (
+                                      <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
+                                    )}
                                   </span>
-                                )}
-                                
-                                {topic.is_outlier && !isEditing && (
-                                  <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
-                                )}
-                              </span>
-                            </div>
-                            
-                            {!isEditing && (
-                              <button
-                                onClick={() => setOpenTopic(isOpen ? null : topic.id)}
-                                className="text-xs text-gray-500 flex items-center gap-2 hover:text-gray-700"
-                              >
-                                <span>{topicPosts.length} posts</span>
-                                <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                              </button>
+                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEditTopicTitle(topic.id, topic.title || '');
+                                    }}
+                                    className="p-1 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Edit title"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                                    className="text-xs text-gray-500 flex items-center gap-2 hover:text-gray-700"
+                                  >
+                                    <span>{topicPosts.length} posts</span>
+                                    <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                  </button>
+                                </div>
+                              </>
                             )}
                           </div>
                           {isOpen && (
@@ -1143,8 +1095,6 @@ export default function DailyBriefing() {
                                           </div>
                                           <div className="mt-1 text-xs text-gray-600 flex items-center gap-3 ml-8">
                                             <span>📡 {post.source}</span>
-                                            <span>📅 {dateLabel}</span>
-                                            <span>🔗 {platformLabel}</span>
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -1263,8 +1213,6 @@ export default function DailyBriefing() {
                             <h4 className="text-sm font-semibold text-gray-900 leading-snug">{post.title || `${platformLabel} Post`}</h4>
                             <div className="mt-1 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-gray-600">
                               <span>📡 {post.source}</span>
-                              <span>📅 {dateLabel}</span>
-                              <span>🔗 {platformLabel}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-2.5 ml-2.5">
