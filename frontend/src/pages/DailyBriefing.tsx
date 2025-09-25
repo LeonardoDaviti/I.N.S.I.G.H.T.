@@ -284,11 +284,6 @@ export default function DailyBriefing() {
   };
 
   const handleMovePostToOutlier = async (topicId: string, postId: string) => {
-    // Confirmation
-    if (!confirm('Move this post to the outlier topic? This will remove it from the current topic.')) {
-      return;
-    }
-    
     setError(null);
     
     try {
