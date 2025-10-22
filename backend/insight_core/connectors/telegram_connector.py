@@ -85,7 +85,10 @@ class TelegramConnector(BaseConnector):
             
             # Set up core configuration
             self.api_hash = api_hash
-            self.session_file = os.getenv('TELEGRAM_SESSION_FILE', 'insight_session')
+            
+            connector_dir = os.path.dirname(os.path.abspath(__file__))
+            backend_dir = os.path.dirname(os.path.dirname(connector_dir))
+            self.session_file = os.path.join(backend_dir, 'insight_session')
             
             # # Load optional rate limiting configuration
             # try:
