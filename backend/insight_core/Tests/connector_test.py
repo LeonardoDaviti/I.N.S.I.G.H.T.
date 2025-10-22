@@ -2,12 +2,14 @@ import sys
 import os
 from typing import List, Dict, Any
 import asyncio
+import json
 
 # Add backend directory to path (one level higher than before)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from insight_core.connectors.base_connector import BaseConnector
 from insight_core.connectors.telegram_connector import TelegramConnector
+from insight_core.connectors.rss_connector import RssConnector
 from insight_core.output.console_output import ConsoleOutput
 
     
@@ -17,9 +19,9 @@ async def display_posts(posts: List[Dict[str, Any]]):
 
 
 class TestConnector:
-    def __init__(self, connector: BaseConnector):
-        self.source = "durov"
-        self.limit = 10
+    def __init__(self, connector: BaseConnector, source: str, limit: int):
+        self.source = source
+        self.limit = limit
         self.connector = connector()
 
     async def connect_connector(self):
@@ -32,11 +34,27 @@ class TestConnector:
             print(f"Error fetching posts: {e}")
             return
         
-        await display_posts(posts)
+        # await display_posts(posts) # Render Posts
+
+        print(type(posts))
+
+        for post in posts:
+            # posts are dicts json.dump will not work
+            # conver date to string
+            post['date'] = post['date'].isoformat()
+            print(json.dumps(post, indent = 4))
+            
         
         await self.connector.disconnect()
 
 
 if __name__ == "__main__":
-    test_connector = TestConnector(TelegramConnector)
+    test_connector = TestConnector(TelegramConnector, "durov", 10)
+    asyncio.run(test_connector.connect_connector())
+
+    print("\n--------------------------------\n")
+    print("RSS Connector")
+    print("\n--------------------------------\n")
+
+    test_connector = TestConnector(RssConnector, "https://simonwillison.net/atom/everything/", 10)
     asyncio.run(test_connector.connect_connector())
