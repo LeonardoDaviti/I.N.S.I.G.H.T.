@@ -41,20 +41,27 @@ class TestConnector:
         for post in posts:
             # posts are dicts json.dump will not work
             # conver date to string
+            print(type(post))
             post['date'] = post['date'].isoformat()
             print(json.dumps(post, indent = 4))
-            
+
+            if not self.connector._validate_unified_post(post):
+                print(f"Invalid post")
+                return
+            else:
+                print(f"Valid post")
+                return
         
         await self.connector.disconnect()
 
 
 if __name__ == "__main__":
-    test_connector = TestConnector(TelegramConnector, "durov", 10)
+    test_connector = TestConnector(TelegramConnector, "durov", 1)
     asyncio.run(test_connector.connect_connector())
 
-    print("\n--------------------------------\n")
-    print("RSS Connector")
-    print("\n--------------------------------\n")
+    # print("\n--------------------------------\n")
+    # print("RSS Connector")
+    # print("\n--------------------------------\n")
 
-    test_connector = TestConnector(RssConnector, "https://simonwillison.net/atom/everything/", 10)
-    asyncio.run(test_connector.connect_connector())
+    # test_connector = TestConnector(RssConnector, "https://simonwillison.net/atom/everything/", 1)
+    # asyncio.run(test_connector.connect_connector())
