@@ -95,7 +95,7 @@ class PostsRepositoryTestSuite:
         connector = TelegramConnector()
         connector.setup_connector()
         await connector.connect()
-        posts = await connector.fetch_posts("seeallochnaya", 1)
+        posts = await connector.fetch_posts("gonzo_ML", 1)
         await connector.disconnect()
         return posts[0] if posts else None
     
@@ -231,8 +231,8 @@ class PostsRepositoryTestSuite:
                 # Lookup source IDs
                 logger.info("\n[SETUP] Looking up source IDs...")
                 try:
-                    rss_source_id = "02c67c7e-82d2-49a7-9a3e-2325cfdca3e2"
-                    telegram_source_id = "1998ddf8-aef3-4ff3-bf16-d7252f8e3c23"
+                    rss_source_id = self.lookup_source_id(cur, "rss", rss_post['source'])
+                    telegram_source_id = self.lookup_source_id(cur, "telegram", telegram_post['source'][1:])
                     logger.info(f"✓ RSS source ID: {rss_source_id}")
                     logger.info(f"✓ Telegram source ID: {telegram_source_id}")
                 except ValueError as e:
@@ -288,6 +288,10 @@ async def main():
     """Entry point."""
     db_url = ensure_database()
     suite = PostsRepositoryTestSuite(db_url)
+    # with psycopg.connect(db_url) as conn:
+    #         with conn.cursor() as cur:
+    #             source_id = suite.lookup_source_id(cur, "telegram", "durov")
+    #             print(source_id)
     await suite.run_all_tests()
 
 
