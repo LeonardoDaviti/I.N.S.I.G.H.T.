@@ -20,7 +20,6 @@ class PostsRepository:
 
     def __init__(self, db_url: str):
         self.db_url = db_url
-
         
         self.logger = get_component_logger("repo_posts")
         self.logger.info(f"PostsRepository initialized")
@@ -36,20 +35,64 @@ class PostsRepository:
         # if exists but different -> Update
 
         # Unified Structure
-        platform = post.get("platform", "")
-        source = post.get("source", "")
-        url = post.get("url", "")
+        url = post['url'] # Let KeyError happen
         content = post.get("content", "")
-        date = post.get("date", "")
-        media_urls = post.get("media_urls", []).get("urls", [])
-        categories = post.get("categories", [])
-        metadata = post.get("metadata", {})
+        published_at = post.get("date", None)
+
+        # Lists -> JSON
+        media_urls = json.dumps(post.get("media_urls", []))
+        categories = json.dumps(post.get("categories", []))
 
         # Optional Fields
-        title = post.get("title", "")
-        content_html = post.get("content_html", "")
+        title = post.get("title", None)
+        content_html = post.get("content_html", None)
 
-        pass
+        # metadata = post.get("metadata", {}) ❌ Not stored yet (future)
+
+        # SQL QUERY
+        # Build SQL query
+        query = """
+            INSERT INTO posts (
+                source_id, 
+                url, 
+                published_at, 
+                title, 
+                content, 
+                content_html, 
+                media_urls, 
+                categories
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            ON CONFLICT (url) DO UPDATE SET
+                fetched_at = now(),
+                updated_at = now()
+            RETURNING id, (xmax = 0) AS inserted
+        """
+        
+        # Execute with parameters
+        cur.execute(query, (
+            source_id,
+            url,
+            published_at,
+            title,
+            content,
+            content_html,
+            media_urls,
+            categories
+        ))
+        
+        # Fetch result
+        row = cur.fetchone()
+        post_id = str(row[0])  # UUID → string
+        was_inserted = row[1]  # Boolean
+        
+        # Log action
+        action = "Inserted" if was_inserted else "Updated"
+        self.logger.debug(f"{action} post: {url[:60]}...")
+        
+        return (post_id, was_inserted)
+        
+
 
     def upsert_posts_batch(self, cur: Cursor, posts: List[Dict[str, Any]], source_id: str) -> Dict[str, int]:
         """Save multiple posts. Returns dict of (post_id, was_inserted) for each post."""
