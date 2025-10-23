@@ -11,7 +11,6 @@ from psycopg import Connection, Cursor
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 from insight_core.db.ensure_db import ensure_database
 
-setup_logging(debug_mode=True)
 
 class PostsRepository:
     """
@@ -24,7 +23,7 @@ class PostsRepository:
 
         
         self.logger = get_component_logger("repo_posts")
-        self.logger.info(f"PostsRepository initialized with db_url: {self.db_url}")
+        self.logger.info(f"PostsRepository initialized")
 
     # ===============================
     # WRITE OPERATIONS
@@ -35,6 +34,21 @@ class PostsRepository:
         # if new -> insert
         # if exists -> do nothing
         # if exists but different -> Update
+
+        # Unified Structure
+        platform = post.get("platform", "")
+        source = post.get("source", "")
+        url = post.get("url", "")
+        content = post.get("content", "")
+        date = post.get("date", "")
+        media_urls = post.get("media_urls", []).get("urls", [])
+        categories = post.get("categories", [])
+        metadata = post.get("metadata", {})
+
+        # Optional Fields
+        title = post.get("title", "")
+        content_html = post.get("content_html", "")
+
         pass
 
     def upsert_posts_batch(self, cur: Cursor, posts: List[Dict[str, Any]], source_id: str) -> Dict[str, int]:

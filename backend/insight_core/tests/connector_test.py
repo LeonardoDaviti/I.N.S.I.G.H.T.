@@ -59,9 +59,9 @@ if __name__ == "__main__":
     test_connector = TestConnector(TelegramConnector, "durov", 1)
     asyncio.run(test_connector.connect_connector())
 
-    # print("\n--------------------------------\n")
-    # print("RSS Connector")
-    # print("\n--------------------------------\n")
+    print("\n--------------------------------\n")
+    print("RSS Connector")
+    print("\n--------------------------------\n")
 
-    # test_connector = TestConnector(RssConnector, "https://simonwillison.net/atom/everything/", 1)
-    # asyncio.run(test_connector.connect_connector())
+    test_connector = TestConnector(RssConnector, "https://simonwillison.net/atom/everything/", 1)
+    asyncio.run(test_connector.connect_connector())

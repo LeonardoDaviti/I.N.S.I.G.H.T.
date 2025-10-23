@@ -1,5 +1,18 @@
 # I.N.S.I.G.H.T. Database (Mark VI)
 
+
+
+### How to update migrated table
+
+1. drop table
+
+2. drop migration schema from schema_migrations
+
+3. update migration of table in file
+
+4. run migrate.py
+
+
 ## Tables
 
 ### sources

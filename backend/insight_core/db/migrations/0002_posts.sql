@@ -9,11 +9,12 @@ CREATE TABLE IF NOT EXISTS posts (
   published_at TIMESTAMPTZ,
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   title TEXT,
-  text TEXT,
+  content TEXT,
   content_html TEXT,
   lang TEXT,
   content_hash TEXT,
-  keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+  media_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+  categories JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (url)
@@ -25,4 +26,4 @@ CREATE UNIQUE INDEX posts_source_external_unique ON posts(source_id, external_id
 -- 3) Helpful indexes
 CREATE INDEX posts_published_idx ON posts(published_at);
 CREATE INDEX posts_source_idx ON posts(source_id);
-CREATE INDEX posts_keywords_gin ON posts USING GIN (keywords);
+CREATE INDEX posts_categories_gin ON posts USING GIN (categories);
