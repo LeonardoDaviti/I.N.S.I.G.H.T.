@@ -86,7 +86,7 @@ class PostsRepositoryTestSuite:
         connector = RssConnector()
         connector.setup_connector()
         await connector.connect()
-        posts = await connector.fetch_posts("https://simonwillison.net/atom/everything/", 1)
+        posts = await connector.fetch_posts("https://simonwillison.net/atom/everything/", 3)
         await connector.disconnect()
         return posts[0] if posts else None
     
@@ -95,7 +95,7 @@ class PostsRepositoryTestSuite:
         connector = TelegramConnector()
         connector.setup_connector()
         await connector.connect()
-        posts = await connector.fetch_posts("gonzo_ML", 1)
+        posts = await connector.fetch_posts("gonzo_ML", 3)
         await connector.disconnect()
         return posts[0] if posts else None
     

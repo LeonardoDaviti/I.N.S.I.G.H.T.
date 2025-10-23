@@ -20,7 +20,7 @@ class PostsRepository:
 
     def __init__(self, db_url: str):
         self.db_url = db_url
-        
+
         self.logger = get_component_logger("repo_posts")
         self.logger.info(f"PostsRepository initialized")
 
@@ -46,7 +46,6 @@ class PostsRepository:
         # Optional Fields
         title = post.get("title", None)
         content_html = post.get("content_html", None)
-
         # metadata = post.get("metadata", {}) ❌ Not stored yet (future)
 
         # SQL QUERY
@@ -103,8 +102,65 @@ class PostsRepository:
     # READ OPERATIONS
     # ===============================
 
-    def get_posts_by_date(self, source_id: str, date) -> List[Dict[str, Any]]:
-        pass
+    def get_posts_by_date(self, cur: Cursor, date) -> List[Dict[str, Any]]:
+        """
+        Retrieve posts for a specific date.
+        
+        Args:
+            cur: Database cursor
+            target_date: Python date object (e.g., date(2025, 10, 23))
+            
+        Returns:
+            List of post dicts with all fields populated
+        """
+        
+        query = """
+            SELECT
+                p.id,
+                p.url,
+                p.content,
+                p.published_at,
+                p.fetched_at,
+                p.content_html,
+                p.media_urls,
+                p.categories,
+                p.title,
+                s.platform,
+                s.handle_or_url
+            FROM posts p
+            JOIN sources s ON p.source_id = s.id
+            WHERE DATE(COALESCE(p.published_at, p.fetched_at)) = %s
+            ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
+        """
+        cur.execute(query, (date,))
+        rows = cur.fetchall()
+        
+        if not rows:
+            self.logger.error(f"No posts found by date: {date}")
+            return []
+
+        posts = []
+        for row in rows:
+            post = {
+                'id': str(row[0]),
+                'url': row[1],
+                'content': row[2],
+                'published_at': row[3],
+                'fetched_at': row[4],
+                'content_html': row[5],
+                'media_urls': row[6],
+                'categories': row[7],
+                'title': row[8],
+                'platform': row[9],
+                'handle_or_url': row[10]
+            }
+            posts.append(post)
+
+        self.logger.info(f"Successfully got {len(posts)} posts by date: {date}")
+        
+        return posts
+
+        
 
     def get_posts_by_source(self, source_id) -> List[Dict[str, Any]]:
         pass
