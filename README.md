@@ -24,11 +24,23 @@ Edit the `.env` file with actual credentials
 
 ## Docker Installation
 
-From project root
-docker build -t insight:mark-v .
 
-Use either --env-file or mount .env; start both ports
-docker run --rm \
-  -p 5173:5173 -p 8000:8000 \
-  --env-file .env \  # or: -v "$PWD/.env":/app/.env:ro
-  insight:mark-v
+
+
+# Evolution visually
+
+
+Mark I - only Telegram connector
+![MarkI](images/MarkI.png)
+
+Mark II - New connectors
+![MarkII](images/MarkII.png)
+
+Mark III - Unified Data model and renderers
+![MarkII](images/MarkIII.png)
+
+Mark IV - Gemini integration and briefing
+![MarkII](images/MarkIV.png)
+
+Mark V - Web interface
+![MarkII](images/MarkV.png)
