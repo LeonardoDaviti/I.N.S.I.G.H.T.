@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from insight_bridge import InsightBridge
+from insight_api_bridge import InsightApiBridge
 import logging
 
 # Configure logging
@@ -26,7 +27,7 @@ app.add_middleware(
 bridge = InsightBridge()
 
 # Initialize the bridge to Mark I API Engine
-
+api_bridge = InsightApiBridge()
 
 # Request models
 class BriefingRequest(BaseModel):
@@ -47,41 +48,57 @@ async def root():
 async def hello():
     return {"message": "Hello World"}
 
-@app.get("/api/sources")
-async def sources():
-    try:
-        logger.info("📋 Fetching sources configuration")
-        
-        # Change implementation of this function to return sources from the database.
+# ============= SOURCES ENDPOINTS (DATABASE-BACKED) =============
 
-        return {"success": True, "data": sources}
+@app.get("/api/sources")
+async def get_sources():
+    """Get sources in frontend-compatible format (nested by platform)."""
+    try:
+        logger.info("📋 Fetching sources from database")
+        sources_config = api_bridge.get_sources_config()
+        return {"success": True, "data": sources_config}
     except Exception as e:
-        logger.error(f"❌ Failed to get sources: {e}")
+        logger.exception("Failed to get sources")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/enabled-sources")
-async def enabled_sources():
+async def get_enabled_sources():
+    """Get only enabled sources (flat list)."""
     try:
-        logger.info("📋 Fetching enabled sources")
-        enabled = bridge.get_enabled_sources()
+        logger.info("📋 Fetching enabled sources from database")
+        enabled = api_bridge.get_enabled_sources()
         return {"success": True, "data": enabled}
     except Exception as e:
-        logger.error(f"❌ Failed to get enabled sources: {e}")
+        logger.exception("Failed to get enabled sources")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/sources")
-async def update_config(new_config: dict):
+async def update_sources(config: dict):
+    """Update sources configuration (add/remove/enable/disable)."""
     try:
-        logger.info("🔧 Updating sources configuration")
-        result = bridge.update_config(new_config)
-        if result:
-            return {"success": True, "message": "Sources updated successfully", "data": result}
+        logger.info("🔧 Updating sources in database")
+        result = api_bridge.update_sources_config(config)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": result["message"],
+                "data": result["stats"]
+            }
         else:
-            return {"success": False, "error": "Failed to update sources - validation failed"}
+            return {
+                "success": False,
+                "error": "Some operations failed",
+                "data": result["stats"]
+            }
     except Exception as e:
-        logger.error(f"❌ Failed to update config: {e}")
+        logger.exception("Failed to update sources")
         return {"success": False, "error": str(e)}
     
+
+# Briefing generation endpoints
+
+
 @app.post("/api/daily")
 async def generate_daily_briefing(request: BriefingRequest):
     try:
