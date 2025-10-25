@@ -25,6 +25,9 @@ app.add_middleware(
 # Initialize the bridge to Mark I Foundation Engine
 bridge = InsightBridge()
 
+# Initialize the bridge to Mark I API Engine
+
+
 # Request models
 class BriefingRequest(BaseModel):
     date: str  # Format: "YYYY-MM-DD"
@@ -48,7 +51,9 @@ async def hello():
 async def sources():
     try:
         logger.info("📋 Fetching sources configuration")
-        sources = bridge.get_sources()
+        
+        # Change implementation of this function to return sources from the database.
+
         return {"success": True, "data": sources}
     except Exception as e:
         logger.error(f"❌ Failed to get sources: {e}")
