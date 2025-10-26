@@ -1,7 +1,8 @@
 # backend/insight_api_bridge.py
 from insight_core.db.ensure_db import ensure_database
 from insight_core.services.sources_service import SourcesService
-# from insight_core.services.posts_service import PostsService
+from insight_core.services.posts_service import PostsService
+from datetime import datetime, date
 # from insight_core.services.briefing_service import BriefingService
 
 from typing import List, Dict, Any
@@ -10,7 +11,7 @@ class InsightApiBridge:
     def __init__(self):
         self.db = ensure_database()
         self.sources_service = SourcesService(self.db)
-
+        self.posts_service = PostsService(self.db)
     # ============= SOURCES MANAGEMENT =============
 
     def get_all_sources(self) -> List[Dict[str, Any]]:
@@ -141,10 +142,46 @@ class InsightApiBridge:
 
     # ============= POSTS RETRIEVAL =============
     
-    def get_posts_for_date(self, date: str) -> Dict[str, Any]:
+    # ============= POSTS RETRIEVAL =============
+
+    def get_posts_by_date(self, date_str: str) -> Dict[str, Any]:
         """
-        Get posts for a date (cache-first).
-        If not in DB → fetch from sources → save → return.
+        Get posts for a specific date from database.
+
+        Args:
+            date_str: Date string in format "YYYY-MM-DD"
+            
+        Returns:
+            Dict with success, posts, date, total
         """
-        # return self.posts_service.get_posts_for_date(date)
-        pass
+        try:
+            # Parse date string to date object
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # Get posts from service
+            posts = self.posts_service.get_posts_by_date(date_obj)
+            
+            return {
+                "success": True,
+                "posts": posts,
+                "date": date_str,
+                "total": len(posts),
+                "source": "database"
+            }
+            
+        except ValueError as e:
+            # Invalid date format
+            return {
+                "success": False,
+                "error": f"Invalid date format: {date_str}. Expected YYYY-MM-DD",
+                "posts": [],
+                "total": 0
+            }
+        except Exception as e:
+            # Database or other errors
+            return {
+                "success": False,
+                "error": str(e),
+                "posts": [],
+                "total": 0
+            }

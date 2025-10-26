@@ -96,6 +96,25 @@ async def update_sources(config: dict):
         return {"success": False, "error": str(e)}
     
 
+# ============= POSTS ENDPOINTS (DATABASE-BACKED) =============
+
+@app.get("/api/posts/{date}")
+async def get_posts(date: str):
+    """Get posts for a specific date."""
+    try:
+        logger.info(f"📋 Fetching posts for date: {date}")
+        posts = api_bridge.get_posts_by_date(date)
+        return {
+            "success": True,
+            "posts": posts,
+            "date": date,
+            "total_posts": len(posts)
+        }
+    except Exception as e:
+        logger.exception("Failed to get posts")
+        return {"success": False, "error": str(e)}
+
+
 # Briefing generation endpoints
 
 
