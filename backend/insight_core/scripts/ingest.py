@@ -71,7 +71,7 @@ async def ingest_posts():
                 repo.upsert_post(cur, post, source_id)
                 logger.info(f"Saved post: {post['url']}")
         conn.commit()
-        logger.info(f"Saved {len(all_posts)} posts to database")
+        # logger.info(f"Saved {len(all_posts)} posts to database")
     
     logger.info(f"✅ Ingested {len(all_posts)} posts from {len(enabled_sources)} sources")
 

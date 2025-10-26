@@ -30,17 +30,19 @@ class ReadTest:
         self.db_url = db_url
         self.repo = PostsRepository(db_url)
 
-    async def read_post(self):
+    def read_post(self):
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                self.repo.get_posts_by_date(cur, date.today())
+                posts = self.repo.get_posts_by_date(cur, date.today()) # date(2025, 10, 25)
                 conn.commit()
+        
+        return posts
 
 # test = UpsertTest(db_url)
 # single_post = asyncio.run(test.fetch_single_telegram_post())
 # asyncio.run(test.upsert_post(single_post))
 
 test = ReadTest(db_url)
-posts = asyncio.run(test.read_post())
-print(posts)
+posts = test.read_post()
+# print(posts)
         
