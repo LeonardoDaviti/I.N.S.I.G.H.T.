@@ -103,13 +103,15 @@ async def get_posts(date: str):
     """Get posts for a specific date."""
     try:
         logger.info(f"📋 Fetching posts for date: {date}")
-        posts = api_bridge.get_posts_by_date(date)
-        return {
-            "success": True,
-            "posts": posts,
-            "date": date,
-            "total_posts": len(posts)
-        }
+
+        result = api_bridge.get_posts_by_date(date)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved {result.get('total', 0)} posts")
+        
+        return result
+
     except Exception as e:
         logger.exception("Failed to get posts")
         return {"success": False, "error": str(e)}

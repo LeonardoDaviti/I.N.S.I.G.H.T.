@@ -140,8 +140,7 @@ class InsightApiBridge:
         """Remove source from database."""
         return self.sources_service.delete_source(source_id)
 
-    # ============= POSTS RETRIEVAL =============
-    
+
     # ============= POSTS RETRIEVAL =============
 
     def get_posts_by_date(self, date_str: str) -> Dict[str, Any]:
