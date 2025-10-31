@@ -3,6 +3,16 @@
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
 import type { SourceConfig } from '../types';
 
+export interface PostsResponse {
+  success: boolean;
+  posts: Post[];
+  date: string;
+  total: number;
+  source: string;  // "database"
+  error?: string;
+}
+
+
 export interface BriefingRequest {
   date: string; // Format: "YYYY-MM-DD"
 }
@@ -171,6 +181,23 @@ class ApiService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update sources'
+      };
+    }
+  }
+
+  async getDailyPosts(date: string): Promise<PostsResponse> {
+    try {
+      const response = await this.makeRequest<PostsResponse>(`/api/posts/${date}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get daily posts:', error);
+      return {
+        success: false,
+        posts: [],
+        date: date,
+        total: 0,
+        source: 'database',
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
   }

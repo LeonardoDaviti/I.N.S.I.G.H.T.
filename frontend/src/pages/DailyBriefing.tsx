@@ -35,6 +35,15 @@ export default function DailyBriefing() {
   const [copied, setCopied] = useState<Record<string, boolean>>({});
   // Inline sections-only experience; sources config is a first-class section now
 
+  // Add these state variables after the existing ones (around line 36)
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+  const [databasePosts, setDatabasePosts] = useState<Post[]>([]);
+  const [databasePostsStats, setDatabasePostsStats] = useState<{
+    total: number;
+    date: string;
+    source: string;
+  } | null>(null);
+
   const handleGenerateBriefing = async () => {
     setIsGenerating(true);
     setError(null);
@@ -105,6 +114,39 @@ export default function DailyBriefing() {
       setError(err instanceof Error ? err.message : 'Network error occurred');
     } finally {
       setIsGeneratingTopics(false);
+    }
+  };
+
+  const handleLoadDatabasePosts = async () => {
+    setIsLoadingPosts(true);
+    setError(null);
+    setDatabasePosts([]);
+    setDatabasePostsStats(null);
+    
+    try {
+      console.log(`📖 Loading posts from database for date: ${selectedDate}`);
+      const response = await apiService.getDailyPosts(selectedDate);
+      
+      if (response.success) {
+        console.log(`✅ Loaded ${response.total} posts from database`);
+        setDatabasePosts(response.posts);
+        setDatabasePostsStats({
+          total: response.total,
+          date: response.date,
+          source: response.source
+        });
+        
+        // Auto-switch to executive-summary to see the posts
+        setActiveSection('executive-summary');
+      } else {
+        console.error('❌ Failed to load posts:', response.error);
+        setError(response.error || 'Failed to load posts from database');
+      }
+    } catch (error) {
+      console.error('❌ API call failed:', error);
+      setError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setIsLoadingPosts(false);
     }
   };
 
@@ -216,6 +258,23 @@ export default function DailyBriefing() {
                 </>
               )}
             </button>
+            <button
+              onClick={handleLoadDatabasePosts}
+              disabled={isLoadingPosts}
+              className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isLoadingPosts ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Loading Posts...
+                </>
+              ) : (
+                <>
+                  <BarChart3 className="w-4 h-4" />
+                  Fetch Posts
+                </>
+              )}
+            </button>
           </div>
 
           {/* Status Indicators */}
@@ -240,6 +299,20 @@ export default function DailyBriefing() {
                 <span className="text-sm font-medium text-red-800">Generation Failed</span>
               </div>
               <div className="text-xs text-red-700">{error}</div>
+            </div>
+          )}
+
+          {databasePostsStats && (
+            <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span className="text-sm font-medium text-emerald-800">Posts Loaded</span>
+              </div>
+              <div className="text-xs text-emerald-700 space-y-1">
+                <div>📊 Total posts: {databasePostsStats.total}</div>
+                <div>📅 Date: {databasePostsStats.date}</div>
+                <div>💾 Source: {databasePostsStats.source}</div>
+              </div>
             </div>
           )}
         </div>
@@ -515,11 +588,15 @@ export default function DailyBriefing() {
 
                 {/* Source Posts Section */}
                 <div className="bg-white border border-gray-200 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Source Intelligence Posts</h3>
-          {/* Prefer posts from the standard flow; if empty, fallback to posts from the topics map */}
-          {(sourcePosts.length > 0 || Object.keys(postsMap).length > 0) ? (
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                    {databasePosts.length > 0 
+                      ? `📚 Database Posts (${databasePostsStats?.total || databasePosts.length})` 
+                      : 'Source Intelligence Posts'}
+                  </h3>
+          {/* Prefer database posts first, then standard flow posts, then fallback to topics map */}
+          {(databasePosts.length > 0 || sourcePosts.length > 0 || Object.keys(postsMap).length > 0) ? (
                     <div className="space-y-4">
-            {(sourcePosts.length ? sourcePosts : Object.values(postsMap)).map((post: Post, index: number) => {
+            {(databasePosts.length > 0 ? databasePosts : (sourcePosts.length > 0 ? sourcePosts : Object.values(postsMap))).map((post: Post, index: number) => {
                         // Defensive guards: avoid crashes on unexpected/missing fields
                         const platformLabel = (post?.platform || 'unknown').toUpperCase();
                         let dateLabel = 'Unknown date';
