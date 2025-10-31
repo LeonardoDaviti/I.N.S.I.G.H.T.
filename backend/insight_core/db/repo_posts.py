@@ -145,6 +145,7 @@ class PostsRepository:
                 'id': str(row[0]),
                 'url': row[1],
                 'content': row[2],
+                'date': row[3],                # For Frontend
                 'published_at': row[3],
                 'fetched_at': row[4],
                 'content_html': row[5],
@@ -152,7 +153,8 @@ class PostsRepository:
                 'categories': row[7],
                 'title': row[8],
                 'platform': row[9],
-                'handle_or_url': row[10]
+                'handle_or_url': row[10],
+                'source': row[10]              # For Frontend
             }
             posts.append(post)
 
