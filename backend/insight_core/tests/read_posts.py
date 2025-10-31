@@ -34,6 +34,8 @@ class ReadTest:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 posts = self.repo.get_posts_by_date(cur, date.today()) # date(2025, 10, 25)
+                for post in posts:
+                    print(post.get('handle_or_url'))
                 conn.commit()
         
         return posts
