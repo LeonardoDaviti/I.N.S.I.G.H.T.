@@ -1,0 +1,14 @@
+telethon
+python-dotenv
+feedparser
+youtube-transcript-api
+yt-dlp
+praw
+asyncpraw
+markdown
+pymdown-extensions
+google-generativeai
+google-genai
+fastapi
+uvicorn
+psycopg[binary]
