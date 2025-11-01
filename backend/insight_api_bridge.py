@@ -139,9 +139,91 @@ class InsightApiBridge:
     def delete_source(self, source_id: str) -> bool:
         """Remove source from database."""
         return self.sources_service.delete_source(source_id)
+    
+    def get_sources_with_counts(self) -> Dict[str, Any]:
+        """
+        Get all sources with post counts, grouped by platform.
+        
+        Returns:
+            Dict with success, platforms grouped data, and total_posts
+        """
+        try:
+            # Get sources with counts from service
+            sources = self.sources_service.get_sources_with_post_counts()
+            
+            # Group by platform
+            platforms = {}
+            total_posts = 0
+            
+            for source in sources:
+                platform = source["platform"]
+                
+                # Initialize platform if not exists
+                if platform not in platforms:
+                    platforms[platform] = {
+                        "sources": [],
+                        "total_count": 0
+                    }
+                
+                # Add source to platform
+                platforms[platform]["sources"].append({
+                    "id": source["id"],
+                    "handle_or_url": source["handle_or_url"],
+                    "enabled": source["enabled"],
+                    "post_count": source["post_count"]
+                })
+                
+                # Update counts
+                platforms[platform]["total_count"] += source["post_count"]
+                total_posts += source["post_count"]
+            
+            return {
+                "success": True,
+                "platforms": platforms,
+                "total_posts": total_posts
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "platforms": {},
+                "total_posts": 0
+            }
 
 
     # ============= POSTS RETRIEVAL =============
+
+    def get_posts_by_source(self, source_id: str) -> Dict[str, Any]:
+        """
+        Get all posts for a specific source from database.
+
+        Args:
+            source_id: UUID of the source
+            
+        Returns:
+            Dict with success, posts, source_id, total
+        """
+        try:
+            # Get posts from service
+            posts = self.posts_service.get_posts_by_source(source_id)
+            
+            return {
+                "success": True,
+                "posts": posts,
+                "source_id": source_id,
+                "total": len(posts)
+            }
+            
+        except Exception as e:
+            # Database or other errors
+            return {
+                "success": False,
+                "error": str(e),
+                "posts": [],
+                "total": 0,
+                "source_id": source_id
+            }
 
     def get_posts_by_date(self, date_str: str) -> Dict[str, Any]:
         """

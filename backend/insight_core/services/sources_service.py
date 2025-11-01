@@ -58,3 +58,9 @@ class SourcesService:
                 if deleted:
                     self.logger.info(f"Deleted source: {source_id}")
                 return deleted
+    
+    def get_sources_with_post_counts(self) -> List[Dict[str, Any]]:
+        """Get all sources with their post counts."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_sources_with_post_counts(cur)

@@ -116,6 +116,42 @@ async def get_posts(date: str):
         logger.exception("Failed to get posts")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/posts/source/{source_id}")
+async def get_posts_by_source(source_id: str):
+    """Get all posts for a specific source."""
+    try:
+        logger.info(f"📋 Fetching posts for source: {source_id}")
+
+        result = api_bridge.get_posts_by_source(source_id)
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved {result.get('total', 0)} posts")
+        
+        return result
+
+    except Exception as e:
+        logger.exception("Failed to get posts by source")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/sources/with-counts")
+async def get_sources_with_counts():
+    """Get all sources with their post counts, grouped by platform."""
+    try:
+        logger.info("📋 Fetching sources with post counts")
+
+        result = api_bridge.get_sources_with_counts()
+        
+        # Log success
+        if result.get("success"):
+            logger.info(f"✅ Retrieved sources with {result.get('total_posts', 0)} total posts")
+        
+        return result
+
+    except Exception as e:
+        logger.exception("Failed to get sources with counts")
+        return {"success": False, "error": str(e)}
+
 
 # Briefing generation endpoints
 

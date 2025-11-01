@@ -104,3 +104,42 @@ class SourcesRepository:
         else:
             self.logger.warning(f"Source {source_id} not found")
             return False
+    
+    def get_sources_with_post_counts(self, cur: Cursor) -> List[Dict[str, Any]]:
+        """
+        Get all sources with their post counts.
+        
+        Returns:
+            List of source dicts with post_count field
+        """
+        query = """
+            SELECT 
+                s.id,
+                s.platform,
+                s.handle_or_url,
+                s.enabled,
+                s.created_at,
+                s.updated_at,
+                COUNT(p.id) as post_count
+            FROM sources s
+            LEFT JOIN posts p ON s.id = p.source_id
+            GROUP BY s.id, s.platform, s.handle_or_url, s.enabled, s.created_at, s.updated_at
+            ORDER BY s.platform, s.handle_or_url
+        """
+        cur.execute(query)
+        rows = cur.fetchall()
+        
+        sources = []
+        for row in rows:
+            sources.append({
+                "id": str(row[0]),
+                "platform": row[1],
+                "handle_or_url": row[2],
+                "enabled": row[3],
+                "created_at": row[4],
+                "updated_at": row[5],
+                "post_count": row[6]
+            })
+        
+        self.logger.debug(f"Retrieved {len(sources)} sources with post counts")
+        return sources

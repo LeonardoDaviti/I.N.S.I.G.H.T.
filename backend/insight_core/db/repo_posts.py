@@ -164,8 +164,65 @@ class PostsRepository:
 
         
 
-    def get_posts_by_source(self, source_id) -> List[Dict[str, Any]]:
-        pass
+    def get_posts_by_source(self, cur: Cursor, source_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve all posts for a specific source, sorted by date descending.
+        
+        Args:
+            cur: Database cursor
+            source_id: UUID of the source
+            
+        Returns:
+            List of post dicts with all fields populated
+        """
+        
+        query = """
+            SELECT
+                p.id,
+                p.url,
+                p.content,
+                p.published_at,
+                p.fetched_at,
+                p.content_html,
+                p.media_urls,
+                p.categories,
+                p.title,
+                s.platform,
+                s.handle_or_url
+            FROM posts p
+            JOIN sources s ON p.source_id = s.id
+            WHERE p.source_id = %s
+            ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
+        """
+        cur.execute(query, (source_id,))
+        rows = cur.fetchall()
+        
+        if not rows:
+            self.logger.info(f"No posts found for source: {source_id}")
+            return []
+
+        posts = []
+        for row in rows:
+            post = {
+                'id': str(row[0]),
+                'url': row[1],
+                'content': row[2],
+                'date': row[3],                # For Frontend
+                'published_at': row[3],
+                'fetched_at': row[4],
+                'content_html': row[5],
+                'media_urls': row[6],
+                'categories': row[7],
+                'title': row[8],
+                'platform': row[9],
+                'handle_or_url': row[10],
+                'source': row[10]              # For Frontend
+            }
+            posts.append(post)
+
+        self.logger.info(f"Successfully got {len(posts)} posts for source: {source_id}")
+        
+        return posts
 
     def get_post_count(self, source_id) -> int:
         pass
