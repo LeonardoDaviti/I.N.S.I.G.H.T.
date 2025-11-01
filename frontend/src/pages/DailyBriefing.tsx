@@ -56,6 +56,18 @@ export default function DailyBriefing() {
     source: string;
   } | null>(null);
 
+  // 🚀 CACHE: Store fetched posts to avoid re-fetching
+  // Think of this as your "photocopy collection"
+  const [postsCache, setPostsCache] = useState<{
+    bySource: Record<string, Post[]>;  // sourceId → posts
+    byDate: Record<string, Post[]>;     // date → posts
+    allPosts: Post[] | null;            // all posts cache
+  }>({
+    bySource: {},
+    byDate: {},
+    allPosts: null
+  });
+
   // Load sources with counts on mount
   useEffect(() => {
     loadSourcesWithCounts();
@@ -89,12 +101,28 @@ export default function DailyBriefing() {
   };
 
   const handleLoadDatabasePosts = async () => {
+    setActiveView('all-posts');
+    setSelectedSourceId(null);
+    
+    // 🔍 STEP 1: Check cache first (like checking your photocopies at home)
+    if (postsCache.byDate[selectedDate]) {
+      console.log(`⚡ Using cached posts for date: ${selectedDate}`);
+      const cachedPosts = postsCache.byDate[selectedDate];
+      setDatabasePosts(cachedPosts);
+      setDisplayedPosts(cachedPosts);
+      setDatabasePostsStats({
+        total: cachedPosts.length,
+        date: selectedDate,
+        source: 'cache'  // Indicate it came from cache
+      });
+      return; // ✨ Done! No API call needed!
+    }
+    
+    // 📞 STEP 2: If not in cache, fetch from API (go to the library)
     setIsLoadingPosts(true);
     setError(null);
     setDatabasePosts([]);
     setDatabasePostsStats(null);
-    setActiveView('all-posts');
-    setSelectedSourceId(null);
     
     try {
       console.log(`📖 Loading posts from database for date: ${selectedDate}`);
@@ -102,6 +130,16 @@ export default function DailyBriefing() {
       
       if (response.success) {
         console.log(`✅ Loaded ${response.total} posts from database`);
+        
+        // 💾 STEP 3: Save to cache for next time (make a photocopy)
+        setPostsCache(prev => ({
+          ...prev,
+          byDate: {
+            ...prev.byDate,
+            [selectedDate]: response.posts
+          }
+        }));
+        
         setDatabasePosts(response.posts);
         setDisplayedPosts(response.posts);
         setDatabasePostsStats({
@@ -124,6 +162,17 @@ export default function DailyBriefing() {
   const handleLoadAllPosts = async () => {
     setActiveView('all-posts');
     setSelectedSourceId(null);
+    
+    // 🔍 STEP 1: Check cache first
+    if (postsCache.allPosts && postsCache.allPosts.length > 0) {
+      console.log(`⚡ Using cached "All Posts" (${postsCache.allPosts.length} posts)`);
+      setDisplayedPosts(postsCache.allPosts);
+      setDatabasePosts([]);
+      setDatabasePostsStats(null);
+      return; // ✨ Done! No API call needed!
+    }
+    
+    // 📞 STEP 2: If not in cache, fetch from API
     setIsLoadingPosts(true);
     setError(null);
     setDisplayedPosts([]);
@@ -141,13 +190,27 @@ export default function DailyBriefing() {
       
       const allPosts: Post[] = [];
       
-      // Fetch posts from each source
+      // Fetch posts from each source (using source cache if available)
       for (const platform of Object.keys(sourcesData.platforms)) {
         const platformData = sourcesData.platforms[platform];
         for (const source of platformData.sources) {
-          const response = await apiService.getPostsBySource(source.id);
-          if (response.success) {
-            allPosts.push(...response.posts);
+          // Check if we have this source cached
+          if (postsCache.bySource[source.id]) {
+            console.log(`⚡ Using cached posts for source: ${source.handle_or_url}`);
+            allPosts.push(...postsCache.bySource[source.id]);
+          } else {
+            const response = await apiService.getPostsBySource(source.id);
+            if (response.success) {
+              allPosts.push(...response.posts);
+              // Cache it for next time
+              setPostsCache(prev => ({
+                ...prev,
+                bySource: {
+                  ...prev.bySource,
+                  [source.id]: response.posts
+                }
+              }));
+            }
           }
         }
       }
@@ -160,6 +223,13 @@ export default function DailyBriefing() {
       });
       
       console.log(`✅ Loaded ${allPosts.length} total posts`);
+      
+      // 💾 STEP 3: Save to cache
+      setPostsCache(prev => ({
+        ...prev,
+        allPosts: allPosts
+      }));
+      
       setDisplayedPosts(allPosts);
       
     } catch (error) {
@@ -173,6 +243,18 @@ export default function DailyBriefing() {
   const handleLoadSourcePosts = async (sourceId: string) => {
     setActiveView('source');
     setSelectedSourceId(sourceId);
+    
+    // 🔍 STEP 1: Check cache first (the magic happens here!)
+    if (postsCache.bySource[sourceId]) {
+      console.log(`⚡ Using cached posts for source: ${sourceId}`);
+      setDisplayedPosts(postsCache.bySource[sourceId]);
+      setDatabasePosts([]);
+      setDatabasePostsStats(null);
+      setError(null);
+      return; // ✨ Done! No API call needed!
+    }
+    
+    // 📞 STEP 2: If not in cache, fetch from API
     setIsLoadingPosts(true);
     setError(null);
     setDisplayedPosts([]);
@@ -185,6 +267,16 @@ export default function DailyBriefing() {
       
       if (response.success) {
         console.log(`✅ Loaded ${response.total} posts`);
+        
+        // 💾 STEP 3: Save to cache for next time
+        setPostsCache(prev => ({
+          ...prev,
+          bySource: {
+            ...prev.bySource,
+            [sourceId]: response.posts
+          }
+        }));
+        
         setDisplayedPosts(response.posts);
       } else {
         console.error('❌ Failed to load posts:', response.error);
