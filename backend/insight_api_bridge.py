@@ -140,6 +140,93 @@ class InsightApiBridge:
         """Remove source from database."""
         return self.sources_service.delete_source(source_id)
     
+    def get_source_settings(self, source_id: str) -> Dict[str, Any]:
+        """
+        Get settings for a specific source.
+        
+        Args:
+            source_id: UUID of the source
+            
+        Returns:
+            Dict with success, settings, and source info
+        """
+        try:
+            source_with_settings = self.sources_service.get_source_with_settings(source_id)
+            
+            return {
+                "success": True,
+                "source_id": source_id,
+                "settings": source_with_settings.get("settings", {}),
+                "source": source_with_settings
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "settings": {}
+            }
+    
+    def update_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update settings for a specific source.
+        
+        Args:
+            source_id: UUID of the source
+            settings: Dict of settings to update
+            
+        Returns:
+            Dict with success status
+        """
+        try:
+            result = self.sources_service.update_source_settings(source_id, settings)
+            
+            return {
+                "success": True,
+                "source_id": source_id,
+                "settings": result.get("settings", {})
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def get_sources_with_settings(self) -> Dict[str, Any]:
+        """
+        Get all sources with their settings and post counts.
+        
+        Returns:
+            Dict with success, sources with settings and counts
+        """
+        try:
+            sources = self.sources_service.get_all_sources_with_settings()
+            
+            # Add post counts (reuse existing logic)
+            sources_with_counts = self.sources_service.get_sources_with_post_counts()
+            
+            # Merge
+            for source in sources:
+                count_data = next((s for s in sources_with_counts if s["id"] == source["id"]), None)
+                if count_data:
+                    source["post_count"] = count_data.get("post_count", 0)
+                else:
+                    source["post_count"] = 0
+            
+            return {
+                "success": True,
+                "sources": sources,
+                "total": len(sources)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "sources": []
+            }
+    
     def get_sources_with_counts(self) -> Dict[str, Any]:
         """
         Get all sources with post counts, grouped by platform.
@@ -148,34 +235,41 @@ class InsightApiBridge:
             Dict with success, platforms grouped data, and total_posts
         """
         try:
-            # Get sources with counts from service
-            sources = self.sources_service.get_sources_with_post_counts()
+            sources_with_settings = self.sources_service.get_all_sources_with_settings()
             
             # Group by platform
             platforms = {}
             total_posts = 0
             
-            for source in sources:
+            for source in sources_with_settings:
                 platform = source["platform"]
+                settings = source.get("settings", {})
+                post_count = source.get("post_count", 0)
                 
-                # Initialize platform if not exists
                 if platform not in platforms:
                     platforms[platform] = {
                         "sources": [],
                         "total_count": 0
                     }
                 
-                # Add source to platform
+                # Get display name from settings
+                display_name = settings.get("display_name") or source["handle_or_url"]
+                
                 platforms[platform]["sources"].append({
                     "id": source["id"],
                     "handle_or_url": source["handle_or_url"],
+                    "display_name": display_name,
                     "enabled": source["enabled"],
-                    "post_count": source["post_count"]
+                    "post_count": post_count,
+                    "priority": settings.get("priority", 999)
                 })
                 
-                # Update counts
-                platforms[platform]["total_count"] += source["post_count"]
-                total_posts += source["post_count"]
+                platforms[platform]["total_count"] += post_count
+                total_posts += post_count
+            
+            # Sort sources within each platform by priority
+            for platform in platforms.values():
+                platform["sources"].sort(key=lambda s: s["priority"])
             
             return {
                 "success": True,

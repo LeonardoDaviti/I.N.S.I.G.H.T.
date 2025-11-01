@@ -185,6 +185,7 @@ sources (
     platform TEXT NOT NULL,
     handle_or_url TEXT NOT NULL,
     enabled BOOLEAN DEFAULT TRUE,
+    settings JSONB DEFAULT '{}'::jsonb,  -- Optional source-specific settings
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ,
     UNIQUE(platform, handle_or_url)
@@ -207,6 +208,133 @@ posts (
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ
 )
+```
+
+---
+
+## Source Settings System
+
+### Settings Schema
+
+Each source can have optional settings stored in the `settings` JSONB field:
+
+```json
+{
+  "display_name": "Friendly Name",       // null = use handle_or_url
+  "fetch_delay_seconds": 5,              // Delay after fetching this source
+  "priority": 1,                         // Lower = fetch first (default: 999)
+  "max_posts_per_fetch": 50             // Stored but not enforced (future use)
+}
+```
+
+**Default Settings (hardcoded):**
+```python
+{
+    "fetch_delay_seconds": 1,
+    "priority": 999,
+    "max_posts_per_fetch": 50
+}
+```
+
+### How Settings Work
+
+1. **Hardcoded defaults** apply to all sources (simple and consistent)
+2. **Source settings** in database override defaults (only store what's different)
+3. **Merged settings** = Defaults + Source overrides
+
+**Example:**
+```python
+# Source has only display_name and priority set in database
+{
+    "display_name": "TechCrunch",
+    "priority": 1
+}
+
+# Merged result (defaults + overrides)
+{
+    "display_name": "TechCrunch",       # from database (override)
+    "fetch_delay_seconds": 1,           # from defaults
+    "priority": 1,                      # from database (override)
+    "max_posts_per_fetch": 50          # from defaults
+}
+```
+
+### Accessing Settings in Code
+
+**Repository Layer:**
+```python
+# Get settings for a source (defaults + overrides)
+settings = repo.get_source_settings(cur, source_id)
+# Returns: {"display_name": "...", "fetch_delay_seconds": 1, "priority": 999, ...}
+
+# Update source settings (only stores overrides)
+repo.update_source_settings(cur, source_id, {
+    "display_name": "New Name",
+    "priority": 5
+})
+```
+
+**Service Layer:**
+```python
+# Get source with settings
+source = service.get_source_with_settings(source_id)
+# Returns: {...source fields..., "settings": {...merged settings...}}
+
+# Get all sources with settings
+sources = service.get_all_sources_with_settings()
+
+# Update settings (with validation)
+service.update_source_settings(source_id, {
+    "display_name": "New Name",
+    "fetch_delay_seconds": "10"  # Validated and converted to int
+})
+```
+
+**API Usage:**
+```bash
+# Get source settings
+GET /api/sources/{source_id}/settings
+
+# Update source settings
+PUT /api/sources/{source_id}/settings
+Body: {"display_name": "New Name", "priority": 5}
+
+# Get all sources with settings
+GET /api/sources/with-settings
+```
+
+### Settings in Connectors
+
+Connectors receive settings and apply delays:
+
+```python
+# Connector receives settings
+await connector.fetch_posts(
+    source="https://example.com/feed",
+    limit=100,
+    settings={"fetch_delay_seconds": 5, "priority": 1}
+)
+
+# Delay is applied AFTER fetching
+if settings and "fetch_delay_seconds" in settings:
+    delay = settings["fetch_delay_seconds"]
+    if delay > 0:
+        await asyncio.sleep(delay)
+```
+
+### Priority-Based Fetching
+
+Sources are fetched in priority order (lower number = higher priority):
+
+```python
+# Engine sorts sources by priority before fetching
+enabled_sources = service.get_all_sources_with_settings()
+enabled_sources = [s for s in enabled_sources if s.get("enabled")]
+enabled_sources.sort(key=lambda s: s.get("settings", {}).get("priority", 999))
+
+for source in enabled_sources:
+    # Fetch in priority order
+    await connector.fetch_posts(..., settings=source["settings"])
 ```
 
 ---

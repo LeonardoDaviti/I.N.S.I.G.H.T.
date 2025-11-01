@@ -143,3 +143,72 @@ class SourcesRepository:
         
         self.logger.debug(f"Retrieved {len(sources)} sources with post counts")
         return sources
+    
+    def get_source_settings(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
+        """
+        Get settings for a source with defaults.
+        
+        Args:
+            cur: Database cursor
+            source_id: UUID of the source
+            
+        Returns:
+            Dict with settings (defaults + source overrides)
+        """
+        query = """
+            SELECT s.settings
+            FROM sources s
+            WHERE s.id = %s
+        """
+        cur.execute(query, (source_id,))
+        row = cur.fetchone()
+        
+        if not row:
+            self.logger.warning(f"Source {source_id} not found")
+            return {}
+        
+        source_settings = row[0] if row[0] else {}
+        
+        # Default settings (same for all platforms for simplicity)
+        defaults = {
+            "fetch_delay_seconds": 1,
+            "priority": 999,
+            "max_posts_per_fetch": 50
+        }
+        
+        # Merge: defaults + source overrides
+        merged = {**defaults, **source_settings}
+        
+        self.logger.debug(f"Merged settings for source {source_id}: {merged}")
+        return merged
+    
+    def update_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> bool:
+        """
+        Update settings for a source.
+        
+        Args:
+            cur: Database cursor
+            source_id: UUID of the source
+            settings: Dict of settings to update
+            
+        Returns:
+            True if updated, False if source not found
+        """
+        import json
+        
+        query = """
+            UPDATE sources
+            SET settings = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING id
+        """
+        cur.execute(query, (json.dumps(settings), source_id))
+        row = cur.fetchone()
+        
+        if row:
+            self.logger.info(f"Updated settings for source {source_id}")
+            return True
+        else:
+            self.logger.warning(f"Source {source_id} not found")
+            return False
+    

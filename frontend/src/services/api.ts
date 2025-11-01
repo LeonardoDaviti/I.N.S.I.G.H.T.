@@ -23,8 +23,10 @@ export interface PostsBySourceResponse {
 export interface SourceWithCount {
   id: string;
   handle_or_url: string;
+  display_name: string;  // Display name from settings, fallback to handle_or_url
   enabled: boolean;
   post_count: number;
+  priority: number;  // Priority for sorting
 }
 
 export interface PlatformData {
@@ -36,6 +38,39 @@ export interface SourcesWithCountsResponse {
   success: boolean;
   platforms: Record<string, PlatformData>;  // e.g., { "rss": {...}, "telegram": {...} }
   total_posts: number;
+  error?: string;
+}
+
+export interface SourceSettings {
+  display_name?: string;
+  fetch_delay_seconds?: number;
+  priority?: number;
+  max_posts_per_fetch?: number;
+}
+
+export interface SourceWithSettings {
+  id: string;
+  platform: string;
+  handle_or_url: string;
+  enabled: boolean;
+  post_count: number;
+  settings: SourceSettings;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SourceSettingsResponse {
+  success: boolean;
+  source_id: string;
+  settings: SourceSettings;
+  source?: SourceWithSettings;
+  error?: string;
+}
+
+export interface SourcesWithSettingsResponse {
+  success: boolean;
+  sources: SourceWithSettings[];
+  total: number;
   error?: string;
 }
 
@@ -255,6 +290,54 @@ class ApiService {
         success: false,
         platforms: {},
         total_posts: 0,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getSourceSettings(sourceId: string): Promise<SourceSettingsResponse> {
+    try {
+      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get source settings:', error);
+      return {
+        success: false,
+        source_id: sourceId,
+        settings: {},
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async updateSourceSettings(sourceId: string, settings: SourceSettings): Promise<SourceSettingsResponse> {
+    try {
+      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to update source settings:', error);
+      return {
+        success: false,
+        source_id: sourceId,
+        settings: {},
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getSourcesWithSettings(): Promise<SourcesWithSettingsResponse> {
+    try {
+      const response = await this.makeRequest<SourcesWithSettingsResponse>('/api/sources/with-settings');
+      return response;
+    } catch (error) {
+      console.error('Failed to get sources with settings:', error);
+      return {
+        success: false,
+        sources: [],
+        total: 0,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }

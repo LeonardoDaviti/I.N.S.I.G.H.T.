@@ -2,81 +2,72 @@
 
 ## Architecture Overview
 
-The INSIGHT frontend is a React + TypeScript application using:
-- **React** - Component library
-- **TypeScript** - Type safety
-- **Tailwind CSS** - Styling
-- **Vite** - Build tool
-- **Lucide React** - Icons
+The INSIGHT frontend is built with React, TypeScript, and Tailwind CSS:
 
 ```
-frontend/
-├── src/
-│   ├── pages/           # Full page components
-│   ├── components/      # Reusable UI components
-│   ├── services/        # API communication
-│   ├── types/           # TypeScript type definitions
-│   └── lib/             # Utility functions
+┌──────────────────────────────────────┐
+│   Pages (pages/)                     │  Main app views
+├──────────────────────────────────────┤
+│   Components (components/)           │  Reusable UI elements
+├──────────────────────────────────────┤
+│   Services (services/api.ts)         │  API communication
+├──────────────────────────────────────┤
+│   Types (types/)                     │  TypeScript definitions
+└──────────────────────────────────────┘
 ```
 
----
+## How to Implement Frontend Features
 
-## Part 1: Integrating Backend Features
+### Step 1: Add TypeScript Types
 
-### Step-by-Step Process
-
-#### 1. **Define TypeScript Types** (`src/services/api.ts`)
-
-First, define the data structure you'll receive from the backend:
+Define interfaces in `frontend/src/services/api.ts`:
 
 ```typescript
-// Define the response interface
-export interface PostsBySourceResponse {
-  success: boolean;
-  posts: Post[];
-  source_id: string;
-  total: number;
-  error?: string;
+export interface NewFeature {
+  id: string;
+  name: string;
+  value: number;
 }
 
-// Post interface (if not already defined)
-export interface Post {
-  id?: string;
-  title?: string;
-  content: string;
-  content_html?: string;
-  date?: string | null;
-  source: string;
-  platform: string;
-  url?: string;
-  feed_title?: string;
-  media_urls?: string[];
+export interface NewFeatureResponse {
+  success: boolean;
+  data: NewFeature[];
+  error?: string;
 }
 ```
 
----
+### Step 2: Add API Methods
 
-#### 2. **Create API Service Method** (`src/services/api.ts`)
-
-Add a method to the `ApiService` class:
+Add service methods in `frontend/src/services/api.ts`:
 
 ```typescript
 class ApiService {
-  // ... existing methods ...
-  
-  async getPostsBySource(sourceId: string): Promise<PostsBySourceResponse> {
+  async getNewFeature(id: string): Promise<NewFeatureResponse> {
     try {
-      const response = await this.makeRequest<PostsBySourceResponse>(
-        `/api/posts/source/${sourceId}`
-      );
+      const response = await this.makeRequest<NewFeatureResponse>(`/api/new-feature/${id}`);
       return response;
     } catch (error) {
-      console.error('Failed to get posts by source:', error);
+      console.error('Failed to get new feature:', error);
       return {
         success: false,
-        posts: [],
-        source_id: sourceId,
-        total: 0,
+        data: [],
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async updateNewFeature(id: string, data: Partial<NewFeature>): Promise<NewFeatureResponse> {
+    try {
+      const response = await this.makeRequest<NewFeatureResponse>(`/api/new-feature/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to update new feature:', error);
+      return {
+        success: false,
+        data: [],
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
@@ -84,406 +75,386 @@ class ApiService {
 }
 ```
 
-**Pattern:**
-- Use `this.makeRequest<ResponseType>()` for API calls
-- Always handle errors and return a valid response structure
-- Log errors to console for debugging
-
----
-
-#### 3. **Import Types in Components**
-
-At the top of your page component:
+### Step 3: Use in Components
 
 ```typescript
 import { apiService } from '../services/api';
-import type { PostsBySourceResponse, Post } from '../services/api';
-```
+import type { NewFeature } from '../services/api';
 
----
-
-#### 4. **Create State Management**
-
-Use React hooks to manage data:
-
-```typescript
-export default function YourPage() {
-  // State for posts data
-  const [posts, setPosts] = useState<Post[]>([]);
-  
-  // State for loading indicator
-  const [isLoading, setIsLoading] = useState(false);
-  
-  // State for error handling
+export default function MyComponent() {
+  const [data, setData] = useState<NewFeature[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // State for metadata
-  const [stats, setStats] = useState<{
-    total: number;
-    source_id: string;
-  } | null>(null);
-  
-  // ... rest of component
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiService.getNewFeature('123');
+
+      if (response.success) {
+        setData(response.data);
+      } else {
+        setError(response.error || 'Failed to load data');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div>Error: {error}</div>;
+
+  return (
+    <div>
+      {data.map(item => (
+        <div key={item.id}>{item.name}</div>
+      ))}
+    </div>
+  );
 }
 ```
 
 ---
 
-#### 5. **Create Handler Function**
+## Styling Guidelines
 
-Create an async function to fetch data:
+### Tailwind CSS
+
+Use Tailwind utility classes for styling:
+
+```tsx
+<button className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+  Click Me
+</button>
+```
+
+### Common Patterns
+
+**Card Container:**
+```tsx
+<div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+  {/* Content */}
+</div>
+```
+
+**Input Field:**
+```tsx
+<input
+  type="text"
+  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+  placeholder="Enter value"
+/>
+```
+
+**Loading Spinner:**
+```tsx
+<div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+```
+
+---
+
+## Source Settings Feature
+
+### Overview
+
+The source settings feature allows users to customize how sources are displayed and fetched:
+
+- **Display Name**: Custom name for sources (instead of URL)
+- **Fetch Delay**: Time to wait after fetching from a source
+- **Priority**: Order in which sources are fetched (lower = first)
+- **Max Posts**: Maximum posts to fetch (future feature)
+
+### Components
+
+#### SourceSettingsEditor
+
+A modal component for editing source settings:
+
+```tsx
+import SourceSettingsEditor from '../components/SourceSettingsEditor';
+
+function MyComponent() {
+  const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
+
+  return (
+    <>
+      <button onClick={() => setEditingSource(someSource)}>
+        Edit Settings
+      </button>
+
+      {editingSource && (
+        <SourceSettingsEditor
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          onSave={() => {
+            // Reload data
+            loadSources();
+          }}
+        />
+      )}
+    </>
+  );
+}
+```
+
+### API Usage
+
+#### Get Source Settings
 
 ```typescript
-const handleLoadPostsBySource = async (sourceId: string) => {
+const response = await apiService.getSourceSettings(sourceId);
+if (response.success) {
+  console.log(response.settings);
+  // { display_name: "TechCrunch", fetch_delay_seconds: 5, priority: 1 }
+}
+```
+
+#### Update Source Settings
+
+```typescript
+const response = await apiService.updateSourceSettings(sourceId, {
+  display_name: "My Custom Name",
+  priority: 5,
+  fetch_delay_seconds: 10
+});
+```
+
+#### Get All Sources with Settings
+
+```typescript
+const response = await apiService.getSourcesWithSettings();
+if (response.success) {
+  response.sources.forEach(source => {
+    console.log(source.settings.display_name || source.handle_or_url);
+  });
+}
+```
+
+### Display Name in UI
+
+Sources should display their custom name if set:
+
+```tsx
+{source.display_name || source.handle_or_url}
+```
+
+This pattern is used in:
+- `DailyBriefing.tsx` - Sources sidebar
+- `SourcesConfig.tsx` - Source list
+
+### Settings Button Integration
+
+Add a settings button next to sources:
+
+```tsx
+import { Settings } from 'lucide-react';
+
+{findDbSource(platform, source.id) && (
+  <button
+    onClick={() => handleSettingsClick(platform, source.id)}
+    className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+    title="Source Settings"
+  >
+    <Settings className="w-4 h-4" />
+  </button>
+)}
+```
+
+---
+
+## State Management
+
+### Common Patterns
+
+**Loading State:**
+```tsx
+const [isLoading, setIsLoading] = useState(false);
+
+const fetchData = async () => {
   setIsLoading(true);
-  setError(null);
-  setPosts([]);
-  setStats(null);
-  
   try {
-    console.log(`📖 Loading posts for source: ${sourceId}`);
-    const response = await apiService.getPostsBySource(sourceId);
-    
-    if (response.success) {
-      console.log(`✅ Loaded ${response.total} posts`);
-      setPosts(response.posts);
-      setStats({
-        total: response.total,
-        source_id: response.source_id
-      });
-    } else {
-      console.error('❌ Failed to load posts:', response.error);
-      setError(response.error || 'Failed to load posts');
-    }
-  } catch (error) {
-    console.error('❌ API call failed:', error);
-    setError(error instanceof Error ? error.message : 'Network error occurred');
+    // Fetch data
   } finally {
     setIsLoading(false);
   }
 };
 ```
 
-**Pattern:**
-- Always set loading state before and after
-- Clear previous data before fetching
-- Handle both success and error cases
-- Add console logging for debugging
-- Use try/catch/finally
+**Error Handling:**
+```tsx
+const [error, setError] = useState<string | null>(null);
 
----
-
-#### 6. **Call Handler Function**
-
-Trigger the handler from UI events:
-
-```typescript
-// From a button click
-<button onClick={() => handleLoadPostsBySource(sourceId)}>
-  Load Posts
-</button>
-
-// From a dropdown/select change
-<select onChange={(e) => handleLoadPostsBySource(e.target.value)}>
-  {sources.map(source => (
-    <option key={source.id} value={source.id}>
-      {source.name}
-    </option>
-  ))}
-</select>
-
-// On component mount
-useEffect(() => {
-  handleLoadPostsBySource(defaultSourceId);
-}, []);
-
-// When a dependency changes
-useEffect(() => {
-  if (selectedSourceId) {
-    handleLoadPostsBySource(selectedSourceId);
-  }
-}, [selectedSourceId]);
-```
-
----
-
-#### 7. **Display Data in UI**
-
-Render the data with conditional logic:
-
-```typescript
-return (
-  <div>
-    {/* Loading State */}
-    {isLoading && (
-      <div className="text-center py-8">
-        <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2" />
-        <p>Loading posts...</p>
-      </div>
-    )}
-    
-    {/* Error State */}
-    {error && (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <AlertCircle className="w-4 h-4 text-red-600" />
-        <span className="text-red-800">{error}</span>
-      </div>
-    )}
-    
-    {/* Success State */}
-    {posts.length > 0 && (
-      <div className="space-y-4">
-        <h2>Found {stats?.total} posts</h2>
-        {posts.map((post, index) => (
-          <div key={post.id || index} className="border rounded-lg p-4">
-            <h3>{post.title}</h3>
-            <p>{post.content}</p>
-          </div>
-        ))}
-      </div>
-    )}
-    
-    {/* Empty State */}
-    {!isLoading && !error && posts.length === 0 && (
-      <div className="text-center py-8 text-gray-500">
-        <p>No posts found</p>
-      </div>
-    )}
-  </div>
-);
-```
-
----
-
-## Part 2: Updating Cosmetics & Design
-
-### Tailwind CSS Class Reference
-
-#### Layout & Spacing
-```css
-p-4          /* padding: 1rem (16px) */
-px-4         /* padding-left + padding-right */
-py-4         /* padding-top + padding-bottom */
-m-4          /* margin: 1rem */
-space-y-4    /* vertical spacing between children */
-gap-4        /* gap in flex/grid layouts */
-```
-
-#### Sizing
-```css
-w-full       /* width: 100% */
-w-80         /* width: 20rem (320px) */
-h-screen     /* height: 100vh */
-max-w-4xl    /* max-width: 56rem (896px) */
-```
-
-#### Typography
-```css
-text-sm      /* font-size: 0.875rem (14px) */
-text-base    /* font-size: 1rem (16px) */
-text-lg      /* font-size: 1.125rem (18px) */
-text-xl      /* font-size: 1.25rem (20px) */
-text-2xl     /* font-size: 1.5rem (24px) */
-text-3xl     /* font-size: 1.875rem (30px) */
-
-font-medium  /* font-weight: 500 */
-font-semibold /* font-weight: 600 */
-font-bold    /* font-weight: 700 */
-```
-
-#### Colors
-```css
-text-gray-600    /* text color */
-bg-blue-50       /* background color (light) */
-bg-blue-600      /* background color (dark) */
-border-gray-200  /* border color */
-```
-
----
-
-### How to Resize Everything by 10%
-
-**Method 1: Reduce Tailwind Class Sizes**
-
-Replace all spacing/typography classes with smaller equivalents:
-```typescript
-// Before
-<div className="p-8 text-3xl">
-
-// After (10% reduction)
-<div className="p-7 text-2xl">
-```
-
-**Mapping Guide:**
-- `p-8` → `p-7` (32px → 28px)
-- `p-6` → `p-5` (24px → 20px)
-- `p-4` → `p-3.5` (16px → 14px)
-- `text-3xl` → `text-2xl` (30px → 24px)
-- `text-xl` → `text-lg` (20px → 18px)
-- `w-80` → `w-72` (320px → 288px)
-
-**Method 2: Global CSS Scale (Quick but affects everything)**
-
-In `src/index.css`:
-```css
-#root {
-  transform: scale(0.9);
-  transform-origin: top left;
-  width: 111.11%; /* compensate for scale */
-  height: 111.11%;
+try {
+  // Operation
+  setError(null);
+} catch (err) {
+  setError(err instanceof Error ? err.message : 'Unknown error');
 }
 ```
 
----
+**Caching:**
+```tsx
+const [cache, setCache] = useState<Record<string, Data>>({});
 
-### Common Design Patterns
+const getData = async (id: string) => {
+  if (cache[id]) {
+    console.log('Using cached data');
+    return cache[id];
+  }
 
-#### Card Component
-```typescript
-<div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-  <h3 className="text-lg font-semibold mb-4">Card Title</h3>
-  <p className="text-gray-600">Card content</p>
-</div>
-```
-
-#### Button Styles
-```typescript
-// Primary Button
-<button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-  Click Me
-</button>
-
-// Secondary Button
-<button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-  Cancel
-</button>
-
-// Disabled Button
-<button 
-  disabled={isLoading}
-  className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
->
-  Submit
-</button>
-```
-
-#### Loading Spinner
-```typescript
-import { RefreshCw } from 'lucide-react';
-
-<RefreshCw className="w-4 h-4 animate-spin" />
+  const data = await fetchData(id);
+  setCache(prev => ({ ...prev, [id]: data }));
+  return data;
+};
 ```
 
 ---
 
-### Removing/Hiding Elements
+## UI Design Principles
 
-**Method 1: Conditional Rendering (Removes from DOM)**
-```typescript
-{shouldShow && <div>Content</div>}
-```
+### 1. Consistency
 
-**Method 2: CSS Hidden (Keeps in DOM)**
-```typescript
-<div className="hidden">Content</div>
-```
+- Use consistent spacing, colors, and typography
+- Follow existing patterns in the codebase
+- Reuse components when possible
 
-**Method 3: Opacity (Keeps space)**
-```typescript
-<div className="opacity-0">Content</div>
-```
+### 2. Feedback
+
+- Show loading states for async operations
+- Display success/error messages
+- Use visual feedback for interactions (hover, active states)
+
+### 3. Accessibility
+
+- Use semantic HTML
+- Add appropriate ARIA labels
+- Ensure keyboard navigation works
+- Maintain good color contrast
+
+### 4. Responsiveness
+
+- Use responsive utilities (`md:`, `lg:`, etc.)
+- Test on different screen sizes
+- Consider mobile-first design
 
 ---
 
-### Sidebar Navigation Pattern
+## Common UI Components
 
-```typescript
-const sections = [
-  { id: 'all', title: 'All Posts', count: 321 },
-  { id: 'source-1', title: 'Source 1', count: 23 },
-  { id: 'source-2', title: 'Source 2', count: 13 },
-];
+### Modal Pattern
 
-const [activeSection, setActiveSection] = useState('all');
+```tsx
+{isOpen && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b">
+        <h2 className="text-lg font-semibold">Modal Title</h2>
+        <button onClick={onClose}>
+          <X className="w-5 h-5" />
+        </button>
+      </div>
 
-return (
-  <div className="flex h-screen">
-    {/* Sidebar */}
-    <div className="w-80 bg-white border-r">
-      <nav className="space-y-1 p-4">
-        {sections.map((section) => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg ${
-              activeSection === section.id
-                ? 'bg-blue-50 text-blue-900'
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <span>{section.title}</span>
-            <span className="text-sm text-gray-500">{section.count}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
-    
-    {/* Main Content */}
-    <div className="flex-1 overflow-y-auto p-8">
-      {/* Content for active section */}
+      {/* Content */}
+      <div className="p-4">
+        {/* Your content */}
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-end gap-2 p-4 border-t bg-gray-50">
+        <button onClick={onClose}>Cancel</button>
+        <button onClick={onSave}>Save</button>
+      </div>
     </div>
   </div>
-);
+)}
+```
+
+### Button Variants
+
+```tsx
+// Primary
+<button className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+  Primary Action
+</button>
+
+// Secondary
+<button className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+  Secondary Action
+</button>
+
+// Danger
+<button className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">
+  Delete
+</button>
+
+// Icon Button
+<button className="w-9 h-9 flex items-center justify-center rounded-md border border-gray-300 hover:bg-gray-50">
+  <Settings className="w-4 h-4" />
+</button>
+```
+
+### Toast Notifications
+
+Use `sonner` for toast notifications:
+
+```tsx
+import { toast } from 'sonner';
+
+// Success
+toast.success('Settings saved successfully');
+
+// Error
+toast.error('Failed to save settings');
+
+// Info
+toast.info('Loading data...');
 ```
 
 ---
 
 ## Debugging Tips
 
-1. **Check API Response in Browser DevTools:**
-   - Open Network tab
-   - Find the API request
-   - Check response status and body
+### Console Logging
 
-2. **Console Logging:**
-   ```typescript
-   console.log('Data:', data);
-   console.error('Error:', error);
-   console.table(array); // Pretty print arrays
-   ```
+Use descriptive console logs:
 
-3. **React DevTools:**
-   - Install React DevTools browser extension
-   - Inspect component state and props
+```tsx
+console.log('📋 Loading sources...');
+console.log('✅ Loaded 5 sources');
+console.log('❌ Failed to load:', error);
+console.log('⚡ Using cached data');
+```
 
-4. **Type Checking:**
-   ```bash
-   cd frontend
-   npm run type-check  # If available
-   ```
+### React DevTools
+
+- Inspect component state and props
+- Track re-renders and performance
+- Debug context and hooks
+
+### Network Tab
+
+- Verify API requests and responses
+- Check request payloads
+- Monitor response times
 
 ---
 
-## Auto-fetch on Date Change
+## Best Practices
 
-```typescript
-const [selectedDate, setSelectedDate] = useState(
-  new Date().toISOString().split('T')[0]
-);
-
-// Auto-fetch when date changes
-useEffect(() => {
-  handleLoadPosts(selectedDate);
-}, [selectedDate]);
-
-return (
-  <input
-    type="date"
-    value={selectedDate}
-    onChange={(e) => setSelectedDate(e.target.value)}
-  />
-);
-```
-
-This automatically calls `handleLoadPosts` whenever the date changes - no button needed!
-
+1. **Always handle errors** - Display user-friendly error messages
+2. **Show loading states** - Don't leave users guessing
+3. **Use TypeScript** - Define types for all data structures
+4. **Keep components focused** - One responsibility per component
+5. **Extract reusable logic** - Use custom hooks for shared logic
+6. **Test in browser** - Check console for errors and warnings
+7. **Follow naming conventions** - Use descriptive names
+8. **Document complex logic** - Add comments for non-obvious code

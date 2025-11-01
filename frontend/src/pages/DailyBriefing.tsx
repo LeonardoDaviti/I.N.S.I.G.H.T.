@@ -196,7 +196,7 @@ export default function DailyBriefing() {
         for (const source of platformData.sources) {
           // Check if we have this source cached
           if (postsCache.bySource[source.id]) {
-            console.log(`⚡ Using cached posts for source: ${source.handle_or_url}`);
+            console.log(`⚡ Using cached posts for source: ${source.display_name || source.handle_or_url}`);
             allPosts.push(...postsCache.bySource[source.id]);
           } else {
             const response = await apiService.getPostsBySource(source.id);
@@ -561,7 +561,7 @@ export default function DailyBriefing() {
                               : 'text-gray-700 hover:bg-gray-100'
                           }`}
                         >
-                          <span className="truncate">{source.handle_or_url}</span>
+                          <span className="truncate">{source.display_name || source.handle_or_url}</span>
                           <span className="text-xs text-gray-500 ml-2">{source.post_count}</span>
                         </button>
                       ))}

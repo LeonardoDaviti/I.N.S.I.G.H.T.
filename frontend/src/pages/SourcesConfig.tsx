@@ -3,8 +3,10 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
 import type { SourceConfig, SourceItem, SourceState } from '../types';
-import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText } from 'lucide-react';
+import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText, Settings } from 'lucide-react';
 import { toast } from 'sonner';
+import SourceSettingsEditor from '../components/SourceSettingsEditor';
+import type { SourceWithSettings } from '../services/api';
 
 type PlatformKey = keyof SourceConfig['platforms'];
 
@@ -22,6 +24,8 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [pulsing] = useState<Record<string, boolean>>({});
   const [bulkEdit, setBulkEdit] = useState<{ platform: string; text: string } | null>(null);
+  const [dbSources, setDbSources] = useState<SourceWithSettings[]>([]);
+  const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
 
   const EXPANDED_KEY = 'insight.sources.expanded';
 
@@ -51,10 +55,16 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     let mounted = true;
     (async () => {
       setLoading(true);
-      const res = await apiService.getSources();
+      
+      // Fetch both config and database sources
+      const [configRes, dbSourcesRes] = await Promise.all([
+        apiService.getSources(),
+        apiService.getSourcesWithSettings()
+      ]);
+      
       if (mounted) {
-        if (res.success && res.data) {
-          const normalizedConfig = { ...res.data as SourceConfig };
+        if (configRes.success && configRes.data) {
+          const normalizedConfig = { ...configRes.data as SourceConfig };
 
           Object.keys(normalizedConfig.platforms).forEach(platformKey =>{
             const platform = normalizedConfig.platforms[platformKey];
@@ -63,8 +73,13 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
 
           setConfig(normalizedConfig);
         } else {
-          toast.error(res.error || 'Failed to load sources configuration');
+          toast.error(configRes.error || 'Failed to load sources configuration');
         }
+        
+        if (dbSourcesRes.success) {
+          setDbSources(dbSourcesRes.sources);
+        }
+        
         setLoading(false);
       }
     })();
@@ -152,6 +167,31 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     setConfig(next);
     setDirty(true);
   };
+
+  function findDbSource(platform: string, sourceId: string): SourceWithSettings | undefined {
+    return dbSources.find(
+      (s) => s.platform === platform && s.handle_or_url === sourceId
+    );
+  }
+
+  function handleSettingsClick(platform: string, sourceId: string) {
+    const dbSource = findDbSource(platform, sourceId);
+    if (dbSource) {
+      setEditingSource(dbSource);
+    } else {
+      toast.error('Source not found in database');
+    }
+  }
+
+  function handleSettingsSaved() {
+    // Reload database sources
+    apiService.getSourcesWithSettings().then((res) => {
+      if (res.success) {
+        setDbSources(res.sources);
+        toast.success('Settings updated successfully');
+      }
+    });
+  }
 
   const updateSource = (platform: PlatformKey, index: number, value: string) => {
     if (!config) return;
@@ -462,6 +502,15 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
                           className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
                           placeholder="Enter source identifier or URL"
                         />
+                        {findDbSource(platform, src.id) && (
+                          <button
+                            onClick={() => handleSettingsClick(platform, src.id)}
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+                            title="Source Settings"
+                          >
+                            <Settings className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => removeSource(platform, idx)}
                           className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-red-300 text-red-600 hover:bg-red-50"
@@ -515,6 +564,15 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
             </div>
           </div>
         </div>
+      )}
+      
+      {/* Settings Editor Modal */}
+      {editingSource && (
+        <SourceSettingsEditor
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          onSave={handleSettingsSaved}
+        />
       )}
     </div>
   );

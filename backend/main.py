@@ -152,6 +152,57 @@ async def get_sources_with_counts():
         logger.exception("Failed to get sources with counts")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/sources/{source_id}/settings")
+async def get_source_settings(source_id: str):
+    """Get settings for a specific source."""
+    try:
+        logger.info(f"📋 Fetching settings for source: {source_id}")
+        
+        result = api_bridge.get_source_settings(source_id)
+        
+        if result.get("success"):
+            logger.info(f"✅ Retrieved settings for source {source_id}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to get settings for source {source_id}")
+        return {"success": False, "error": str(e)}
+
+@app.put("/api/sources/{source_id}/settings")
+async def update_source_settings(source_id: str, settings: dict):
+    """Update settings for a specific source."""
+    try:
+        logger.info(f"🔧 Updating settings for source: {source_id}")
+        
+        result = api_bridge.update_source_settings(source_id, settings)
+        
+        if result.get("success"):
+            logger.info(f"✅ Updated settings for source {source_id}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Failed to update settings for source {source_id}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/sources/with-settings")
+async def get_sources_with_settings():
+    """Get all sources with their settings and post counts."""
+    try:
+        logger.info("📋 Fetching sources with settings")
+        
+        result = api_bridge.get_sources_with_settings()
+        
+        if result.get("success"):
+            logger.info(f"✅ Retrieved {result.get('total', 0)} sources with settings")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception("Failed to get sources with settings")
+        return {"success": False, "error": str(e)}
+
 
 # Briefing generation endpoints
 

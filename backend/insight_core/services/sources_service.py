@@ -64,3 +64,65 @@ class SourcesService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_sources_with_post_counts(cur)
+    
+    def get_source_with_settings(self, source_id: str) -> Dict[str, Any]:
+        """Get source with merged settings (platform defaults + overrides)."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                # Get source basic info
+                sources = self.repo.get_all_sources(cur)
+                source = next((s for s in sources if s["id"] == source_id), None)
+                
+                if not source:
+                    raise ValueError(f"Source {source_id} not found")
+                
+                # Get merged settings
+                settings = self.repo.get_source_settings(cur, source_id)
+                
+                return {
+                    **source,
+                    "settings": settings
+                }
+    
+    def get_all_sources_with_settings(self) -> List[Dict[str, Any]]:
+        """Get all sources with their merged settings and post counts."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                sources_with_counts = self.repo.get_sources_with_post_counts(cur)
+                
+                # Add settings to each source
+                for source in sources_with_counts:
+                    source["settings"] = self.repo.get_source_settings(cur, source["id"])
+                
+                return sources_with_counts
+    
+    def update_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update settings for a source.
+        Validates settings before updating.
+        """
+        # Validate settings
+        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch"}
+        validated_settings = {k: v for k, v in settings.items() if k in valid_keys}
+        
+        # Type validation
+        if "fetch_delay_seconds" in validated_settings:
+            validated_settings["fetch_delay_seconds"] = int(validated_settings["fetch_delay_seconds"])
+        if "priority" in validated_settings:
+            validated_settings["priority"] = int(validated_settings["priority"])
+        if "max_posts_per_fetch" in validated_settings:
+            validated_settings["max_posts_per_fetch"] = int(validated_settings["max_posts_per_fetch"])
+        
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                success = self.repo.update_source_settings(cur, source_id, validated_settings)
+                conn.commit()
+                
+                if success:
+                    self.logger.info(f"Updated settings for source {source_id}")
+                    return {
+                        "source_id": source_id,
+                        "settings": validated_settings
+                    }
+                else:
+                    raise ValueError(f"Source {source_id} not found")
