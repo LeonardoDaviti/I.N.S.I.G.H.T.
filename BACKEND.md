@@ -236,37 +236,150 @@ SELECT COUNT(*) FROM posts WHERE source_id = %s
 
 ---
 
-## Testing Your Feature
+## Testing Your Feature (REQUIRED!)
 
-1. **Test Repository Layer:**
-   ```python
-   # In backend/insight_core/tests/
-   from insight_core.db.repo_posts import PostsRepository
-   
-   repo = PostsRepository(db_url)
-   with psycopg.connect(db_url) as conn:
-       with conn.cursor() as cur:
-           results = repo.get_posts_by_source(cur, source_id)
-           print(results)
-   ```
+**IMPORTANT:** Every backend feature MUST be tested before integration. Write tests in `backend/insight_core/tests/`.
 
-2. **Test Service Layer:**
-   ```python
-   from insight_core.services.posts_service import PostsService
-   
-   service = PostsService(db_url)
-   results = service.get_posts_by_source(source_id)
-   print(results)
-   ```
+### Test File Structure
 
-3. **Test API Layer:**
-   ```bash
-   # Start backend
-   python backend/start_api.py
-   
-   # Test endpoint
-   curl http://localhost:8000/api/posts/source/{source_id}
-   ```
+Create a test file following this pattern:
+
+```python
+# test_your_feature.py
+import sys
+from pathlib import Path
+
+# Add backend to path
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND_DIR))
+
+import psycopg
+from insight_core.db.ensure_db import ensure_database
+from insight_core.logs.core.logger_config import setup_logging, get_component_logger
+
+# Setup
+setup_logging(debug_mode=True)
+logger = get_component_logger("test_your_feature")
+
+# Connect to DB
+db_url = ensure_database()
+
+class YourFeatureTest:
+    def __init__(self, db_url: str):
+        self.db_url = db_url
+        # Initialize repos/services you need
+    
+    def test_repository_layer(self):
+        """Test repository method directly"""
+        # Your test code here
+        pass
+    
+    def test_service_layer(self):
+        """Test service layer"""
+        # Your test code here
+        pass
+
+# Run tests
+if __name__ == "__main__":
+    test = YourFeatureTest(db_url)
+    test.test_repository_layer()
+    test.test_service_layer()
+    logger.info("✅ All tests passed!")
+```
+
+### Testing Checklist
+
+For each new feature, you MUST test:
+
+1. ✅ **Repository Layer** - Test SQL queries return correct data
+2. ✅ **Service Layer** - Test business logic works correctly
+3. ✅ **API Layer** - Test HTTP endpoints (manual with curl/Postman)
+
+### Example: Testing Posts by Source
+
+```python
+# test_posts_by_source.py
+import sys
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND_DIR))
+
+import psycopg
+from insight_core.db.repo_posts import PostsRepository
+from insight_core.services.posts_service import PostsService
+from insight_core.db.ensure_db import ensure_database
+from insight_core.logs.core.logger_config import setup_logging, get_component_logger
+
+setup_logging(debug_mode=True)
+logger = get_component_logger("test_posts_by_source")
+db_url = ensure_database()
+
+class PostsBySourceTest:
+    def __init__(self, db_url: str):
+        self.db_url = db_url
+        self.repo = PostsRepository(db_url)
+        self.service = PostsService(db_url)
+
+    def test_repo(self, source_id: str):
+        """Test repository layer"""
+        logger.info(f"Testing repo.get_posts_by_source({source_id})")
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                posts = self.repo.get_posts_by_source(cur, source_id)
+                logger.info(f"Retrieved {len(posts)} posts")
+                if posts:
+                    logger.info(f"Sample post: {posts[0].get('title', 'No title')}")
+                return posts
+    
+    def test_service(self, source_id: str):
+        """Test service layer"""
+        logger.info(f"Testing service.get_posts_by_source({source_id})")
+        posts = self.service.get_posts_by_source(source_id)
+        logger.info(f"Retrieved {len(posts)} posts")
+        return posts
+
+# Run test
+if __name__ == "__main__":
+    test = PostsBySourceTest(db_url)
+    
+    # Replace with actual source_id from your database
+    test_source_id = "YOUR-SOURCE-UUID-HERE"
+    
+    # Test repository
+    posts = test.test_repo(test_source_id)
+    
+    # Test service
+    posts = test.test_service(test_source_id)
+    
+    logger.info("✅ All tests passed!")
+```
+
+### Running Tests
+
+```bash
+# Navigate to tests directory
+cd backend/insight_core/tests/
+
+# Run your test
+python test_posts_by_source.py
+```
+
+### Manual API Testing
+
+After backend tests pass, test the API endpoint:
+
+```bash
+# Start backend server
+cd backend
+python start_api.py
+
+# In another terminal, test endpoint
+curl http://localhost:8000/api/posts/source/{source_id}
+
+# Or use httpie (prettier output)
+http GET http://localhost:8000/api/posts/source/{source_id}
+```
 
 ---
 
