@@ -112,7 +112,11 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
 
   const enabledSourcesCount = useMemo(() => {
     if (!config) return 0;
-    return Object.values(config.platforms).reduce((acc, p) => acc + (p.enabled ? (p.sources?.length || 0) : 0), 0);
+    return Object.values(config.platforms).reduce((acc, p) => {
+      // Count individual sources with state 'enabled', regardless of platform enabled status
+      const enabledInPlatform = p.sources?.filter(s => s.state === 'enabled').length || 0;
+      return acc + enabledInPlatform;
+    }, 0);
   }, [config]);
 
   const togglePlatform = (platform: PlatformKey) => {
@@ -294,72 +298,59 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
 
         {/* Title and Save */}
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Sources Configuration</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Sources Configuration</h1>
+          <button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 shadow-sm"
+          >
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            Save
+          </button>
+        </div>
+
+        {/* Global Actions and Counters */}
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <button
-              onClick={onSave}
-              disabled={!dirty || saving}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+              onClick={() => {
+                if (!config) return;
+                const next = { ...config, platforms: { ...config.platforms } } as SourceConfig;
+                (Object.keys(next.platforms) as string[]).forEach((p) => {
+                  next.platforms[p].enabled = true;
+                });
+                setConfig(next);
+                setDirty(true);
+              }}
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50"
             >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save Changes
+              Enable All
+            </button>
+            <button
+              onClick={() => {
+                if (!config) return;
+                const next = { ...config, platforms: { ...config.platforms } } as SourceConfig;
+                (Object.keys(next.platforms) as string[]).forEach((p) => {
+                  next.platforms[p].enabled = false;
+                });
+                setConfig(next);
+                setDirty(true);
+              }}
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+            >
+              Disable All
             </button>
           </div>
-        </div>
-
-        {/* Global Actions */}
-        <div className="flex items-center gap-2 mb-3">
-          <button
-            onClick={() => {
-              if (!config) return;
-              const next = { ...config, platforms: { ...config.platforms } } as SourceConfig;
-              (Object.keys(next.platforms) as string[]).forEach((p) => {
-                next.platforms[p].enabled = true;
-              });
-              setConfig(next);
-              setDirty(true);
-            }}
-            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-          >
-            Enable All
-          </button>
-          <button
-            onClick={() => {
-              if (!config) return;
-              const next = { ...config, platforms: { ...config.platforms } } as SourceConfig;
-              (Object.keys(next.platforms) as string[]).forEach((p) => {
-                next.platforms[p].enabled = false;
-              });
-              setConfig(next);
-              setDirty(true);
-            }}
-            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-          >
-            Disable All
-          </button>
-        </div>
-
-        {/* Summary Card */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
-          <div className="grid md:grid-cols-3 gap-6 items-start">
-            <div>
-              <h3 className="text-sm font-medium text-gray-900">Project</h3>
-              <p className="text-sm text-gray-700">{config.metadata.name}</p>
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-gray-900">Version</h3>
-              <p className="text-sm text-gray-700">{config.metadata.version}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-2 text-sm bg-gray-50 text-gray-700 px-3 py-2 rounded-md border border-gray-200">
-                All:
-                <strong className="text-gray-900 text-base">{totalSources}</strong>
-              </span>
-              <span className="inline-flex items-center gap-2 text-sm bg-green-50 text-green-700 px-3 py-2 rounded-md border border-green-200">
-                Enabled:
-                <strong className="text-green-900 text-base">{enabledSourcesCount}</strong>
-              </span>
-            </div>
+          
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-2 text-sm text-gray-700">
+              All:
+              <strong className="text-gray-900 text-base">{totalSources}</strong>
+            </span>
+            <span className="inline-flex items-center gap-2 text-sm text-green-700">
+              Enabled:
+              <strong className="text-green-900 text-base">{enabledSourcesCount}</strong>
+            </span>
           </div>
         </div>
 
@@ -415,10 +406,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
                   <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-700 flex items-center justify-center">
                     {platformIcon[platform] || <MessageSquare className="w-5 h-5" />}
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900 capitalize">{platform}</h3>
-                    <p className="text-xs text-gray-500">Enable platform and manage its sources</p>
-                  </div>
+                  <h3 className="font-semibold text-gray-900 text-lg capitalize">{platform}</h3>
                 </div>
                 <div className="flex items-center gap-2">
                   {/* Export removed per request */}
