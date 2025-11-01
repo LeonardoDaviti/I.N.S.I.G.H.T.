@@ -12,6 +12,33 @@ export interface PostsResponse {
   error?: string;
 }
 
+export interface PostsBySourceResponse {
+  success: boolean;
+  posts: Post[];
+  source_id: string;
+  total: number;
+  error?: string;
+}
+
+export interface SourceWithCount {
+  id: string;
+  handle_or_url: string;
+  enabled: boolean;
+  post_count: number;
+}
+
+export interface PlatformData {
+  sources: SourceWithCount[];
+  total_count: number;
+}
+
+export interface SourcesWithCountsResponse {
+  success: boolean;
+  platforms: Record<string, PlatformData>;  // e.g., { "rss": {...}, "telegram": {...} }
+  total_posts: number;
+  error?: string;
+}
+
 
 export interface BriefingRequest {
   date: string; // Format: "YYYY-MM-DD"
@@ -197,6 +224,37 @@ class ApiService {
         date: date,
         total: 0,
         source: 'database',
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getPostsBySource(sourceId: string): Promise<PostsBySourceResponse> {
+    try {
+      const response = await this.makeRequest<PostsBySourceResponse>(`/api/posts/source/${sourceId}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get posts by source:', error);
+      return {
+        success: false,
+        posts: [],
+        source_id: sourceId,
+        total: 0,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getSourcesWithCounts(): Promise<SourcesWithCountsResponse> {
+    try {
+      const response = await this.makeRequest<SourcesWithCountsResponse>('/api/sources/with-counts');
+      return response;
+    } catch (error) {
+      console.error('Failed to get sources with counts:', error);
+      return {
+        success: false,
+        platforms: {},
+        total_posts: 0,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
