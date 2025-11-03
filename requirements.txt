@@ -12,3 +12,5 @@ google-genai
 fastapi
 uvicorn
 psycopg[binary]
+langchain
+langchain-google-genai
