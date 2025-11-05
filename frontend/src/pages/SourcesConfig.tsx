@@ -3,10 +3,27 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
 import type { SourceConfig, SourceItem, SourceState } from '../types';
-import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText, Settings } from 'lucide-react';
+import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText, Settings, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import type { SourceWithSettings } from '../services/api';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 type PlatformKey = keyof SourceConfig['platforms'];
 
@@ -14,6 +31,100 @@ type SourcesConfigProps = {
   embedded?: boolean;
   onClose?: () => void;
 };
+
+// Extended source item with priority and database info
+interface SourceItemWithPriority extends SourceItem {
+  priority: number;
+  displayName?: string;
+  dbId?: string;
+}
+
+// Sortable source item component
+interface SortableSourceItemProps {
+  source: SourceItemWithPriority;
+  onToggleState: () => void;
+  onUpdate: (value: string) => void;
+  onRemove: () => void;
+  onSettingsClick: () => void;
+  hasDbSource: boolean;
+  getStateStyle: (state: SourceState) => string;
+}
+
+function SortableSourceItem({
+  source,
+  onToggleState,
+  onUpdate,
+  onRemove,
+  onSettingsClick,
+  hasDbSource,
+  getStateStyle,
+}: SortableSourceItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: source.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2">
+      {/* Drag Handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0"
+        title="Drag to reorder"
+      >
+        <GripVertical className="w-5 h-5" />
+      </button>
+
+      {/* Priority Number */}
+      <button
+        onClick={onToggleState}
+        className={`inline-flex items-center justify-center w-12 h-9 rounded-md border font-mono text-xs hover:opacity-75 flex-shrink-0 ${getStateStyle(source.state)}`}
+        title={`Priority: ${source.priority} | State: ${source.state} - Click to cycle`}
+      >
+        {source.priority}
+      </button>
+
+      {/* Source Input */}
+      <input
+        value={source.id}
+        onChange={(e) => onUpdate(e.target.value)}
+        className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
+        placeholder="Enter source identifier or URL"
+      />
+
+      {/* Settings Button */}
+      {hasDbSource && (
+        <button
+          onClick={onSettingsClick}
+          className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 flex-shrink-0"
+          title="Source Settings"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Remove Button */}
+      <button
+        onClick={onRemove}
+        className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-red-300 text-red-600 hover:bg-red-50 flex-shrink-0"
+        title="Remove"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
 
 export default function SourcesConfig({ embedded = false, onClose }: SourcesConfigProps) {
   const [loading, setLoading] = useState(true);
@@ -28,6 +139,14 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
 
   const EXPANDED_KEY = 'insight.sources.expanded';
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const loadExpanded = (keys: string[]): Record<string, boolean> => {
     try {
@@ -192,6 +311,91 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       }
     });
   }
+
+  // Get sources with priorities for a platform
+  const getSourcesWithPriority = (platform: PlatformKey): SourceItemWithPriority[] => {
+    if (!config) return [];
+
+    const sources = config.platforms[platform].sources;
+    
+    return sources.map((source) => {
+      const dbSource = findDbSource(platform, source.id);
+      return {
+        ...source,
+        priority: dbSource?.settings?.priority ?? 999,
+        displayName: dbSource?.settings?.display_name,
+        dbId: dbSource?.id,
+      };
+    });
+  };
+
+  // Get sources sorted by priority for a platform
+  const getSortedSources = (platform: PlatformKey): SourceItemWithPriority[] => {
+    const sourcesWithPriority = getSourcesWithPriority(platform);
+    return [...sourcesWithPriority].sort((a, b) => {
+      // Sort by priority first, then by id for stable sort
+      if (a.priority !== b.priority) {
+        return a.priority - b.priority;
+      }
+      return a.id.localeCompare(b.id);
+    });
+  };
+
+  // Handle drag end - update order and priorities
+  const handleDragEnd = async (event: DragEndEvent, platform: PlatformKey) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) return;
+
+    const sortedSources = getSortedSources(platform);
+    const oldIndex = sortedSources.findIndex((s) => s.id === active.id);
+    const newIndex = sortedSources.findIndex((s) => s.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    // Reorder the sources array
+    const reorderedSources = arrayMove(sortedSources, oldIndex, newIndex);
+
+    // Update priorities based on new order (1, 2, 3, ...)
+    const updatedSources = reorderedSources.map((source, index) => ({
+      ...source,
+      priority: index + 1,
+    }));
+
+    // Update config with new order
+    if (!config) return;
+    const next = {
+      ...config,
+      platforms: {
+        ...config.platforms,
+        [platform]: {
+          ...config.platforms[platform],
+          sources: updatedSources.map(({ priority: _priority, displayName: _displayName, dbId: _dbId, ...source }) => source),
+        },
+      },
+    };
+    setConfig(next);
+    setDirty(true);
+
+    // Update priorities in database for all reordered sources
+    const updates = updatedSources
+      .filter((source) => source.dbId)
+      .map((source) => 
+        apiService.updateSourceSettings(source.dbId!, { priority: source.priority })
+      );
+
+    try {
+      await Promise.all(updates);
+      // Reload database sources to get updated priorities
+      const res = await apiService.getSourcesWithSettings();
+      if (res.success) {
+        setDbSources(res.sources);
+      }
+      toast.success(`Reordered sources by priority`);
+    } catch (_error) {
+      toast.error('Failed to update priorities');
+    }
+  };
 
   const updateSource = (platform: PlatformKey, index: number, value: string) => {
     if (!config) return;
@@ -478,7 +682,9 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
               {expanded[platform] && (
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-gray-900">Sources</h4>
+                    <h4 className="text-sm font-medium text-gray-900">
+                      Sources <span className="text-xs text-gray-500">(drag to reorder by priority)</span>
+                    </h4>
                     <button
                       onClick={() => addSource(platform)}
                       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 text-sm hover:bg-gray-50"
@@ -486,44 +692,42 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
                       <Plus className="w-4 h-4" /> Add Source
                     </button>
                   </div>
-                  <div className="space-y-2">
-                    {config.platforms[platform].sources.map((src, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <button 
-                          onClick={() => toggleSourceState(platform, idx)}
-                          className={`inline-flex items-center justify-center w-7 h-9 rounded-md border font-mono text-xs hover:opacity-75 ${getSourceStateStyle(src.state)}`}
-                          title={`State: ${src.state} - Click to cycle`}
-                        >
-                          {idx + 1}
-                        </button>
-                        <input
-                          value={src.id}
-                          onChange={(e) => updateSource(platform, idx, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
-                          placeholder="Enter source identifier or URL"
-                        />
-                        {findDbSource(platform, src.id) && (
-                          <button
-                            onClick={() => handleSettingsClick(platform, src.id)}
-                            className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
-                            title="Source Settings"
-                          >
-                            <Settings className="w-4 h-4" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => removeSource(platform, idx)}
-                          className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-red-300 text-red-600 hover:bg-red-50"
-                          title="Remove"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                    {config.platforms[platform].sources.length === 0 && (
-                      <div className="text-xs text-gray-500">No sources added yet.</div>
-                    )}
-                  </div>
+
+                  {config.platforms[platform].sources.length === 0 ? (
+                    <div className="text-xs text-gray-500">No sources added yet.</div>
+                  ) : (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(event) => handleDragEnd(event, platform)}
+                    >
+                      <SortableContext
+                        items={getSortedSources(platform).map((s) => s.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <div className="space-y-2">
+                          {getSortedSources(platform).map((source) => {
+                            const originalIndex = config.platforms[platform].sources.findIndex(
+                              (s) => s.id === source.id
+                            );
+                            
+                            return (
+                              <SortableSourceItem
+                                key={source.id}
+                                source={source}
+                                onToggleState={() => toggleSourceState(platform, originalIndex)}
+                                onUpdate={(value) => updateSource(platform, originalIndex, value)}
+                                onRemove={() => removeSource(platform, originalIndex)}
+                                onSettingsClick={() => handleSettingsClick(platform, source.id)}
+                                hasDbSource={!!findDbSource(platform, source.id)}
+                                getStateStyle={getSourceStateStyle}
+                              />
+                            );
+                          })}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  )}
                 </div>
               )}
             </div>
@@ -552,6 +756,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
                   if (!config) return;
                   const lines = bulkEdit.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
                   const sourceItems = lines.map(line => ({ id: line, state: 'enabled' as SourceState }));
+                  const next = { ...config, platforms: { ...config.platforms } } as SourceConfig;
                   next.platforms[bulkEdit.platform].sources = sourceItems;
                   setConfig(next);
                   setDirty(true);
