@@ -1,6 +1,80 @@
-# I.N.S.I.G.H.T. Export Scripts
+# I.N.S.I.G.H.T. Scripts
 
-Scripts for exporting data to CSV format for analysis (e.g., BERTopic, ML experiments).
+Scripts for data ingestion and export operations.
+
+---
+
+## 📥 safe_ingest.py - Safe Ingestion
+
+Smart ingestion script that only fetches from sources that need updating. Perfect for development to avoid redundant API calls.
+
+### Usage
+
+```bash
+cd /home/man/Documents/I.N.S.I.G.H.T./backend
+python insight_core/scripts/safe_ingest.py
+```
+
+### How It Works
+
+The script intelligently filters sources before fetching:
+
+1. **New Sources (0 posts)** → ✅ FETCH
+   - Newly added sources that have never been fetched
+   
+2. **Stale Sources (>24h)** → ✅ FETCH
+   - Sources with posts older than 24 hours
+   
+3. **Recent Sources (<24h)** → ⏭️ SKIP
+   - Sources fetched within the last 24 hours
+
+### Features
+
+- **Zero Schema Changes**: Uses existing `posts.fetched_at` data
+- **Development-Friendly**: Prevents redundant fetches during feature development
+- **Transparent Logging**: Shows exactly why each source is fetched or skipped
+- **Production-Ready**: Same reliability as regular `ingest.py`
+
+### Configuration
+
+You can adjust the skip threshold at the top of the script:
+
+```python
+SKIP_THRESHOLD_HOURS = 24  # Change to 12, 48, etc.
+```
+
+### Example Session
+
+```
+📊 Found 15 enabled sources
+✅ TechCrunch RSS: 📦 New source (0 posts)
+✅ Hacker News: 🔄 Stale data (26.3h old, 145 posts)
+⏭️  Reddit/Python: ⏭️ Recently fetched 2.5h ago (89 posts)
+⏭️  AI News Telegram: ⏭️ Recently fetched 1.2h ago (34 posts)
+============================================================
+📥 Sources to fetch: 2
+⏭️  Sources to skip:  13
+============================================================
+🔌 Connected to rss connector
+📥 [1] Fetching up to 50 posts from TechCrunch RSS
+✅ [1] TechCrunch RSS: fetched 23 posts
+✅ Ingested 23 posts from 2 sources
+```
+
+### When to Use
+
+- **Use `safe_ingest.py`**: During development, testing, or when you want to avoid hitting rate limits
+- **Use `ingest.py`**: For scheduled production runs or when you want to force-refresh all sources
+
+### Comparison with Regular Ingest
+
+| Feature | `ingest.py` | `safe_ingest.py` |
+|---------|-------------|------------------|
+| Fetches all enabled sources | ✅ Always | ⚠️ Only if needed |
+| Good for production | ✅ Yes | ✅ Yes |
+| Good for development | ⚠️ Redundant | ✅ Efficient |
+| Avoids rate limits | ❌ No | ✅ Yes |
+| Checks post history | ❌ No | ✅ Yes |
 
 ---
 
