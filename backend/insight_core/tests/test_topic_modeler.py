@@ -1,13 +1,15 @@
 """
-Test Topic Modeler
-==================
+Test Gemini Processor with Topic Modeling
+==========================================
 
-Tests for the Gemini Topic Modeler processor.
+Tests for the complete Gemini Processor with topic modeling capabilities.
 
 Tests:
-1. JSON structure parsing
-2. Topic modeling correctness
-3. Post assignments validation
+0. Processor methods verification (core + topic modeling)
+1. Processor setup
+2. JSON structure parsing
+3. Topic modeling correctness
+4. Post assignments validation
 """
 
 import sys
@@ -22,7 +24,7 @@ import psycopg
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.ensure_db import ensure_database
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
-from insight_core.processors.ai.gemini_topic_modeler import GeminiTopicModeler
+from insight_core.processors.ai.gemini_processor import GeminiProcessor
 
 # Setup
 setup_logging(debug_mode=True)
@@ -36,7 +38,7 @@ class TopicModelerTest:
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.repo = PostsRepository(db_url)
-        self.modeler = GeminiTopicModeler()
+        self.processor = GeminiProcessor()
         
     def fetch_posts_by_date(self, target_date: date):
         """Fetch posts for a specific date"""
@@ -47,17 +49,44 @@ class TopicModelerTest:
                 logger.info(f"✅ Retrieved {len(posts)} posts for {target_date}")
                 return posts
     
+    def test_processor_methods(self):
+        """Test 0: Verify processor has all required methods"""
+        logger.info("\n--- Test 0: Processor Methods Verification ---")
+        
+        # Check core methods
+        assert hasattr(self.processor, 'setup_processor'), "Missing setup_processor()"
+        assert hasattr(self.processor, 'analyze_single_post'), "Missing analyze_single_post()"
+        assert hasattr(self.processor, 'ask_single_post'), "Missing ask_single_post()"
+        assert hasattr(self.processor, 'count_tokens'), "Missing count_tokens()"
+        logger.info("✅ Has all core methods")
+        
+        # Check topic modeling methods
+        assert hasattr(self.processor, 'model_topics'), "Missing model_topics()"
+        assert hasattr(self.processor, '_truncate_post'), "Missing _truncate_post()"
+        assert hasattr(self.processor, '_prepare_posts_for_prompt'), "Missing _prepare_posts_for_prompt()"
+        assert hasattr(self.processor, '_create_topic_modeling_prompt'), "Missing _create_topic_modeling_prompt()"
+        logger.info("✅ Has all topic modeling methods")
+        
+        # Check attributes
+        assert hasattr(self.processor, 'llm'), "Missing llm attribute"
+        assert hasattr(self.processor, 'model'), "Missing model attribute"
+        assert hasattr(self.processor, 'temperature'), "Missing temperature attribute"
+        assert hasattr(self.processor, 'is_setup'), "Missing is_setup attribute"
+        logger.info("✅ Has all required attributes")
+        
+        return True
+    
     def test_setup(self):
-        """Test 1: Setup the topic modeler"""
-        logger.info("\n--- Test 1: Setup Topic Modeler ---")
-        success = self.modeler.setup_processor()
+        """Test 1: Setup the processor"""
+        logger.info("\n--- Test 1: Setup Processor ---")
+        success = self.processor.setup_processor()
         
         if success:
-            logger.info("✅ Topic modeler setup successful")
+            logger.info("✅ Processor setup successful")
         else:
-            logger.error("❌ Topic modeler setup failed")
+            logger.error("❌ Processor setup failed")
             
-        assert success, "Failed to setup topic modeler"
+        assert success, "Failed to setup processor"
         return success
     
     def test_json_structure(self, result: dict):
@@ -154,8 +183,11 @@ class TopicModelerTest:
     def run_all_tests(self):
         """Run all tests sequentially"""
         logger.info("=" * 70)
-        logger.info("TESTING: Gemini Topic Modeler")
+        logger.info("TESTING: Gemini Processor (with Topic Modeling)")
         logger.info("=" * 70)
+        
+        # Test 0: Processor methods verification
+        self.test_processor_methods()
         
         # Test 1: Setup
         self.test_setup()
@@ -188,7 +220,7 @@ class TopicModelerTest:
         logger.info("\n🤖 Running topic modeling...")
         logger.info("   (This may take 10-30 seconds depending on post count)")
         
-        result = self.modeler.model_topics(all_posts)
+        result = self.processor.model_topics(all_posts)
         
         # Test 2: JSON structure
         self.test_json_structure(result)
