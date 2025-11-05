@@ -247,7 +247,8 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   const enabledSourcesCount = useMemo(() => {
     if (!config) return 0;
     return Object.values(config.platforms).reduce((acc, p) => {
-      // Count individual sources with state 'enabled', regardless of platform enabled status
+      // Count sources only if BOTH platform is enabled AND source state is 'enabled'
+      if (!p.enabled) return acc;
       const enabledInPlatform = p.sources?.filter(s => s.state === 'enabled').length || 0;
       return acc + enabledInPlatform;
     }, 0);
@@ -302,14 +303,13 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     }
   }
 
-  function handleSettingsSaved() {
-    // Reload database sources
-    apiService.getSourcesWithSettings().then((res) => {
-      if (res.success) {
-        setDbSources(res.sources);
-        toast.success('Settings updated successfully');
-      }
-    });
+  async function handleSettingsSaved() {
+    // Reload database sources to get updated settings
+    const res = await apiService.getSourcesWithSettings();
+    if (res.success) {
+      setDbSources(res.sources);
+      toast.success('Settings updated successfully');
+    }
   }
 
   // Get sources with priorities for a platform
@@ -436,13 +436,21 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     if (!config) return;
     setSaving(true);
     const res = await apiService.updateSources(config);
-    setSaving(false);
+    
     if (res.success) {
+      // Reload database sources to get updated list with settings
+      const dbSourcesRes = await apiService.getSourcesWithSettings();
+      if (dbSourcesRes.success) {
+        setDbSources(dbSourcesRes.sources);
+      }
+      
       toast.success('Sources configuration saved');
       setDirty(false);
     } else {
       toast.error(res.error || 'Failed to save configuration');
     }
+    
+    setSaving(false);
   };
 
   function getSourceStateStyle(state: SourceState): string {
@@ -515,10 +523,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
           <div className="mb-3">
             <button
               type="button"
-              onClick={() => {
-                if (window.history.length > 1) navigate(-1);
-                else navigate('/briefing');
-              }}
+              onClick={() => navigate('/briefing')}
               className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
             >
               <ChevronLeft className="w-4 h-4 mr-1" /> Back to Briefing
