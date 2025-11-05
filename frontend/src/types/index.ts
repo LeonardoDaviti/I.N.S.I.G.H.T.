@@ -28,7 +28,7 @@ export interface ApiResponse<T = any> {
   error?: string;
 } 
 
-type SourceState = "enabled" | "disabled" | "error";
+export type SourceState = "enabled" | "disabled" | "error";
 
 export interface SourceItem {
   id: string;

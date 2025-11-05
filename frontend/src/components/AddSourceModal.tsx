@@ -1,0 +1,309 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Plus } from 'lucide-react';
+import type { SourceState } from '../types';
+
+interface Template {
+  id: string;
+  name: string;
+  color: string;
+  platform: string;
+  urlPattern: string;
+  variableName: string;
+  defaultSettings: {
+    fetch_delay_seconds: number;
+    priority: number;
+    max_posts_per_fetch: number;
+  };
+}
+
+// Hardcoded templates
+const TEMPLATES: Template[] = [
+  {
+    id: 'nitter',
+    name: 'Nitter',
+    color: '#FF6C60',
+    platform: 'rss',
+    urlPattern: 'https://nitter.local/{username}/rss',
+    variableName: 'username',
+    defaultSettings: {
+      fetch_delay_seconds: 10,
+      priority: 999,
+      max_posts_per_fetch: 50,
+    },
+  },
+];
+
+interface AddSourceModalProps {
+  platform: string;
+  onClose: () => void;
+  onAdd: (source: {
+    handle_or_url: string;
+    display_name: string;
+    fetch_delay_seconds: number;
+    priority: number;
+    max_posts_per_fetch: number;
+    state: SourceState;
+  }) => void;
+}
+
+export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceModalProps) {
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [templateVariable, setTemplateVariable] = useState('');
+  const [handleOrUrl, setHandleOrUrl] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [fetchDelay, setFetchDelay] = useState(1);
+  const [priority, setPriority] = useState(999);
+  const [maxPosts, setMaxPosts] = useState(50);
+  
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Get templates for this platform
+  const availableTemplates = TEMPLATES.filter(t => t.platform === platform);
+
+  // Handle click outside to close
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [onClose]);
+
+  // Update URL when template variable changes
+  useEffect(() => {
+    if (selectedTemplate && templateVariable) {
+      const url = selectedTemplate.urlPattern.replace(`{${selectedTemplate.variableName}}`, templateVariable);
+      setHandleOrUrl(url);
+      
+      // Auto-fill display name if empty
+      if (!displayName) {
+        setDisplayName(templateVariable);
+      }
+    }
+  }, [selectedTemplate, templateVariable, displayName]);
+
+  const handleTemplateClick = (template: Template) => {
+    setSelectedTemplate(template);
+    setFetchDelay(template.defaultSettings.fetch_delay_seconds);
+    setPriority(template.defaultSettings.priority);
+    setMaxPosts(template.defaultSettings.max_posts_per_fetch);
+    // Clear previous values
+    setTemplateVariable('');
+    setHandleOrUrl('');
+    setDisplayName('');
+  };
+
+  const handleAdd = () => {
+    if (!handleOrUrl.trim()) {
+      return;
+    }
+
+    onAdd({
+      handle_or_url: handleOrUrl.trim(),
+      display_name: displayName.trim(),
+      fetch_delay_seconds: fetchDelay,
+      priority,
+      max_posts_per_fetch: maxPosts,
+      state: 'enabled',
+    });
+
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div ref={modalRef} className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 sticky top-0 bg-white">
+          <h2 className="text-lg font-semibold text-gray-900">Add New Source</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          {/* Templates Section */}
+          {availableTemplates.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Templates
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {availableTemplates.map((template) => (
+                  <button
+                    key={template.id}
+                    onClick={() => handleTemplateClick(template)}
+                    className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                      selectedTemplate?.id === template.id
+                        ? 'bg-white shadow-md'
+                        : 'bg-white hover:shadow-md'
+                    }`}
+                    style={{
+                      border: `2px solid ${template.color}`,
+                      color: template.color,
+                      boxShadow: selectedTemplate?.id === template.id
+                        ? `0 0 12px ${template.color}40`
+                        : 'none',
+                    }}
+                  >
+                    {template.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Template Variable Input */}
+          {selectedTemplate && (
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+              <label htmlFor="template-var" className="block text-sm font-medium text-blue-900 mb-1">
+                {selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1)} (for {selectedTemplate.name})
+              </label>
+              <input
+                id="template-var"
+                type="text"
+                value={templateVariable}
+                onChange={(e) => setTemplateVariable(e.target.value)}
+                placeholder={`Enter ${selectedTemplate.variableName}...`}
+                className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+              <p className="text-xs text-blue-700 mt-1">
+                → {selectedTemplate.urlPattern.replace(`{${selectedTemplate.variableName}}`, templateVariable || `{${selectedTemplate.variableName}}`)}
+              </p>
+            </div>
+          )}
+
+          {/* Divider */}
+          {availableTemplates.length > 0 && (
+            <div className="flex items-center gap-3">
+              <div className="flex-1 border-t border-gray-300"></div>
+              <span className="text-xs text-gray-500 uppercase">or enter manually</span>
+              <div className="flex-1 border-t border-gray-300"></div>
+            </div>
+          )}
+
+          {/* Handle or URL */}
+          <div>
+            <label htmlFor="handle_or_url" className="block text-sm font-medium text-gray-700 mb-1">
+              Handle or URL
+            </label>
+            <input
+              id="handle_or_url"
+              type="text"
+              value={handleOrUrl}
+              onChange={(e) => setHandleOrUrl(e.target.value)}
+              placeholder="Enter source URL or handle"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              disabled={!!selectedTemplate && !!templateVariable}
+            />
+          </div>
+
+          {/* Display Name */}
+          <div>
+            <label htmlFor="display_name" className="block text-sm font-medium text-gray-700 mb-1">
+              Display Name
+            </label>
+            <input
+              id="display_name"
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Leave empty to use URL/handle"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Optional: Friendly name for this source
+            </p>
+          </div>
+
+          {/* Fetch Delay */}
+          <div>
+            <label htmlFor="fetch_delay" className="block text-sm font-medium text-gray-700 mb-1">
+              Fetch Delay (seconds)
+            </label>
+            <input
+              id="fetch_delay"
+              type="number"
+              min="0"
+              max="60"
+              value={fetchDelay}
+              onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Time to wait after fetching from this source
+            </p>
+          </div>
+
+          {/* Priority */}
+          <div>
+            <label htmlFor="priority" className="block text-sm font-medium text-gray-700 mb-1">
+              Priority
+            </label>
+            <input
+              id="priority"
+              type="number"
+              min="1"
+              max="9999"
+              value={priority}
+              onChange={(e) => setPriority(parseInt(e.target.value) || 999)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Lower number = higher priority (fetched first)
+            </p>
+          </div>
+
+          {/* Max Posts Per Fetch */}
+          <div>
+            <label htmlFor="max_posts" className="block text-sm font-medium text-gray-700 mb-1">
+              Max Posts Per Fetch
+            </label>
+            <input
+              id="max_posts"
+              type="number"
+              min="1"
+              max="200"
+              value={maxPosts}
+              onChange={(e) => setMaxPosts(parseInt(e.target.value) || 50)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              disabled
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              ⚠️ Not enforced (future feature)
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleAdd}
+            disabled={!handleOrUrl.trim()}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Source
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

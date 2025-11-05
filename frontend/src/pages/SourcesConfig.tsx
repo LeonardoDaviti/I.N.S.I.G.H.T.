@@ -6,6 +6,7 @@ import type { SourceConfig, SourceItem, SourceState } from '../types';
 import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText, Settings, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
+import AddSourceModal from '../components/AddSourceModal';
 import type { SourceWithSettings } from '../services/api';
 import {
   DndContext,
@@ -137,6 +138,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   const [bulkEdit, setBulkEdit] = useState<{ platform: string; text: string } | null>(null);
   const [dbSources, setDbSources] = useState<SourceWithSettings[]>([]);
   const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
+  const [addingSourcePlatform, setAddingSourcePlatform] = useState<PlatformKey | null>(null);
 
   const EXPANDED_KEY = 'insight.sources.expanded';
 
@@ -271,21 +273,37 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   };
 
   const addSource = (platform: PlatformKey) => {
+    setAddingSourcePlatform(platform);
+  };
+
+  const handleAddSource = async (platform: PlatformKey, sourceData: {
+    handle_or_url: string;
+    display_name: string;
+    fetch_delay_seconds: number;
+    priority: number;
+    max_posts_per_fetch: number;
+    state: SourceState;
+  }) => {
     if (!config) return;
-    const value = prompt(`Add new source to ${platform}`);
-    if (!value) return;
+
+    // Add to config
     const next = {
       ...config,
       platforms: {
         ...config.platforms,
         [platform]: {
           ...config.platforms[platform],
-          sources: [...config.platforms[platform].sources, { id: value.trim(), state: 'enabled' as SourceState }],
+          sources: [...config.platforms[platform].sources, { 
+            id: sourceData.handle_or_url, 
+            state: sourceData.state 
+          }],
         },
       },
     };
     setConfig(next);
     setDirty(true);
+
+    toast.success('Source added - click Save to persist');
   };
 
   function findDbSource(platform: string, sourceId: string): SourceWithSettings | undefined {
@@ -779,6 +797,15 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
           source={editingSource}
           onClose={() => setEditingSource(null)}
           onSave={handleSettingsSaved}
+        />
+      )}
+
+      {/* Add Source Modal */}
+      {addingSourcePlatform && (
+        <AddSourceModal
+          platform={String(addingSourcePlatform)}
+          onClose={() => setAddingSourcePlatform(null)}
+          onAdd={(sourceData) => handleAddSource(addingSourcePlatform, sourceData)}
         />
       )}
     </div>
