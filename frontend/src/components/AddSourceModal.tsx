@@ -51,6 +51,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
   const [templateVariable, setTemplateVariable] = useState('');
   const [handleOrUrl, setHandleOrUrl] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   const [fetchDelay, setFetchDelay] = useState(1);
   const [priority, setPriority] = useState(999);
   const [maxPosts, setMaxPosts] = useState(50);
@@ -80,12 +81,12 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
       const url = selectedTemplate.urlPattern.replace(`{${selectedTemplate.variableName}}`, templateVariable);
       setHandleOrUrl(url);
       
-      // Auto-fill display name if empty
-      if (!displayName) {
+      // Auto-fill display name if user hasn't manually edited it
+      if (!displayNameManuallyEdited) {
         setDisplayName(templateVariable);
       }
     }
-  }, [selectedTemplate, templateVariable, displayName]);
+  }, [selectedTemplate, templateVariable, displayNameManuallyEdited]);
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
@@ -96,6 +97,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     setTemplateVariable('');
     setHandleOrUrl('');
     setDisplayName('');
+    setDisplayNameManuallyEdited(false); // Reset manual edit flag
   };
 
   const handleAdd = () => {
@@ -217,7 +219,10 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
               id="display_name"
               type="text"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={(e) => {
+                setDisplayName(e.target.value);
+                setDisplayNameManuallyEdited(true); // Mark as manually edited
+              }}
               placeholder="Leave empty to use URL/handle"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />

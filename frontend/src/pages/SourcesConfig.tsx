@@ -286,24 +286,106 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   }) => {
     if (!config) return;
 
-    // Add to config
-    const next = {
-      ...config,
-      platforms: {
-        ...config.platforms,
-        [platform]: {
-          ...config.platforms[platform],
-          sources: [...config.platforms[platform].sources, { 
-            id: sourceData.handle_or_url, 
-            state: sourceData.state 
-          }],
+    try {
+      // 1. Add source to database immediately
+      const addResult = await apiService.updateSources({
+        ...config,
+        platforms: {
+          ...config.platforms,
+          [platform]: {
+            ...config.platforms[platform],
+            sources: [...config.platforms[platform].sources, { 
+              id: sourceData.handle_or_url, 
+              state: sourceData.state 
+            }],
+          },
         },
-      },
-    };
-    setConfig(next);
-    setDirty(true);
+      });
 
-    toast.success('Source added - click Save to persist');
+      if (!addResult.success) {
+        toast.error(addResult.error || 'Failed to add source');
+        return;
+      }
+
+      // 2. Reload database sources to get the new source with its DB ID
+      const dbSourcesRes = await apiService.getSourcesWithSettings();
+      if (!dbSourcesRes.success) {
+        toast.error('Failed to reload sources');
+        return;
+      }
+      setDbSources(dbSourcesRes.sources);
+
+      // 3. Find the newly added source by handle_or_url and platform
+      const newDbSource = dbSourcesRes.sources.find(
+        s => s.platform === platform && s.handle_or_url === sourceData.handle_or_url
+      );
+
+      if (!newDbSource) {
+        toast.error('Source added but settings could not be applied');
+        // Still update config so it shows in UI
+        const next = {
+          ...config,
+          platforms: {
+            ...config.platforms,
+            [platform]: {
+              ...config.platforms[platform],
+              sources: [...config.platforms[platform].sources, { 
+                id: sourceData.handle_or_url, 
+                state: sourceData.state 
+              }],
+            },
+          },
+        };
+        setConfig(next);
+        return;
+      }
+
+      // 4. Update settings for the new source
+      const settings: any = {
+        priority: sourceData.priority,
+        fetch_delay_seconds: sourceData.fetch_delay_seconds,
+        max_posts_per_fetch: sourceData.max_posts_per_fetch,
+      };
+
+      // Only add display_name if it's not empty
+      if (sourceData.display_name && sourceData.display_name.trim()) {
+        settings.display_name = sourceData.display_name.trim();
+      }
+
+      const settingsResult = await apiService.updateSourceSettings(newDbSource.id, settings);
+
+      if (!settingsResult.success) {
+        toast.error('Source added but settings failed to save');
+      } else {
+        toast.success('Source added with settings!');
+      }
+
+      // 5. Reload sources again to get updated settings
+      const finalDbSourcesRes = await apiService.getSourcesWithSettings();
+      if (finalDbSourcesRes.success) {
+        setDbSources(finalDbSourcesRes.sources);
+      }
+
+      // 6. Update config to reflect changes
+      const next = {
+        ...config,
+        platforms: {
+          ...config.platforms,
+          [platform]: {
+            ...config.platforms[platform],
+            sources: [...config.platforms[platform].sources, { 
+              id: sourceData.handle_or_url, 
+              state: sourceData.state 
+            }],
+          },
+        },
+      };
+      setConfig(next);
+      setDirty(false); // Already saved to DB
+
+    } catch (error) {
+      toast.error('Failed to add source: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   };
 
   function findDbSource(platform: string, sourceId: string): SourceWithSettings | undefined {
