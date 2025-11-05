@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import { apiService } from '../services/api';
 import type { SourceSettings, SourceWithSettings } from '../services/api';
@@ -19,12 +19,25 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
   
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Handle click outside to close
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [onClose]);
 
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
-    setSuccessMessage(null);
 
     try {
       // Only send non-empty display_name, otherwise send null to use default
@@ -36,11 +49,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
       const response = await apiService.updateSourceSettings(source.id, settingsToSave);
 
       if (response.success) {
-        setSuccessMessage('Settings saved successfully!');
-        setTimeout(() => {
-          onSave();
-          onClose();
-        }, 1000);
+        onSave();
+        onClose();
       } else {
         setError(response.error || 'Failed to save settings');
       }
@@ -53,7 +63,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+      <div ref={modalRef} className="bg-white rounded-lg shadow-xl max-w-md w-full">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">Source Settings</h2>
@@ -151,18 +161,11 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
             </p>
           </div>
 
-          {/* Error/Success Messages */}
+          {/* Error Message */}
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
               <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-red-800">{error}</p>
-            </div>
-          )}
-
-          {successMessage && (
-            <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
-              <Save className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-green-800">{successMessage}</p>
             </div>
           )}
         </div>

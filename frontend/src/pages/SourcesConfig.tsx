@@ -449,18 +449,13 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     switch (state) {
       case 'enabled': return 'bg-green-100 text-green-700 border-green-200';
       case 'disabled': return 'bg-red-100 text-red-700 border-red-200';  
-      case 'only': return 'bg-blue-100 text-blue-700 border-blue-200';
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   }
 
   function cycleSourceState(currentState: SourceState): SourceState {
-    switch (currentState) {
-      case 'enabled': return 'disabled';
-      case 'disabled': return 'only';  
-      case 'only': return 'enabled';
-      default: return 'enabled';
-    }
+    // Only toggle between enabled and disabled
+    return currentState === 'enabled' ? 'disabled' : 'enabled';
   }
 
   const toggleSourceState = (platform: PlatformKey, index: number) => {
@@ -469,15 +464,6 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     const currentSources = [...config.platforms[platform].sources];
     const currentState = currentSources[index].state;
     const newState = cycleSourceState(currentState);
-    
-    // If setting to 'only', clear other 'only' states in this platform
-    if (newState === 'only') {
-      currentSources.forEach((src, i) => {
-        if (i !== index && src.state === 'only') {
-          src.state = 'enabled';
-        }
-      });
-    }
     
     // Update the clicked source
     currentSources[index] = { 
@@ -682,9 +668,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
               {expanded[platform] && (
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-gray-900">
-                      Sources <span className="text-xs text-gray-500">(drag to reorder by priority)</span>
-                    </h4>
+                    <h4 className="text-sm font-medium text-gray-900">Sources</h4>
                     <button
                       onClick={() => addSource(platform)}
                       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 text-sm hover:bg-gray-50"
