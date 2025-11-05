@@ -377,12 +377,25 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
     setConfig(next);
     setDirty(true);
 
-    // Update priorities in database for all reordered sources
+    // Update priorities in database - PRESERVE existing settings by merging
     const updates = updatedSources
       .filter((source) => source.dbId)
-      .map((source) => 
-        apiService.updateSourceSettings(source.dbId!, { priority: source.priority })
-      );
+      .map((source) => {
+        // Find the current source in dbSources to get all existing settings
+        const currentDbSource = dbSources.find(s => s.id === source.dbId);
+        if (!currentDbSource) {
+          // No existing settings, just set priority
+          return apiService.updateSourceSettings(source.dbId!, { priority: source.priority });
+        }
+        
+        // Merge existing settings with new priority (preserve display_name, fetch_delay_seconds, etc.)
+        const mergedSettings = {
+          ...currentDbSource.settings,
+          priority: source.priority
+        };
+        
+        return apiService.updateSourceSettings(source.dbId!, mergedSettings);
+      });
 
     try {
       await Promise.all(updates);
