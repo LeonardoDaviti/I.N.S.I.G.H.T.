@@ -31,6 +31,7 @@ class GeminiProcessor:
         self.llm = None
         # self.model = "gemini-2.0-flash"
         self.model = "gemini-flash-latest"
+        # self.model = "gemini-2.5-pro"
         self.temperature = 0.1
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
@@ -142,22 +143,22 @@ class GeminiProcessor:
             # Create analysis prompt
             prompt = f"""You are an expert content analyst. Analyze this post and provide a concise, informative summary.
 
-POST INFORMATION:
-- Source: {source_info}
-- Title: {title}
-- Content: {content}
+        POST INFORMATION:
+        - Source: {source_info}
+        - Title: {title}
+        - Content: {content}
 
-ANALYSIS REQUIREMENTS:
-1. Provide a clear, briefing summary (user should spend minimal time understanding the main idea)
-2. Maximum 5 sentences (use fewer if possible)
-3. Focus on key information and insights
-4. Use markdown formatting for emphasis (bold, italic, links)
-5. Be objective and professional
+        ANALYSIS REQUIREMENTS:
+        1. Provide a clear, briefing summary (user should spend minimal time understanding the main idea)
+        2. Maximum 5 sentences (use fewer if possible)
+        3. Focus on key information and insights
+        4. Use markdown formatting for emphasis (bold, italic, links)
+        5. Be objective and professional
 
-OUTPUT FORMAT:
-Return ONLY the markdown-formatted summary text. Do not include JSON formatting or code blocks.
+        OUTPUT FORMAT:
+        Return ONLY the markdown-formatted summary text. Do not include JSON formatting or code blocks.
 
-Analyze the post now:"""
+        Analyze the post now:"""
 
             # Call LLM
             self.logger.info("Analyzing single post")
@@ -226,25 +227,25 @@ Analyze the post now:"""
             # Create Q&A prompt
             prompt = f"""You are an expert content analyst. Analyze this content and answer the user's question.
 
-POST INFORMATION:
-- Source: {source_info}
-- Title: {title}
-- Content: {content}
+        POST INFORMATION:
+        - Source: {source_info}
+        - Title: {title}
+        - Content: {content}
 
-ANALYSIS REQUIREMENTS:
-1. Provide a clear, concise answer (user should spend minimal time understanding)
-2. Maximum 5 sentences (use fewer if possible)
-3. Focus on key information and insights
-4. Use markdown formatting for emphasis (bold, italic, links)
-5. Be objective and professional
-6. If the answer is not in the content, say so
+        ANALYSIS REQUIREMENTS:
+        1. Provide a clear, concise answer (user should spend minimal time understanding)
+        2. Maximum 5 sentences (use fewer if possible)
+        3. Focus on key information and insights
+        4. Use markdown formatting for emphasis (bold, italic, links)
+        5. Be objective and professional
+        6. If the answer is not in the content, say so
 
-OUTPUT FORMAT:
-Return ONLY the markdown-formatted answer text. Do not include JSON formatting or code blocks.
+        OUTPUT FORMAT:
+        Return ONLY the markdown-formatted answer text. Do not include JSON formatting or code blocks.
 
-QUESTION: {question}
+        QUESTION: {question}
 
-Answer now:"""
+        Answer now:"""
 
             # Call LLM
             self.logger.info(f"Asking question about post: {question[:50]}...")
@@ -336,124 +337,198 @@ Answer now:"""
         Returns:
             Complete prompt string
         """
+
+        EXAMPLES = """
+            ### Examples of mistakes and how they should be actually done
+
+            #### Outliers, which are not actually outliers and could be connected.
+
+            ##### Case 1
+
+            Post 1
+            ```
+            **Вообще, у многих это было в бинго 2025 **
+
+            Конгресс США рассекретил более 20 000 писем Джеффри Эпштейна. Среди них переписка от 2018 года с в которой Эпштейн через посредника предлагает Путину  инсайты о Трампе перед саммитом в Хельсинки
+
+            После того саммита Трамп публично отверг выводы американской разведки о российском вмешательстве в выборы 2016 и вообще всячески показывал лояльность к нашему полушарию
+
+            В тех же письмах один из высокопоставленных сшашных чиновников спрашивает напрямую у Эпштейна - есть ли у рашнз что то на Трампа
+
+            Оу щит
+            ```
+
+            Post 2
+            ```
+            This is cool. COURIER has created a searchable database with all 20,000 of the files just released from Epstein’s estate. 
+
+
+
+            Trump's name appears in them more than anyone else, in 1,628 documents.
+
+            couriernewsroom.com/news/we-…
+            ```
+
+            Explanation: These two posts were classified as outliers, but they can be connected, because they are both about the Epstein's files.
+            topic name could be new 20,000 Epstein files or something more creative.
+
+            BAD TOPIC NAME: Seachable Database of 20,000 Declassified Epstein Files
+            GOOD TOPIC NAME: New 20,000 Declassified Epstein Files Released
+
+            ##### Case 2
+
+            post 1
+            ```
+            Как успешный запуск и посадка New Glenn влияют на SpaceX?
+
+            Достаточно распространённый вопрос, ответ на который нельзя упростить до «никак» или «им хана». Но это важный и позитивный шаг для всей американской космической отрасли. 2 успешных запуска — это прохождение сертификации, которая открывает двери для новых государственных и оборонных заказов.
+
+            И Blue Origin ещё далеко не там — по сути, они реплицировали то, что SpaceX сделали 10 лет назад, и впереди ещё более длинный и сложный путь. Сперва им предстоит догнать результаты, которые были у SpaceX 5 лет назад — примерно 25 пусков в год. К этому можно прийти за 2-3 года, но потребует стабильности и скалирования производства и операций. Нужен флот ускорителей и по 2 вторых ступени каждый месяц. Сейчас они смогли только в 2 за год.
+
+            Затем им надо будет ставить внутренние рекорды и догнать результаты SpaceX сегодня — 150-170 пусков год, и это результат, который пока никто не смог реплицировать. Если бежать и по пути не ломать ноги, то это 5 лет агрессивного роста без значительных ошибок. Также ни разу не лёгкая задача.
+            ```
+
+            post 2
+            ```
+            Не каждый день в мире появляется новая тяжёлая многоразовая ракета, вот и сегодня не п... 😱 😱 в смысле села???
+
+            Поздравляем команду Blue Origin и её основателя Jeff Bezos, которые шли к этому 25 лет. Первая попытка в январе 25-го провалилась (ракета разрушилась в ходе вхождения в атмосферу), вторую перенесли с 9-го ноября, и сам запуск сегодня переносили аж 3, если не больше, раза. Но по сути со второй попытки полноценная посадка — огромный успех.
+            ```
+
+            Explanation: these two posts were as well classified as outliers, but as you can read, they can be connected because both of them are talking about the same thing, how company named as Blue Origin created rocket that can fly multiple times, like spaceX's rockets can.
+
+            ##### CONCLUSION
+
+            After Creation of outliers, you should go through the outliers posts again and find topics there or try and rerun if there is 
+            still a post that can be fused in some of the topics. 
+            first generated results are not always correct and you might need to 
+            reread everything you created to validate and evaluate your results.
+            at the end look at the number of outliers and try to reduce it as much as possible.
+        """
+
+        
+        
         return f"""You are an expert AI News Analyst working for a system called "Insight". Your primary function is to perform high-quality topic modeling on a daily batch of posts.
- Your main goal is to analyze the following posts and create extremely specific, single-concept topic titles. Avoid generic labels and multi-concept titles at all costs.
+        Your main goal is to analyze the following posts and create extremely specific, single-concept topic titles. Avoid generic labels and multi-concept titles at all costs.
 
-**YOUR GOAL AND THE BIG PICTURE:**
-1. Read all posts carefully
-2. Identify natural topic groupings based on semantic similarity
-3. Create SPECIFIC, CONCRETE titles for each topic (2-6 words)
-4. Assign each post to a topic using a topic ID (integer starting from 0)
-5. Posts about similar things should have the same topic ID
-6. If a post doesn't fit any group, assign it to topic -1 (outlier)
+        **YOUR GOAL AND THE BIG PICTURE:**
+        1. Read all posts carefully
+        2. Identify natural topic groupings based on semantic similarity
+        3. Create SPECIFIC, CONCRETE titles for each topic (2-6 words)
+        4. Assign each post to a topic using a topic ID (integer starting from 0)
+        5. Posts about similar things should have the same topic ID
+        6. If a post doesn't fit any group, assign it to topic -1 (outlier)
 
-Your output is the foundational step in our news aggregation pipeline. After you create topic titles, we perform a critical downstream task:
-1.  We take your generated `topic_name`.
-2.  We convert this name into a vector embedding (a series of numbers).
-3.  We use these embeddings to find similar topics across different days, allowing us to build storylines and track news trends.
+        Your output is the foundational step in our news aggregation pipeline. After you create topic titles, we perform a critical downstream task:
+        1.  We take your generated `topic_name`.
+        2.  We convert this name into a vector embedding (a series of numbers).
+        3.  We use these embeddings to find similar topics across different days, allowing us to build storylines and track news trends.
 
-Therefore, the quality of your `topic_name` is paramount. It must be a perfect, self-contained summary because the embedding model will ONLY see the title, not the underlying posts. A good title leads to accurate story-building; a generic title pollutes our entire system.
+        Therefore, the quality of your `topic_name` is paramount. It must be a perfect, self-contained summary because the embedding model will ONLY see the title, not the underlying posts. A good title leads to accurate story-building; a generic title pollutes our entire system.
 
-TOPIC NAMING RULES:
-✅ DO: Include specific names, companies, products, technologies, people
-   Examples: "Elov Musk vs Sam Altman about the teslas refund system.", "Gemini 2.0 Flash Features updated context lenght up to 128k tokens.", "o1 Reasoning model evaluation on the latest tasks."
+        TOPIC NAMING RULES:
+        ✅ DO: Include specific names, companies, products, technologies, people
+        Examples: "Elov Musk vs Sam Altman about the teslas refund system.", "Gemini 2.0 Flash Features updated context lenght up to 128k tokens.", "o1 Reasoning model evaluation on the latest tasks."
 
-✅ DO: Be concrete about the actual subject matter
-   Examples: "RAG Pipeline Optimization using e5 embeddings", "Transformer Architecture Scaling using two layer attention", "ChatGPI Atlas New Vulnerabilities such as image injection."
-   
-✅ DO: Use entities and proper nouns when relevant
-   Examples: "DeepMind's AlphaFold 3 can fold protein 10x faster.", "OpenAI GPT-4 Pricing increase to $100 per month", "Anthropic Claude Artifacts features image generation"
-   What exactly happened in the news should be stated in the topic name as well.
+        ✅ DO: Be concrete about the actual subject matter
+        Examples: "RAG Pipeline Optimization using e5 embeddings", "Transformer Architecture Scaling using two layer attention", "ChatGPI Atlas New Vulnerabilities such as image injection."
+        
+        ✅ DO: Use entities and proper nouns when relevant
+        Examples: "DeepMind's AlphaFold 3 can fold protein 10x faster.", "OpenAI GPT-4 Pricing increase to $100 per month", "Anthropic Claude Artifacts features image generation"
+        What exactly happened in the news should be stated in the topic name as well.
 
-❌ DON'T: Use generic/broad terms
-   Bad: "AI News", "Tech Updates", "Industry Developments", "Research Papers", "New Release"
-   
-❌ DON'T: Use vague descriptors
-   Bad: "Interesting AI Topics", "Various Discussions", "General Updates"
+        ❌ DON'T: Use generic/broad terms
+        Bad: "AI News", "Tech Updates", "Industry Developments", "Research Papers", "New Release"
+        
+        ❌ DON'T: Use vague descriptors
+        Bad: "Interesting AI Topics", "Various Discussions", "General Updates"
 
-**CORE PRINCIPLES (Follow Strictly):**
-1.  **ONE TOPIC, ONE IDEA:** Each topic title MUST focus on a single, primary subject. If a post mentions multiple things, identify the main point. Do not create "list" or "compound" topics.
-    *   **DO NOT:** Create a topic like "Synplant 2, GrapheneOS, Smol.ai". This is a bad topic.
-    *   **DO:** Identify the primary theme of the post. If it's about a news aggregator, the topic should be "Smol AI News Aggregation Service".
+        **CORE PRINCIPLES (Follow Strictly):**
+        1.  **ONE TOPIC, ONE IDEA:** Each topic title MUST focus on a single, primary subject. If a post mentions multiple things, identify the main point. Do not create "list" or "compound" topics.
+            *   **DO NOT:** Create a topic like "Synplant 2, GrapheneOS, Smol.ai". This is a bad topic.
+            *   **DO:** Identify the primary theme of the post. If it's about a news aggregator, the topic should be "Smol AI News Aggregation Service".
 
-2.  **PRIORITIZE SPECIFIC EMBEDDABLE ENTITIES:** Your topic titles must be grounded in concrete entities. Look for and use these in your titles:
-    *   **Products & Models:** `Claude Code`, `DeepSeek-OCR`, `ChatGPT Atlas`, `Sora 2`, `SGR-core`.
-    *   **Companies & Labs:** `Anthropic`, `OpenAI`, `Google DeepMind`, `TSMC`.
-    *   **People:** `Karpathy`, `Yudkowsky`, `Schneier`.
-    *   **Events & Papers:** `Enterprise RAG Challenge`, `ICCV 2025`, `Quantum Echoes`.
-    *   **Techniques & Papers:** `Rectified Flow`, `Mixture of Experts (MoE)`, `Prompt Injection`.
+        2.  **PRIORITIZE SPECIFIC EMBEDDABLE ENTITIES:** Your topic titles must be grounded in concrete entities. Look for and use these in your titles:
+            *   **Products & Models:** `Claude Code`, `DeepSeek-OCR`, `ChatGPT Atlas`, `Sora 2`, `SGR-core`.
+            *   **Companies & Labs:** `Anthropic`, `OpenAI`, `Google DeepMind`, `TSMC`.
+            *   **People:** `Karpathy`, `Yudkowsky`, `Schneier`.
+            *   **Events & Papers:** `Enterprise RAG Challenge`, `ICCV 2025`, `Quantum Echoes`.
+            *   **Techniques & Papers:** `Rectified Flow`, `Mixture of Experts (MoE)`, `Prompt Injection`.
 
-3.  **HIERARCHICAL THINKING:** First, identify the type of context (e.g., a product launch, a research discussion, a security warning, a community event), then create a specific title.
-    *   *Is this about a new product?* -> Name the product in the title.
-    *   *Is this a technical explanation?* -> Name the technique in the title.
-    *   *Is this about a person's work?* -> Name the person and their project.
+        3.  **HIERARCHICAL THINKING:** First, identify the type of context (e.g., a product launch, a research discussion, a security warning, a community event), then create a specific title.
+            *   *Is this about a new product?* -> Name the product in the title.
+            *   *Is this a technical explanation?* -> Name the technique in the title.
+            *   *Is this about a person's work?* -> Name the person and their project.
 
-4.  **AVOID AMBIGUITY:** Your titles must be unambiguous. Do not create titles that could be interpreted in multiple ways.
+        4.  **AVOID AMBIGUITY:** Your titles must be unambiguous. Do not create titles that could be interpreted in multiple ways.
 
-**Example 1: Specificity in AI Agents**
--   **Posts about:** Anthropic adding new feature to the claude code to browse the web and execute code.
--   **High-Performance Topic Name:** "Anthropic Claude Code now can browse the web and execute code"
--   **Why it's High-Performance:** Contains three crucial, embeddable entities: `Anthropic` (the company), `Claude Code` (the product), and `Web Agent` (the function). This allows our system to correctly link it to future topics like "Claude Code Security Analysis" or "OpenAI's Agent vs. Anthropic's".
--   **Low-Performance Topic Name:** "Anthropic Claude Code new features"
--   **Why it's Low-Performance:** Too generic. Its embedding would be "average" and would incorrectly match dozens of unrelated agent topics, destroying our storyline feature.
+        **Example 1: Specificity in AI Agents**
+        -   **Posts about:** Anthropic adding new feature to the claude code to browse the web and execute code.
+        -   **High-Performance Topic Name:** "Anthropic Claude Code now can browse the web and execute code"
+        -   **Why it's High-Performance:** Contains three crucial, embeddable entities: `Anthropic` (the company), `Claude Code` (the product), and `Web Agent` (the function). This allows our system to correctly link it to future topics like "Claude Code Security Analysis" or "OpenAI's Agent vs. Anthropic's".
+        -   **Low-Performance Topic Name:** "Anthropic Claude Code new features"
+        -   **Why it's Low-Performance:** Too generic. Its embedding would be "average" and would incorrectly match dozens of unrelated agent topics, destroying our storyline feature.
 
-**Example 2: Technical Nuance**
--   **Posts about:** A new tutorial explaining a specific type of generative model.
--   **High-Performance Topic Name:** "Rectified Flow Matching Tutorial"
--   **Why it's High-Performance:** It names the specific technique, `Rectified Flow`. This is critical. It allows researchers interested in generative models to find this specific thread, distinct from "Diffusion Models" or "GANs".
--   **Low-Performance Topic Name:** "New Machine Learning Paper"
--   **Why it's Low-Performance:** Useless for search. It provides no unique semantic information.
+        **Example 2: Technical Nuance**
+        -   **Posts about:** A new tutorial explaining a specific type of generative model.
+        -   **High-Performance Topic Name:** "Rectified Flow Matching Tutorial"
+        -   **Why it's High-Performance:** It names the specific technique, `Rectified Flow`. This is critical. It allows researchers interested in generative models to find this specific thread, distinct from "Diffusion Models" or "GANs".
+        -   **Low-Performance Topic Name:** "New Machine Learning Paper"
+        -   **Why it's Low-Performance:** Useless for search. It provides no unique semantic information.
 
-**Example 3: Geopolitical and Hardware Context**
--   **Posts about:** TSMC's new factory in Arizona starting production of Nvidia's latest chips.
--   **High-Performance Topic Name:** "TSMC's new factory in Arizona starting production of Nvidia's latest chips"
--   **Why it's High-Performance:** Rich with specific entities (`TSMC`, `Arizona Fab`, `Nvidia Blackwell`). This allows it to be correctly clustered with topics about "semiconductor geopolitics", "AI hardware supply chain", or "Nvidia's manufacturing".
--   **Low-Performance Topic Name:** "Chip Manufacturing Updates"
--   **Why it's Low-Performance:** Fails to capture any of the key actors or locations, making it impossible to connect to the larger narrative.
+        **Example 3: Geopolitical and Hardware Context**
+        -   **Posts about:** TSMC's new factory in Arizona starting production of Nvidia's latest chips.
+        -   **High-Performance Topic Name:** "TSMC's new factory in Arizona starting production of Nvidia's latest chips"
+        -   **Why it's High-Performance:** Rich with specific entities (`TSMC`, `Arizona Fab`, `Nvidia Blackwell`). This allows it to be correctly clustered with topics about "semiconductor geopolitics", "AI hardware supply chain", or "Nvidia's manufacturing".
+        -   **Low-Performance Topic Name:** "Chip Manufacturing Updates"
+        -   **Why it's Low-Performance:** Fails to capture any of the key actors or locations, making it impossible to connect to the larger narrative.
 
-as you see, Topic name Should tell the story, not summarize the content whas posts is about.
----
+        More IMPORTANT EXAMPLES, READ THEM VERY CAREFULLY, THEY ARE VERY IMPORTANT:
+        {EXAMPLES}
 
-CLUSTERING GUIDELINES:
-- Create as many topics as needed (typically 3-8 for this dataset size)
-- Topic IDs should be consecutive integers: 0, 1, 2, 3, etc.
-- Use -1 for posts that don't fit any topic (outliers)
-- Each post MUST have exactly one topic ID
-- Group by both semantic similarity AND shared entities/names
-- Minimum 3 words, maximum 20 words
+        as you see, Topic name Should tell the story, not summarize the content whas posts is about.
+        ---
 
-POSTS:
-{posts_text}
+        CLUSTERING GUIDELINES:
+        - Create as many topics as needed (typically 3-8 for this dataset size)
+        - Topic IDs should be consecutive integers: 0, 1, 2, 3, etc.
+        - Use -1 for posts that don't fit any topic (outliers)
+        - Each post MUST have exactly one topic ID
+        - Group by both semantic similarity AND shared entities/names
+        - Minimum 3 words, maximum 20 words
 
-OUTPUT FORMAT:
-Return a JSON object with this EXACT structure:
+        POSTS:
+        {posts_text}
 
-{{
-  "topic_names": {{
-    "0": "Elon vs Sam Altman Dispute",
-    "1": "Claude 3.5 Coding Performance",
-    "2": "Gemini 2.0 Flash Release"
-  }},
-  "assignments": {{
-    "post_id_1": 0,
-    "post_id_2": 1,
-    "post_id_3": 0,
-    "post_id_4": 2,
-    "post_id_5": -1
-  }}
-}}
+        OUTPUT FORMAT:
+        Return a JSON object with this EXACT structure:
 
-**FINAL INSTRUCTIONS:**
-- The keys in "assignments" MUST be the actual post IDs from the input.
-- "topic_names": Maps topic ID (as string) to descriptive topic name (DO NOT include "-1" here)
-- "assignments": Maps post ID to topic ID (as integer, use -1 for outliers)
-- If a post is a personal anecdote, a joke, or does not fit any technical or news-related group, assign it to topic ID **-1 (outlier)**.
-- Use the actual post IDs from the "Post X (ID: ...)" lines above
-- DO NOT add "-1" to topic_names dictionary - outliers don't need a topic name
-- Only named topics (0, 1, 2, etc.) should appear in topic_names
-- **Self-Correction:** Before returning the JSON, review your generated topic names. Do they follow the "ONE TOPIC, ONE IDEA" rule? Are they specific? If not, correct them.
+        {{
+        "topic_names": {{
+            "0": "Elon vs Sam Altman Dispute",
+            "1": "Claude 3.5 Coding Performance",
+            "2": "Gemini 2.0 Flash Release"
+        }},
+        "assignments": {{
+            "post_id_1": 0,
+            "post_id_2": 1,
+            "post_id_3": 0,
+            "post_id_4": 2,
+            "post_id_5": -1
+        }}
+        }}
 
-Analyze now and return ONLY the JSON object:"""
+        **FINAL INSTRUCTIONS:**
+        - The keys in "assignments" MUST be the actual post IDs from the input.
+        - "topic_names": Maps topic ID (as string) to descriptive topic name (DO NOT include "-1" here)
+        - "assignments": Maps post ID to topic ID (as integer, use -1 for outliers)
+        - If a post is a personal anecdote, a joke, or does not fit any technical or news-related group, assign it to topic ID **-1 (outlier)**.
+        - Use the actual post IDs from the "Post X (ID: ...)" lines above
+        - DO NOT add "-1" to topic_names dictionary - outliers don't need a topic name
+        - Only named topics (0, 1, 2, etc.) should appear in topic_names
+        - **Self-Correction:** Before returning the JSON, review your generated topic names. Do they follow the "ONE TOPIC, ONE IDEA" rule? Are they specific? If not, correct them.
+
+        Analyze now and return ONLY the JSON object:"""
     
     def model_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

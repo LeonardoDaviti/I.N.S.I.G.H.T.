@@ -192,7 +192,7 @@ def main():
             sys.exit(1)
     else:
         # Use a recent date for testing (adjust as needed)
-        target_date = date(2025, 11, 13)
+        target_date = date(2025, 11, 15)
         logger.info(f"No date provided, using default: {target_date}")
     
     test = GenerateTopicsTest(db_url)
