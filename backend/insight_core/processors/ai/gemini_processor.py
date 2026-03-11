@@ -7,27 +7,105 @@ import asyncio
 import json
 import logging
 import os
-import urllib.error
-import urllib.request
+import re
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
+DEFAULT_MODEL = "gemini-3.0-flash"
+DEFAULT_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash",
+]
+
+
+def _status_code(exc: Exception) -> int | None:
+    value = getattr(exc, "status_code", None)
+    if value is None:
+        match = re.match(r"\s*([0-9]{3})\b", str(exc))
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _looks_like_missing_model(exc: Exception) -> bool:
+    code = _status_code(exc)
+    text = str(exc).lower()
+    if code == 404:
+        return True
+    if "model" in text and ("not found" in text or "is not found for api version" in text):
+        return True
+    if code == 400 and "model" in text and ("not found" in text or "unknown" in text or "invalid" in text):
+        return True
+    return False
+
+
+def _retry_delay_from_error(exc: Exception) -> float | None:
+    text = str(exc)
+    match = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", text, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"retryDelay['\"]?\s*:\s*['\"]([0-9]+)s", text, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def _looks_like_quota_exhausted(exc: Exception) -> bool:
+    text = str(exc).lower()
+    if "resource_exhausted" in text:
+        return True
+    if "quota" in text and ("exceeded" in text or "limit" in text):
+        return True
+    if "daily limit" in text:
+        return True
+    return False
+
+
+def _model_alias(model: str) -> str:
+    aliases = {
+        "gemini-3.0-flash": "gemini-3-flash-preview",
+    }
+    return aliases.get(model, model)
+
+
+def _parse_csv_env(name: str) -> list[str]:
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 class GeminiProcessor:
-    """Thin async wrapper around the Gemini text generation API."""
+    """Thin async wrapper around Gemini with Roberto-style model fallback handling."""
 
     def __init__(self):
         self.api_key: Optional[str] = None
-        self.model = "gemini-2.0-flash"
-        self.temperature = 0.1
+        self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        self.model_fallbacks = _parse_csv_env("GEMINI_MODEL_FALLBACKS") or list(DEFAULT_FALLBACK_MODELS)
+        self.temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0.1"))
+        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+        self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
+        self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "10"))
+        self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
+        self._client: Any | None = None
+        self._disabled_models: set[str] = set()
+        self.llm: Any | None = None
 
     def setup_processor(self) -> bool:
-        """Configure Gemini using GEMINI_API_KEY."""
-        api_key = os.environ.get("GEMINI_API_KEY")
+        """Configure Gemini using GEMINI_API_KEY or GOOGLE_API_KEY."""
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
-            self.logger.error("GEMINI_API_KEY environment variable not set")
+            self.logger.error("GEMINI_API_KEY or GOOGLE_API_KEY environment variable not set")
             return False
 
         try:
@@ -40,12 +118,15 @@ class GeminiProcessor:
             return False
 
     async def connect(self) -> None:
-        """No-op kept for compatibility with existing call sites."""
+        """Initialize the Gemini client lazily for compatibility with existing call sites."""
         if not self.is_setup:
             raise RuntimeError("Gemini processor is not configured")
+        self.llm = self._client_instance()
 
     async def disconnect(self) -> None:
-        """No-op kept for compatibility with existing call sites."""
+        """Release the cached client for compatibility with existing call sites."""
+        self._client = None
+        self.llm = None
         return None
 
     async def daily_briefing(self, posts: List[Dict[str, Any]]) -> str:
@@ -292,56 +373,151 @@ POSTS:
     async def _generate_text(self, prompt: str) -> str:
         return await asyncio.to_thread(self._generate_text_sync, prompt)
 
+    def _client_instance(self):
+        if self._client is not None:
+            return self._client
+
+        from google import genai
+
+        if self.api_key:
+            self._client = genai.Client(api_key=self.api_key)
+        else:
+            self._client = genai.Client()
+        self.llm = self._client
+        return self._client
+
+    def _candidate_models(self) -> list[str]:
+        requested = [str(self.model).strip()] + [str(model).strip() for model in self.model_fallbacks]
+        out: list[str] = []
+        for model in requested:
+            if not model:
+                continue
+            aliased = _model_alias(model)
+            if aliased and aliased not in out:
+                out.append(aliased)
+        return out or ["gemini-flash-latest"]
+
     def _generate_text_sync(self, prompt: str) -> str:
         if not self.is_setup or not self.api_key:
             raise RuntimeError("Gemini processor is not configured")
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:generateContent?key={self.api_key}"
-        )
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt,
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": self.temperature,
-            },
-        }
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-
+        client = self._client_instance()
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                response_json = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Gemini HTTP {exc.code}: {error_body[:500]}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Gemini request failed: {exc.reason}") from exc
+            from google.genai import types as genai_types
 
-        candidates = response_json.get("candidates", [])
-        text_parts = []
-        for candidate in candidates:
-            content = candidate.get("content", {})
-            for part in content.get("parts", []):
-                if "text" in part:
-                    text_parts.append(part["text"])
+            config_obj: Any = genai_types.GenerateContentConfig(
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except Exception:  # noqa: BLE001
+            config_obj = {
+                "temperature": self.temperature,
+                "max_output_tokens": self.max_output_tokens,
+            }
 
-        text = "\n".join(text_parts).strip()
-        if not text:
-            raise RuntimeError("Gemini returned an empty response")
-        return self._clean_markdown_response(text)
+        models = [model for model in self._candidate_models() if model not in self._disabled_models]
+        if not models:
+            raise RuntimeError("No enabled Gemini models available for request")
+
+        attempts = max(1, int(self.retry_max_attempts))
+        min_backoff = max(1.0, float(self.retry_min_backoff_s))
+        max_backoff = max(min_backoff, float(self.retry_max_backoff_s))
+        last_retryable_exc: Exception | None = None
+
+        for attempt in range(attempts):
+            cycle_retry_delay: float | None = None
+            for model in list(models):
+                if model in self._disabled_models:
+                    continue
+                try:
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=config_obj,
+                    )
+                    text = self._response_text(response)
+                    if not text:
+                        raise RuntimeError(f"Gemini returned empty response for model {model}")
+                    return self._clean_markdown_response(text)
+                except Exception as exc:  # noqa: BLE001
+                    if _looks_like_missing_model(exc):
+                        self.logger.warning("Disabling unavailable Gemini model %s: %s", model, exc)
+                        self._disabled_models.add(model)
+                        continue
+
+                    if isinstance(exc, RuntimeError):
+                        text = str(exc).lower()
+                        if "empty response" in text:
+                            last_retryable_exc = exc
+                            continue
+
+                    status = _status_code(exc)
+                    if status in {429, 500, 502, 503, 504}:
+                        if status == 429 and _looks_like_quota_exhausted(exc):
+                            self.logger.warning("Disabling quota-exhausted Gemini model %s: %s", model, exc)
+                            self._disabled_models.add(model)
+                            last_retryable_exc = exc
+                            continue
+                        last_retryable_exc = exc
+                        retry_hint = _retry_delay_from_error(exc)
+                        if retry_hint is not None:
+                            cycle_retry_delay = max(cycle_retry_delay or 0.0, retry_hint)
+                        continue
+                    raise
+
+            models = [model for model in self._candidate_models() if model not in self._disabled_models]
+            if not models:
+                raise RuntimeError("All configured Gemini models were rejected/unavailable")
+            if last_retryable_exc is None:
+                break
+            if attempt >= attempts - 1:
+                break
+            default_delay = min(max_backoff, min_backoff * (2 ** attempt))
+            wait_s = min(max_backoff, max(min_backoff, cycle_retry_delay or default_delay))
+            self.logger.warning(
+                "Gemini retry cycle %s/%s exhausted across models; sleeping %.1fs before retry.",
+                attempt + 1,
+                attempts,
+                wait_s,
+            )
+            time.sleep(wait_s)
+
+        if last_retryable_exc is not None:
+            raise last_retryable_exc
+        raise RuntimeError("Gemini request failed without retryable error details")
+
+    def _response_text(self, response: Any) -> str:
+        text = getattr(response, "text", None)
+        if text:
+            return str(text).strip()
+
+        parsed = getattr(response, "parsed", None)
+        if parsed is not None:
+            if hasattr(parsed, "model_dump_json"):
+                return parsed.model_dump_json()  # type: ignore[attr-defined]
+            if hasattr(parsed, "model_dump"):
+                return json.dumps(parsed.model_dump())  # type: ignore[attr-defined]
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed)
+            return str(parsed).strip()
+
+        candidates = getattr(response, "candidates", None)
+        text_parts: list[str] = []
+        if candidates:
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                if content is None and isinstance(candidate, dict):
+                    content = candidate.get("content", {})
+                parts = getattr(content, "parts", None) if content is not None else None
+                if parts is None and isinstance(content, dict):
+                    parts = content.get("parts", [])
+                for part in parts or []:
+                    part_text = getattr(part, "text", None)
+                    if part_text is None and isinstance(part, dict):
+                        part_text = part.get("text")
+                    if part_text:
+                        text_parts.append(str(part_text))
+        return "\n".join(text_parts).strip()
 
     def _extract_json_from_response(self, response_text: str) -> Dict[str, Any]:
         text = response_text.strip()
