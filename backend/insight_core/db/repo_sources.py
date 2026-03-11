@@ -2,8 +2,10 @@
 Repository for sources table operations.
 Handles all SQL queries for source management.
 """
+import json
 import psycopg
 from psycopg import Cursor
+from datetime import date, datetime
 from typing import List, Dict, Any, Optional
 from insight_core.logs.core.logger_config import get_component_logger
 
@@ -37,6 +39,29 @@ class SourcesRepository:
         
         self.logger.debug(f"Retrieved {len(sources)} sources")
         return sources
+
+    def get_source_by_id(self, cur: Cursor, source_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single source by UUID."""
+        query = """
+            SELECT id, platform, handle_or_url, enabled, settings, created_at, updated_at
+            FROM sources
+            WHERE id = %s
+        """
+        cur.execute(query, (source_id,))
+        row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": str(row[0]),
+            "platform": row[1],
+            "handle_or_url": row[2],
+            "enabled": row[3],
+            "settings": row[4] or {},
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
     
     def get_enabled_sources(self, cur: Cursor) -> List[Dict[str, Any]]:
         """Get only enabled sources."""
@@ -168,20 +193,60 @@ class SourcesRepository:
             return {}
         
         source_settings = row[0] if row[0] else {}
-        
+
         # Default settings (same for all platforms for simplicity)
         defaults = {
             "fetch_delay_seconds": 1,
             "priority": 999,
-            "max_posts_per_fetch": 50
+            "max_posts_per_fetch": 50,
+            "archive": {
+                "status": "not_archived",
+                "stored_posts": 0,
+                "available_posts": None,
+                "first_post_date": None,
+                "last_archived_at": None,
+                "last_live_fetch_at": None,
+                "source_type": None,
+            },
         }
-        
-        # Merge: defaults + source overrides
-        merged = {**defaults, **source_settings}
-        
+
+        merged = self._deep_merge_dicts(defaults, source_settings)
+
         self.logger.debug(f"Merged settings for source {source_id}: {merged}")
         return merged
-    
+
+    def merge_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Merge new settings into the existing JSONB payload and persist the result.
+
+        Returns:
+            The merged settings dict, or None when the source does not exist.
+        """
+        source = self.get_source_by_id(cur, source_id)
+        if not source:
+            self.logger.warning(f"Source {source_id} not found")
+            return None
+
+        current_settings = source.get("settings") or {}
+        merged_settings = self._deep_merge_dicts(current_settings, settings)
+
+        query = """
+            UPDATE sources
+            SET settings = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING id
+        """
+        json_safe_settings = self._make_json_safe(merged_settings)
+        cur.execute(query, (json.dumps(json_safe_settings), source_id))
+        row = cur.fetchone()
+
+        if not row:
+            self.logger.warning(f"Source {source_id} not found")
+            return None
+
+        self.logger.info(f"Updated settings for source {source_id}")
+        return json_safe_settings
+
     def update_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> bool:
         """
         Update settings for a source.
@@ -194,21 +259,28 @@ class SourcesRepository:
         Returns:
             True if updated, False if source not found
         """
-        import json
-        
-        query = """
-            UPDATE sources
-            SET settings = %s, updated_at = now()
-            WHERE id = %s
-            RETURNING id
-        """
-        cur.execute(query, (json.dumps(settings), source_id))
-        row = cur.fetchone()
-        
-        if row:
-            self.logger.info(f"Updated settings for source {source_id}")
-            return True
-        else:
-            self.logger.warning(f"Source {source_id} not found")
-            return False
+        merged = self.merge_source_settings(cur, source_id, settings)
+        return merged is not None
+
+    def _deep_merge_dicts(self, base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge nested dictionaries without clobbering existing archive metadata."""
+        merged = dict(base)
+
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = self._deep_merge_dicts(merged[key], value)
+            else:
+                merged[key] = value
+
+        return merged
+
+    def _make_json_safe(self, value: Any) -> Any:
+        """Convert nested datetime values into JSON-safe ISO strings."""
+        if isinstance(value, dict):
+            return {key: self._make_json_safe(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._make_json_safe(item) for item in value]
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        return value
     

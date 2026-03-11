@@ -25,6 +25,7 @@ from psycopg import Cursor
 from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.services.sources_service import SourcesService
+from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.connectors import create_connector
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
@@ -102,6 +103,7 @@ async def safe_ingest_posts():
     
     # 1. Get all sources with settings from database
     sources_service = SourcesService(db_url)
+    fetch_service = SourceFetchService(db_url)
     all_sources = sources_service.get_all_sources_with_settings()
     
     # Filter only enabled sources
@@ -110,6 +112,7 @@ async def safe_ingest_posts():
     if not enabled_sources:
         logger.warning("⚠️  No enabled sources found")
         return {
+            "success": True,
             "posts_ingested": 0,
             "sources_ingested": 0,
         }
@@ -142,6 +145,7 @@ async def safe_ingest_posts():
     if not sources_to_fetch:
         logger.info("✨ All sources are up to date! Nothing to fetch.")
         return {
+            "success": True,
             "posts_ingested": 0,
             "sources_ingested": 0,
         }
@@ -171,13 +175,16 @@ async def safe_ingest_posts():
     
     # 5. Fetch posts from each platform in priority order
     all_posts = []
+    source_lookup = {source["id"]: source for source in sources_to_fetch}
     for platform, sources in by_platform.items():
         platform_start_time = time.time()
-        
-        connector = create_connector(platform)
-        connector.setup_connector()
-        await connector.connect()
-        logger.info(f"🔌 Connected to {platform} connector")
+
+        connector = None
+        if platform != "rss":
+            connector = create_connector(platform)
+            connector.setup_connector()
+            await connector.connect()
+            logger.info(f"🔌 Connected to {platform} connector")
         
         for idx, source in enumerate(sources):
             try:
@@ -189,7 +196,10 @@ async def safe_ingest_posts():
                 
                 # Fetch posts with custom limit
                 logger.info(f"📥 [{priority}] Fetching up to {max_posts} posts from {display_name}")
-                posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
+                if platform == "rss":
+                    posts = await fetch_service.fetch_live_posts(source, limit=max_posts)
+                else:
+                    posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
                 logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts")
                 
                 # Attach source_id to each post
@@ -207,8 +217,9 @@ async def safe_ingest_posts():
                 logger.error(f"❌ Failed to fetch from {source['handle_or_url']}: {e}")
                 continue
         
-        await connector.disconnect()
-        logger.info(f"🔌 Disconnected from {platform} connector")
+        if connector:
+            await connector.disconnect()
+            logger.info(f"🔌 Disconnected from {platform} connector")
         
         # Record platform timing
         platform_elapsed = time.time() - platform_start_time
@@ -220,13 +231,20 @@ async def safe_ingest_posts():
     # 6. Save to database
     db_start_time = time.time()
     repo = PostsRepository(db_url)
+    per_source_fetch_counts = {}
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             for post in all_posts:
                 source_id = post.pop("_source_id")
+                per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
                 repo.upsert_post(cur, post, source_id)
                 logger.info(f"Saved post: {post['url']}")
         conn.commit()
+
+    for source_id, fetched_posts in per_source_fetch_counts.items():
+        source = source_lookup.get(source_id)
+        if source and source["platform"] == "rss":
+            await fetch_service.record_live_fetch(source_id, source, fetched_posts=fetched_posts)
     
     db_elapsed = time.time() - db_start_time
     total_elapsed = time.time() - total_start_time
@@ -251,14 +269,13 @@ async def safe_ingest_posts():
         logger.debug("=" * 60)
 
     return {
+        "success": True,
         "posts_ingested": len(all_posts),
-        "sources_ingested": len(enabled_sources),
+        "sources_ingested": len(sources_to_fetch),
     }
 
 if __name__ == "__main__":
     asyncio.run(safe_ingest_posts())
-
-
 
 
 

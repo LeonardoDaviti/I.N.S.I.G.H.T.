@@ -1,4 +1,4 @@
-import os, sys, json
+import os, sys, json, hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -38,6 +38,7 @@ class PostsRepository:
         url = post['url'] # Let KeyError happen
         content = post.get("content", "")
         published_at = post.get("date", None)
+        external_id = post.get("external_id", None)
 
         # Lists -> JSON
         media_urls = json.dumps(post.get("media_urls", []))
@@ -46,6 +47,8 @@ class PostsRepository:
         # Optional Fields
         title = post.get("title", None)
         content_html = post.get("content_html", None)
+        lang = post.get("lang", None)
+        content_hash = self._build_content_hash(title, content, content_html)
         # metadata = post.get("metadata", {}) ❌ Not stored yet (future)
 
         # SQL QUERY
@@ -54,15 +57,27 @@ class PostsRepository:
             INSERT INTO posts (
                 source_id, 
                 url, 
+                external_id,
                 published_at, 
                 title, 
                 content, 
                 content_html, 
+                lang,
+                content_hash,
                 media_urls, 
                 categories
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             ON CONFLICT (url) DO UPDATE SET
+                external_id = COALESCE(EXCLUDED.external_id, posts.external_id),
+                published_at = COALESCE(EXCLUDED.published_at, posts.published_at),
+                title = COALESCE(EXCLUDED.title, posts.title),
+                content = COALESCE(EXCLUDED.content, posts.content),
+                content_html = COALESCE(EXCLUDED.content_html, posts.content_html),
+                lang = COALESCE(EXCLUDED.lang, posts.lang),
+                content_hash = COALESCE(EXCLUDED.content_hash, posts.content_hash),
+                media_urls = EXCLUDED.media_urls,
+                categories = EXCLUDED.categories,
                 fetched_at = now(),
                 updated_at = now()
             RETURNING id, (xmax = 0) AS inserted
@@ -72,10 +87,13 @@ class PostsRepository:
         cur.execute(query, (
             source_id,
             url,
+            external_id,
             published_at,
             title,
             content,
             content_html,
+            lang,
+            content_hash,
             media_urls,
             categories
         ))
@@ -225,7 +243,56 @@ class PostsRepository:
         return posts
 
     def get_post_count(self, source_id) -> int:
-        pass
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM posts WHERE source_id = %s", (source_id,))
+                row = cur.fetchone()
+                return row[0] if row else 0
 
     def get_post_count_by_date(self, date) -> int:
-        pass
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM posts
+                    WHERE DATE(COALESCE(published_at, fetched_at)) = %s
+                    """,
+                    (date,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else 0
+
+    def get_source_post_stats(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
+        """Return aggregate storage stats for a single source."""
+        query = """
+            SELECT
+                COUNT(*) AS post_count,
+                MIN(published_at) AS oldest_published_at,
+                MAX(published_at) AS latest_published_at,
+                MAX(fetched_at) AS latest_fetched_at
+            FROM posts
+            WHERE source_id = %s
+        """
+        cur.execute(query, (source_id,))
+        row = cur.fetchone()
+
+        return {
+            "post_count": row[0] or 0,
+            "oldest_published_at": row[1],
+            "latest_published_at": row[2],
+            "latest_fetched_at": row[3],
+        }
+
+    def _build_content_hash(self, title: Optional[str], content: str, content_html: Optional[str]) -> str:
+        """Create a stable digest for dedupe and update tracking."""
+        payload = "\n".join(
+            part.strip()
+            for part in [
+                title or "",
+                content or "",
+                content_html or "",
+            ]
+            if part
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest() if payload else ""

@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from insight_bridge import InsightBridge
 from insight_api_bridge import InsightApiBridge
 from typing import List, Dict, Any
 import logging
@@ -24,9 +23,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the bridge to Mark I Foundation Engine
-bridge = InsightBridge()
-
 # Initialize the bridge to Mark I API Engine
 api_bridge = InsightApiBridge()
 
@@ -36,12 +32,16 @@ class BriefingRequest(BaseModel):
     includeTopics: bool | None = None
     includeUnreferenced: bool | None = True
 
+
+class ArchiveRequest(BaseModel):
+    desiredPosts: int | None = None
+
 @app.get("/")
 async def root():
     return {
         "message": "INSIGHT Intelligence Platform API", 
         "version": "1.0.0",
-        "engine": "Mark I Foundation Engine",
+        "engine": "DB-backed Archive Engine",
         "status": "operational"
     }
 
@@ -205,6 +205,39 @@ async def get_sources_with_settings():
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/archive/{source_id}/status")
+async def get_archive_status(source_id: str):
+    """Get persisted archive status for a source."""
+    try:
+        logger.info(f"📦 Fetching archive status for source: {source_id}")
+        return api_bridge.get_archive_status(source_id)
+    except Exception as e:
+        logger.exception(f"Failed to get archive status for {source_id}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/archive/{source_id}/plan")
+async def plan_archive(source_id: str, request: ArchiveRequest):
+    """Estimate archive effort for a source."""
+    try:
+        logger.info(f"🧭 Planning archive for source: {source_id}")
+        return await api_bridge.get_archive_plan(source_id, request.desiredPosts)
+    except Exception as e:
+        logger.exception(f"Failed to plan archive for {source_id}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/archive/{source_id}/run")
+async def run_archive(source_id: str, request: ArchiveRequest):
+    """Run an archive job for a single source."""
+    try:
+        logger.info(f"📦 Running archive for source: {source_id}")
+        return await api_bridge.run_archive(source_id, request.desiredPosts)
+    except Exception as e:
+        logger.exception(f"Failed to run archive for {source_id}")
+        return {"success": False, "error": str(e)}
+
+
 # Briefing generation endpoints
 
 
@@ -217,14 +250,15 @@ async def generate_daily_briefing(request: BriefingRequest):
         if not date:
             raise HTTPException(status_code=400, detail="Date parameter required")
         
-        # If includeTopics flag is set, use enhanced path
         if request.includeTopics:
-            result = await bridge.daily_briefing_with_topics(date)
+            result = await api_bridge.generate_daily_briefing_with_topics(
+                date,
+                include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
+            )
         else:
-            # Call the Mark I Foundation Engine
-            result = await bridge.daily_briefing(date)
+            result = await api_bridge.generate_daily_briefing(date)
         
-        if isinstance(result, dict) and "error" in result:
+        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
             logger.error(f"❌ Engine error: {result['error']}")
             return {"success": False, "error": result["error"]}
         
@@ -262,8 +296,8 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
             raise HTTPException(status_code=400, detail="Date parameter required")
 
         include_unreferenced = True if request.includeUnreferenced is None else request.includeUnreferenced
-        result = await bridge.daily_briefing_with_topics(date, include_unreferenced=include_unreferenced)
-        if isinstance(result, dict) and "error" in result:
+        result = await api_bridge.generate_daily_briefing_with_topics(date, include_unreferenced=include_unreferenced)
+        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
             logger.error(f"❌ Engine error: {result['error']}")
             return {"success": False, "error": result["error"]}
 
@@ -292,7 +326,7 @@ async def health_check():
     import time
     return {
         "status": "healthy",
-        "engine": "Mark I Foundation Engine",
+        "engine": "DB-backed Archive Engine",
         "timestamp": str(time.time())
     }
 

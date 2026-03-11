@@ -34,3 +34,9 @@ class PostsService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source(cur, source_id)
+
+    def get_source_post_stats(self, source_id: str) -> Dict[str, Any]:
+        """Get aggregate storage stats for a source."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_source_post_stats(cur, source_id)

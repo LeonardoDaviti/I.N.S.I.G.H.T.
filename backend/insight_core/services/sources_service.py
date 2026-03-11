@@ -26,6 +26,12 @@ class SourcesService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_enabled_sources(cur)
+
+    def get_source_by_id(self, source_id: str) -> Dict[str, Any] | None:
+        """Get a single source by UUID."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_source_by_id(cur, source_id)
     
     def update_source_status(self, source_id: str, enabled: bool) -> Dict[str, Any]:
         """Enable or disable a source."""
@@ -115,14 +121,30 @@ class SourcesService:
         
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                success = self.repo.update_source_settings(cur, source_id, validated_settings)
+                merged_settings = self.repo.merge_source_settings(cur, source_id, validated_settings)
                 conn.commit()
                 
-                if success:
+                if merged_settings is not None:
                     self.logger.info(f"Updated settings for source {source_id}")
                     return {
                         "source_id": source_id,
-                        "settings": validated_settings
+                        "settings": merged_settings
                     }
                 else:
                     raise ValueError(f"Source {source_id} not found")
+
+    def merge_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge internal settings payloads, including archive metadata."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                merged_settings = self.repo.merge_source_settings(cur, source_id, settings)
+                conn.commit()
+
+                if merged_settings is None:
+                    raise ValueError(f"Source {source_id} not found")
+
+                self.logger.info(f"Merged internal settings for source {source_id}")
+                return {
+                    "source_id": source_id,
+                    "settings": merged_settings,
+                }

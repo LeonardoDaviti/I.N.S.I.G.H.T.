@@ -4,14 +4,13 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.topics_service import TopicsService
+from insight_core.services.briefing_service import BriefingService
+from insight_core.services.source_fetch_service import SourceFetchService
 
 from insight_core.scripts.ingest import ingest_posts
 from insight_core.scripts.safe_ingest import safe_ingest_posts
 
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
-
 from datetime import datetime, date
-# from insight_core.services.briefing_service import BriefingService
 
 from typing import List, Dict, Any
 
@@ -21,7 +20,8 @@ class InsightApiBridge:
         self.sources_service = SourcesService(self.db)
         self.posts_service = PostsService(self.db)
         self.topics_service = TopicsService(self.db)
-        self.processor = GeminiProcessor()
+        self.briefing_service = BriefingService(self.db)
+        self.source_fetch_service = SourceFetchService(self.db)
     
     # ============= SOURCES MANAGEMENT =============
 
@@ -294,6 +294,85 @@ class InsightApiBridge:
                 "error": str(e),
                 "platforms": {},
                 "total_posts": 0
+            }
+
+    # ============= ARCHIVE =============
+
+    async def get_archive_plan(self, source_id: str, desired_posts: int | None = None) -> Dict[str, Any]:
+        """Inspect a source and estimate archive effort."""
+        try:
+            plan = await self.source_fetch_service.plan_archive(source_id, desired_posts)
+            return {
+                "success": True,
+                "archive": plan,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def run_archive(self, source_id: str, desired_posts: int | None = None) -> Dict[str, Any]:
+        """Archive posts for a single source into the shared posts table."""
+        try:
+            result = await self.source_fetch_service.archive_source(source_id, desired_posts)
+            return result
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "source_id": source_id,
+            }
+
+    def get_archive_status(self, source_id: str) -> Dict[str, Any]:
+        """Return persisted archive metadata plus current storage stats."""
+        try:
+            source = self.sources_service.get_source_with_settings(source_id)
+            post_stats = self.posts_service.get_source_post_stats(source_id)
+            archive_settings = source.get("settings", {}).get("archive", {})
+
+            return {
+                "success": True,
+                "source_id": source_id,
+                "archive": {
+                    **archive_settings,
+                    "stored_posts": post_stats["post_count"],
+                    "oldest_published_at": post_stats["oldest_published_at"].isoformat() if post_stats.get("oldest_published_at") else None,
+                    "latest_published_at": post_stats["latest_published_at"].isoformat() if post_stats.get("latest_published_at") else None,
+                },
+                "source": source,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "source_id": source_id,
+            }
+
+    # ============= BRIEFINGS =============
+
+    async def generate_daily_briefing(self, date_str: str) -> Dict[str, Any]:
+        """Generate a DB-backed daily briefing."""
+        try:
+            return await self.briefing_service.generate_daily_briefing(date_str)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def generate_daily_briefing_with_topics(
+        self,
+        date_str: str,
+        include_unreferenced: bool = True,
+    ) -> Dict[str, Any]:
+        """Generate a DB-backed topic briefing."""
+        try:
+            return await self.briefing_service.generate_daily_briefing_with_topics(date_str, include_unreferenced)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
             }
 
 
@@ -704,13 +783,13 @@ class InsightApiBridge:
     def model_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Model topics from a list of posts (testing only)."""
         try:
-            if not self.processor.is_setup:
-                self.processor.setup_processor()
+            processor = self.briefing_service.processor
+            if not processor.is_setup and not processor.setup_processor():
                 return {
                     "success": False,
                     "error": "Processor not setup. Call setup_processor() first"
                 }
-            return self.processor.model_topics(posts)
+            return processor.model_topics(posts)
         except Exception as e:
             return {
                 "success": False,
