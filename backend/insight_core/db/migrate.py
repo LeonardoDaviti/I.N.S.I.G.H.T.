@@ -35,6 +35,16 @@ def ensure_schema_migrations(cur: psycopg.Cursor) -> None:
         )
     """)
 
+
+def acquire_migration_lock(cur: psycopg.Cursor) -> None:
+    """Serialize migrations across multiple processes/containers."""
+    cur.execute("SELECT pg_advisory_lock(%s)", (84217001,))
+
+
+def release_migration_lock(cur: psycopg.Cursor) -> None:
+    """Release the migration advisory lock."""
+    cur.execute("SELECT pg_advisory_unlock(%s)", (84217001,))
+
 def applied_versions(cur: psycopg.Cursor) -> Set[str]:
     cur.execute("SELECT version FROM schema_migrations")
     return {r[0] for r in cur.fetchall()}
@@ -72,6 +82,7 @@ def main():
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                acquire_migration_lock(cur)
                 ensure_schema_migrations(cur)
 
                 already = applied_versions(cur)
@@ -97,6 +108,7 @@ def main():
                     except Exception as e:
                         logger.error("Failed applying %s; %s", version, e)
                         raise
+                release_migration_lock(cur)
                 
             conn.commit()
             logger.info("All Pending migrations applied successfully")

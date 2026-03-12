@@ -35,6 +35,20 @@ class SourceFetchServiceTests(unittest.TestCase):
             }),
             "reddit_subreddit",
         )
+        self.assertEqual(
+            self.service.classify_source({
+                "platform": "youtube",
+                "handle_or_url": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+            }),
+            "youtube_channel",
+        )
+        self.assertEqual(
+            self.service.classify_source({
+                "platform": "rss",
+                "handle_or_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHkYOD-3fZbuGhwsADBd9ZQ",
+            }),
+            "youtube_channel",
+        )
 
     def test_extract_nitter_tweet_count(self):
         html = """
@@ -92,6 +106,10 @@ class SourceFetchServiceTests(unittest.TestCase):
         self.assertEqual(posts[0]["external_id"], "11277")
         self.assertEqual(posts[0]["url"], "https://t.me/denissexy/11277")
         self.assertEqual(posts[0]["media_urls"], ["https://telegram.local/media/denissexy/1.jpg"])
+
+    def test_estimate_seconds_applies_nitter_batch_cooldown(self):
+        self.assertEqual(self.service._estimate_seconds("nitter_rss", 10), 100)
+        self.assertEqual(self.service._estimate_seconds("nitter_rss", 11), 131)
 
 
 if __name__ == "__main__":

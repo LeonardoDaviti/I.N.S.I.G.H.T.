@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from backend.insight_core.db.repo_sources import SourcesRepository
 from backend.insight_core.processors.ai.gemini_processor import GeminiProcessor
+from backend.insight_core.services.briefing_service import BriefingService
 
 
 class GeminiProcessorFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -78,6 +79,51 @@ class SourcesRepositoryJsonSafeTests(unittest.TestCase):
 
         self.assertEqual(result["archive"]["last_archived_at"], "2026-03-11T22:23:14+00:00")
         self.assertEqual(result["archive"]["history"][0]["at"], "2026-03-11T22:26:13+00:00")
+
+
+class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_daily_briefing_falls_back_when_connect_fails(self):
+        service = BriefingService("postgresql:///unused")
+
+        class FakePostsService:
+            def get_posts_by_date(self, target_date):
+                return [
+                    {
+                        "id": "1",
+                        "source": "https://nitter.local/karpathy/rss",
+                        "title": "Agent update",
+                        "content": "Agents are getting more capable.",
+                        "date": "2026-03-12T00:00:00+00:00",
+                    }
+                ]
+
+        class FakeStoreService:
+            def save_briefing(self, **kwargs):
+                return {"id": "briefing-1"}
+
+        class FakeProcessor:
+            def setup_processor(self):
+                return True
+
+            async def connect(self):
+                raise RuntimeError("missing google.genai")
+
+            async def disconnect(self):
+                return None
+
+            def _fallback_daily_briefing(self, posts):
+                return "## Executive Summary\nFallback"
+
+        service.posts_service = FakePostsService()
+        service.store_service = FakeStoreService()
+        service.processor = FakeProcessor()
+
+        result = await service.generate_daily_briefing("2026-03-12")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["briefing"], "## Executive Summary\nFallback")
+        self.assertEqual(result["format"], "markdown")
+        self.assertEqual(result["saved_briefing_id"], "briefing-1")
 
 
 if __name__ == "__main__":

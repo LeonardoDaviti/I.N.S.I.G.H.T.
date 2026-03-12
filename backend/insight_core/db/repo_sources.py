@@ -181,7 +181,7 @@ class SourcesRepository:
             Dict with settings (defaults + source overrides)
         """
         query = """
-            SELECT s.settings
+            SELECT s.platform, s.settings
             FROM sources s
             WHERE s.id = %s
         """
@@ -192,13 +192,11 @@ class SourcesRepository:
             self.logger.warning(f"Source {source_id} not found")
             return {}
         
-        source_settings = row[0] if row[0] else {}
+        platform = row[0]
+        source_settings = row[1] if row[1] else {}
 
-        # Default settings (same for all platforms for simplicity)
         defaults = {
-            "fetch_delay_seconds": 1,
-            "priority": 999,
-            "max_posts_per_fetch": 50,
+            **self._platform_defaults(platform),
             "archive": {
                 "status": "not_archived",
                 "stored_posts": 0,
@@ -283,4 +281,36 @@ class SourcesRepository:
         if isinstance(value, (datetime, date)):
             return value.isoformat()
         return value
+
+    def _platform_defaults(self, platform: str) -> Dict[str, Any]:
+        defaults_by_platform = {
+            "rss": {
+                "fetch_delay_seconds": 1,
+                "priority": 999,
+                "max_posts_per_fetch": 20,
+            },
+            "reddit": {
+                "fetch_delay_seconds": 2,
+                "priority": 999,
+                "max_posts_per_fetch": 25,
+            },
+            "youtube": {
+                "fetch_delay_seconds": 2,
+                "priority": 999,
+                "max_posts_per_fetch": 5,
+            },
+            "telegram": {
+                "fetch_delay_seconds": 2,
+                "priority": 999,
+                "max_posts_per_fetch": 20,
+            },
+        }
+        return defaults_by_platform.get(
+            platform,
+            {
+                "fetch_delay_seconds": 1,
+                "priority": 999,
+                "max_posts_per_fetch": 20,
+            },
+        )
     

@@ -4,8 +4,29 @@ from urllib.parse import urlparse, parse_qs
 import os
 
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from youtube_transcript_api.formatters import TextFormatter
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+    from youtube_transcript_api.formatters import TextFormatter
+    TRANSCRIPT_API_AVAILABLE = True
+except ImportError:
+    TRANSCRIPT_API_AVAILABLE = False
+
+    class NoTranscriptFound(Exception):
+        pass
+
+    class TranscriptsDisabled(Exception):
+        pass
+
+    class TextFormatter:
+        def format_transcript(self, transcript_data):
+            return "\n".join(item.get("text", "") for item in transcript_data if item.get("text"))
+
+    class _YouTubeTranscriptApiFallback:
+        @staticmethod
+        def list_transcripts(video_id):
+            raise NoTranscriptFound("youtube_transcript_api is not installed")
+
+    YouTubeTranscriptApi = _YouTubeTranscriptApiFallback
 
 from .base_connector import BaseConnector
 from .tool_registry import expose_tool

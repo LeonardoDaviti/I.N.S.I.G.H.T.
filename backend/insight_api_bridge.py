@@ -6,6 +6,8 @@ from insight_core.services.posts_service import PostsService
 from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
 from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.services.source_config_sync_service import SourceConfigSyncService
+from insight_core.services.youtube_service import YouTubeService
 
 from insight_core.scripts.ingest import ingest_posts
 from insight_core.scripts.safe_ingest import safe_ingest_posts
@@ -22,6 +24,15 @@ class InsightApiBridge:
         self.topics_service = TopicsService(self.db)
         self.briefing_service = BriefingService(self.db)
         self.source_fetch_service = SourceFetchService(self.db)
+        self.source_config_sync_service = SourceConfigSyncService(self.db)
+        self.youtube_service = YouTubeService(self.db)
+
+    def _export_sources_json(self) -> None:
+        try:
+            self.source_config_sync_service.sync_db_to_json()
+        except Exception:
+            # Source mutations should still succeed even if the file export fails.
+            pass
     
     # ============= SOURCES MANAGEMENT =============
 
@@ -73,9 +84,18 @@ class InsightApiBridge:
         """Get only enabled sources (flat list)."""
         return self.sources_service.get_enabled_sources()
 
+    def sync_sources_registry(self, direction: str) -> Dict[str, Any]:
+        if direction == "json-to-db":
+            return self.source_config_sync_service.sync_json_to_db(mirror=True)
+        if direction == "db-to-json":
+            return self.source_config_sync_service.sync_db_to_json()
+        return {"success": False, "error": f"Unsupported sync direction: {direction}"}
+
     def update_source(self, source_id: str, enabled: bool) -> Dict[str, Any]:
         """Enable/disable a single source by UUID."""
-        return self.sources_service.update_source_status(source_id, enabled)
+        result = self.sources_service.update_source_status(source_id, enabled)
+        self._export_sources_json()
+        return result
     
     def update_sources_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -137,19 +157,26 @@ class InsightApiBridge:
                 except Exception as e:
                     stats["errors"].append(f"Failed to delete {key}: {e}")
         
-        return {
+        result = {
             "success": len(stats["errors"]) == 0,
             "stats": stats,
             "message": f"Added: {stats['added']}, Updated: {stats['updated']}, Deleted: {stats['deleted']}"
         }
+        self._export_sources_json()
+        return result
     
     def add_source(self, platform: str, handle: str) -> Dict[str, Any]:
         """Add new source to database."""
-        return self.sources_service.add_source(platform, handle)
+        result = self.sources_service.add_source(platform, handle)
+        self._export_sources_json()
+        return result
     
     def delete_source(self, source_id: str) -> bool:
         """Remove source from database."""
-        return self.sources_service.delete_source(source_id)
+        deleted = self.sources_service.delete_source(source_id)
+        if deleted:
+            self._export_sources_json()
+        return deleted
     
     def get_source_settings(self, source_id: str) -> Dict[str, Any]:
         """
@@ -477,6 +504,76 @@ class InsightApiBridge:
                 "posts_ingested": 0,
                 "sources_ingested": 0,
             }
+
+    # ============= YOUTUBE =============
+
+    def list_youtube_channel_videos(self, source_handle: str, limit: int | None = None) -> Dict[str, Any]:
+        try:
+            result = self.youtube_service.list_channel_videos(source_handle, limit=limit)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def build_youtube_channel_roadmap(self, source_handle: str, limit: int | None = None) -> Dict[str, Any]:
+        try:
+            result = self.youtube_service.build_channel_roadmap(source_handle, limit=limit)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def build_youtube_playlists(self, source_handle: str, limit: int = 20) -> Dict[str, Any]:
+        try:
+            result = self.youtube_service.build_playlists(source_handle, limit=limit)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def evaluate_youtube_video(self, source_handle: str, video_ref: str) -> Dict[str, Any]:
+        try:
+            result = await self.youtube_service.evaluate_video(source_handle, video_ref)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def chat_with_youtube_video(self, source_handle: str, video_ref: str, question: str) -> Dict[str, Any]:
+        try:
+            return await self.youtube_service.chat_with_video(source_handle, video_ref, question)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_youtube_watch_progress(self, video_id: str) -> Dict[str, Any]:
+        try:
+            progress = self.youtube_service.get_watch_progress(video_id)
+            return {"success": True, "progress": progress}
+        except Exception as e:
+            return {"success": False, "error": str(e), "progress": None}
+
+    def save_youtube_watch_progress(
+        self,
+        *,
+        video_id: str,
+        video_url: str,
+        title: str,
+        duration_seconds: int | None,
+        progress_seconds: int,
+        source_id: str | None = None,
+        notes_markdown: str | None = None,
+        completed: bool | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            progress = self.youtube_service.save_watch_progress(
+                video_id=video_id,
+                video_url=video_url,
+                title=title,
+                duration_seconds=duration_seconds,
+                progress_seconds=progress_seconds,
+                source_id=source_id,
+                notes_markdown=notes_markdown,
+                completed=completed,
+            )
+            return {"success": True, "progress": progress}
+        except Exception as e:
+            return {"success": False, "error": str(e), "progress": None}
 
     # ============= TOPICS RETRIEVAL =============
 

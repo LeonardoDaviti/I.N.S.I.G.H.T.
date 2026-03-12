@@ -82,7 +82,7 @@ async def ingest_posts():
         platform_start_time = time.time()
 
         connector = None
-        if platform != "rss":
+        if platform not in {"rss", "reddit", "youtube"}:
             connector = create_connector(platform)
             connector.setup_connector()
             await connector.connect()
@@ -98,7 +98,7 @@ async def ingest_posts():
                 
                 # Fetch posts with custom limit
                 logger.info(f"📥 [{priority}] Fetching up to {max_posts} posts from {display_name}")
-                if platform == "rss":
+                if platform in {"rss", "reddit", "youtube"}:
                     posts = await fetch_service.fetch_live_posts(source, limit=max_posts)
                 else:
                     posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
@@ -144,7 +144,7 @@ async def ingest_posts():
 
     for source_id, fetched_posts in per_source_fetch_counts.items():
         source = source_lookup.get(source_id)
-        if source and source["platform"] == "rss":
+        if source and source["platform"] in {"rss", "reddit", "youtube"}:
             await fetch_service.record_live_fetch(source_id, source, fetched_posts=fetched_posts)
     
     db_elapsed = time.time() - db_start_time

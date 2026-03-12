@@ -1,4 +1,5 @@
 import os, sys, json, hashlib
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -41,15 +42,15 @@ class PostsRepository:
         external_id = post.get("external_id", None)
 
         # Lists -> JSON
-        media_urls = json.dumps(post.get("media_urls", []))
-        categories = json.dumps(post.get("categories", []))
+        media_urls = self._json_dumps(post.get("media_urls", []))
+        categories = self._json_dumps(post.get("categories", []))
 
         # Optional Fields
         title = post.get("title", None)
         content_html = post.get("content_html", None)
         lang = post.get("lang", None)
         content_hash = self._build_content_hash(title, content, content_html)
-        # metadata = post.get("metadata", {}) ❌ Not stored yet (future)
+        metadata = self._json_dumps(post.get("metadata", {}))
 
         # SQL QUERY
         # Build SQL query
@@ -64,10 +65,11 @@ class PostsRepository:
                 content_html, 
                 lang,
                 content_hash,
+                metadata,
                 media_urls, 
                 categories
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
             ON CONFLICT (url) DO UPDATE SET
                 external_id = COALESCE(EXCLUDED.external_id, posts.external_id),
                 published_at = COALESCE(EXCLUDED.published_at, posts.published_at),
@@ -76,6 +78,7 @@ class PostsRepository:
                 content_html = COALESCE(EXCLUDED.content_html, posts.content_html),
                 lang = COALESCE(EXCLUDED.lang, posts.lang),
                 content_hash = COALESCE(EXCLUDED.content_hash, posts.content_hash),
+                metadata = COALESCE(EXCLUDED.metadata, posts.metadata),
                 media_urls = EXCLUDED.media_urls,
                 categories = EXCLUDED.categories,
                 fetched_at = now(),
@@ -94,6 +97,7 @@ class PostsRepository:
             content_html,
             lang,
             content_hash,
+            metadata,
             media_urls,
             categories
         ))
@@ -140,6 +144,7 @@ class PostsRepository:
                 p.published_at,
                 p.fetched_at,
                 p.content_html,
+                p.metadata,
                 p.media_urls,
                 p.categories,
                 p.title,
@@ -167,12 +172,13 @@ class PostsRepository:
                 'published_at': row[3],
                 'fetched_at': row[4],
                 'content_html': row[5],
-                'media_urls': row[6],
-                'categories': row[7],
-                'title': row[8],
-                'platform': row[9],
-                'handle_or_url': row[10],
-                'source': row[10]              # For Frontend
+                'metadata': row[6] or {},
+                'media_urls': row[7],
+                'categories': row[8],
+                'title': row[9],
+                'platform': row[10],
+                'handle_or_url': row[11],
+                'source': row[11]              # For Frontend
             }
             posts.append(post)
 
@@ -202,6 +208,7 @@ class PostsRepository:
                 p.published_at,
                 p.fetched_at,
                 p.content_html,
+                p.metadata,
                 p.media_urls,
                 p.categories,
                 p.title,
@@ -229,12 +236,13 @@ class PostsRepository:
                 'published_at': row[3],
                 'fetched_at': row[4],
                 'content_html': row[5],
-                'media_urls': row[6],
-                'categories': row[7],
-                'title': row[8],
-                'platform': row[9],
-                'handle_or_url': row[10],
-                'source': row[10]              # For Frontend
+                'metadata': row[6] or {},
+                'media_urls': row[7],
+                'categories': row[8],
+                'title': row[9],
+                'platform': row[10],
+                'handle_or_url': row[11],
+                'source': row[11]              # For Frontend
             }
             posts.append(post)
 
@@ -296,3 +304,11 @@ class PostsRepository:
             if part
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest() if payload else ""
+
+    def _json_dumps(self, value: Any) -> str:
+        return json.dumps(value, default=self._json_default)
+
+    def _json_default(self, value: Any) -> str:
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        raise TypeError(f"Object of type {type(value)} is not JSON serializable")

@@ -4,12 +4,11 @@ INSIGHT Backend Startup Script
 Starts the FastAPI server with Mark I Foundation Engine integration
 """
 
-import uvicorn
-import sys
 import os
-from dotenv import load_dotenv, find_dotenv
+import sys
 
-PORT = 8000
+import uvicorn
+from dotenv import load_dotenv, find_dotenv
 
 # Add the backend directory to the Python path
 backend_path = os.path.dirname(os.path.abspath(__file__))
@@ -25,17 +24,18 @@ def start_server():
     except Exception:
         # Non-fatal if .env isn't present; connectors may load their own
         pass
+    port = int(os.getenv("API_PORT", "8000"))
     print("🚀 Starting INSIGHT Intelligence Platform API...")
-    print("📡 Frontend URL: http://localhost:5173")
-    print("🔧 Backend URL: http://localhost:8000")
-    print("📋 API Docs: http://localhost:8000/docs")
+    print(f"📡 Frontend URL: {os.getenv('FRONTEND_PUBLIC_URL', 'http://localhost:3000')}")
+    print(f"🔧 Backend URL: {os.getenv('BACKEND_PUBLIC_URL', f'http://localhost:{port}')}")
+    print(f"📋 API Docs: http://localhost:{port}/docs")
     print("-" * 50)
     
     try:
         uvicorn.run(
             "main:app",
             host="0.0.0.0",
-            port=PORT,
+            port=port,
             reload=True,
             reload_dirs=[backend_path],
             log_level="info"

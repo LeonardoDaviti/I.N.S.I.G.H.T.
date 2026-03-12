@@ -27,6 +27,7 @@ from insight_core.db.repo_posts import PostsRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
+from insight_core.services.youtube_service import YouTubeService
 
 
 class SourceFetchService:
@@ -42,10 +43,15 @@ class SourceFetchService:
     TELEGRAM_BATCH_SIZE = 10
     TELEGRAM_BATCH_COOLDOWN_SECONDS = 30
     NITTER_PAGE_DELAY_SECONDS = 10
+    NITTER_BATCH_SIZE = 10
+    NITTER_BATCH_COOLDOWN_SECONDS = 30
     REDDIT_PAGE_DELAY_SECONDS = 2
+    YOUTUBE_PAGE_DELAY_SECONDS = 2
 
     TELEGRAM_HOSTS = {"telegram.local", "tg.i-c-a.su", "127.0.0.1"}
     NITTER_HOSTS = {"nitter.local", "nitter.net"}
+    YOUTUBE_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com"}
+    REDDIT_HOSTS = {"www.reddit.com", "reddit.com", "old.reddit.com"}
 
     TELEGRAM_CANONICAL_RE = re.compile(r"^https://t\.me/(?P<username>[^/]+)/(?P<post_id>\d+)$")
     NITTER_STATUS_RE = re.compile(r"/status/(?P<post_id>\d+)")
@@ -57,6 +63,7 @@ class SourceFetchService:
         self.sources_service = SourcesService(db_url)
         self.posts_service = PostsService(db_url)
         self.posts_repo = PostsRepository(db_url)
+        self.youtube_service = YouTubeService(db_url)
         self.logger = get_component_logger("source_fetch_service")
         self.timeout = int(os.getenv("RSS_TIMEOUT_SECONDS", str(self.DEFAULT_TIMEOUT_SECONDS)))
         self.user_agent = os.getenv("RSS_USER_AGENT", self.DEFAULT_USER_AGENT)
@@ -101,6 +108,10 @@ class SourceFetchService:
             posts, pages_fetched = await self._collect_telegram_posts(source["handle_or_url"], target_posts)
         elif source_type == "nitter_rss":
             posts, pages_fetched = await self._collect_nitter_posts(source["handle_or_url"], target_posts)
+        elif source_type == "youtube_channel":
+            youtube_result = self.youtube_service.archive_channel_posts(source["handle_or_url"], target_posts)
+            posts = youtube_result["posts"]
+            pages_fetched = youtube_result["pages_fetched"]
         elif source_type == "reddit_subreddit":
             posts, pages_fetched = await self._collect_reddit_posts(source["handle_or_url"], target_posts)
         elif source_type == "generic_rss":
@@ -138,9 +149,11 @@ class SourceFetchService:
             posts, _ = await self._collect_nitter_posts(source["handle_or_url"], limit)
             return posts
 
+        if source_type == "youtube_channel":
+            return self.youtube_service.fetch_live_posts(source["handle_or_url"], limit)
+
         if source_type == "reddit_subreddit":
-            posts, _ = await self._collect_reddit_posts(source["handle_or_url"], limit)
-            return posts
+            return await self._fetch_reddit_live_posts(source["handle_or_url"], limit)
 
         feed_text, _ = await self._fetch_text(source["handle_or_url"])
         return self._parse_feed_posts(feed_text, source["handle_or_url"])[:limit]
@@ -155,6 +168,8 @@ class SourceFetchService:
             inspection = await self._inspect_telegram_source(source_url)
         elif source_type == "nitter_rss":
             inspection = await self._inspect_nitter_source(source_url)
+        elif source_type == "youtube_channel":
+            inspection = self._inspect_youtube_source(source_url)
         elif source_type == "reddit_subreddit":
             inspection = self._inspect_reddit_source(source_url)
         elif source_type == "generic_rss":
@@ -186,6 +201,8 @@ class SourceFetchService:
 
         if platform == "reddit":
             return "reddit_subreddit"
+        if platform == "youtube":
+            return "youtube_channel"
 
         parsed = urllib.parse.urlparse(handle_or_url)
         host = (parsed.hostname or "").lower()
@@ -196,6 +213,12 @@ class SourceFetchService:
 
         if host in self.NITTER_HOSTS and len(segments) >= 2 and segments[1] == "rss":
             return "nitter_rss"
+
+        if host in self.YOUTUBE_HOSTS and parsed.path == "/feeds/videos.xml":
+            return "youtube_channel"
+
+        if host in self.REDDIT_HOSTS and "/r/" in parsed.path:
+            return "reddit_subreddit"
 
         return "generic_rss"
 
@@ -237,8 +260,13 @@ class SourceFetchService:
             "first_post_date": None,
             "rate_limit": {
                 "page_delay_seconds": self.NITTER_PAGE_DELAY_SECONDS,
+                "batch_size": self.NITTER_BATCH_SIZE,
+                "batch_cooldown_seconds": self.NITTER_BATCH_COOLDOWN_SECONDS,
             },
         }
+
+    def _inspect_youtube_source(self, source_url: str) -> Dict[str, Any]:
+        return self.youtube_service.inspect_channel(source_url)
 
     def _inspect_reddit_source(self, source_url: str) -> Dict[str, Any]:
         return {
@@ -319,7 +347,7 @@ class SourceFetchService:
                 break
 
             cursor = next_cursor
-            await asyncio.sleep(self.NITTER_PAGE_DELAY_SECONDS)
+            await self._sleep_between_nitter_pages(pages_fetched)
 
         return collected[:target_posts], pages_fetched
 
@@ -396,16 +424,19 @@ class SourceFetchService:
         subreddit: str,
         after: Optional[str] = None,
         limit: int = 100,
+        sort_method: str = "top",
+        time_filter: Optional[str] = "all",
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         params = {
-            "t": "all",
             "limit": str(limit),
         }
+        if sort_method == "top" and time_filter:
+            params["t"] = time_filter
         if after:
             params["after"] = after
 
         query_string = urllib.parse.urlencode(params)
-        url = f"{self.REDDIT_BASE_URL}/r/{subreddit}/top.json?{query_string}"
+        url = f"{self.REDDIT_BASE_URL}/r/{subreddit}/{sort_method}.json?{query_string}"
         body, _ = await self._fetch_text(url, user_agent=self.reddit_user_agent)
         payload = json.loads(body)
         data = payload.get("data", {})
@@ -437,6 +468,11 @@ class SourceFetchService:
             })
 
         return posts, data.get("after")
+
+    async def _fetch_reddit_live_posts(self, source_handle: str, limit: int) -> List[Dict[str, Any]]:
+        subreddit = self._extract_reddit_subreddit(source_handle)
+        posts, _ = await self._fetch_reddit_page(subreddit, limit=min(limit, 100), sort_method="new", time_filter=None)
+        return posts[:limit]
 
     async def _fetch_text(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         return await asyncio.to_thread(self._fetch_text_sync, url, user_agent)
@@ -578,6 +614,12 @@ class SourceFetchService:
         else:
             await asyncio.sleep(self.TELEGRAM_PAGE_DELAY_SECONDS)
 
+    async def _sleep_between_nitter_pages(self, pages_fetched: int) -> None:
+        if pages_fetched % self.NITTER_BATCH_SIZE == 0:
+            await asyncio.sleep(self.NITTER_BATCH_COOLDOWN_SECONDS)
+        else:
+            await asyncio.sleep(self.NITTER_PAGE_DELAY_SECONDS)
+
     def _estimate_pages(self, source_type: str, desired_posts: int, page_size: int) -> int:
         if desired_posts <= 0:
             return 0
@@ -597,10 +639,19 @@ class SourceFetchService:
             return total
 
         if source_type == "nitter_rss":
-            return estimated_pages + max(0, estimated_pages - 1) * self.NITTER_PAGE_DELAY_SECONDS
+            total = estimated_pages
+            for page_number in range(1, estimated_pages):
+                if page_number % self.NITTER_BATCH_SIZE == 0:
+                    total += self.NITTER_BATCH_COOLDOWN_SECONDS
+                else:
+                    total += self.NITTER_PAGE_DELAY_SECONDS
+            return total
 
         if source_type == "reddit_subreddit":
             return estimated_pages + max(0, estimated_pages - 1) * self.REDDIT_PAGE_DELAY_SECONDS
+
+        if source_type == "youtube_channel":
+            return estimated_pages + max(0, estimated_pages - 1) * self.YOUTUBE_PAGE_DELAY_SECONDS
 
         return estimated_pages
 

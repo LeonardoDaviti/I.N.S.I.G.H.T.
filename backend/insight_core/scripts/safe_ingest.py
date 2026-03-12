@@ -4,8 +4,8 @@ Safe ingestion script that only fetches from sources that need updating.
 
 Filtering Logic:
 - Sources with 0 posts (newly added) → FETCH
-- Sources with latest post older than 24h → FETCH  
-- Sources with recent posts (< 24h) → SKIP
+- Sources with latest fetch older than SAFE_INGEST_SKIP_THRESHOLD_HOURS → FETCH
+- Sources with recent fetches inside that window → SKIP
 
 This prevents redundant fetching during development iterations.
 
@@ -14,6 +14,7 @@ Usage: python backend/insight_core/scripts/safe_ingest.py
 import sys
 from pathlib import Path
 import time
+import os
 from datetime import datetime, timedelta, timezone
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -34,7 +35,7 @@ setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
 
 # Configuration
-SKIP_THRESHOLD_HOURS = 24
+SKIP_THRESHOLD_HOURS = int(os.getenv("SAFE_INGEST_SKIP_THRESHOLD_HOURS", "12"))
 
 
 def get_source_post_stats(cur: Cursor, source_id: str) -> tuple[int, datetime | None]:
@@ -180,7 +181,7 @@ async def safe_ingest_posts():
         platform_start_time = time.time()
 
         connector = None
-        if platform != "rss":
+        if platform not in {"rss", "reddit", "youtube"}:
             connector = create_connector(platform)
             connector.setup_connector()
             await connector.connect()
@@ -196,7 +197,7 @@ async def safe_ingest_posts():
                 
                 # Fetch posts with custom limit
                 logger.info(f"📥 [{priority}] Fetching up to {max_posts} posts from {display_name}")
-                if platform == "rss":
+                if platform in {"rss", "reddit", "youtube"}:
                     posts = await fetch_service.fetch_live_posts(source, limit=max_posts)
                 else:
                     posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
@@ -243,7 +244,7 @@ async def safe_ingest_posts():
 
     for source_id, fetched_posts in per_source_fetch_counts.items():
         source = source_lookup.get(source_id)
-        if source and source["platform"] == "rss":
+        if source and source["platform"] in {"rss", "reddit", "youtube"}:
             await fetch_service.record_live_fetch(source_id, source, fetched_posts=fetched_posts)
     
     db_elapsed = time.time() - db_start_time
@@ -276,6 +277,3 @@ async def safe_ingest_posts():
 
 if __name__ == "__main__":
     asyncio.run(safe_ingest_posts())
-
-
-

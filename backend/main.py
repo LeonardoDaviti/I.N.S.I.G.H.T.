@@ -1,9 +1,12 @@
+import logging
+import os
+from typing import List, Dict, Any
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 from insight_api_bridge import InsightApiBridge
-from typing import List, Dict, Any
-import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,9 +18,28 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+def _cors_origins() -> list[str]:
+    configured = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+    frontend_public = os.getenv("FRONTEND_PUBLIC_URL", "http://localhost:3000").strip()
+    defaults = [
+        frontend_public,
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+
+    origins: list[str] = []
+    for origin in defaults:
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # use * for testing?
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,6 +57,32 @@ class BriefingRequest(BaseModel):
 
 class ArchiveRequest(BaseModel):
     desiredPosts: int | None = None
+
+
+class YouTubeChannelRequest(BaseModel):
+    source: str
+    limit: int | None = None
+
+
+class YouTubeVideoRequest(BaseModel):
+    source: str
+    video: str
+
+
+class YouTubeChatRequest(BaseModel):
+    source: str
+    video: str
+    question: str
+
+
+class YouTubeProgressRequest(BaseModel):
+    sourceId: str | None = None
+    videoUrl: str
+    title: str
+    durationSeconds: int | None = None
+    progressSeconds: int
+    notesMarkdown: str | None = None
+    completed: bool | None = None
 
 @app.get("/")
 async def root():
@@ -94,6 +142,17 @@ async def update_sources(config: dict):
             }
     except Exception as e:
         logger.exception("Failed to update sources")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/sources/sync/{direction}")
+async def sync_sources(direction: str):
+    """Synchronize sources.json and the database-backed registry."""
+    try:
+        logger.info(f"🔄 Syncing sources registry: {direction}")
+        return api_bridge.sync_sources_registry(direction)
+    except Exception as e:
+        logger.exception("Failed to sync sources")
         return {"success": False, "error": str(e)}
     
 
@@ -266,6 +325,8 @@ async def generate_daily_briefing(request: BriefingRequest):
         response_payload = {
             "success": True,
             "briefing": result.get("briefing", result) if isinstance(result, dict) else result,
+            "format": result.get("format", "markdown") if isinstance(result, dict) else "markdown",
+            "saved_briefing_id": result.get("saved_briefing_id") if isinstance(result, dict) else None,
             "date": result.get("date", date) if isinstance(result, dict) else date,
             "posts_processed": result.get("posts_processed", 0) if isinstance(result, dict) else 0,
             "total_posts_fetched": result.get("total_posts_fetched", 0) if isinstance(result, dict) else 0,
@@ -307,6 +368,8 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
             "enhanced": result.get("enhanced", True),
             # Topic-based daily briefing string (top-level summary)
             "briefing": result.get("briefing", ""),
+            "format": result.get("format", "markdown"),
+            "saved_briefing_id": result.get("saved_briefing_id"),
             "topics": result.get("topics", []),
             "unreferenced_posts": result.get("unreferenced_posts", []),
             "posts": result.get("posts", {}),
@@ -370,6 +433,87 @@ async def safe_ingest_posts():
     except Exception as e:
         logger.exception("Failed to ingest posts from all sources that need updating")
         return {"success": False, "error": str(e)}
+
+
+# ============= YOUTUBE ENDPOINTS =============
+
+@app.post("/api/youtube/channel/videos")
+async def list_youtube_channel_videos(request: YouTubeChannelRequest):
+    try:
+        logger.info(f"📺 Listing YouTube videos for {request.source}")
+        return api_bridge.list_youtube_channel_videos(request.source, request.limit)
+    except Exception as e:
+        logger.exception("Failed to list YouTube videos")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/youtube/channel/roadmap")
+async def build_youtube_channel_roadmap(request: YouTubeChannelRequest):
+    try:
+        logger.info(f"🗺️ Building YouTube roadmap for {request.source}")
+        return api_bridge.build_youtube_channel_roadmap(request.source, request.limit)
+    except Exception as e:
+        logger.exception("Failed to build YouTube roadmap")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/youtube/channel/playlists")
+async def build_youtube_playlists(request: YouTubeChannelRequest):
+    try:
+        logger.info(f"📚 Building YouTube playlists for {request.source}")
+        return api_bridge.build_youtube_playlists(request.source, request.limit or 20)
+    except Exception as e:
+        logger.exception("Failed to build YouTube playlists")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/youtube/video/evaluate")
+async def evaluate_youtube_video(request: YouTubeVideoRequest):
+    try:
+        logger.info(f"🎥 Evaluating YouTube video {request.video}")
+        return await api_bridge.evaluate_youtube_video(request.source, request.video)
+    except Exception as e:
+        logger.exception("Failed to evaluate YouTube video")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/youtube/video/chat")
+async def chat_with_youtube_video(request: YouTubeChatRequest):
+    try:
+        logger.info(f"💬 Chatting with YouTube video {request.video}")
+        return await api_bridge.chat_with_youtube_video(request.source, request.video, request.question)
+    except Exception as e:
+        logger.exception("Failed to chat with YouTube video")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/youtube/progress/{video_id}")
+async def get_youtube_watch_progress(video_id: str):
+    try:
+        logger.info(f"▶️ Fetching watch progress for {video_id}")
+        return api_bridge.get_youtube_watch_progress(video_id)
+    except Exception as e:
+        logger.exception("Failed to fetch watch progress")
+        return {"success": False, "error": str(e), "progress": None}
+
+
+@app.put("/api/youtube/progress/{video_id}")
+async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressRequest):
+    try:
+        logger.info(f"💾 Saving watch progress for {video_id}")
+        return api_bridge.save_youtube_watch_progress(
+            video_id=video_id,
+            video_url=request.videoUrl,
+            title=request.title,
+            duration_seconds=request.durationSeconds,
+            progress_seconds=request.progressSeconds,
+            source_id=request.sourceId,
+            notes_markdown=request.notesMarkdown,
+            completed=request.completed,
+        )
+    except Exception as e:
+        logger.exception("Failed to save watch progress")
+        return {"success": False, "error": str(e), "progress": None}
 
 # ============= TOPICS ENDPOINTS =============
 

@@ -1,7 +1,8 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: insight-db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-insight}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-insight}
@@ -9,9 +10,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U insight"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-insight} -d ${DB_NAME:-insight}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,25 +24,36 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: insight-api
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-    ports:
-      - "8000:8000"
-    command: |
+      DATABASE_URL: postgresql://${DB_USER:-insight}:${DB_PASSWORD:-insight}@postgres:5432/${DB_NAME:-insight}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      API_PORT: 8000
+      BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
+      FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
+      INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
+      SAFE_INGEST_SKIP_THRESHOLD_HOURS: ${SAFE_INGEST_SKIP_THRESHOLD_HOURS:-12}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
+      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
+    volumes:
+      - ./backend/insight_core/config:/app/insight_core/config
+    command: >
       sh -c "
         python insight_core/db/migrate.py &&
-        python insight_core/db/seed_sources.py &&
+        python insight_core/scripts/sync_sources_json.py json-to-db &&
         uvicorn main:app --host 0.0.0.0 --port 8000
       "
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
     networks:
       - insight-network
 
@@ -50,18 +62,29 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: insight-ingestion
+    restart: unless-stopped
     depends_on:
-      backend:
+      postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-    command: |
+      DATABASE_URL: postgresql://${DB_USER:-insight}:${DB_PASSWORD:-insight}@postgres:5432/${DB_NAME:-insight}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
+      SAFE_INGEST_SKIP_THRESHOLD_HOURS: ${SAFE_INGEST_SKIP_THRESHOLD_HOURS:-12}
+      INSIGHT_INGEST_INTERVAL_HOURS: ${INSIGHT_INGEST_INTERVAL_HOURS:-12}
+      INSIGHT_SYNC_SOURCES_EACH_CYCLE: ${INSIGHT_SYNC_SOURCES_EACH_CYCLE:-true}
+      INSIGHT_GENERATE_DAILY_BRIEFING: ${INSIGHT_GENERATE_DAILY_BRIEFING:-true}
+      INSIGHT_GENERATE_TOPIC_BRIEFING: ${INSIGHT_GENERATE_TOPIC_BRIEFING:-false}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
+      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
+    volumes:
+      - ./backend/insight_core/config:/app/insight_core/config
+    command: >
       sh -c "
-        sleep 10 &&
-        python insight_core/scripts/ingest.py &&
-        echo 'Ingestion complete, container will exit'
+        python insight_core/db/migrate.py &&
+        python insight_core/scripts/run_scheduler.py
       "
-    restart: "no"  # Run once
     networks:
       - insight-network
 
@@ -70,12 +93,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ""
+        VITE_API_URL: http://localhost:${BACKEND_PORT:-8000}
     container_name: insight-frontend
+    restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3000}:80"
     networks:
       - insight-network
 
