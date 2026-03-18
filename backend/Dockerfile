@@ -19,6 +19,7 @@ RUN python -m pip install --upgrade pip && python -m pip install --no-cache-dir 
 
 COPY . .
 RUN chmod +x docker/start-backend.sh docker/start-ingestion.sh
+RUN rm -rf fastapi pydantic psycopg uvicorn.py dotenv
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1

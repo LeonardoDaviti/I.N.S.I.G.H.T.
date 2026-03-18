@@ -100,16 +100,31 @@ class SourceFetchServiceTests(unittest.TestCase):
             return xml, {}
 
         self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
-        posts = asyncio.run(self.service._fetch_telegram_page("denissexy", 1))
+        posts = asyncio.run(self.service._fetch_telegram_page("https://tg.i-c-a.su/rss/denissexy", "denissexy", 1))
 
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["external_id"], "11277")
         self.assertEqual(posts[0]["url"], "https://t.me/denissexy/11277")
-        self.assertEqual(posts[0]["media_urls"], ["https://telegram.local/media/denissexy/1.jpg"])
+        self.assertEqual(posts[0]["media_urls"], ["https://tg.i-c-a.su/media/denissexy/1.jpg"])
 
     def test_estimate_seconds_applies_nitter_batch_cooldown(self):
         self.assertEqual(self.service._estimate_seconds("nitter_rss", 10), 100)
         self.assertEqual(self.service._estimate_seconds("nitter_rss", 11), 131)
+
+    def test_origin_resolution_uses_source_host(self):
+        self.assertEqual(
+            self.service._telegram_origin("https://tg.i-c-a.su/rss/denissexy?limit=50"),
+            "https://tg.i-c-a.su",
+        )
+        self.assertEqual(
+            self.service._nitter_origin("https://nitter.local/karpathy/rss"),
+            "https://nitter.local",
+        )
+
+    def test_tls_verification_is_skipped_for_local_hosts_only(self):
+        self.assertTrue(self.service._should_skip_tls_verify("telegram.local"))
+        self.assertTrue(self.service._should_skip_tls_verify("nitter.local"))
+        self.assertFalse(self.service._should_skip_tls_verify("tg.i-c-a.su"))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -71,6 +72,11 @@ class SourceFetchService:
             "REDDIT_USER_AGENT",
             "INSIGHT Archive Fetcher/1.0",
         )
+        self.insecure_tls_hosts = {
+            host.strip().lower()
+            for host in os.getenv("RSS_SKIP_TLS_VERIFY_HOSTS", "").split(",")
+            if host.strip()
+        }
 
     async def plan_archive(self, source_id: str, desired_posts: Optional[int] = None) -> Dict[str, Any]:
         """Inspect a source and estimate archive effort."""
@@ -224,15 +230,15 @@ class SourceFetchService:
 
     async def _inspect_telegram_source(self, source_url: str) -> Dict[str, Any]:
         username = self._extract_telegram_username(source_url)
-        page_one_posts = await self._fetch_telegram_page(username, 1)
+        page_one_posts = await self._fetch_telegram_page(source_url, username, 1)
 
         if not page_one_posts:
             raise ValueError(f"No canonical Telegram posts found for {username}")
 
         highest_post_id = max(int(post["external_id"]) for post in page_one_posts if post.get("external_id"))
         page_size = max(1, len(page_one_posts))
-        last_page_number = await self._find_last_telegram_page(username, highest_post_id, page_size)
-        last_page_posts = await self._fetch_telegram_page(username, last_page_number)
+        last_page_number = await self._find_last_telegram_page(source_url, username, highest_post_id, page_size)
+        last_page_posts = await self._fetch_telegram_page(source_url, username, last_page_number)
         oldest_post_date = last_page_posts[-1]["date"] if last_page_posts else None
 
         return {
@@ -248,7 +254,7 @@ class SourceFetchService:
 
     async def _inspect_nitter_source(self, source_url: str) -> Dict[str, Any]:
         username = self._extract_nitter_username(source_url)
-        profile_url = f"{self.NITTER_BASE_URL}/{username}"
+        profile_url = f"{self._nitter_origin(source_url)}/{username}"
         profile_html, _ = await self._fetch_text(profile_url)
         available_posts = self._extract_nitter_tweet_count(profile_html)
         rss_text, _ = await self._fetch_text(source_url)
@@ -305,7 +311,7 @@ class SourceFetchService:
         pages_fetched = 0
 
         while len(collected) < target_posts:
-            page_posts = await self._fetch_telegram_page(username, page)
+            page_posts = await self._fetch_telegram_page(source_url, username, page)
             if not page_posts:
                 break
 
@@ -331,7 +337,7 @@ class SourceFetchService:
         pages_fetched = 0
 
         while len(collected) < target_posts:
-            page_posts, next_cursor = await self._fetch_nitter_page(username, cursor)
+            page_posts, next_cursor = await self._fetch_nitter_page(source_url, username, cursor)
             if not page_posts:
                 break
 
@@ -374,15 +380,16 @@ class SourceFetchService:
 
         return collected[:target_posts], pages_fetched
 
-    async def _fetch_telegram_page(self, username: str, page: int) -> List[Dict[str, Any]]:
-        url = f"{self.TELEGRAM_BASE_URL}/rss/{username}/{page}"
+    async def _fetch_telegram_page(self, source_url: str, username: str, page: int) -> List[Dict[str, Any]]:
+        telegram_origin = self._telegram_origin(source_url)
+        url = f"{telegram_origin}/rss/{username}/{page}"
         body, _ = await self._fetch_text(url)
 
         if body.lstrip().startswith("{"):
             payload = json.loads(body)
             raise ValueError(payload.get("errors", payload))
 
-        posts = self._parse_feed_posts(body, f"{self.TELEGRAM_BASE_URL}/rss/{username}")
+        posts = self._parse_feed_posts(body, f"{telegram_origin}/rss/{username}")
         canonical_posts: List[Dict[str, Any]] = []
 
         for post in posts:
@@ -395,21 +402,30 @@ class SourceFetchService:
 
             post["external_id"] = match.group("post_id")
             post["url"] = f"https://t.me/{match.group('username')}/{match.group('post_id')}"
-            post["content_html"] = self._normalize_telegram_resources(post.get("content_html", ""))
+            post["content_html"] = self._normalize_telegram_resources(post.get("content_html", ""), telegram_origin)
             post["content"] = self._strip_html(post["content_html"])
-            post["media_urls"] = [self._normalize_telegram_resources(media_url) for media_url in post.get("media_urls", [])]
+            post["media_urls"] = [
+                self._normalize_telegram_resources(media_url, telegram_origin)
+                for media_url in post.get("media_urls", [])
+            ]
             canonical_posts.append(post)
 
         return canonical_posts
 
-    async def _fetch_nitter_page(self, username: str, cursor: Optional[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        url = f"{self.NITTER_BASE_URL}/{username}/rss"
+    async def _fetch_nitter_page(
+        self,
+        source_url: str,
+        username: str,
+        cursor: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        nitter_origin = self._nitter_origin(source_url)
+        url = f"{nitter_origin}/{username}/rss"
         if cursor:
             encoded_cursor = urllib.parse.quote(cursor, safe="")
             url = f"{url}?cursor={encoded_cursor}"
 
         body, headers = await self._fetch_text(url)
-        posts = self._parse_feed_posts(body, f"{self.NITTER_BASE_URL}/{username}/rss")
+        posts = self._parse_feed_posts(body, f"{nitter_origin}/{username}/rss")
 
         for post in posts:
             external_id = self._extract_nitter_status_id(post["url"]) or self._extract_nitter_status_id(post.get("guid", ""))
@@ -482,9 +498,13 @@ class SourceFetchService:
             url,
             headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*"},
         )
+        parsed = urllib.parse.urlparse(url)
+        context = None
+        if parsed.scheme == "https" and self._should_skip_tls_verify(parsed.hostname):
+            context = ssl._create_unverified_context()
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:
                 body = response.read().decode("utf-8", errors="replace")
                 headers = {
                     key.lower(): value
@@ -586,26 +606,26 @@ class SourceFetchService:
 
         return sorted({category.strip() for category in categories if category and category.strip()})
 
-    async def _find_last_telegram_page(self, username: str, highest_post_id: int, page_size: int) -> int:
+    async def _find_last_telegram_page(self, source_url: str, username: str, highest_post_id: int, page_size: int) -> int:
         estimated_last_page = max(1, math.ceil(highest_post_id / max(page_size, 1)))
         low = 1
         high = estimated_last_page
 
-        while await self._telegram_page_has_posts(username, high):
+        while await self._telegram_page_has_posts(source_url, username, high):
             low = high
             high *= 2
 
         while low < high:
             mid = (low + high + 1) // 2
-            if await self._telegram_page_has_posts(username, mid):
+            if await self._telegram_page_has_posts(source_url, username, mid):
                 low = mid
             else:
                 high = mid - 1
 
         return low
 
-    async def _telegram_page_has_posts(self, username: str, page: int) -> bool:
-        posts = await self._fetch_telegram_page(username, page)
+    async def _telegram_page_has_posts(self, source_url: str, username: str, page: int) -> bool:
+        posts = await self._fetch_telegram_page(source_url, username, page)
         return bool(posts)
 
     async def _sleep_between_telegram_pages(self, pages_fetched: int) -> None:
@@ -712,11 +732,14 @@ class SourceFetchService:
             return value
         return self._normalize_telegram_resources(value)
 
-    def _normalize_telegram_resources(self, value: str) -> str:
+    def _normalize_telegram_resources(self, value: str, telegram_origin: Optional[str] = None) -> str:
+        target_origin = telegram_origin or self.TELEGRAM_BASE_URL
         replacements = (
-            ("http://127.0.0.1:9504", self.TELEGRAM_BASE_URL),
-            ("http://telegram.local:9504", self.TELEGRAM_BASE_URL),
-            ("https://telegram.local:9504", self.TELEGRAM_BASE_URL),
+            ("http://127.0.0.1:9504", target_origin),
+            ("http://telegram.local:9504", target_origin),
+            ("https://telegram.local:9504", target_origin),
+            (self.TELEGRAM_BASE_URL, target_origin),
+            ("http://telegram.local", target_origin),
         )
 
         normalized = value
@@ -750,6 +773,26 @@ class SourceFetchService:
             if len(segments) >= 2 and segments[0] == "r":
                 return segments[1]
         return source_handle.replace("r/", "").strip("/")
+
+    def _telegram_origin(self, source_url: str) -> str:
+        return self._origin_from_source(source_url, self.TELEGRAM_BASE_URL)
+
+    def _nitter_origin(self, source_url: str) -> str:
+        return self._origin_from_source(source_url, self.NITTER_BASE_URL)
+
+    def _origin_from_source(self, source_url: str, fallback: str) -> str:
+        parsed = urllib.parse.urlparse(source_url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+        return fallback
+
+    def _should_skip_tls_verify(self, hostname: Optional[str]) -> bool:
+        if not hostname:
+            return False
+        host = hostname.lower()
+        if host in self.insecure_tls_hosts:
+            return True
+        return host.endswith(".local")
 
     def _extract_nitter_tweet_count(self, profile_html: str) -> Optional[int]:
         match = re.search(

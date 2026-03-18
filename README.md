@@ -52,6 +52,12 @@ This lets you keep editing `sources.json` manually without losing DB-backed beha
 - Reddit via `r/{subreddit}` or Reddit subreddit URLs
 - YouTube via channel ID, `@handle`, `/channel/...`, or feed URL
 
+Notes:
+
+- RSS-based Telegram sources do not require Telegram API credentials.
+- Raw `telegram` connector sources do require `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+- Self-hosted `.local` HTTPS feeds are fetched with TLS verification disabled automatically. You can also set `RSS_SKIP_TLS_VERIFY_HOSTS` for additional internal hosts.
+
 Archive behavior:
 
 - Telegram: 5s per page, then 30s cooldown after each 10 pages

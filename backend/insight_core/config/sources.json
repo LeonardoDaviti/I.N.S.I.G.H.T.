@@ -26,11 +26,11 @@
                 },
                 {
                     "id": "bminaiev_blog",
-                    "state": "enabled"
+                    "state": "disabled"
                 },
                 {
                     "id": "gonzo_ML",
-                    "state": "enabled"
+                    "state": "disabled"
                 },
                 {
                     "id": "optozorax_dev",

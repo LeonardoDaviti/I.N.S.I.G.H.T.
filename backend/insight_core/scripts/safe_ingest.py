@@ -183,7 +183,9 @@ async def safe_ingest_posts():
         connector = None
         if platform not in {"rss", "reddit", "youtube"}:
             connector = create_connector(platform)
-            connector.setup_connector()
+            if connector is None:
+                logger.warning(f"⚠️  Skipping platform {platform}: connector unavailable or not configured")
+                continue
             await connector.connect()
             logger.info(f"🔌 Connected to {platform} connector")
         
