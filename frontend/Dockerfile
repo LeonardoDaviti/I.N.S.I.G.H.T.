@@ -4,7 +4,7 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Accept build argument
-ARG VITE_API_URL=http://localhost:8000
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 COPY package*.json ./

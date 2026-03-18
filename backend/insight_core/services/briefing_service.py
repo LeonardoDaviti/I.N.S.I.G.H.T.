@@ -37,17 +37,11 @@ class BriefingService:
                 "total_posts_fetched": 0,
             }
 
-        if not self.processor.setup_processor():
-            return {
-                "success": False,
-                "error": "AI processor setup failed: GEMINI_API_KEY missing or invalid.",
-                "posts": posts,
-                "date": date_str,
-                "posts_processed": len(posts),
-                "total_posts_fetched": len(posts),
-            }
+        setup_ok = self.processor.setup_processor()
 
         try:
+            if not setup_ok:
+                raise RuntimeError("Gemini processor setup failed")
             await self.processor.connect()
             briefing = await self.processor.daily_briefing(posts)
         except Exception as exc:
@@ -103,18 +97,11 @@ class BriefingService:
                 "total_posts_fetched": 0,
             }
 
-        if not self.processor.setup_processor():
-            return {
-                "success": False,
-                "error": "AI processor setup failed: GEMINI_API_KEY missing or invalid.",
-                "topics": [],
-                "posts": {},
-                "date": date_str,
-                "posts_processed": len(posts),
-                "total_posts_fetched": len(posts),
-            }
+        setup_ok = self.processor.setup_processor()
 
         try:
+            if not setup_ok:
+                raise RuntimeError("Gemini processor setup failed")
             await self.processor.connect()
             topic_result = await self.processor.topic_briefing_with_numeric_ids(posts)
         except Exception as exc:

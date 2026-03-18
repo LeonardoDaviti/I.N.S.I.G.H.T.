@@ -125,6 +125,45 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["format"], "markdown")
         self.assertEqual(result["saved_briefing_id"], "briefing-1")
 
+    async def test_generate_daily_briefing_falls_back_when_setup_fails(self):
+        service = BriefingService("postgresql:///unused")
+
+        class FakePostsService:
+            def get_posts_by_date(self, target_date):
+                return [
+                    {
+                        "id": "1",
+                        "source": "r/LocalLLaMA",
+                        "title": "Local model update",
+                        "content": "New local model benchmark results arrived.",
+                        "date": "2026-03-12T00:00:00+00:00",
+                    }
+                ]
+
+        class FakeStoreService:
+            def save_briefing(self, **kwargs):
+                return {"id": "briefing-2"}
+
+        class FakeProcessor:
+            def setup_processor(self):
+                return False
+
+            async def disconnect(self):
+                return None
+
+            def _fallback_daily_briefing(self, posts):
+                return "## Executive Summary\nNo key fallback"
+
+        service.posts_service = FakePostsService()
+        service.store_service = FakeStoreService()
+        service.processor = FakeProcessor()
+
+        result = await service.generate_daily_briefing("2026-03-12")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["briefing"], "## Executive Summary\nNo key fallback")
+        self.assertEqual(result["saved_briefing_id"], "briefing-2")
+
 
 if __name__ == "__main__":
     unittest.main()

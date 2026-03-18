@@ -58,7 +58,7 @@ async def main() -> None:
     db_url = ensure_database()
     os.environ["DATABASE_URL"] = db_url
 
-    interval_hours = float(os.getenv("INSIGHT_INGEST_INTERVAL_HOURS", "12"))
+    interval_hours = float(os.getenv("INSIGHT_INGEST_INTERVAL_HOURS", "20"))
     sleep_seconds = max(60, int(interval_hours * 3600))
 
     signal.signal(signal.SIGTERM, _handle_stop)

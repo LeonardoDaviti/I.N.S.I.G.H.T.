@@ -35,7 +35,7 @@ setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
 
 # Configuration
-SKIP_THRESHOLD_HOURS = int(os.getenv("SAFE_INGEST_SKIP_THRESHOLD_HOURS", "12"))
+SKIP_THRESHOLD_HOURS = int(os.getenv("SAFE_INGEST_SKIP_THRESHOLD_HOURS", "20"))
 
 
 def get_source_post_stats(cur: Cursor, source_id: str) -> tuple[int, datetime | None]:

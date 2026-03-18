@@ -70,10 +70,11 @@ The recommended production layout is the included `docker-compose.yml`:
 
 Scheduler defaults:
 
-- ingestion every `12` hours
-- `safe-ingest` skips sources fetched within the last `12` hours
+- ingestion every `20` hours
+- `safe-ingest` skips sources fetched within the last `20` hours
 - daily briefing generation enabled by default
 - topic briefing generation disabled by default
+- archive is never run automatically; archive remains a manual API action only
 
 ## Quick Start
 
@@ -93,16 +94,18 @@ Important values:
 - `POSTGRES_PORT`
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY` if you want Gemini output
 - `INSIGHT_SOURCES_JSON_PATH`
 
-3. Start the stack:
+3. Optional: edit `backend/insight_core/config/sources.json` before first boot if you want some sources preloaded without using the frontend.
+
+4. Start the stack:
 
 ```bash
 docker compose up -d --build
 ```
 
-4. Check services:
+5. Check services:
 
 ```bash
 docker compose ps
@@ -116,6 +119,14 @@ Default URLs:
 - Backend API: `http://localhost:${BACKEND_PORT}`
 - API docs: `http://localhost:${BACKEND_PORT}/docs`
 
+What happens automatically on startup:
+
+- PostgreSQL starts and persists data in `postgres_data`
+- backend runs migrations, syncs `sources.json -> DB`, and starts the API
+- ingestion runs migrations, syncs `sources.json -> DB`, performs a scheduler cycle immediately, then sleeps until the next 20-hour cycle
+- daily briefings are generated automatically after ingestion when enabled
+- source changes made in the API are exported back into `sources.json`
+
 ## Ports
 
 These are configurable in `.env`:
@@ -125,27 +136,47 @@ These are configurable in `.env`:
 - `FRONTEND_PORT`: host port for frontend
 
 The backend CORS config follows `FRONTEND_PUBLIC_URL` and can be overridden with `CORS_ALLOW_ORIGINS`.
+For the frontend, the recommended default is to leave `VITE_API_URL` empty so the built UI uses same-origin `/api` through Nginx. That is the safest option for homelab access from other devices.
 
 ## Normal Local Run Without Docker
 
-If you want to run the backend directly, you still need PostgreSQL running first.
+If you want to run the project without Docker, you still need PostgreSQL running first.
 
 Recommended database for normal local development:
 
 - use the database from `DATABASE_URL`
 - default local value from `.env.example` is `postgresql://insight:insight@localhost:5432/insight`
 
-Boot order:
+1. Install backend dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+2. Apply migrations:
 
 ```bash
 python backend/insight_core/db/migrate.py
+```
+
+3. Start the backend:
+
+```bash
 python backend/start_api.py
 ```
 
-Scheduler:
+4. Start the ingestion scheduler in another shell:
 
 ```bash
 python backend/insight_core/scripts/run_scheduler.py
+```
+
+5. Start the frontend in another shell if needed:
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 If you inspect another database, you will not see your sources/posts/briefings. The runtime database is always the one from `DATABASE_URL`.
@@ -182,7 +213,7 @@ Current flow:
 2. `/api/daily` loads posts for the requested date from PostgreSQL
 3. Gemini is attempted using the configured primary model
 4. If a model is missing, rate-limited, quota-exhausted, or another configured failure occurs, the processor tries fallback Gemini models
-5. If generation still fails, a deterministic markdown fallback briefing is generated
+5. If generation still fails, or Gemini is not configured at all, a deterministic markdown fallback briefing is generated
 6. The final result is persisted to `briefings`
 
 Returned API fields include:
