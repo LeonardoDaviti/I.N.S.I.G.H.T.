@@ -91,7 +91,6 @@ Important values:
 - `DB_USER`
 - `DB_PASSWORD`
 - `DB_NAME`
-- `POSTGRES_PORT`
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
 - `GEMINI_API_KEY` or `GOOGLE_API_KEY` if you want Gemini output
@@ -131,12 +130,13 @@ What happens automatically on startup:
 
 These are configurable in `.env`:
 
-- `POSTGRES_PORT`: host port for PostgreSQL
 - `BACKEND_PORT`: host port for backend API
 - `FRONTEND_PORT`: host port for frontend
 
 The backend CORS config follows `FRONTEND_PUBLIC_URL` and can be overridden with `CORS_ALLOW_ORIGINS`.
 For the frontend, the recommended default is to leave `VITE_API_URL` empty so the built UI uses same-origin `/api` through Nginx. That is the safest option for homelab access from other devices.
+
+PostgreSQL is intentionally internal-only in Docker Compose. The backend and ingestion containers reach it over the Docker network as `postgres:5432`, so there is no host port conflict and no public DB exposure by default.
 
 ## Normal Local Run Without Docker
 

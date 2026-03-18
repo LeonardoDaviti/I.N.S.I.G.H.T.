@@ -18,8 +18,15 @@ def find_dotenv(filename: str = ".env") -> str:
 
 
 def load_dotenv(dotenv_path: Optional[str] = None, override: bool = False) -> bool:
-    path = Path(dotenv_path) if dotenv_path else Path(find_dotenv())
-    if not path or not path.exists():
+    if dotenv_path:
+        path = Path(dotenv_path)
+    else:
+        discovered = find_dotenv()
+        if not discovered:
+            return False
+        path = Path(discovered)
+
+    if not path.exists() or not path.is_file():
         return False
 
     for line in path.read_text(encoding="utf-8").splitlines():
