@@ -108,6 +108,11 @@ class PostSummaryRequest(BaseModel):
 class PostChatRequest(BaseModel):
     question: str
 
+
+class PostCommentsRequest(BaseModel):
+    limit: int | None = 80
+    refresh: bool | None = False
+
 @app.get("/")
 async def root():
     return {
@@ -267,6 +272,34 @@ async def chat_about_post(post_id: str, request: PostChatRequest):
         return api_bridge.chat_about_post(post_id, request.question)
     except Exception as e:
         logger.exception("Failed to chat about post")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/reddit-comments")
+async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest):
+    try:
+        logger.info(f"💬 Fetching Reddit comments for post: {post_id}")
+        return await api_bridge.fetch_reddit_comments(
+            post_id,
+            limit=int(request.limit or 80),
+            refresh=bool(request.refresh),
+        )
+    except Exception as e:
+        logger.exception("Failed to fetch Reddit comments")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/reddit-comments/briefing")
+async def get_reddit_comments_briefing(post_id: str, request: PostCommentsRequest):
+    try:
+        logger.info(f"🧠 Generating Reddit comments briefing for post: {post_id}")
+        return await api_bridge.get_reddit_comments_briefing(
+            post_id,
+            limit=int(request.limit or 80),
+            refresh=bool(request.refresh),
+        )
+    except Exception as e:
+        logger.exception("Failed to generate Reddit comments briefing")
         return {"success": False, "error": str(e), "post_id": post_id}
 
 @app.get("/api/sources/with-counts")

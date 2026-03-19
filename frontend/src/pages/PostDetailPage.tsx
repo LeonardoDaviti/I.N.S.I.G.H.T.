@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  Download,
   ExternalLink,
+  FileText,
   Loader2,
   MessageSquareText,
   NotebookPen,
@@ -10,11 +12,11 @@ import {
   Save,
   Sparkles,
   Tags,
-  Download,
+  MessagesSquare,
 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import { apiService } from '../services/api';
-import type { Post } from '../services/api';
+import type { Post, RedditComment } from '../services/api';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -48,11 +50,17 @@ export default function PostDetailPage() {
   const [notes, setNotes] = useState('');
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryModel, setSummaryModel] = useState<string | null>(null);
+  const [comments, setComments] = useState<RedditComment[]>([]);
+  const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
+  const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
+  const [commentsBriefingModel, setCommentsBriefingModel] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [chatting, setChatting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +88,13 @@ export default function PostDetailPage() {
 
     setPost(response.post);
     setNotes(response.notes?.notes_markdown || defaultNotesTemplate(response.post));
+    const discussion = response.post.metadata?.reddit_discussion as Record<string, any> | undefined;
+    setComments(Array.isArray(discussion?.comments) ? discussion?.comments : []);
+    setCommentsFetchedAt(discussion?.fetched_at || null);
+    setCommentsBriefing(discussion?.briefing?.summary_markdown || null);
+    setCommentsBriefingModel(discussion?.briefing?.model || null);
+    setSummary(null);
+    setSummaryModel(null);
     setLoading(false);
   };
 
@@ -105,11 +120,37 @@ export default function PostDetailPage() {
     loadPost();
   }, [postId]);
 
-  useEffect(() => {
-    if (postId) {
-      loadSummary();
+  const fetchComments = async (refresh = false) => {
+    if (!postId) return;
+    setLoadingComments(true);
+    setError(null);
+    const response = await apiService.fetchRedditComments(postId, { limit: 80, refresh });
+    if (!response.success) {
+      setError(response.error || 'Failed to fetch Reddit comments');
+      setLoadingComments(false);
+      return;
     }
-  }, [postId]);
+    setComments(response.comments || []);
+    setCommentsFetchedAt(response.fetched_at || null);
+    setLoadingComments(false);
+  };
+
+  const generateCommentsBriefing = async (refresh = false) => {
+    if (!postId) return;
+    setLoadingCommentsBriefing(true);
+    setError(null);
+    const response = await apiService.generateRedditCommentsBriefing(postId, { limit: 80, refresh });
+    if (!response.success) {
+      setError(response.error || 'Failed to generate Reddit discussion briefing');
+      setLoadingCommentsBriefing(false);
+      return;
+    }
+    setCommentsBriefing(response.summary_markdown || null);
+    setCommentsBriefingModel(response.model || null);
+    setLoadingCommentsBriefing(false);
+  };
+
+  const isRedditPost = post?.platform === 'reddit';
 
   const handleSaveNotes = async () => {
     if (!postId) return;
@@ -208,8 +249,28 @@ export default function PostDetailPage() {
               className="app-inline-button"
             >
               {loadingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Refresh Summary
+              {summary ? 'Refresh Summary' : 'Generate Summary'}
             </button>
+            {isRedditPost && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => fetchComments(true)}
+                  className="app-inline-button"
+                >
+                  {loadingComments ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessagesSquare className="h-4 w-4" />}
+                  Fetch Comments
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateCommentsBriefing(true)}
+                  className="app-inline-button"
+                >
+                  {loadingCommentsBriefing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  Brief Comments
+                </button>
+              </>
+            )}
             {post.url && (
               <a href={post.url} target="_blank" rel="noopener noreferrer" className="app-inline-button">
                 <ExternalLink className="h-4 w-4" />
@@ -242,7 +303,7 @@ export default function PostDetailPage() {
                   <MarkdownRenderer content={summary} />
                 </div>
               ) : (
-                <div className="text-sm text-[var(--text-muted)]">No summary available yet.</div>
+                <div className="text-sm text-[var(--text-muted)]">Generate a summary on demand for this post.</div>
               )}
               {summaryModel && (
                 <div className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">
@@ -250,6 +311,81 @@ export default function PostDetailPage() {
                 </div>
               )}
             </section>
+
+            <section className="app-panel p-6">
+              <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
+              <div className="prose max-w-none">
+                <MarkdownRenderer content={post.content_html || post.content || ''} />
+              </div>
+            </section>
+
+            {isRedditPost && (
+              <section className="app-panel p-6">
+                <div className="mb-4 flex items-center gap-2">
+                  <MessagesSquare className="h-5 w-5 text-[var(--accent-strong)]" />
+                  <h2 className="text-lg font-semibold text-[var(--text-normal)]">Reddit Discussion</h2>
+                </div>
+                <div className="mb-4 flex flex-wrap items-center gap-3">
+                  <button type="button" onClick={() => fetchComments(true)} className="app-inline-button">
+                    {loadingComments ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessagesSquare className="h-4 w-4" />}
+                    Refresh Comments
+                  </button>
+                  <button type="button" onClick={() => generateCommentsBriefing(true)} className="app-inline-button">
+                    {loadingCommentsBriefing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                    {commentsBriefing ? 'Refresh Comment Briefing' : 'Generate Comment Briefing'}
+                  </button>
+                  {commentsFetchedAt && (
+                    <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                      Comments fetched {new Date(commentsFetchedAt).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+                <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                    <div className="mb-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                      Thread Briefing
+                    </div>
+                    {commentsBriefing ? (
+                      <div className="prose max-w-none">
+                        <MarkdownRenderer content={commentsBriefing} />
+                      </div>
+                    ) : (
+                      <div className="text-sm text-[var(--text-muted)]">
+                        No discussion briefing yet. Generate it on demand from the fetched Reddit comments.
+                      </div>
+                    )}
+                    {commentsBriefingModel && (
+                      <div className="mt-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                        Model: {commentsBriefingModel}
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                    <div className="mb-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                      Comments {comments.length ? `(${comments.length})` : ''}
+                    </div>
+                    {comments.length ? (
+                      <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+                        {comments.map((comment) => (
+                          <div key={comment.id || `${comment.author}-${comment.created_at}-${comment.body.slice(0, 24)}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-4 py-3">
+                            <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                              <span>{comment.author || 'unknown'}</span>
+                              <span>Score {comment.score ?? 0}</span>
+                              <span>Depth {comment.depth ?? 0}</span>
+                            </div>
+                            <div className="text-sm leading-7 text-[var(--text-normal)] whitespace-pre-wrap">{comment.body}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-[var(--text-muted)]">
+                        No comments loaded yet. Fetch the thread on demand when you need discussion context.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
 
             <section className="app-panel p-6">
               <div className="mb-4 flex items-center gap-2">
@@ -276,23 +412,21 @@ export default function PostDetailPage() {
                   <div className="mt-2 space-y-2">
                     {(post.topics || []).length ? (
                       post.topics?.map((topic) => (
-                        <div key={topic.id} className="rounded-xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-2">
+                        <button
+                          key={topic.id}
+                          type="button"
+                          onClick={() => navigate(`/briefing/topics?date=${encodeURIComponent(topic.date || '')}&topic=${encodeURIComponent(topic.id)}`)}
+                          className="block w-full rounded-xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-2 text-left transition hover:border-[var(--accent-strong)] hover:bg-[var(--background-primary-alt)]"
+                        >
                           <div className="font-medium text-[var(--text-normal)]">{topic.title}</div>
                           {topic.date && <div className="text-xs text-[var(--text-muted)]">{topic.date}</div>}
-                        </div>
+                        </button>
                       ))
                     ) : (
                       <span className="text-[var(--text-muted)]">No topic associations yet.</span>
                     )}
                   </div>
                 </div>
-              </div>
-            </section>
-
-            <section className="app-panel p-6">
-              <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
-              <div className="prose max-w-none">
-                <MarkdownRenderer content={post.content_html || post.content || ''} />
               </div>
             </section>
           </div>
@@ -345,7 +479,7 @@ export default function PostDetailPage() {
                   <div>
                     <h3 className="text-xl font-semibold text-[var(--text-normal)]">Chat</h3>
                     <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Ask the AI to reason only from this post.
+                      Ask the AI to reason only from this post. Context includes source metadata, tags, notes, cached summary, and fetched Reddit comments.
                     </p>
                   </div>
                   <div className="workspace-chat-feed">

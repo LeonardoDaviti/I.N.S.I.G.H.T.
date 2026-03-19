@@ -793,6 +793,18 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id}
 
+    async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
+        try:
+            return {"success": True, **await self.post_detail_service.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id}
+
+    async def get_reddit_comments_briefing(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
+        try:
+            return {"success": True, **await self.post_detail_service.get_or_generate_reddit_comments_briefing(post_id, limit=limit, refresh=refresh)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id}
+
     # ============= TOPICS RETRIEVAL =============
 
     def get_topics_by_date(self, date_str: str) -> Dict[str, Any]:

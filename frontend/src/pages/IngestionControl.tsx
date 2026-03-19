@@ -74,6 +74,27 @@ function formatJson(data: Record<string, any> | null) {
   return JSON.stringify(data, null, 2);
 }
 
+function formatJobTimestamp(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString();
+}
+
+function formatJobDuration(startedAt?: string | null, finishedAt?: string | null) {
+  if (!startedAt || !finishedAt) return null;
+  const started = new Date(startedAt).getTime();
+  const finished = new Date(finishedAt).getTime();
+  if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) return null;
+  const totalSeconds = Math.round((finished - started) / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 export default function IngestionControl() {
   const navigate = useNavigate();
   const [sources, setSources] = useState<SourceWithSettings[]>([]);
@@ -200,11 +221,21 @@ export default function IngestionControl() {
   );
 
   const selectedSource = useMemo(
-    () => sources.find((source) => source.id === selectedSourceId) || null,
-    [sources, selectedSourceId],
+    () => enabledSources.find((source) => source.id === selectedSourceId) || null,
+    [enabledSources, selectedSourceId],
   );
 
   const availableLogs = logTail?.available_logs?.length ? logTail.available_logs : DEFAULT_LOG_OPTIONS;
+
+  useEffect(() => {
+    if (!enabledSources.length) {
+      return;
+    }
+
+    if (!enabledSources.some((source) => source.id === selectedSourceId)) {
+      setSelectedSourceId(enabledSources[0].id);
+    }
+  }, [enabledSources, selectedSourceId]);
 
   useEffect(() => {
     if (!selectedSource) {
@@ -381,7 +412,7 @@ export default function IngestionControl() {
                       onChange={(e) => setSelectedSourceId(e.target.value)}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
                     >
-                      {sources.map((source) => (
+                      {enabledSources.map((source) => (
                         <option key={source.id} value={source.id}>
                           {source.settings.display_name || source.handle_or_url} · {source.platform}
                         </option>
@@ -557,7 +588,7 @@ export default function IngestionControl() {
                     onChange={(e) => setSelectedSourceId(e.target.value)}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
                   >
-                    {sources.map((source) => (
+                    {enabledSources.map((source) => (
                       <option key={source.id} value={source.id}>
                         {source.settings.display_name || source.handle_or_url} · {source.platform}
                       </option>
@@ -784,6 +815,11 @@ export default function IngestionControl() {
                       </span>
                     </div>
                     <div className="mt-1 text-xs text-slate-500">{job.message || 'No message'}</div>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                      {formatJobTimestamp(job.started_at) && <span>Started {formatJobTimestamp(job.started_at)}</span>}
+                      {formatJobTimestamp(job.finished_at) && <span>Finished {formatJobTimestamp(job.finished_at)}</span>}
+                      {formatJobDuration(job.started_at, job.finished_at) && <span>Duration {formatJobDuration(job.started_at, job.finished_at)}</span>}
+                    </div>
                   </div>
                 ))}
               </div>

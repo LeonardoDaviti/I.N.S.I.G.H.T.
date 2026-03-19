@@ -48,3 +48,11 @@ class PostsService:
                 updated = self.repo.update_post_categories(cur, post_id, categories)
                 conn.commit()
                 return updated
+
+    def update_post_metadata(self, post_id: str, metadata: Dict[str, Any]) -> bool:
+        """Update the stored metadata for a post."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                updated = self.repo.update_post_metadata(cur, post_id, metadata)
+                conn.commit()
+                return updated

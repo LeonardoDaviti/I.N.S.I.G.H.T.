@@ -3,7 +3,7 @@ Post-level intelligence workspace: detail retrieval, notes, summaries, and chat.
 """
 from __future__ import annotations
 
-import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -11,6 +11,7 @@ import psycopg
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
 from insight_core.services.posts_service import PostsService
+from insight_core.services.source_fetch_service import SourceFetchService
 
 
 class PostDetailService:
@@ -21,6 +22,7 @@ class PostDetailService:
         self.logger = get_component_logger("post_detail_service")
         self.processor = GeminiProcessor()
         self.posts_service = PostsService(db_url)
+        self.source_fetch_service = SourceFetchService(db_url)
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         with psycopg.connect(self.db_url) as conn:
@@ -174,8 +176,16 @@ class PostDetailService:
         if not post:
             raise ValueError(f"Post {post_id} not found")
 
+        notes = self.get_notes(post_id)
+        cached_summary = self._get_cached_summary(post_id)
+        post_context = {
+            **post,
+            "notes_markdown": notes.get("notes_markdown", ""),
+            "cached_summary_markdown": (cached_summary or {}).get("summary_markdown", ""),
+        }
+
         if self.processor.setup_processor():
-            answer = self.processor.ask_single_post(post, question)
+            answer = self.processor.ask_single_post(post_context, question)
             if answer.get("success"):
                 return {
                     "success": True,
@@ -189,6 +199,104 @@ class PostDetailService:
             "post_id": post_id,
             "answer": self._fallback_answer(post, question),
             "source": "fallback",
+        }
+
+    async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
+        post = self.get_post_by_id(post_id)
+        if not post:
+            raise ValueError(f"Post {post_id} not found")
+        if post.get("platform") != "reddit":
+            raise ValueError("Reddit comments are only available for reddit posts")
+
+        metadata = dict(post.get("metadata") or {})
+        discussion = dict(metadata.get("reddit_discussion") or {})
+        cached_comments = discussion.get("comments") if isinstance(discussion.get("comments"), list) else []
+        cached_limit = int(discussion.get("limit") or len(cached_comments) or 0)
+
+        if not refresh and cached_comments and cached_limit >= limit:
+            return {
+                "post_id": post_id,
+                "comments": cached_comments[:limit],
+                "comment_count": min(len(cached_comments), limit),
+                "cached": True,
+                "fetched_at": discussion.get("fetched_at"),
+            }
+
+        comments = await self.source_fetch_service.fetch_reddit_comments_for_post(post["url"], limit=limit)
+        updated_discussion = {
+            **discussion,
+            "comments": comments,
+            "limit": limit,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+        metadata["reddit_discussion"] = updated_discussion
+        self.posts_service.update_post_metadata(post_id, metadata)
+
+        return {
+            "post_id": post_id,
+            "comments": comments,
+            "comment_count": len(comments),
+            "cached": False,
+            "fetched_at": updated_discussion["fetched_at"],
+        }
+
+    async def get_or_generate_reddit_comments_briefing(
+        self,
+        post_id: str,
+        *,
+        limit: int = 80,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        post = self.get_post_by_id(post_id)
+        if not post:
+            raise ValueError(f"Post {post_id} not found")
+        if post.get("platform") != "reddit":
+            raise ValueError("Reddit comment briefing is only available for reddit posts")
+
+        metadata = dict(post.get("metadata") or {})
+        discussion = dict(metadata.get("reddit_discussion") or {})
+        cached_briefing = discussion.get("briefing") if isinstance(discussion.get("briefing"), dict) else None
+        cached_comments = discussion.get("comments") if isinstance(discussion.get("comments"), list) else []
+
+        if not refresh and cached_briefing and cached_comments:
+            return {
+                "post_id": post_id,
+                "summary_markdown": cached_briefing.get("summary_markdown", ""),
+                "model": cached_briefing.get("model"),
+                "signals": cached_briefing.get("signals") or [],
+                "updated_at": cached_briefing.get("updated_at"),
+                "comment_count": len(cached_comments),
+                "cached": True,
+            }
+
+        comments_payload = await self.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
+        comments = comments_payload.get("comments") or []
+
+        summary_markdown, model, signals = self._generate_reddit_comments_briefing(post, comments)
+        updated_discussion = {
+            **discussion,
+            "comments": comments,
+            "limit": limit,
+            "fetched_at": comments_payload.get("fetched_at") or discussion.get("fetched_at"),
+            "briefing": {
+                "summary_markdown": summary_markdown,
+                "model": model,
+                "signals": signals,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "comment_count": len(comments),
+            },
+        }
+        metadata["reddit_discussion"] = updated_discussion
+        self.posts_service.update_post_metadata(post_id, metadata)
+
+        return {
+            "post_id": post_id,
+            "summary_markdown": summary_markdown,
+            "model": model,
+            "signals": signals,
+            "updated_at": updated_discussion["briefing"]["updated_at"],
+            "comment_count": len(comments),
+            "cached": False,
         }
 
     def _get_cached_summary(self, post_id: str) -> Optional[Dict[str, Any]]:
@@ -232,6 +340,17 @@ class PostDetailService:
             "updated_at": updated_at.isoformat(),
         }
 
+    def _generate_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> tuple[str, str, List[str]]:
+        if self.processor.setup_processor():
+            result = self.processor.summarize_reddit_comments(post, comments)
+            if result.get("success"):
+                summary = str(result.get("summary") or "").strip() or self._fallback_reddit_comments_briefing(post, comments)
+                signals = self._normalize_tags(result.get("signals"))
+                model = str(result.get("model") or getattr(self.processor, "model_name", "gemini"))
+                return summary, model, signals
+
+        return self._fallback_reddit_comments_briefing(post, comments), "fallback", []
+
     def _generate_summary(self, post: Dict[str, Any]) -> tuple[str, str, List[str]]:
         if self.processor.setup_processor():
             result = self.processor.analyze_single_post(post)
@@ -243,6 +362,33 @@ class PostDetailService:
 
         fallback_tags = self._fallback_tags(post)
         return self._fallback_summary(post, tags=fallback_tags), "fallback", fallback_tags
+
+    def _fallback_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> str:
+        if not comments:
+            return (
+                "## Discussion Briefing\n"
+                "No comments were fetched for this Reddit post yet."
+            )
+
+        ranked = sorted(
+            comments,
+            key=lambda comment: (int(comment.get("score") or 0), -int(comment.get("depth") or 0)),
+            reverse=True,
+        )
+        highlights = ranked[:5]
+        bullet_lines = []
+        for comment in highlights:
+            author = comment.get("author") or "unknown"
+            score = comment.get("score") or 0
+            body = " ".join(str(comment.get("body") or "").split())[:220].strip()
+            bullet_lines.append(f"- **{author}** ({score}): {body}")
+
+        return (
+            f"## Discussion Briefing\n"
+            f"Fetched **{len(comments)} comments** for **{post.get('title') or 'this post'}**.\n\n"
+            f"## Strongest Signals\n"
+            + "\n".join(bullet_lines)
+        )
 
     def _fallback_summary(self, post: Dict[str, Any], tags: Optional[List[str]] = None) -> str:
         title = (post.get("title") or "Untitled post").strip()
@@ -302,9 +448,22 @@ class PostDetailService:
         excerpt = " ".join((post.get("content") or "").split())[:1200].strip()
         if not excerpt:
             excerpt = "This post has very little stored text, so the answer space is limited."
+        discussion = (post.get("metadata") or {}).get("reddit_discussion", {})
+        comments = discussion.get("comments") if isinstance(discussion, dict) else []
+        comment_excerpt = ""
+        if comments:
+            preview = []
+            for comment in comments[:3]:
+                body = " ".join(str(comment.get("body") or "").split())[:180].strip()
+                if not body:
+                    continue
+                preview.append(f"- {comment.get('author') or 'unknown'}: {body}")
+            if preview:
+                comment_excerpt = "\n\nFetched discussion:\n" + "\n".join(preview)
         return (
             f"I do not have an AI model available right now, so this is a deterministic answer.\n\n"
             f"Source: {post.get('source_display_name') or post.get('source')}\n"
             f"Title: {post.get('title') or 'Untitled post'}\n\n"
             f"Known content:\n{excerpt}"
+            f"{comment_excerpt}"
         )

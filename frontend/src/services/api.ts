@@ -273,6 +273,38 @@ export interface PostChatResponse {
   source?: string;
 }
 
+export interface RedditComment {
+  id?: string;
+  author?: string | null;
+  body: string;
+  score?: number | null;
+  depth?: number | null;
+  created_at?: string | null;
+  permalink?: string | null;
+}
+
+export interface RedditCommentsResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  comments?: RedditComment[];
+  comment_count?: number;
+  cached?: boolean;
+  fetched_at?: string | null;
+}
+
+export interface RedditCommentsBriefingResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  summary_markdown?: string;
+  model?: string | null;
+  signals?: string[];
+  updated_at?: string | null;
+  comment_count?: number;
+  cached?: boolean;
+}
+
 export interface SyncSourcesResponse {
   success: boolean;
   error?: string;
@@ -551,6 +583,45 @@ class ApiService {
       });
     } catch (error) {
       console.error('Failed to chat about post:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+      };
+    }
+  }
+
+  async fetchRedditComments(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsResponse> {
+    try {
+      return await this.makeRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          limit: opts?.limit ?? 80,
+          refresh: opts?.refresh ?? false,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to fetch Reddit comments:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        comments: [],
+      };
+    }
+  }
+
+  async generateRedditCommentsBriefing(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsBriefingResponse> {
+    try {
+      return await this.makeRequest<RedditCommentsBriefingResponse>(`/api/posts/item/${postId}/reddit-comments/briefing`, {
+        method: 'POST',
+        body: JSON.stringify({
+          limit: opts?.limit ?? 80,
+          refresh: opts?.refresh ?? false,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to generate Reddit comments briefing:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',

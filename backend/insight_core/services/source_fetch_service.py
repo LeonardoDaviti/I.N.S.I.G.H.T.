@@ -587,6 +587,53 @@ class SourceFetchService:
         posts, _ = await self._fetch_reddit_page(subreddit, limit=min(limit, 100), sort_method="new", time_filter=None)
         return posts[:limit]
 
+    async def fetch_reddit_comments_for_post(self, post_url: str, limit: int = 80) -> List[Dict[str, Any]]:
+        """Fetch a Reddit post discussion thread on demand via the public JSON endpoint."""
+        json_url = self._build_reddit_post_json_url(post_url, limit=max(1, min(limit, 250)))
+        body, _ = await self._fetch_text(json_url, user_agent=self.reddit_user_agent)
+        payload = json.loads(body)
+
+        if not isinstance(payload, list) or len(payload) < 2:
+            return []
+
+        comments_listing = payload[1].get("data", {}).get("children", [])
+        comments: List[Dict[str, Any]] = []
+
+        def visit(nodes: List[Dict[str, Any]], depth: int = 0) -> None:
+            if len(comments) >= limit:
+                return
+            for node in nodes:
+                if len(comments) >= limit:
+                    return
+                if node.get("kind") != "t1":
+                    continue
+                data = node.get("data", {}) or {}
+                body_text = str(data.get("body") or "").strip()
+                if not body_text or body_text in {"[deleted]", "[removed]"}:
+                    continue
+
+                comments.append(
+                    {
+                        "id": data.get("id"),
+                        "author": data.get("author"),
+                        "body": body_text,
+                        "score": data.get("score"),
+                        "depth": depth,
+                        "created_at": datetime.fromtimestamp(
+                            data.get("created_utc", 0),
+                            tz=timezone.utc,
+                        ).isoformat(),
+                        "permalink": f"https://reddit.com{data.get('permalink', '')}" if data.get("permalink") else None,
+                    }
+                )
+
+                replies = data.get("replies")
+                if isinstance(replies, dict):
+                    visit(replies.get("data", {}).get("children", []), depth + 1)
+
+        visit(comments_listing, 0)
+        return comments[:limit]
+
     async def _fetch_text(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         return await asyncio.to_thread(self._fetch_text_sync, url, user_agent)
 
@@ -702,6 +749,26 @@ class SourceFetchService:
                 categories.append(term)
 
         return sorted({category.strip() for category in categories if category and category.strip()})
+
+    def _build_reddit_post_json_url(self, post_url: str, limit: int) -> str:
+        parsed = urllib.parse.urlparse(post_url)
+        path = parsed.path.rstrip("/")
+        if not path.endswith(".json"):
+            path = f"{path}.json"
+        query = urllib.parse.urlencode({
+            "limit": str(limit),
+            "depth": "8",
+            "sort": "top",
+            "raw_json": "1",
+        })
+        return urllib.parse.urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc or "www.reddit.com",
+            path,
+            "",
+            query,
+            "",
+        ))
 
     async def _find_last_telegram_page(self, source_url: str, username: str, highest_post_id: int, page_size: int) -> int:
         estimated_last_page = max(1, math.ceil(highest_post_id / max(page_size, 1)))

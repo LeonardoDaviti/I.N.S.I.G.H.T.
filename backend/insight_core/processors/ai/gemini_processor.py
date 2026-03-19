@@ -254,14 +254,38 @@ Content:
         if not self.is_setup:
             return {"success": False, "error": "Processor not setup. Call setup_processor() first"}
 
+        topics = [
+            topic.get("title")
+            for topic in (post.get("topics") or [])
+            if isinstance(topic, dict) and topic.get("title")
+        ]
+        metadata = post.get("metadata") or {}
+        discussion = metadata.get("reddit_discussion") if isinstance(metadata, dict) else {}
+        comments = discussion.get("comments") if isinstance(discussion, dict) else []
+        comments_text = "\n\n".join(
+            f"- {comment.get('author') or 'unknown'} (score={comment.get('score', 0)}, depth={comment.get('depth', 0)}): {comment.get('body', '')}"
+            for comment in (comments or [])[:40]
+        )
+
         prompt = f"""
 Answer the user's question using only this post.
 If the answer is not present, say that clearly.
 
 Source: {post.get("source", "unknown")}
+URL: {post.get("url", "")}
 Title: {post.get("title", "")}
+Published at: {post.get("published_at", "")}
+Tags: {", ".join(post.get("categories") or []) or "none"}
+Connected topics: {", ".join(topics) or "none"}
+Saved summary:
+{post.get("cached_summary_markdown", "")[:1600]}
+Saved notes:
+{post.get("notes_markdown", "")[:1600]}
 Content:
-{post.get("content", "")[:3000]}
+{post.get("content", "")[:5000]}
+
+Fetched Reddit comments:
+{comments_text[:8000] or "No fetched comments."}
 
 Question: {question}
 """
@@ -270,6 +294,45 @@ Question: {question}
             return {"success": True, "answer": answer}
         except Exception as exc:
             return {"success": False, "error": f"Question answering failed: {exc}"}
+
+    def summarize_reddit_comments(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Summarize a Reddit discussion thread for a single stored post."""
+        if not self.is_setup:
+            return {"success": False, "error": "Processor not setup. Call setup_processor() first"}
+
+        prompt = f"""
+Return ONLY valid JSON with this exact structure:
+{{
+  "summary": "markdown discussion briefing",
+  "signals": ["signal one", "signal two", "signal three"]
+}}
+
+Rules:
+- Focus on the discussion, disagreement, consensus, and concrete recommendations.
+- Use only the supplied comments.
+- Keep it compact and high-signal.
+
+Post title: {post.get("title", "")}
+Post source: {post.get("source", "")}
+Post content:
+{(post.get("content") or "")[:2400]}
+
+Comments:
+{chr(10).join(
+    f"- {comment.get('author') or 'unknown'} (score={comment.get('score', 0)}, depth={comment.get('depth', 0)}): {str(comment.get('body') or '')[:600]}"
+    for comment in comments[:60]
+)[:12000]}
+"""
+        try:
+            result = self._extract_json_from_response(self._generate_text_sync(prompt))
+            return {
+                "success": True,
+                "summary": str(result.get("summary", "")).strip(),
+                "signals": result.get("signals") if isinstance(result.get("signals"), list) else [],
+                "model": self.model_name,
+            }
+        except Exception as exc:
+            return {"success": False, "error": f"Comments summary failed: {exc}"}
 
     def model_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Assign database posts into topic buckets keyed by post UUID."""

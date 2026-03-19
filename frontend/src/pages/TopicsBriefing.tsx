@@ -1,14 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, FileText } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiService } from '../services/api';
 import type { BriefingTopicsResponse, Topic, Post } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 
 export default function TopicsBriefing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [showSidebar, setShowSidebar] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const requestedDate = searchParams.get('date') || new Date().toISOString().split('T')[0];
+  const requestedTopicId = searchParams.get('topic');
+  const [selectedDate, setSelectedDate] = useState(requestedDate);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [briefing, setBriefing] = useState<string | null>(null);
@@ -20,7 +23,8 @@ export default function TopicsBriefing() {
   // expanded state per post: key = `${topicId}:${postId}`
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
 
-  const runTopicBriefing = async (refresh = false) => {
+  const runTopicBriefing = async (refresh = false, dateOverride?: string, topicIdOverride?: string | null) => {
+    const targetDate = dateOverride || selectedDate;
     if (refresh) {
       setIsRefreshing(true);
     } else {
@@ -32,14 +36,15 @@ export default function TopicsBriefing() {
     setPostsMap({});
     setUnreferencedIds([]);
     try {
-      const res: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate, { refresh });
+      const res: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(targetDate, { refresh });
       if (res.success) {
         setBriefing(res.briefing || null);
         setTopics(res.topics || []);
         setPostsMap(res.posts || {});
         setUnreferencedIds(res.unreferenced_posts || []);
         const first = (res.topics || [])[0];
-        setOpenTopic(first ? first.id : null);
+        const requestedTopic = (res.topics || []).find((topic) => topic.id === topicIdOverride);
+        setOpenTopic(requestedTopic ? requestedTopic.id : first ? first.id : null);
         const nextExpanded: Record<string, boolean> = {};
         (res.topics || []).forEach((t) => (t.post_ids || []).forEach((pid) => { nextExpanded[`${t.id}:${pid}`] = true; }));
         setExpandedPosts(nextExpanded);
@@ -57,7 +62,16 @@ export default function TopicsBriefing() {
   const handleGenerate = async () => runTopicBriefing(false);
   const handleRefresh = async () => runTopicBriefing(true);
 
-  const allPostsArray = useMemo(() => Object.entries(postsMap).sort((a, b) => Number(a[0]) - Number(b[0])), [postsMap]);
+  useEffect(() => {
+    setSelectedDate(requestedDate);
+  }, [requestedDate]);
+
+  useEffect(() => {
+    if (!requestedDate) {
+      return;
+    }
+    runTopicBriefing(false, requestedDate, requestedTopicId);
+  }, [requestedDate, requestedTopicId]);
 
   return (
     <div className="app-shell flex h-screen">

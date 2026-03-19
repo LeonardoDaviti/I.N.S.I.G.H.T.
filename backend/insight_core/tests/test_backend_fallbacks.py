@@ -272,6 +272,61 @@ class PostDetailServiceTests(unittest.TestCase):
         self.assertEqual(tags, ["rss", "ai"])
         self.assertIn("The post is tagged with: rss, ai.", summary)
 
+    def test_generate_reddit_comments_briefing_uses_model_from_processor_result(self):
+        service = PostDetailService("postgresql:///unused")
+
+        class FakeProcessor:
+            def setup_processor(self):
+                return True
+
+            def summarize_reddit_comments(self, post, comments):
+                return {
+                    "success": True,
+                    "summary": "## Discussion Briefing\nConsensus emerged.",
+                    "signals": ["consensus", "recommendations"],
+                    "model": "gemini-comments",
+                }
+
+        service.processor = FakeProcessor()
+
+        summary, model, signals = service._generate_reddit_comments_briefing(
+            {"title": "Reddit thread", "source": "r/test"},
+            [{"author": "a", "body": "Useful", "score": 10, "depth": 0}],
+        )
+
+        self.assertEqual(summary, "## Discussion Briefing\nConsensus emerged.")
+        self.assertEqual(model, "gemini-comments")
+        self.assertEqual(signals, ["consensus", "recommendations"])
+
+
+class PostDetailDiscussionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_reddit_comments_uses_cached_metadata_without_refetch(self):
+        service = PostDetailService("postgresql:///unused")
+        service.get_post_by_id = lambda post_id: {
+            "id": post_id,
+            "platform": "reddit",
+            "url": "https://reddit.com/r/test/comments/abc/thread/",
+            "metadata": {
+                "reddit_discussion": {
+                    "limit": 80,
+                    "fetched_at": "2026-03-19T12:00:00+00:00",
+                    "comments": [{"id": "c1", "body": "cached"}],
+                }
+            },
+        }
+
+        class FakeFetchService:
+            async def fetch_reddit_comments_for_post(self, post_url, limit=80):
+                raise AssertionError("Should not refetch when cached discussion exists")
+
+        service.source_fetch_service = FakeFetchService()
+
+        result = await service.fetch_reddit_comments("post-1", limit=40, refresh=False)
+
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["comment_count"], 1)
+        self.assertEqual(result["comments"][0]["body"], "cached")
+
 
 if __name__ == "__main__":
     unittest.main()
