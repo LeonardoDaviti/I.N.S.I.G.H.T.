@@ -15,6 +15,7 @@ import asyncio
 from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.services.sources_service import SourcesService
+from insight_core.services.operations_service import OperationsService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.connectors import create_connector
 import psycopg
@@ -24,7 +25,7 @@ DEBUG_MODE = True  # Set to False for production
 setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("ingest_posts")
 
-async def ingest_posts():
+async def ingest_posts(trigger: str = "manual"):
     """Fetch and save posts from enabled sources with priority-based ordering."""
     
     # Start total timer
@@ -36,6 +37,7 @@ async def ingest_posts():
     
     # 1. Get all sources with settings from database
     sources_service = SourcesService(db_url)
+    operations_service = OperationsService(db_url)
     fetch_service = SourceFetchService(db_url)
     all_sources = sources_service.get_all_sources_with_settings()
     
@@ -103,6 +105,13 @@ async def ingest_posts():
                 else:
                     posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
                 logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts")
+                operations_service.record_source_status(
+                    source["id"],
+                    status="healthy",
+                    message=f"Fetched {len(posts)} posts",
+                    trigger=trigger,
+                    fetched_posts=len(posts),
+                )
                 
                 # Attach source_id to each post
                 for post in posts:
@@ -117,6 +126,12 @@ async def ingest_posts():
             except Exception as e:
                 # Log error but continue with remaining sources
                 logger.error(f"❌ Failed to fetch from {source['handle_or_url']}: {e}")
+                operations_service.record_source_status(
+                    source["id"],
+                    status="error",
+                    message=str(e),
+                    trigger=trigger,
+                )
                 continue
         
         if connector:

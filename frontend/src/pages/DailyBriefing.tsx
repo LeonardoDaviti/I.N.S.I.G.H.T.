@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors } from 'lucide-react';
+import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
@@ -650,7 +650,7 @@ export default function DailyBriefing() {
   const briefingTitle = briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="app-shell flex h-screen">
       {/* Floating Focus toggle */}
       <div className="fixed right-4 md:right-6 top-6 md:top-8 z-50">
         <button
@@ -997,12 +997,39 @@ export default function DailyBriefing() {
                                     <div key={`${pid}_${rIndex}`} className="border border-gray-200 rounded-xl overflow-hidden">
                                       <button
                                         type="button"
-                                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50"
+                                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
                                         onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
                                       >
-                                        <h4 className="text-sm font-semibold text-gray-900">{post.title || 'Post'}</h4>
-                                        <div className="mt-1 text-xs text-gray-600">
-                                          {post.source} • {post.platform}
+                                        <div>
+                                          <h4 className="text-sm font-semibold text-gray-900">{post.title || 'Post'}</h4>
+                                          <div className="mt-1 text-xs text-gray-600">
+                                            {post.source} • {post.platform}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {post.id && (
+                                            <button
+                                              type="button"
+                                              className="text-indigo-600 hover:text-indigo-800"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                navigate(`/posts/${post.id}`);
+                                              }}
+                                            >
+                                              <FileText className="w-4 h-4" />
+                                            </button>
+                                          )}
+                                          {post.url && (
+                                            <a
+                                              href={post.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-indigo-600 hover:text-indigo-800"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <ExternalLink className="w-4 h-4" />
+                                            </a>
+                                          )}
                                         </div>
                                       </button>
                                       {isExpanded && (
@@ -1161,6 +1188,18 @@ export default function DailyBriefing() {
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-2">
+                                          {post.id && (
+                                            <button
+                                              type="button"
+                                              className="text-teal-600 hover:text-teal-800"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                navigate(`/posts/${post.id}`);
+                                              }}
+                                            >
+                                              <FileText className="w-4 h-4" />
+                                            </button>
+                                          )}
                                           {post.url && (
                                             <a
                                               href={post.url}
@@ -1284,6 +1323,18 @@ export default function DailyBriefing() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2.5 ml-2.5">
+                            {post.id && (
+                              <button
+                                type="button"
+                                className="text-indigo-600 hover:text-indigo-800 p-1"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/posts/${post.id}`);
+                                }}
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {post.url && (
                               <a
                                 href={post.url}

@@ -126,6 +126,27 @@ class SourceFetchServiceTests(unittest.TestCase):
         self.assertTrue(self.service._should_skip_tls_verify("nitter.local"))
         self.assertFalse(self.service._should_skip_tls_verify("tg.i-c-a.su"))
 
+    def test_extract_article_html_prefers_substantial_main_content(self):
+        paragraph = "<p>" + ("This is a long-form intelligence paragraph. " * 25) + "</p>"
+        html = f"""
+        <html>
+          <body>
+            <header><p>Short intro</p></header>
+            <main>
+              <h1>Deep analysis</h1>
+              {paragraph}
+              {paragraph}
+            </main>
+            <footer><p>Footer links</p></footer>
+          </body>
+        </html>
+        """
+
+        extracted = self.service._extract_article_html(html)
+
+        self.assertIn("<h1>Deep analysis</h1>", extracted)
+        self.assertGreater(len(self.service._strip_html(extracted)), 500)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,8 @@ import type {
   ArchiveResponse,
   LiveFetchResponse,
   LogTailResponse,
+  OperationsOverviewResponse,
+  SchedulerConfig,
   SourceWithSettings,
 } from '../services/api';
 
@@ -83,6 +85,9 @@ export default function IngestionControl() {
   const [selectedLogName, setSelectedLogName] = useState('application');
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [savingScheduler, setSavingScheduler] = useState(false);
+  const [schedulerDirty, setSchedulerDirty] = useState(false);
   const [ingestResult, setIngestResult] = useState<Record<string, any> | null>(null);
   const [safeIngestResult, setSafeIngestResult] = useState<Record<string, any> | null>(null);
   const [sourceFetchResult, setSourceFetchResult] = useState<LiveFetchResponse | null>(null);
@@ -90,6 +95,8 @@ export default function IngestionControl() {
   const [topicBriefingResult, setTopicBriefingResult] = useState<Record<string, any> | null>(null);
   const [archiveResult, setArchiveResult] = useState<ArchiveResponse | null>(null);
   const [logTail, setLogTail] = useState<LogTailResponse | null>(null);
+  const [operationsOverview, setOperationsOverview] = useState<OperationsOverviewResponse | null>(null);
+  const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,8 +156,29 @@ export default function IngestionControl() {
     setLoadingLogs(false);
   };
 
+  const loadOperationsOverview = async (options?: { silent?: boolean }) => {
+    setLoadingOverview(true);
+    const response = await apiService.getOperationsOverview();
+    if (!response.success) {
+      const message = response.error || 'Failed to load operations overview';
+      if (!options?.silent) {
+        setError(message);
+        appendLog('error', message);
+      }
+      setLoadingOverview(false);
+      return;
+    }
+
+    setOperationsOverview(response);
+    if (!schedulerDirty && response.scheduler) {
+      setSchedulerConfig(response.scheduler);
+    }
+    setLoadingOverview(false);
+  };
+
   useEffect(() => {
     loadSources();
+    loadOperationsOverview();
   }, []);
 
   useEffect(() => {
@@ -158,6 +186,7 @@ export default function IngestionControl() {
 
     const intervalId = window.setInterval(() => {
       loadLogTail(selectedLogName, { silent: true });
+      loadOperationsOverview({ silent: true });
     }, 8000);
 
     return () => {
@@ -210,6 +239,7 @@ export default function IngestionControl() {
       if (['ingest', 'safe-ingest', 'source-fetch', 'archive-run', 'sync-json-to-db', 'sync-db-to-json'].includes(actionKey)) {
         await loadSources({ silent: true });
       }
+      await loadOperationsOverview({ silent: true });
       await loadLogTail(selectedLogName, { silent: true });
     } catch (actionError) {
       const message = actionError instanceof Error ? actionError.message : 'Unknown error';
@@ -220,8 +250,28 @@ export default function IngestionControl() {
     }
   };
 
+  const saveSchedulerConfig = async () => {
+    if (!schedulerConfig) {
+      return;
+    }
+
+    setSavingScheduler(true);
+    const response = await apiService.updateSchedulerConfig(schedulerConfig);
+    if (!response.success || !response.scheduler) {
+      setError(response.error || 'Failed to save scheduler config');
+      setSavingScheduler(false);
+      return;
+    }
+
+    setSchedulerConfig(response.scheduler);
+    setSchedulerDirty(false);
+    appendLog('success', `Scheduler updated to ${response.scheduler.interval_hours} hour cycle`);
+    await loadOperationsOverview({ silent: true });
+    setSavingScheduler(false);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="app-shell min-h-screen">
       <div className="mx-auto max-w-7xl px-6 py-8 space-y-6">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -234,15 +284,15 @@ export default function IngestionControl() {
             </button>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Ingestion Control</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Force a fetch without waiting for the 20-hour scheduler, inspect recent runtime logs,
+              Force a fetch without waiting for the next scheduler cycle, inspect recent runtime logs,
               sync the registry, and run archive jobs for one source at a time.
             </p>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="app-panel px-4 py-3">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Scheduler</div>
             <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
               <Clock3 className="h-4 w-4 text-indigo-600" />
-              20-hour automatic cycle
+              {schedulerConfig ? `${schedulerConfig.interval_hours}-hour automatic cycle` : 'Loading...'}
             </div>
           </div>
         </div>
@@ -256,7 +306,7 @@ export default function IngestionControl() {
 
         <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
           <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="app-panel p-5">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Immediate Actions</h2>
@@ -486,7 +536,7 @@ export default function IngestionControl() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="app-panel p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Archive className="h-5 w-5 text-amber-600" />
                 <div>
@@ -592,7 +642,75 @@ export default function IngestionControl() {
           </div>
 
           <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            {schedulerConfig && (
+              <section className="app-panel p-5">
+                <div className="mb-4 flex items-center gap-2">
+                  <Clock3 className="h-5 w-5 text-indigo-600" />
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Scheduler Control</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Change the automatic cycle and scheduled tasks without touching container env files.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Interval Hours
+                    </label>
+                    <input
+                      type="number"
+                      min={0.25}
+                      step={0.25}
+                      value={schedulerConfig.interval_hours}
+                      onChange={(e) => {
+                        setSchedulerDirty(true);
+                        setSchedulerConfig((prev) => prev ? ({
+                          ...prev,
+                          interval_hours: Math.max(0.25, Number(e.target.value) || 0.25),
+                        }) : prev);
+                      }}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    />
+                  </div>
+
+                  <div className="grid gap-3">
+                    {[
+                      ['sync_sources_each_cycle', 'Sync sources.json every cycle'],
+                      ['generate_daily_briefing', 'Generate daily briefing'],
+                      ['generate_topic_briefing', 'Generate topic briefing'],
+                    ].map(([key, label]) => (
+                      <label key={key} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        <span>{label}</span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(schedulerConfig[key as keyof SchedulerConfig])}
+                          onChange={(e) => {
+                            setSchedulerDirty(true);
+                            setSchedulerConfig((prev) => prev ? ({
+                              ...prev,
+                              [key]: e.target.checked,
+                            }) as SchedulerConfig : prev);
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={saveSchedulerConfig}
+                    disabled={savingScheduler || !schedulerDirty}
+                    className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {savingScheduler ? 'Saving…' : 'Save Scheduler'}
+                  </button>
+                </div>
+              </section>
+            )}
+
+            <section className="app-panel p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Settings className="h-5 w-5 text-indigo-600" />
                 <div>
@@ -615,10 +733,84 @@ export default function IngestionControl() {
                     {selectedSource?.settings.display_name || selectedSource?.handle_or_url || 'None'}
                   </div>
                 </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent Failures</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">
+                    {operationsOverview?.stats?.recent_failures ?? 0}
+                  </div>
+                </div>
               </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="app-panel p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Mission Feed</h2>
+                    <p className="mt-1 text-sm text-slate-500">Structured job history, failures, and source health.</p>
+                  </div>
+                </div>
+                {loadingOverview && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
+              </div>
+
+              {(operationsOverview?.alerts?.length || 0) > 0 && (
+                <div className="mb-4 space-y-2">
+                  {operationsOverview?.alerts?.slice(0, 3).map((alert) => (
+                    <div key={alert.id} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                      <div className="font-semibold">{alert.title}</div>
+                      <div className="mt-1">{alert.message}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {(operationsOverview?.jobs || []).slice(0, 8).map((job) => (
+                  <div key={job.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-semibold text-slate-900">
+                        {job.job_type}
+                        {job.source_display_name ? ` · ${job.source_display_name}` : ''}
+                      </div>
+                      <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                        job.status === 'failed'
+                          ? 'bg-rose-100 text-rose-700'
+                          : job.status === 'running'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {job.status}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">{job.message || 'No message'}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Source Health</div>
+                {(operationsOverview?.source_health || []).slice(0, 8).map((source) => (
+                  <div key={source.source_id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                    <div>
+                      <div className="font-medium text-slate-900">{source.display_name}</div>
+                      <div className="text-xs text-slate-500">{source.platform} · {source.stored_posts} stored posts</div>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                      source.status === 'error'
+                        ? 'bg-rose-100 text-rose-700'
+                        : source.status === 'healthy'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {source.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="app-panel p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <ScrollText className="h-5 w-5 text-slate-700" />
@@ -671,7 +863,7 @@ export default function IngestionControl() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="app-panel p-5">
               <div className="mb-4 flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                 <div>

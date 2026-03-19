@@ -140,6 +140,12 @@ export interface Post {
   feed_title?: string;
   media_urls?: string[];
   published_at?: string | null;
+  fetched_at?: string | null;
+  categories?: string[];
+  metadata?: Record<string, any>;
+  handle_or_url?: string;
+  source_display_name?: string;
+  topics?: Array<{ id: string; title: string; date?: string | null }>;
 }
 
 export interface SourceStats {
@@ -181,6 +187,90 @@ export interface LogTailResponse {
   lines?: string[];
 }
 
+export interface SchedulerConfig {
+  interval_hours: number;
+  sync_sources_each_cycle: boolean;
+  generate_daily_briefing: boolean;
+  generate_topic_briefing: boolean;
+  updated_at?: string | null;
+}
+
+export interface JobRun {
+  id: string;
+  job_type: string;
+  status: string;
+  trigger: string;
+  source_id?: string | null;
+  source_display_name?: string | null;
+  source_platform?: string | null;
+  message?: string | null;
+  payload?: Record<string, any>;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface SourceHealthRow {
+  source_id: string;
+  display_name: string;
+  platform: string;
+  enabled: boolean;
+  stored_posts: number;
+  archive_status?: string | null;
+  status: string;
+  last_checked_at?: string | null;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+  last_message?: string | null;
+}
+
+export interface OperationsOverviewResponse {
+  success?: boolean;
+  error?: string;
+  scheduler?: SchedulerConfig;
+  jobs?: JobRun[];
+  source_health?: SourceHealthRow[];
+  alerts?: Array<{
+    id: string;
+    severity: string;
+    title: string;
+    message: string;
+    started_at?: string | null;
+    source_id?: string | null;
+  }>;
+  stats?: Record<string, any>;
+}
+
+export interface PostNotesPayload {
+  post_id: string;
+  notes_markdown: string;
+  updated_at?: string | null;
+}
+
+export interface PostDetailResponse {
+  success?: boolean;
+  error?: string;
+  post?: Post | null;
+  notes?: PostNotesPayload;
+}
+
+export interface PostSummaryResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  summary_markdown?: string;
+  model?: string;
+  updated_at?: string | null;
+  cached?: boolean;
+}
+
+export interface PostChatResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  answer?: string;
+  source?: string;
+}
+
 export interface SyncSourcesResponse {
   success: boolean;
   error?: string;
@@ -207,6 +297,23 @@ export interface YouTubeChannelVideosResponse {
   videos?: YouTubeVideoPreview[];
 }
 
+function normalizeErrorText(text: string, contentType: string): string | null {
+  const raw = text.trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (contentType.includes('text/html')) {
+    const titleMatch = raw.match(/<title>(.*?)<\/title>/is);
+    const headingMatch = raw.match(/<h1[^>]*>(.*?)<\/h1>/is);
+    const bestHtmlSnippet = titleMatch?.[1] || headingMatch?.[1] || raw;
+    const stripped = bestHtmlSnippet.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return stripped.slice(0, 180) || 'HTML error response';
+  }
+
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
 class ApiService {
   private async makeRequest<T>(
     endpoint: string, 
@@ -221,11 +328,11 @@ class ApiService {
       },
     };
 
-  const response = await fetch(url, { ...defaultOptions, ...options });
+    const response = await fetch(url, { ...defaultOptions, ...options });
     
     if (!response.ok) {
       // Try to surface server error details when available
-  let detail = `${response.status} ${response.statusText}`;
+      let detail = `${response.status} ${response.statusText}`;
       try {
         const data = await response.clone().json();
         const serverMsg = (data && (data.detail || data.error || data.message));
@@ -233,11 +340,12 @@ class ApiService {
       } catch {
         try {
           const text = await response.text();
-          if (text) detail = `${response.status} ${text}`;
+          const contentType = response.headers.get('content-type') || 'unknown';
+          const normalizedText = normalizeErrorText(text, contentType);
+          if (normalizedText) detail = `${response.status} ${normalizedText}`;
         } catch {}
       }
-  const ct = response.headers.get('content-type') || 'unknown';
-  throw new Error(`API request failed: ${detail} | url=${url} | content-type=${ct}`);
+      throw new Error(`API request failed: ${detail} | url=${url}`);
     }
 
     return response.json();
@@ -365,6 +473,82 @@ class ApiService {
         source_id: sourceId,
         total: 0,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getPostDetail(postId: string): Promise<PostDetailResponse> {
+    try {
+      return await this.makeRequest<PostDetailResponse>(`/api/posts/item/${postId}`);
+    } catch (error) {
+      console.error('Failed to get post detail:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post: null,
+      };
+    }
+  }
+
+  async getPostNotes(postId: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
+    try {
+      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`);
+    } catch (error) {
+      console.error('Failed to get post notes:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        notes_markdown: '',
+      };
+    }
+  }
+
+  async savePostNotes(postId: string, notesMarkdown: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
+    try {
+      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`, {
+        method: 'PUT',
+        body: JSON.stringify({ notesMarkdown }),
+      });
+    } catch (error) {
+      console.error('Failed to save post notes:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        notes_markdown: notesMarkdown,
+      };
+    }
+  }
+
+  async getPostSummary(postId: string, refresh = false): Promise<PostSummaryResponse> {
+    try {
+      return await this.makeRequest<PostSummaryResponse>(`/api/posts/item/${postId}/summary`, {
+        method: 'POST',
+        body: JSON.stringify({ refresh }),
+      });
+    } catch (error) {
+      console.error('Failed to get post summary:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+      };
+    }
+  }
+
+  async chatAboutPost(postId: string, question: string): Promise<PostChatResponse> {
+    try {
+      return await this.makeRequest<PostChatResponse>(`/api/posts/item/${postId}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+      });
+    } catch (error) {
+      console.error('Failed to chat about post:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
       };
     }
   }
@@ -533,6 +717,53 @@ class ApiService {
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         log,
         lines: [],
+      };
+    }
+  }
+
+  async getOperationsOverview(): Promise<OperationsOverviewResponse> {
+    try {
+      return await this.makeRequest<OperationsOverviewResponse>('/api/operations/overview');
+    } catch (error) {
+      console.error('Failed to load operations overview:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        jobs: [],
+        source_health: [],
+        alerts: [],
+      };
+    }
+  }
+
+  async getSchedulerConfig(): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler');
+    } catch (error) {
+      console.error('Failed to load scheduler config:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async updateSchedulerConfig(config: Partial<SchedulerConfig>): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler', {
+        method: 'PUT',
+        body: JSON.stringify({
+          intervalHours: config.interval_hours,
+          syncSourcesEachCycle: config.sync_sources_each_cycle,
+          generateDailyBriefing: config.generate_daily_briefing,
+          generateTopicBriefing: config.generate_topic_briefing,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to update scheduler config:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
   }

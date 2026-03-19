@@ -136,8 +136,16 @@ What happens automatically on startup:
 Frontend operational pages:
 
 - `/briefing`: daily briefing view and source browser
-- `/ingestion`: manual ingestion, single-source fetch, archive control, registry sync, and recent runtime logs
+- `/ingestion`: manual ingestion, single-source fetch, archive control, registry sync, scheduler control, mission feed, source health, and recent runtime logs
+- `/posts/:postId`: single-post intelligence workspace with original content, AI summary, notes, and chat
 - `/settings/sources`: source registry editing
+
+Frontend runtime features:
+
+- theme toggle with light/dark Obsidian-inspired gold palette
+- per-post detail button from briefing and topic views
+- single-post notes persisted in PostgreSQL
+- single-post AI summary cache persisted in PostgreSQL
 
 ## Ports
 
@@ -214,6 +222,8 @@ The Ingestion Control page also exposes:
 - `Run Safe Ingestion`
 - `Sync JSON -> DB`
 - `Sync DB -> JSON`
+- scheduler interval and briefing toggles
+- recent job history, alerts, and per-source health
 - live tail of shared backend/scheduler logs
 
 ## Updating On Server

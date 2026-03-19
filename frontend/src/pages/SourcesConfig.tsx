@@ -629,7 +629,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   }
 
   return (
-    <div className={embedded ? "bg-gray-100" : "min-h-screen bg-gray-100"}>
+    <div className={embedded ? "app-shell" : "app-shell min-h-screen"}>
       <div className={embedded ? "max-w-5xl mx-auto p-6" : "max-w-5xl mx-auto p-8"}>
         {/* Back link (hidden when embedded) */}
   {!embedded && (

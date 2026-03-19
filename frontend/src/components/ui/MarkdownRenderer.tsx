@@ -35,7 +35,7 @@ function normalizeRendererContent(content: string): string {
 
 export default function MarkdownRenderer({ content, className = "" }: MarkdownRendererProps) {
   if (!content) {
-    return <p className="text-gray-500 italic">No content available</p>;
+    return <p className="italic text-[var(--text-muted)]">No content available</p>;
   }
 
   const normalizedContent = normalizeRendererContent(content);
@@ -75,32 +75,32 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
         components={{
           // Custom paragraph to preserve single line breaks from plain text sources
           p: ({ children }) => (
-            <p className="text-gray-800 leading-relaxed mb-4 whitespace-pre-wrap">
+            <p className="mb-4 whitespace-pre-wrap leading-relaxed text-[var(--text-normal)]">
               {children}
             </p>
           ),
           h1: ({ children }) => (
-            <h1 className="text-2xl font-bold text-gray-900 mt-6 mb-4 pb-2 border-b-2 border-indigo-500">
+            <h1 className="mt-6 mb-4 border-b-2 border-[var(--gold-shadow)] pb-2 text-2xl font-bold text-[var(--text-normal)]">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="text-xl font-semibold text-indigo-600 mt-5 mb-3">
+            <h2 className="mt-5 mb-3 text-xl font-semibold text-[var(--gold-shadow)]">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="text-lg font-medium text-gray-700 mt-4 mb-2">
+            <h3 className="mt-4 mb-2 text-lg font-medium text-[var(--text-normal)]">
               {children}
             </h3>
           ),
           strong: ({ children }) => (
-            <strong className="font-semibold text-gray-900">
+            <strong className="font-semibold text-[var(--text-normal)]">
               {children}
             </strong>
           ),
           em: ({ children }) => (
-            <em className="italic text-indigo-600">
+            <em className="italic text-[var(--gold-shadow)]">
               {children}
             </em>
           ),
@@ -115,13 +115,13 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             </ol>
           ),
           li: ({ children }) => (
-            <li className="text-gray-800 leading-relaxed">
+            <li className="leading-relaxed text-[var(--text-normal)]">
               {children}
             </li>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-indigo-300 pl-4 py-2 my-4 bg-indigo-50 rounded-r-lg">
-              <div className="text-gray-700 italic">
+            <blockquote className="my-4 rounded-r-lg border-l-4 border-[var(--gold-shadow)] bg-[var(--text-highlight-bg)] py-2 pl-4">
+              <div className="italic text-[var(--text-normal)]">
                 {children}
               </div>
             </blockquote>
@@ -129,14 +129,14 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
           code: (props: any) => {
             if (props.inline) {
               return (
-                <code className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded font-mono text-sm">
+                <code className="rounded bg-[var(--background-secondary)] px-1.5 py-0.5 font-mono text-sm text-[var(--text-normal)]">
                   {props.children}
                 </code>
               );
             }
             return (
-              <pre className="bg-gray-100 border border-gray-200 rounded-lg p-4 my-4 overflow-x-auto">
-                <code className="font-mono text-sm text-gray-800">
+              <pre className="my-4 overflow-x-auto rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                <code className="font-mono text-sm text-[var(--text-normal)]">
                   {props.children}
                 </code>
               </pre>
@@ -144,33 +144,33 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
           },
           table: ({ children }) => (
             <div className="overflow-x-auto my-4">
-              <table className="min-w-full border border-gray-200 rounded-lg">
+              <table className="min-w-full rounded-lg border border-[var(--background-modifier-border)]">
                 {children}
               </table>
             </div>
           ),
           thead: ({ children }) => (
-            <thead className="bg-gray-50">
+            <thead className="bg-[var(--background-secondary)]">
               {children}
             </thead>
           ),
           tbody: ({ children }) => (
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-[var(--background-modifier-border)]">
               {children}
             </tbody>
           ),
           tr: ({ children }) => (
-            <tr className="hover:bg-gray-50">
+            <tr className="hover:bg-[var(--background-secondary)]">
               {children}
             </tr>
           ),
           th: ({ children }) => (
-            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200">
+            <th className="border-b border-[var(--background-modifier-border)] px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="px-4 py-3 text-sm text-gray-800 border-b border-gray-200">
+            <td className="border-b border-[var(--background-modifier-border)] px-4 py-3 text-sm text-[var(--text-normal)]">
               {children}
             </td>
           ),
@@ -179,13 +179,13 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-indigo-600 hover:text-indigo-800 underline transition-colors duration-200"
+              className="underline transition-colors duration-200 text-[var(--gold-shadow)] hover:text-[var(--text-normal)]"
             >
               {children}
             </a>
           ),
           hr: () => (
-            <hr className="my-6 border-t border-gray-300" />
+            <hr className="my-6 border-t border-[var(--background-modifier-border)]" />
           ),
         }}
       >

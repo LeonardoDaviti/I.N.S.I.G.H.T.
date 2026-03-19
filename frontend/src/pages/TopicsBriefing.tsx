@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
 import type { BriefingTopicsResponse, Topic, Post } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 
 export default function TopicsBriefing() {
+  const navigate = useNavigate();
   const [showSidebar, setShowSidebar] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -51,7 +53,7 @@ export default function TopicsBriefing() {
   const allPostsArray = useMemo(() => Object.entries(postsMap).sort((a, b) => Number(a[0]) - Number(b[0])), [postsMap]);
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="app-shell flex h-screen">
     {showSidebar && (
     <div className="w-80 bg-white border-r border-gray-200 pt-4 pr-6 pb-6 pl-6 overflow-y-auto relative">
         <button
@@ -181,6 +183,16 @@ export default function TopicsBriefing() {
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-3">
+                                      {post.id && (
+                                        <button
+                                          type="button"
+                                          onClick={() => navigate(`/posts/${post.id}`)}
+                                          className="text-indigo-600 hover:text-indigo-800"
+                                          aria-label="Open details"
+                                        >
+                                          <FileText className="w-4 h-4" />
+                                        </button>
+                                      )}
                                       {post.url && (
                                         <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800" aria-label="Open original">
                                           <ExternalLink className="w-4 h-4" />

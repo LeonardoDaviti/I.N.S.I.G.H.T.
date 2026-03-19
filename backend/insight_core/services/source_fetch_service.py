@@ -73,6 +73,11 @@ class SourceFetchService:
             "REDDIT_USER_AGENT",
             "INSIGHT Archive Fetcher/1.0",
         )
+        self.full_content_hosts = {
+            host.strip().lower()
+            for host in os.getenv("RSS_FULL_CONTENT_HOSTS", "news.smol.ai").split(",")
+            if host.strip()
+        }
         self.insecure_tls_hosts = {
             host.strip().lower()
             for host in os.getenv("RSS_SKIP_TLS_VERIFY_HOSTS", "").split(",")
@@ -211,7 +216,8 @@ class SourceFetchService:
             return await self._fetch_reddit_live_posts(source["handle_or_url"], limit)
 
         feed_text, _ = await self._fetch_text(source["handle_or_url"])
-        return self._parse_feed_posts(feed_text, source["handle_or_url"])[:limit]
+        posts = self._parse_feed_posts(feed_text, source["handle_or_url"])[:limit]
+        return await self._maybe_enrich_generic_rss_posts(source, posts)
 
     async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
         """Inspect source capabilities and available archive metadata."""
@@ -346,6 +352,48 @@ class SourceFetchService:
                 "page_delay_seconds": 0,
             },
         }
+
+    async def _maybe_enrich_generic_rss_posts(self, source: Dict[str, Any], posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not posts:
+            return posts
+
+        source_settings = source.get("settings") or {}
+        source_host = (urllib.parse.urlparse(source["handle_or_url"]).hostname or "").lower()
+        should_expand = bool(source_settings.get("fetch_full_content")) or source_host in self.full_content_hosts
+        if not should_expand:
+            return posts
+
+        enriched_posts: List[Dict[str, Any]] = []
+        for post in posts:
+            enriched_posts.append(await self._maybe_expand_article_body(post))
+        return enriched_posts
+
+    async def _maybe_expand_article_body(self, post: Dict[str, Any]) -> Dict[str, Any]:
+        url = post.get("url")
+        if not isinstance(url, str) or not url.startswith("http"):
+            return post
+
+        current_content = self._strip_html(post.get("content_html") or post.get("content") or "")
+        if len(current_content) >= 1400:
+            return post
+
+        try:
+            article_html, _ = await self._fetch_text(url)
+            extracted_html = self._extract_article_html(article_html)
+            extracted_text = self._strip_html(extracted_html)
+            if len(extracted_text) <= max(len(current_content) + 250, 700):
+                return post
+
+            next_metadata = dict(post.get("metadata") or {})
+            next_metadata["full_content_fetched"] = True
+            next_post = dict(post)
+            next_post["content_html"] = extracted_html
+            next_post["content"] = extracted_text
+            next_post["metadata"] = next_metadata
+            return next_post
+        except Exception as exc:
+            self.logger.debug("Full-content expansion skipped for %s: %s", url, exc)
+            return post
 
     async def _collect_telegram_posts(
         self,
@@ -802,6 +850,35 @@ class SourceFetchService:
     def _strip_html(self, html_text: str) -> str:
         text = re.sub(r"<[^>]+>", " ", html_text or "")
         return re.sub(r"\s+", " ", text).strip()
+
+    def _extract_article_html(self, html_text: str) -> str:
+        cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg).*?</\1>", "", html_text or "")
+        candidate_patterns = [
+            r"(?is)<article\b[^>]*>(.*?)</article>",
+            r"(?is)<main\b[^>]*>(.*?)</main>",
+            r'(?is)<div\b[^>]+class="[^"]*(?:entry-content|post-content|article-content|content-body|prose|single-post-content)[^"]*"[^>]*>(.*?)</div>',
+        ]
+
+        candidate = ""
+        for pattern in candidate_patterns:
+            match = re.search(pattern, cleaned)
+            if match:
+                candidate = match.group(1)
+                break
+
+        if not candidate:
+            body_match = re.search(r"(?is)<body\b[^>]*>(.*?)</body>", cleaned)
+            candidate = body_match.group(1) if body_match else cleaned
+
+        blocks = re.findall(r"(?is)<(?:h1|h2|h3|p|blockquote|li)[^>]*>.*?</(?:h1|h2|h3|p|blockquote|li)>", candidate)
+        if not blocks:
+            blocks = re.findall(r"(?is)<(?:h1|h2|h3|p|blockquote|li)[^>]*>.*?</(?:h1|h2|h3|p|blockquote|li)>", cleaned)
+
+        text_size = len(self._strip_html(" ".join(blocks)))
+        if text_size < 500:
+            return ""
+
+        return "\n".join(blocks)
 
     def _extract_telegram_username(self, source_url: str) -> str:
         segments = [segment for segment in urllib.parse.urlparse(source_url).path.split("/") if segment]

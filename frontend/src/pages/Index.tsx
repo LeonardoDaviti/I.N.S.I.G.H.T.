@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 export default function Index() {
   return (
-    <div className="flex h-screen bg-background">
+    <div className="app-shell flex h-screen bg-background">
       {/* Navigation Panel */}
       <div className="w-80 bg-card border-r border-border p-6">
         <div className="mb-8">

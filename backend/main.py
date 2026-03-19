@@ -88,6 +88,25 @@ class YouTubeProgressRequest(BaseModel):
 class LiveFetchRequest(BaseModel):
     limit: int | None = None
 
+
+class SchedulerConfigRequest(BaseModel):
+    intervalHours: float | None = None
+    syncSourcesEachCycle: bool | None = None
+    generateDailyBriefing: bool | None = None
+    generateTopicBriefing: bool | None = None
+
+
+class PostNotesRequest(BaseModel):
+    notesMarkdown: str
+
+
+class PostSummaryRequest(BaseModel):
+    refresh: bool | None = False
+
+
+class PostChatRequest(BaseModel):
+    question: str
+
 @app.get("/")
 async def root():
     return {
@@ -197,6 +216,57 @@ async def get_posts_by_source(source_id: str):
     except Exception as e:
         logger.exception("Failed to get posts by source")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/posts/item/{post_id}")
+async def get_post_detail(post_id: str):
+    """Get a single post with source metadata and saved notes."""
+    try:
+        logger.info(f"📄 Fetching post detail: {post_id}")
+        return api_bridge.get_post_detail(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post detail")
+        return {"success": False, "error": str(e), "post": None}
+
+
+@app.get("/api/posts/item/{post_id}/notes")
+async def get_post_notes(post_id: str):
+    try:
+        logger.info(f"📝 Fetching notes for post: {post_id}")
+        return api_bridge.get_post_notes(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post notes")
+        return {"success": False, "error": str(e), "post_id": post_id, "notes_markdown": ""}
+
+
+@app.put("/api/posts/item/{post_id}/notes")
+async def save_post_notes(post_id: str, request: PostNotesRequest):
+    try:
+        logger.info(f"📝 Saving notes for post: {post_id}")
+        return api_bridge.save_post_notes(post_id, request.notesMarkdown)
+    except Exception as e:
+        logger.exception("Failed to save post notes")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/summary")
+async def get_post_summary(post_id: str, request: PostSummaryRequest):
+    try:
+        logger.info(f"🧠 Generating summary for post: {post_id}")
+        return api_bridge.get_post_summary(post_id, refresh=bool(request.refresh))
+    except Exception as e:
+        logger.exception("Failed to get post summary")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/chat")
+async def chat_about_post(post_id: str, request: PostChatRequest):
+    try:
+        logger.info(f"💬 Chat about post: {post_id}")
+        return api_bridge.chat_about_post(post_id, request.question)
+    except Exception as e:
+        logger.exception("Failed to chat about post")
+        return {"success": False, "error": str(e), "post_id": post_id}
 
 @app.get("/api/sources/with-counts")
 async def get_sources_with_counts():
@@ -462,6 +532,45 @@ async def get_ingestion_logs(
     except Exception as e:
         logger.exception("Failed to fetch ingestion logs")
         return {"success": False, "error": str(e), "log": log, "lines": []}
+
+
+@app.get("/api/operations/overview")
+async def get_operations_overview():
+    try:
+        logger.info("📡 Fetching operations overview")
+        return api_bridge.get_operations_overview()
+    except Exception as e:
+        logger.exception("Failed to fetch operations overview")
+        return {"success": False, "error": str(e), "jobs": [], "source_health": [], "alerts": []}
+
+
+@app.get("/api/operations/scheduler")
+async def get_scheduler_config():
+    try:
+        logger.info("⏱️ Fetching scheduler config")
+        return api_bridge.get_scheduler_config()
+    except Exception as e:
+        logger.exception("Failed to fetch scheduler config")
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/api/operations/scheduler")
+async def update_scheduler_config(request: SchedulerConfigRequest):
+    try:
+        logger.info("⏱️ Updating scheduler config")
+        payload = {}
+        if request.intervalHours is not None:
+            payload["interval_hours"] = request.intervalHours
+        if request.syncSourcesEachCycle is not None:
+            payload["sync_sources_each_cycle"] = request.syncSourcesEachCycle
+        if request.generateDailyBriefing is not None:
+            payload["generate_daily_briefing"] = request.generateDailyBriefing
+        if request.generateTopicBriefing is not None:
+            payload["generate_topic_briefing"] = request.generateTopicBriefing
+        return api_bridge.update_scheduler_config(payload)
+    except Exception as e:
+        logger.exception("Failed to update scheduler config")
+        return {"success": False, "error": str(e)}
 
 
 # ============= YOUTUBE ENDPOINTS =============
