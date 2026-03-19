@@ -509,6 +509,39 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
         logger.error(f"❌ Failed to generate topic-based briefing: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/weekly")
+async def generate_weekly_briefing(request: BriefingRequest):
+    try:
+        date = request.date
+        logger.info(f"🚀 Generating weekly briefing anchored at date: {date}")
+        if not date:
+            raise HTTPException(status_code=400, detail="Date parameter required")
+
+        result = await api_bridge.generate_weekly_briefing(date, refresh=bool(request.refresh))
+        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
+            logger.error(f"❌ Engine error: {result['error']}")
+            return {"success": False, "error": result["error"]}
+
+        return {
+            "success": True,
+            "briefing": result.get("briefing", ""),
+            "format": result.get("format", "markdown"),
+            "saved_briefing_id": result.get("saved_briefing_id"),
+            "cached": result.get("cached", False),
+            "date": result.get("date", date),
+            "week_start": result.get("week_start"),
+            "week_end": result.get("week_end"),
+            "subject_key": result.get("subject_key"),
+            "daily_briefings_used": result.get("daily_briefings_used", 0),
+            "days_covered": result.get("days_covered", []),
+            "estimated_tokens": result.get("estimated_tokens"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to generate weekly briefing: {e}")
+        return {"success": False, "error": str(e)}
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring"""
@@ -583,6 +616,16 @@ async def get_operations_overview():
     except Exception as e:
         logger.exception("Failed to fetch operations overview")
         return {"success": False, "error": str(e), "jobs": [], "source_health": [], "alerts": []}
+
+
+@app.get("/api/operations/jobs/{job_id}")
+async def get_operation_job(job_id: str):
+    try:
+        logger.info("📡 Fetching operation job detail: %s", job_id)
+        return api_bridge.get_operation_job(job_id)
+    except Exception as e:
+        logger.exception("Failed to fetch operation job detail")
+        return {"success": False, "error": str(e), "job": None}
 
 
 @app.get("/api/operations/scheduler")

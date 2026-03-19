@@ -21,7 +21,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import psycopg
 
 from insight_core.connectors import create_connector
@@ -106,7 +106,12 @@ class SourceFetchService:
         await self._record_archive_metadata(source_id, inspection, mode="plan")
         return inspection
 
-    async def archive_source(self, source_id: str, desired_posts: Optional[int] = None) -> Dict[str, Any]:
+    async def archive_source(
+        self,
+        source_id: str,
+        desired_posts: Optional[int] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
+    ) -> Dict[str, Any]:
         """Archive historical posts for a single source."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
@@ -115,17 +120,41 @@ class SourceFetchService:
         plan = await self.plan_archive(source_id, desired_posts)
         source_type = plan["source_type"]
         target_posts = plan["desired_posts"]
+        await self._emit_progress(
+            progress_callback,
+            {
+                "stage": "planning_complete",
+                "source_type": source_type,
+                "target_posts": target_posts,
+                "estimated_pages": plan.get("estimated_pages"),
+                "estimated_seconds": plan.get("estimated_seconds"),
+                "message": f"Planning complete for {target_posts} posts",
+                "progress": 0,
+            },
+        )
 
         if source_type == "telegram_rss":
-            posts, pages_fetched = await self._collect_telegram_posts(source["handle_or_url"], target_posts)
+            posts, pages_fetched = await self._collect_telegram_posts(
+                source["handle_or_url"],
+                target_posts,
+                progress_callback=progress_callback,
+            )
         elif source_type == "nitter_rss":
-            posts, pages_fetched = await self._collect_nitter_posts(source["handle_or_url"], target_posts)
+            posts, pages_fetched = await self._collect_nitter_posts(
+                source["handle_or_url"],
+                target_posts,
+                progress_callback=progress_callback,
+            )
         elif source_type == "youtube_channel":
             youtube_result = self.youtube_service.archive_channel_posts(source["handle_or_url"], target_posts)
             posts = youtube_result["posts"]
             pages_fetched = youtube_result["pages_fetched"]
         elif source_type == "reddit_subreddit":
-            posts, pages_fetched = await self._collect_reddit_posts(source["handle_or_url"], target_posts)
+            posts, pages_fetched = await self._collect_reddit_posts(
+                source["handle_or_url"],
+                target_posts,
+                progress_callback=progress_callback,
+            )
         elif source_type == "generic_rss":
             posts = await self.fetch_live_posts(source, target_posts)
             pages_fetched = 1
@@ -147,6 +176,20 @@ class SourceFetchService:
         }
 
         await self._record_archive_metadata(source_id, result, mode="archive")
+        await self._emit_progress(
+            progress_callback,
+            {
+                "stage": "completed",
+                "source_type": source_type,
+                "pages_fetched": pages_fetched,
+                "posts_fetched": len(posts),
+                "posts_inserted": saved["inserted"],
+                "posts_updated": saved["updated"],
+                "stored_posts": post_stats["post_count"],
+                "message": f"Archive completed with {len(posts)} posts",
+                "progress": 100,
+            },
+        )
         return result
 
     async def ingest_source_now(self, source_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
@@ -400,6 +443,7 @@ class SourceFetchService:
         source_url: str,
         target_posts: int,
         apply_rate_limits: bool = True,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         username = self._extract_telegram_username(source_url)
         collected: List[Dict[str, Any]] = []
@@ -420,13 +464,32 @@ class SourceFetchService:
                     if len(collected) >= target_posts:
                         break
 
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "stage": "page_fetched",
+                    "platform": "telegram",
+                    "page": page,
+                    "pages_fetched": pages_fetched,
+                    "posts_collected": len(collected),
+                    "target_posts": target_posts,
+                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
+                    "message": f"Fetched Telegram page {page}",
+                },
+            )
+
             page += 1
             if len(collected) < target_posts and apply_rate_limits:
                 await self._sleep_between_telegram_pages(pages_fetched)
 
         return collected[:target_posts], pages_fetched
 
-    async def _collect_nitter_posts(self, source_url: str, target_posts: int) -> Tuple[List[Dict[str, Any]], int]:
+    async def _collect_nitter_posts(
+        self,
+        source_url: str,
+        target_posts: int,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         username = self._extract_nitter_username(source_url)
         collected: List[Dict[str, Any]] = []
         seen_urls = set()
@@ -446,6 +509,20 @@ class SourceFetchService:
                     if len(collected) >= target_posts:
                         break
 
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "stage": "page_fetched",
+                    "platform": "nitter",
+                    "pages_fetched": pages_fetched,
+                    "posts_collected": len(collected),
+                    "target_posts": target_posts,
+                    "cursor": next_cursor,
+                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
+                    "message": f"Fetched Nitter page {pages_fetched}",
+                },
+            )
+
             if len(collected) >= target_posts or not next_cursor or next_cursor == cursor:
                 break
 
@@ -454,7 +531,12 @@ class SourceFetchService:
 
         return collected[:target_posts], pages_fetched
 
-    async def _collect_reddit_posts(self, source_handle: str, target_posts: int) -> Tuple[List[Dict[str, Any]], int]:
+    async def _collect_reddit_posts(
+        self,
+        source_handle: str,
+        target_posts: int,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         subreddit = self._extract_reddit_subreddit(source_handle)
         collected: List[Dict[str, Any]] = []
         after: Optional[str] = None
@@ -468,6 +550,19 @@ class SourceFetchService:
 
             pages_fetched += 1
             collected.extend(page_posts)
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "stage": "page_fetched",
+                    "platform": "reddit",
+                    "pages_fetched": pages_fetched,
+                    "posts_collected": len(collected),
+                    "target_posts": target_posts,
+                    "after": after,
+                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
+                    "message": f"Fetched Reddit page {pages_fetched}",
+                },
+            )
 
             if not after:
                 break
@@ -636,6 +731,17 @@ class SourceFetchService:
 
     async def _fetch_text(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         return await asyncio.to_thread(self._fetch_text_sync, url, user_agent)
+
+    async def _emit_progress(
+        self,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]],
+        payload: Dict[str, Any],
+    ) -> None:
+        if progress_callback is None:
+            return
+        result = progress_callback(payload)
+        if asyncio.iscoroutine(result):
+            await result
 
     def _fetch_text_sync(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         request = urllib.request.Request(

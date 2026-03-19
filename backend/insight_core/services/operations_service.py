@@ -106,31 +106,88 @@ class OperationsService:
         message: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
+                row = cur.fetchone()
+                current_payload = row[0] if row else {}
+                events = list((current_payload or {}).get("events") or [])
+                if message or status:
+                    events.append(
+                        {
+                            "at": now_iso,
+                            "level": "error" if status == "failed" else "success",
+                            "message": message or f"Job {status}",
+                            "status": status,
+                        }
+                    )
+                next_payload = {
+                    **(current_payload or {}),
+                    **self._prepare_payload(payload or {}),
+                }
+                if events:
+                    next_payload["events"] = events[-200:]
                 cur.execute(
                     """
                     UPDATE job_runs
                     SET status = %s,
                         message = COALESCE(%s, message),
-                        payload = CASE
-                          WHEN %s::jsonb = '{}'::jsonb THEN payload
-                          ELSE payload || %s::jsonb
-                        END,
-                        finished_at = now()
+                        payload = %s::jsonb,
+                        finished_at = %s
                     WHERE id = %s
                     """,
                     (
                         status,
                         message,
-                        json.dumps(self._prepare_payload(payload or {})),
-                        json.dumps(self._prepare_payload(payload or {})),
+                        json.dumps(self._prepare_payload(next_payload)),
+                        now_iso,
                         job_id,
                     ),
                 )
             conn.commit()
 
-    def list_recent_jobs(self, limit: int = 30) -> List[Dict[str, Any]]:
+    def append_job_event(
+        self,
+        job_id: str,
+        *,
+        message: str,
+        level: str = "info",
+        progress: float | None = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
+                row = cur.fetchone()
+                if not row:
+                    return
+                current_payload = row[0] or {}
+                events = list(current_payload.get("events") or [])
+                event: Dict[str, Any] = {
+                    "at": now_iso,
+                    "level": level,
+                    "message": message,
+                }
+                if progress is not None:
+                    event["progress"] = round(float(progress), 2)
+                if payload:
+                    event["data"] = self._prepare_payload(payload)
+                events.append(event)
+                next_payload = {
+                    **current_payload,
+                    "events": events[-200:],
+                }
+                if progress is not None:
+                    next_payload["progress"] = round(float(progress), 2)
+                cur.execute(
+                    "UPDATE job_runs SET payload = %s::jsonb WHERE id = %s",
+                    (json.dumps(self._prepare_payload(next_payload)), job_id),
+                )
+            conn.commit()
+
+    def list_recent_jobs(self, limit: int = 80) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -170,11 +227,58 @@ class OperationsService:
                     "source_platform": row[6],
                     "message": row[7],
                     "payload": row[8] or {},
+                    "progress": float((row[8] or {}).get("progress", 0) or 0),
+                    "event_count": len((row[8] or {}).get("events", []) or []),
                     "started_at": row[9].isoformat() if row[9] else None,
                     "finished_at": row[10].isoformat() if row[10] else None,
                 }
             )
         return jobs
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      jr.id,
+                      jr.job_type,
+                      jr.status,
+                      jr.trigger,
+                      jr.source_id,
+                      COALESCE(s.settings->>'display_name', s.handle_or_url),
+                      s.platform,
+                      jr.message,
+                      jr.payload,
+                      jr.started_at,
+                      jr.finished_at
+                    FROM job_runs jr
+                    LEFT JOIN sources s ON s.id = jr.source_id
+                    WHERE jr.id = %s
+                    """,
+                    (job_id,),
+                )
+                row = cur.fetchone()
+
+        if not row:
+            return None
+
+        payload = row[8] or {}
+        return {
+            "id": str(row[0]),
+            "job_type": row[1],
+            "status": row[2],
+            "trigger": row[3],
+            "source_id": str(row[4]) if row[4] else None,
+            "source_display_name": row[5],
+            "source_platform": row[6],
+            "message": row[7],
+            "payload": payload,
+            "progress": float(payload.get("progress", 0) or 0),
+            "event_count": len(payload.get("events", []) or []),
+            "started_at": row[9].isoformat() if row[9] else None,
+            "finished_at": row[10].isoformat() if row[10] else None,
+        }
 
     def record_source_status(
         self,
@@ -201,8 +305,9 @@ class OperationsService:
         self.sources_service.merge_source_settings(source_id, {"ops": next_ops})
 
     def get_operations_overview(self) -> Dict[str, Any]:
-        jobs = self.list_recent_jobs(40)
+        jobs = self.list_recent_jobs(120)
         source_health = self.get_source_health()
+        counts = self.get_database_counts()
         alerts = [
             {
                 "id": job["id"],
@@ -226,7 +331,29 @@ class OperationsService:
                 "recent_failures": len([job for job in jobs if job["status"] == "failed"]),
                 "sources_in_error": len([source for source in source_health if source["status"] == "error"]),
                 "sources_monitored": len(source_health),
+                **counts,
             },
+        }
+
+    def get_database_counts(self) -> Dict[str, int]:
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      (SELECT COUNT(*) FROM posts) AS total_posts,
+                      (SELECT COUNT(*) FROM topics) AS total_topics,
+                      (SELECT COUNT(*) FROM briefings) AS total_briefings,
+                      (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
+                    """
+                )
+                row = cur.fetchone()
+
+        return {
+            "total_posts": int(row[0] or 0),
+            "total_topics": int(row[1] or 0),
+            "total_briefings": int(row[2] or 0),
+            "enabled_sources": int(row[3] or 0),
         }
 
     def get_source_health(self) -> List[Dict[str, Any]]:
@@ -315,6 +442,9 @@ class OperationsService:
             return compacted
 
         if isinstance(value, list):
+            if parent_key == "events":
+                return [self._compact_payload(item, parent_key=parent_key) for item in value[-200:]]
+
             if parent_key == "topics":
                 summarized = []
                 for item in value[:12]:

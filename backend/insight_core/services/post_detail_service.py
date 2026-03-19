@@ -151,9 +151,10 @@ class PostDetailService:
                     "updated_at": cached["updated_at"],
                     "cached": True,
                     "categories": current_categories,
+                    "estimated_tokens": self._count_tokens(cached["summary_markdown"]),
                 }
 
-        summary_markdown, model, generated_tags = self._generate_summary(post)
+        summary_markdown, model, generated_tags, estimated_tokens = self._generate_summary(post)
         final_categories = current_categories or generated_tags
         if generated_tags and not current_categories:
             try:
@@ -169,6 +170,7 @@ class PostDetailService:
             "updated_at": cached["updated_at"],
             "cached": False,
             "categories": final_categories,
+            "estimated_tokens": estimated_tokens,
         }
 
     def chat_about_post(self, post_id: str, question: str) -> Dict[str, Any]:
@@ -192,6 +194,8 @@ class PostDetailService:
                     "post_id": post_id,
                     "answer": answer["answer"],
                     "source": "gemini",
+                    "estimated_tokens": answer.get("estimated_tokens"),
+                    "context": self._build_context_stats(post_context),
                 }
 
         return {
@@ -199,6 +203,8 @@ class PostDetailService:
             "post_id": post_id,
             "answer": self._fallback_answer(post, question),
             "source": "fallback",
+            "estimated_tokens": self._count_tokens((post.get("content") or "")[:4000]),
+            "context": self._build_context_stats(post_context),
         }
 
     async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
@@ -267,12 +273,13 @@ class PostDetailService:
                 "updated_at": cached_briefing.get("updated_at"),
                 "comment_count": len(cached_comments),
                 "cached": True,
+                "estimated_tokens": cached_briefing.get("estimated_tokens", self.processor.count_tokens(cached_briefing.get("summary_markdown", ""))),
             }
 
         comments_payload = await self.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
         comments = comments_payload.get("comments") or []
 
-        summary_markdown, model, signals = self._generate_reddit_comments_briefing(post, comments)
+        summary_markdown, model, signals, estimated_tokens = self._generate_reddit_comments_briefing(post, comments)
         updated_discussion = {
             **discussion,
             "comments": comments,
@@ -284,6 +291,7 @@ class PostDetailService:
                 "signals": signals,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "comment_count": len(comments),
+                "estimated_tokens": estimated_tokens,
             },
         }
         metadata["reddit_discussion"] = updated_discussion
@@ -297,6 +305,7 @@ class PostDetailService:
             "updated_at": updated_discussion["briefing"]["updated_at"],
             "comment_count": len(comments),
             "cached": False,
+            "estimated_tokens": estimated_tokens,
         }
 
     def _get_cached_summary(self, post_id: str) -> Optional[Dict[str, Any]]:
@@ -340,28 +349,47 @@ class PostDetailService:
             "updated_at": updated_at.isoformat(),
         }
 
-    def _generate_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> tuple[str, str, List[str]]:
+    def _generate_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> tuple[str, str, List[str], int]:
         if self.processor.setup_processor():
             result = self.processor.summarize_reddit_comments(post, comments)
             if result.get("success"):
                 summary = str(result.get("summary") or "").strip() or self._fallback_reddit_comments_briefing(post, comments)
                 signals = self._normalize_tags(result.get("signals"))
                 model = str(result.get("model") or getattr(self.processor, "model_name", "gemini"))
-                return summary, model, signals
+                return summary, model, signals, int(result.get("estimated_tokens") or self._count_tokens(summary))
 
-        return self._fallback_reddit_comments_briefing(post, comments), "fallback", []
+        fallback = self._fallback_reddit_comments_briefing(post, comments)
+        return fallback, "fallback", [], self._count_tokens(fallback)
 
-    def _generate_summary(self, post: Dict[str, Any]) -> tuple[str, str, List[str]]:
+    def _generate_summary(self, post: Dict[str, Any]) -> tuple[str, str, List[str], int]:
         if self.processor.setup_processor():
             result = self.processor.analyze_single_post(post)
             if result.get("success"):
                 tags = self._normalize_tags(result.get("tags"))
                 summary = str(result.get("summary") or "").strip() or self._fallback_summary(post, tags=tags)
                 model = str(result.get("model") or getattr(self.processor, "model_name", "gemini"))
-                return summary, model, tags
+                return summary, model, tags, int(result.get("estimated_tokens") or self._count_tokens(summary))
 
         fallback_tags = self._fallback_tags(post)
-        return self._fallback_summary(post, tags=fallback_tags), "fallback", fallback_tags
+        fallback_summary = self._fallback_summary(post, tags=fallback_tags)
+        return fallback_summary, "fallback", fallback_tags, self._count_tokens(fallback_summary)
+
+    def _build_context_stats(self, post: Dict[str, Any]) -> Dict[str, Any]:
+        discussion = (post.get("metadata") or {}).get("reddit_discussion", {})
+        comments = discussion.get("comments") if isinstance(discussion, dict) else []
+        return {
+            "content_chars": len(str(post.get("content") or "")),
+            "notes_chars": len(str(post.get("notes_markdown") or "")),
+            "summary_chars": len(str(post.get("cached_summary_markdown") or "")),
+            "topics_loaded": len(post.get("topics") or []),
+            "reddit_comments_loaded": len(comments or []),
+        }
+
+    def _count_tokens(self, text: str) -> int:
+        counter = getattr(self.processor, "count_tokens", None)
+        if callable(counter):
+            return int(counter(text))
+        return max(1, len(str(text or "")) // 4)
 
     def _fallback_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> str:
         if not comments:

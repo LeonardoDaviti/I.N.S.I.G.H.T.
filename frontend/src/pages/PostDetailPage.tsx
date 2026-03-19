@@ -50,10 +50,12 @@ export default function PostDetailPage() {
   const [notes, setNotes] = useState('');
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryModel, setSummaryModel] = useState<string | null>(null);
+  const [summaryEstimatedTokens, setSummaryEstimatedTokens] = useState<number | null>(null);
   const [comments, setComments] = useState<RedditComment[]>([]);
   const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
   const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
   const [commentsBriefingModel, setCommentsBriefingModel] = useState<string | null>(null);
+  const [commentsBriefingEstimatedTokens, setCommentsBriefingEstimatedTokens] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -63,6 +65,7 @@ export default function PostDetailPage() {
   const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [chatting, setChatting] = useState(false);
+  const [chatContext, setChatContext] = useState<Record<string, any> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sourceLabel = useMemo(
@@ -93,8 +96,10 @@ export default function PostDetailPage() {
     setCommentsFetchedAt(discussion?.fetched_at || null);
     setCommentsBriefing(discussion?.briefing?.summary_markdown || null);
     setCommentsBriefingModel(discussion?.briefing?.model || null);
+    setCommentsBriefingEstimatedTokens(discussion?.briefing?.estimated_tokens || null);
     setSummary(null);
     setSummaryModel(null);
+    setSummaryEstimatedTokens(null);
     setLoading(false);
   };
 
@@ -110,6 +115,7 @@ export default function PostDetailPage() {
     }
     setSummary(response.summary_markdown || null);
     setSummaryModel(response.model || null);
+    setSummaryEstimatedTokens(response.estimated_tokens ?? null);
     if (response.categories?.length) {
       setPost((current) => current ? { ...current, categories: response.categories } : current);
     }
@@ -132,6 +138,7 @@ export default function PostDetailPage() {
     }
     setComments(response.comments || []);
     setCommentsFetchedAt(response.fetched_at || null);
+    setChatContext((current) => current ? { ...current, reddit_comments_loaded: response.comment_count || 0 } : current);
     setLoadingComments(false);
   };
 
@@ -147,6 +154,7 @@ export default function PostDetailPage() {
     }
     setCommentsBriefing(response.summary_markdown || null);
     setCommentsBriefingModel(response.model || null);
+    setCommentsBriefingEstimatedTokens(response.estimated_tokens ?? null);
     setLoadingCommentsBriefing(false);
   };
 
@@ -186,6 +194,7 @@ export default function PostDetailPage() {
         content: response.answer || response.error || 'No response returned.',
       },
     ]);
+    setChatContext(response.context || null);
     setChatting(false);
   };
 
@@ -306,8 +315,9 @@ export default function PostDetailPage() {
                 <div className="text-sm text-[var(--text-muted)]">Generate a summary on demand for this post.</div>
               )}
               {summaryModel && (
-                <div className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">
-                  Model: {summaryModel}
+                <div className="mt-3 flex flex-wrap gap-3 text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">
+                  <span>Model: {summaryModel}</span>
+                  {summaryEstimatedTokens ? <span>Estimated tokens: {summaryEstimatedTokens}</span> : null}
                 </div>
               )}
             </section>
@@ -355,8 +365,9 @@ export default function PostDetailPage() {
                       </div>
                     )}
                     {commentsBriefingModel && (
-                      <div className="mt-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
-                        Model: {commentsBriefingModel}
+                      <div className="mt-3 flex flex-wrap gap-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                        <span>Model: {commentsBriefingModel}</span>
+                        {commentsBriefingEstimatedTokens ? <span>Estimated tokens: {commentsBriefingEstimatedTokens}</span> : null}
                       </div>
                     )}
                   </div>
@@ -415,7 +426,7 @@ export default function PostDetailPage() {
                         <button
                           key={topic.id}
                           type="button"
-                          onClick={() => navigate(`/briefing/topics?date=${encodeURIComponent(topic.date || '')}&topic=${encodeURIComponent(topic.id)}`)}
+                          onClick={() => navigate(`/briefing?date=${encodeURIComponent(topic.date || '')}&mode=topics&topic=${encodeURIComponent(topic.id)}`)}
                           className="block w-full rounded-xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-2 text-left transition hover:border-[var(--accent-strong)] hover:bg-[var(--background-primary-alt)]"
                         >
                           <div className="font-medium text-[var(--text-normal)]">{topic.title}</div>
@@ -479,9 +490,14 @@ export default function PostDetailPage() {
                   <div>
                     <h3 className="text-xl font-semibold text-[var(--text-normal)]">Chat</h3>
                     <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Ask the AI to reason only from this post. Context includes source metadata, tags, notes, cached summary, and fetched Reddit comments.
+                      Ask the AI to reason only from this post. Context includes the full stored post, source metadata, tags, notes, cached summary, and fetched Reddit comments.
                     </p>
                   </div>
+                  {chatContext && (
+                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-4 py-3 text-xs text-[var(--text-muted)]">
+                      Context loaded: {chatContext.content_chars || 0} chars of post content, {chatContext.reddit_comments_loaded || 0} Reddit comments, {chatContext.topics_loaded || 0} connected topics.
+                    </div>
+                  )}
                   <div className="workspace-chat-feed">
                     {chatMessages.length === 0 ? (
                       <div className="text-sm text-[var(--text-muted)]">

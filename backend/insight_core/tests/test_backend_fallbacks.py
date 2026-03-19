@@ -63,6 +63,36 @@ class GeminiProcessorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["topics"]), 1)
         self.assertEqual(result["topics"][0]["post_ids"], ["1", "2"])
 
+    async def test_weekly_briefing_falls_back_when_generation_fails(self):
+        processor = GeminiProcessor()
+        processor.is_setup = True
+        processor.api_key = "test"
+
+        async def fail_generate(prompt):
+            raise RuntimeError("quota exceeded")
+
+        processor._generate_text = fail_generate
+
+        result = await processor.weekly_briefing(
+            "2026-03-16 to 2026-03-22",
+            [
+                {
+                    "date": "2026-03-17",
+                    "briefing": "## Executive Summary\nLocal model updates accelerated.",
+                    "posts_processed": 12,
+                },
+                {
+                    "date": "2026-03-18",
+                    "briefing": "## Executive Summary\nOpen-source tooling matured further.",
+                    "posts_processed": 8,
+                },
+            ],
+        )
+
+        self.assertIn("## Executive Weekly Summary", result)
+        self.assertIn("## Major Developments", result)
+        self.assertIn("2026-03-17", result)
+
 
 class SourcesRepositoryJsonSafeTests(unittest.TestCase):
     def test_make_json_safe_converts_nested_datetimes(self):
@@ -222,6 +252,33 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["briefing"], "## Cached Topic Briefing")
         self.assertEqual(result["topics"][0]["post_ids"], ["post-1"])
 
+    async def test_generate_weekly_briefing_uses_cached_payload_without_regenerating(self):
+        service = BriefingService("postgresql:///unused")
+
+        class FakeStoreService:
+            def get_briefing(self, subject_type, subject_key, variant="default"):
+                if subject_type == "weekly_briefing":
+                    return {
+                        "id": "weekly-1",
+                        "render_format": "markdown",
+                        "content": "## Executive Weekly Summary\nCached weekly view",
+                        "payload": {
+                            "days_covered": ["2026-03-16", "2026-03-17"],
+                            "daily_briefings_used": 2,
+                            "estimated_tokens": 123,
+                        },
+                    }
+                raise AssertionError("Daily briefing lookup should not happen when weekly cache exists")
+
+        service.store_service = FakeStoreService()
+
+        result = await service.generate_weekly_briefing("2026-03-18")
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["briefing"], "## Executive Weekly Summary\nCached weekly view")
+        self.assertEqual(result["daily_briefings_used"], 2)
+
 
 class PostDetailServiceTests(unittest.TestCase):
     def test_generate_summary_uses_model_from_processor_result(self):
@@ -241,7 +298,7 @@ class PostDetailServiceTests(unittest.TestCase):
 
         service.processor = FakeProcessor()
 
-        summary, model, tags = service._generate_summary({
+        summary, model, tags, estimated_tokens = service._generate_summary({
             "title": "Test post",
             "content": "Some content",
             "source": "test-source",
@@ -250,6 +307,7 @@ class PostDetailServiceTests(unittest.TestCase):
         self.assertEqual(summary, "## Summary\nUseful signal.")
         self.assertEqual(model, "gemini-test")
         self.assertEqual(tags, ["ai", "research"])
+        self.assertGreater(estimated_tokens, 0)
 
     def test_generate_summary_fallback_uses_generated_tags_in_markdown(self):
         service = PostDetailService("postgresql:///unused")
@@ -260,7 +318,7 @@ class PostDetailServiceTests(unittest.TestCase):
 
         service.processor = FakeProcessor()
 
-        summary, model, tags = service._generate_summary({
+        summary, model, tags, estimated_tokens = service._generate_summary({
             "title": "Nitter post",
             "content": "A short note about model training.",
             "source": "karpathy",
@@ -271,6 +329,7 @@ class PostDetailServiceTests(unittest.TestCase):
         self.assertEqual(model, "fallback")
         self.assertEqual(tags, ["rss", "ai"])
         self.assertIn("The post is tagged with: rss, ai.", summary)
+        self.assertGreater(estimated_tokens, 0)
 
     def test_generate_reddit_comments_briefing_uses_model_from_processor_result(self):
         service = PostDetailService("postgresql:///unused")
@@ -289,7 +348,7 @@ class PostDetailServiceTests(unittest.TestCase):
 
         service.processor = FakeProcessor()
 
-        summary, model, signals = service._generate_reddit_comments_briefing(
+        summary, model, signals, estimated_tokens = service._generate_reddit_comments_briefing(
             {"title": "Reddit thread", "source": "r/test"},
             [{"author": "a", "body": "Useful", "score": 10, "depth": 0}],
         )
@@ -297,6 +356,7 @@ class PostDetailServiceTests(unittest.TestCase):
         self.assertEqual(summary, "## Discussion Briefing\nConsensus emerged.")
         self.assertEqual(model, "gemini-comments")
         self.assertEqual(signals, ["consensus", "recommendations"])
+        self.assertGreater(estimated_tokens, 0)
 
 
 class PostDetailDiscussionTests(unittest.IsolatedAsyncioTestCase):

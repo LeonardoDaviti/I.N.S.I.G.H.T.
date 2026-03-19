@@ -1,7 +1,7 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
 import type { BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
@@ -60,6 +60,7 @@ function getPlatformTone(platform?: string) {
 
 export default function DailyBriefing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // Focus mode
   const [focusMode, setFocusMode] = useState(false);
   
@@ -69,6 +70,14 @@ export default function DailyBriefing() {
   // Briefing generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [briefingData, setBriefingData] = useState<string | null>(null);
+  const [isGeneratingWeekly, setIsGeneratingWeekly] = useState(false);
+  const [weeklyBriefing, setWeeklyBriefing] = useState<string | null>(null);
+  const [weeklyMeta, setWeeklyMeta] = useState<{
+    weekStart?: string | null;
+    weekEnd?: string | null;
+    dailyBriefingsUsed?: number;
+    cached?: boolean;
+  } | null>(null);
   const [briefingStats, setBriefingStats] = useState<{
     postsProcessed: number;
     totalFetched: number;
@@ -81,7 +90,7 @@ export default function DailyBriefing() {
   const [topicsBriefing, setTopicsBriefing] = useState<string | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [postsMap, setPostsMap] = useState<Record<string, Post>>({});
-  const [openTopic, setOpenTopic] = useState<string | null>(null);
+  const [openTopics, setOpenTopics] = useState<Record<string, boolean>>({});
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
   
   // Error handling
@@ -153,6 +162,13 @@ export default function DailyBriefing() {
   useEffect(() => {
     loadSourcesWithCounts();
   }, []);
+
+  const toggleTopic = (topicId: string) => {
+    setOpenTopics((prev) => ({
+      ...prev,
+      [topicId]: !prev[topicId],
+    }));
+  };
 
   const loadSourcesWithCounts = async () => {
     setIsLoadingSources(true);
@@ -525,11 +541,13 @@ export default function DailyBriefing() {
     setIsGenerating(true);
     setError(null);
     setBriefingData(null);
+    setWeeklyBriefing(null);
+    setWeeklyMeta(null);
     setBriefingStats(null);
     setTopicsBriefing(null);
     setTopics([]);
     setPostsMap({});
-    setOpenTopic(null);
+    setOpenTopics({});
     setActiveView('briefing');
 
     try {
@@ -556,7 +574,43 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleGenerateTopicBriefing = async (refresh = false) => {
+  const handleGenerateWeeklyBriefing = async (refresh = false) => {
+    setIsGeneratingWeekly(true);
+    setError(null);
+    setBriefingData(null);
+    setBriefingStats(null);
+    setTopicsBriefing(null);
+    setTopics([]);
+    setPostsMap({});
+    setOpenTopics({});
+    setActiveView('briefing');
+
+    try {
+      const response = await apiService.generateWeeklyBriefing(selectedDate, refresh);
+      if (response.success) {
+        setWeeklyBriefing(response.briefing || null);
+        setWeeklyMeta({
+          weekStart: response.week_start,
+          weekEnd: response.week_end,
+          dailyBriefingsUsed: response.daily_briefings_used,
+          cached: response.cached,
+        });
+      } else {
+        setError(response.error || 'Failed to generate weekly briefing');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error occurred');
+    } finally {
+      setIsGeneratingWeekly(false);
+    }
+  };
+
+  const handleGenerateTopicBriefing = async (
+    refresh = false,
+    options?: { dateOverride?: string; topicId?: string | null }
+  ) => {
+    const targetDate = options?.dateOverride || selectedDate;
+    const requestedTopicId = options?.topicId || null;
     if (refresh) {
       setIsRefreshingTopics(true);
     } else {
@@ -564,15 +618,17 @@ export default function DailyBriefing() {
     }
     setError(null);
     setTopicsBriefing(null);
+    setWeeklyBriefing(null);
+    setWeeklyMeta(null);
     setTopics([]);
     setPostsMap({});
-    setOpenTopic(null);
+    setOpenTopics({});
     setBriefingData(null);
     setBriefingStats(null);
     setActiveView('briefing');
     
     try {
-      const response: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate, {
+      const response: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(targetDate, {
         includeUnreferenced: true,
         refresh,
       });
@@ -581,7 +637,13 @@ export default function DailyBriefing() {
         setTopics(response.topics || []);
         setPostsMap(response.posts || {});
         const first = (response.topics || [])[0];
-        setOpenTopic(first ? first.id : null);
+        const nextOpenTopics: Record<string, boolean> = {};
+        if (requestedTopicId) {
+          nextOpenTopics[requestedTopicId] = true;
+        } else if (first?.id) {
+          nextOpenTopics[first.id] = true;
+        }
+        setOpenTopics(nextOpenTopics);
         const defaults: Record<string, boolean> = {};
         (response.topics || []).forEach((t) => (t.post_ids || []).forEach((pid) => { defaults[`${t.id}:${pid}`] = true; }));
         setExpandedPosts(defaults);
@@ -656,7 +718,26 @@ export default function DailyBriefing() {
     }
   };
 
-  const briefingTitle = briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
+  const topicQueryMode = searchParams.get('mode');
+  const topicQueryDate = searchParams.get('date');
+  const topicQueryId = searchParams.get('topic');
+
+  useEffect(() => {
+    const mode = topicQueryMode;
+    const requestedDate = topicQueryDate;
+    const requestedTopicId = topicQueryId;
+    if (mode !== 'topics' || !requestedDate) {
+      return;
+    }
+
+    setSelectedDate(requestedDate);
+    handleGenerateTopicBriefing(false, {
+      dateOverride: requestedDate,
+      topicId: requestedTopicId,
+    });
+  }, [topicQueryMode, topicQueryDate, topicQueryId]);
+
+  const briefingTitle = weeklyBriefing || briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
 
   return (
     <div className="app-shell flex h-screen">
@@ -729,6 +810,23 @@ export default function DailyBriefing() {
                 <>
                   <BarChart3 className="w-4 h-4" />
                   Topic Briefing
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => handleGenerateWeeklyBriefing(false)}
+              disabled={isGeneratingWeekly}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
+            >
+              {isGeneratingWeekly ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Calendar className="w-4 h-4" />
+                  Weekly Briefing
                 </>
               )}
             </button>
@@ -806,6 +904,20 @@ export default function DailyBriefing() {
               <div className="text-xs text-green-700 space-y-0.5">
                 <div>📊 Posts: {briefingStats.postsProcessed}</div>
                 <div>📅 Date: {briefingStats.date}</div>
+              </div>
+            </div>
+          )}
+
+          {weeklyMeta && (
+            <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-slate-700" />
+                <span className="text-xs font-medium text-slate-800">Weekly Briefing</span>
+              </div>
+              <div className="text-xs text-slate-700 space-y-0.5">
+                <div>🗓️ {weeklyMeta.weekStart} → {weeklyMeta.weekEnd}</div>
+                <div>📚 Daily briefings: {weeklyMeta.dailyBriefingsUsed || 0}</div>
+                <div>{weeklyMeta.cached ? 'Using cached weekly briefing' : 'Generated fresh weekly briefing'}</div>
               </div>
             </div>
           )}
@@ -973,6 +1085,17 @@ export default function DailyBriefing() {
               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">{briefingTitle}</h1>
 
               {/* Standard Briefing */}
+              {weeklyBriefing && (
+                <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">
+                    📆 Weekly Intelligence Briefing
+                  </h3>
+                  <div className="prose max-w-none">
+                    <MarkdownRenderer content={weeklyBriefing} />
+                  </div>
+                </div>
+              )}
+
               {briefingData && (
                 <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
                   <h3 className="text-base font-semibold text-gray-900 mb-3.5">
@@ -995,16 +1118,17 @@ export default function DailyBriefing() {
                   )}
                   <div className="space-y-3.5">
                     {topics.map((topic, tIndex) => {
-                      const isOpen = openTopic === topic.id;
+                      const isOpen = Boolean(openTopics[topic.id]);
                       return (
                         <div key={topic.id || `topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                           <button
-                            onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                            onClick={() => toggleTopic(topic.id)}
                             className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
                           >
                             <span className="text-gray-900 font-bold tracking-tight text-base">
                               {tIndex + 1}. {topic.title || 'Untitled Topic'}
                             </span>
+                            <span className="text-xs text-gray-500">{isOpen ? 'Collapse' : 'Expand'}</span>
                           </button>
                           {isOpen && (
                             <div className="px-4 pb-4">
@@ -1082,7 +1206,7 @@ export default function DailyBriefing() {
                   <h3 className="text-base font-semibold text-gray-900 mb-3.5">📚 Topics from Database</h3>
                   <div className="space-y-3.5">
                     {databaseTopics.map((topic, tIndex) => {
-                      const isOpen = openTopic === topic.id;
+                      const isOpen = Boolean(openTopics[topic.id]);
                       const topicPosts = topic.posts || [];
                       const isEditing = editingTopicId === topic.id;
                       
@@ -1133,10 +1257,10 @@ export default function DailyBriefing() {
                                 </button>
                               </div>
                             ) : (
-                              /* Display Mode */
+                                /* Display Mode */
                               <>
                                 <button
-                                  onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                                  onClick={() => toggleTopic(topic.id)}
                                   className="flex-1 flex items-center gap-2 text-left"
                                 >
                                   <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
@@ -1161,7 +1285,7 @@ export default function DailyBriefing() {
                                     <Pencil className="w-3.5 h-3.5" />
                                   </button>
                                   <button
-                                    onClick={() => setOpenTopic(isOpen ? null : topic.id)}
+                                    onClick={() => toggleTopic(topic.id)}
                                     className="text-xs text-gray-500 flex items-center gap-2 hover:text-gray-700"
                                   >
                                     <span>{topicPosts.length} posts</span>
@@ -1286,7 +1410,7 @@ export default function DailyBriefing() {
               )}
 
               {/* Empty state */}
-              {!briefingData && !topicsBriefing && databaseTopics.length === 0 && (
+              {!weeklyBriefing && !briefingData && !topicsBriefing && databaseTopics.length === 0 && (
                 <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
                   <BarChart3 className="w-10 h-10 text-gray-400 mx-auto mb-3.5" />
                   <h3 className="text-base font-semibold text-gray-900 mb-2">

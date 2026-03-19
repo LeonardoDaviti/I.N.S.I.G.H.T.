@@ -53,12 +53,19 @@ class OperationsServiceTests(unittest.TestCase):
             {"source_id": "source-1", "display_name": "PewDiePie", "status": "error"},
             {"source_id": "source-2", "display_name": "karpathy", "status": "healthy"},
         ]
+        self.service.get_database_counts = lambda: {  # type: ignore[method-assign]
+            "total_posts": 140,
+            "total_topics": 12,
+            "total_briefings": 7,
+            "enabled_sources": 4,
+        }
 
         result = self.service.get_operations_overview()
 
         self.assertTrue(result["success"])
         self.assertEqual(result["stats"]["recent_failures"], 1)
         self.assertEqual(result["stats"]["sources_in_error"], 1)
+        self.assertEqual(result["stats"]["total_posts"], 140)
         self.assertEqual(len(result["alerts"]), 1)
         self.assertEqual(result["alerts"][0]["title"], "fetch_source_now")
 

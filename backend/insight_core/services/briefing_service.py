@@ -3,7 +3,7 @@ DB-backed daily briefing generation.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from insight_core.logs.core.logger_config import get_component_logger
@@ -55,6 +55,8 @@ class BriefingService:
             except Exception:
                 pass
 
+        estimated_tokens = self._count_tokens(briefing)
+
         saved = self.store_service.save_briefing(
             subject_type="daily_briefing",
             subject_key=date_str,
@@ -65,6 +67,7 @@ class BriefingService:
             payload={
                 "posts_processed": len(posts),
                 "source": "database",
+                "estimated_tokens": estimated_tokens,
             },
         )
 
@@ -77,6 +80,7 @@ class BriefingService:
             "date": date_str,
             "posts_processed": len(posts),
             "total_posts_fetched": len(posts),
+            "estimated_tokens": estimated_tokens,
         }
 
     async def generate_daily_briefing_with_topics(
@@ -150,6 +154,7 @@ class BriefingService:
                 "unreferenced_posts": normalized["unreferenced_posts"],
                 "posts_processed": len(posts),
                 "source": "database",
+                "estimated_tokens": self._count_tokens(topic_result.get("daily_briefing", "")),
             },
         )
 
@@ -166,6 +171,117 @@ class BriefingService:
             "posts_processed": len(posts),
             "total_posts_fetched": len(posts),
             "cached": False,
+            "estimated_tokens": self._count_tokens(topic_result.get("daily_briefing", "")),
+        }
+
+    async def generate_weekly_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+        """Generate a weekly briefing by combining the week's daily briefings."""
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        week_start = target_date - timedelta(days=target_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        subject_key = f"{week_start.isoformat()}__{week_end.isoformat()}"
+        week_label = f"{week_start.isoformat()} to {week_end.isoformat()}"
+
+        if not refresh:
+            cached = self.store_service.get_briefing("weekly_briefing", subject_key, "default")
+            if cached:
+                payload = cached.get("payload") or {}
+                return {
+                    "success": True,
+                    "briefing": cached.get("content", ""),
+                    "format": cached.get("render_format", "markdown"),
+                    "saved_briefing_id": cached.get("id"),
+                    "cached": True,
+                    "date": date_str,
+                    "week_start": week_start.isoformat(),
+                    "week_end": week_end.isoformat(),
+                    "subject_key": subject_key,
+                    "daily_briefings_used": payload.get("daily_briefings_used", 0),
+                    "days_covered": payload.get("days_covered", []),
+                    "estimated_tokens": payload.get("estimated_tokens", self._count_tokens(cached.get("content", ""))),
+                }
+
+        daily_briefings: List[Dict[str, Any]] = []
+        for offset in range(7):
+            current_date = week_start + timedelta(days=offset)
+            current_key = current_date.isoformat()
+            cached_daily = self.store_service.get_briefing("daily_briefing", current_key, "default")
+            if cached_daily:
+                daily_briefings.append(
+                    {
+                        "date": current_key,
+                        "briefing": cached_daily.get("content", ""),
+                        "posts_processed": (cached_daily.get("payload") or {}).get("posts_processed", 0),
+                    }
+                )
+                continue
+
+            generated = await self.generate_daily_briefing(current_key)
+            if generated.get("success"):
+                daily_briefings.append(
+                    {
+                        "date": current_key,
+                        "briefing": generated.get("briefing", ""),
+                        "posts_processed": generated.get("posts_processed", 0),
+                    }
+                )
+
+        if not daily_briefings:
+            return {
+                "success": False,
+                "error": f"No daily briefings or posts found for week {week_label}",
+                "date": date_str,
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "subject_key": subject_key,
+            }
+
+        setup_ok = self.processor.setup_processor()
+        try:
+            if not setup_ok:
+                raise RuntimeError("Gemini processor setup failed")
+            await self.processor.connect()
+            briefing = await self.processor.weekly_briefing(week_label, daily_briefings)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic weekly briefing for %s: %s", week_label, exc)
+            briefing = self.processor._fallback_weekly_briefing(week_label, daily_briefings)
+        finally:
+            try:
+                await self.processor.disconnect()
+            except Exception:
+                pass
+
+        estimated_tokens = self._count_tokens(briefing)
+        payload = {
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+            "days_covered": [item["date"] for item in daily_briefings],
+            "daily_briefings_used": len(daily_briefings),
+            "estimated_tokens": estimated_tokens,
+        }
+        saved = self.store_service.save_briefing(
+            subject_type="weekly_briefing",
+            subject_key=subject_key,
+            variant="default",
+            render_format="markdown",
+            title=f"Weekly Briefing {week_label}",
+            content=briefing,
+            payload=payload,
+        )
+
+        return {
+            "success": True,
+            "briefing": briefing,
+            "format": "markdown",
+            "saved_briefing_id": saved["id"],
+            "cached": False,
+            "date": date_str,
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+            "subject_key": subject_key,
+            "daily_briefings_used": len(daily_briefings),
+            "days_covered": payload["days_covered"],
+            "estimated_tokens": estimated_tokens,
         }
 
     def _build_cached_topic_response(
@@ -211,6 +327,7 @@ class BriefingService:
             "posts_processed": len(posts),
             "total_posts_fetched": len(posts),
             "cached": True,
+            "estimated_tokens": (cached_briefing.get("payload") or {}).get("estimated_tokens", self._count_tokens(cached_briefing.get("content", ""))),
         }
 
     def _normalize_topic_result(
@@ -337,3 +454,9 @@ class BriefingService:
                 }
             )
         return hydrated
+
+    def _count_tokens(self, text: str) -> int:
+        counter = getattr(self.processor, "count_tokens", None)
+        if callable(counter):
+            return int(counter(text))
+        return max(1, len(str(text or "")) // 4)

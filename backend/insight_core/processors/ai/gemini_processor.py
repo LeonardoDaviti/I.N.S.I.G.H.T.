@@ -96,6 +96,9 @@ class GeminiProcessor:
         self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
         self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "10"))
         self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
+        self.single_post_context_chars = int(os.environ.get("GEMINI_SINGLE_POST_CONTEXT_CHARS", "32000"))
+        self.single_post_notes_chars = int(os.environ.get("GEMINI_SINGLE_POST_NOTES_CHARS", "10000"))
+        self.single_post_comments_chars = int(os.environ.get("GEMINI_SINGLE_POST_COMMENTS_CHARS", "20000"))
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
         self._client: Any | None = None
@@ -207,27 +210,67 @@ POSTS:
         """Compatibility alias for older scripts."""
         return await self.topic_briefing_with_numeric_ids(posts)
 
+    async def weekly_briefing(self, week_label: str, daily_briefings: List[Dict[str, Any]]) -> str:
+        """Generate a weekly briefing from already-generated daily briefings."""
+        prompt = f"""
+You are preparing a weekly intelligence briefing by synthesizing daily briefings from the same week.
+
+Write concise markdown with these sections:
+- ## Executive Weekly Summary
+- ## Major Developments
+- ## Cross-Day Patterns
+- ## Watchlist For Next Week
+
+Requirements:
+- Use only the supplied daily briefings.
+- Merge repeated stories into one thread instead of restating them day by day.
+- Emphasize what changed across the week.
+- Keep it compact, specific, and high-signal.
+- Do not mention missing data or your own process.
+
+WEEK:
+{week_label}
+
+DAILY BRIEFINGS:
+{self._format_daily_briefings(daily_briefings)}
+"""
+        try:
+            return await self._generate_text(prompt)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic weekly briefing: %s", exc)
+            return self._fallback_weekly_briefing(week_label, daily_briefings)
+
     def analyze_single_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """Summarize a single post and suggest tags in one request."""
         if not self.is_setup:
             return {"success": False, "error": "Processor not setup. Call setup_processor() first"}
 
+        post_body = self._single_post_body(post, max_chars=self.single_post_context_chars)
         prompt = f"""
 Return ONLY valid JSON with this exact structure:
 {{
-  "summary": "2-4 sentence markdown summary",
+  "summary": "markdown summary",
   "tags": ["tag one", "tag two", "tag three"]
 }}
 
 Rules:
 - Keep tags short, concrete, and lowercase when possible.
 - Use 0 to 5 tags.
+- Make the summary materially useful for an operator, not generic.
+- Structure the summary with these markdown sections:
+  - ## Core Thesis
+  - ## Key Signals
+  - ## Why It Matters
+- Stay grounded in the supplied post only.
 - Do not include commentary outside the JSON.
 
 Source: {post.get("source", "unknown")}
+Platform: {post.get("platform", "unknown")}
+URL: {post.get("url", "")}
+Published at: {post.get("published_at", "")}
 Title: {post.get("title", "")}
 Content:
-{post.get("content", "")[:3000]}
+{post_body}
 """
         try:
             result = self._extract_json_from_response(self._generate_text_sync(prompt))
@@ -245,6 +288,7 @@ Content:
                 "summary": str(result.get("summary", "")).strip(),
                 "tags": cleaned_tags[:5],
                 "model": self.model_name,
+                "estimated_tokens": self.count_tokens(prompt) + self.count_tokens(str(result.get("summary", ""))),
             }
         except Exception as exc:
             return {"success": False, "error": f"Analysis failed: {exc}"}
@@ -266,10 +310,15 @@ Content:
             f"- {comment.get('author') or 'unknown'} (score={comment.get('score', 0)}, depth={comment.get('depth', 0)}): {comment.get('body', '')}"
             for comment in (comments or [])[:40]
         )
+        content = self._single_post_body(post, max_chars=self.single_post_context_chars)
+        saved_summary = str(post.get("cached_summary_markdown", "") or "")[: self.single_post_notes_chars]
+        saved_notes = str(post.get("notes_markdown", "") or "")[: self.single_post_notes_chars]
 
         prompt = f"""
 Answer the user's question using only this post.
 If the answer is not present, say that clearly.
+Use the full supplied material, including fetched Reddit comments, when relevant.
+Prefer precise answers over vague summaries.
 
 Source: {post.get("source", "unknown")}
 URL: {post.get("url", "")}
@@ -278,20 +327,24 @@ Published at: {post.get("published_at", "")}
 Tags: {", ".join(post.get("categories") or []) or "none"}
 Connected topics: {", ".join(topics) or "none"}
 Saved summary:
-{post.get("cached_summary_markdown", "")[:1600]}
+{saved_summary}
 Saved notes:
-{post.get("notes_markdown", "")[:1600]}
+{saved_notes}
 Content:
-{post.get("content", "")[:5000]}
+{content}
 
 Fetched Reddit comments:
-{comments_text[:8000] or "No fetched comments."}
+{comments_text[: self.single_post_comments_chars] or "No fetched comments."}
 
 Question: {question}
 """
         try:
             answer = self._generate_text_sync(prompt)
-            return {"success": True, "answer": answer}
+            return {
+                "success": True,
+                "answer": answer,
+                "estimated_tokens": self.count_tokens(prompt) + self.count_tokens(answer),
+            }
         except Exception as exc:
             return {"success": False, "error": f"Question answering failed: {exc}"}
 
@@ -315,7 +368,7 @@ Rules:
 Post title: {post.get("title", "")}
 Post source: {post.get("source", "")}
 Post content:
-{(post.get("content") or "")[:2400]}
+{self._single_post_body(post, max_chars=6000)}
 
 Comments:
 {chr(10).join(
@@ -330,6 +383,7 @@ Comments:
                 "summary": str(result.get("summary", "")).strip(),
                 "signals": result.get("signals") if isinstance(result.get("signals"), list) else [],
                 "model": self.model_name,
+                "estimated_tokens": self.count_tokens(prompt) + self.count_tokens(str(result.get("summary", ""))),
             }
         except Exception as exc:
             return {"success": False, "error": f"Comments summary failed: {exc}"}
@@ -392,6 +446,43 @@ POSTS:
     def count_tokens(self, text: str) -> int:
         """Rough token estimate used for compatibility fields."""
         return max(1, len(text) // 4)
+
+    def _single_post_body(self, post: Dict[str, Any], *, max_chars: int) -> str:
+        content = str(post.get("content") or "").strip()
+        html_content = str(post.get("content_html") or "").strip()
+
+        if html_content and len(content) < len(html_content) // 4:
+            stripped_html = re.sub(r"<[^>]+>", " ", html_content)
+            stripped_html = re.sub(r"\s+", " ", stripped_html).strip()
+            if len(stripped_html) > len(content):
+                content = stripped_html
+
+        if not content:
+            content = "No stored content."
+
+        return content[:max_chars]
+
+    def _format_daily_briefings(self, daily_briefings: List[Dict[str, Any]]) -> str:
+        blocks = []
+        for item in daily_briefings:
+            blocks.append(
+                "\n".join(
+                    [
+                        f"Date: {item.get('date') or 'unknown'}",
+                        f"Posts processed: {item.get('posts_processed') or 0}",
+                        "Briefing:",
+                        str(item.get("briefing") or "").strip(),
+                    ]
+                ).strip()
+            )
+        return "\n\n---\n\n".join(blocks)
+
+    def _first_sentence(self, value: str) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text:
+            return ""
+        match = re.search(r"(.+?[.!?])(?:\s|$)", text)
+        return (match.group(1) if match else text[:220]).strip()
 
     def _fallback_daily_briefing(self, posts: List[Dict[str, Any]]) -> str:
         ordered_posts = sorted(posts, key=self._post_sort_key, reverse=True)
@@ -456,6 +547,32 @@ POSTS:
             "daily_briefing": self._fallback_daily_briefing(posts),
             "topics": topics,
         }
+
+    def _fallback_weekly_briefing(self, week_label: str, daily_briefings: List[Dict[str, Any]]) -> str:
+        ordered = sorted(daily_briefings, key=lambda item: item.get("date") or "")
+        developments = []
+        watchlist = []
+        for item in ordered[:7]:
+            first_sentence = self._first_sentence(item.get("briefing") or "")
+            label = item.get("date") or "unknown day"
+            if first_sentence:
+                developments.append(f"- **{label}**: {first_sentence}")
+                watchlist.append(f"- Revisit the {label} thread for downstream changes.")
+
+        sections = [
+            "## Executive Weekly Summary",
+            f"- {len(ordered)} daily briefings contributed to {week_label}.",
+            "",
+            "## Major Developments",
+            *(developments or ["- No major developments were available."]),
+            "",
+            "## Cross-Day Patterns",
+            "- Repeated stories across the week should be treated as durable signals rather than one-off noise.",
+            "",
+            "## Watchlist For Next Week",
+            *(watchlist[:5] or ["- No watchlist items were generated."]),
+        ]
+        return "\n".join(sections)
 
     async def _generate_text(self, prompt: str) -> str:
         return await asyncio.to_thread(self._generate_text_sync, prompt)

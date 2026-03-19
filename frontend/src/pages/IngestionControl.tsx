@@ -18,6 +18,7 @@ import {
 import { apiService } from '../services/api';
 import type {
   ArchiveResponse,
+  JobRun,
   LiveFetchResponse,
   LogTailResponse,
   OperationsOverviewResponse,
@@ -86,13 +87,21 @@ function formatJobDuration(startedAt?: string | null, finishedAt?: string | null
   const started = new Date(startedAt).getTime();
   const finished = new Date(finishedAt).getTime();
   if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) return null;
-  const totalSeconds = Math.round((finished - started) / 1000);
+  const elapsedMs = finished - started;
+  if (elapsedMs < 1000) return '<1s';
+  const totalSeconds = Math.round(elapsedMs / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes < 60) return `${minutes}m ${seconds}s`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
+}
+
+function formatEstimatedTokens(value: unknown) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return num.toLocaleString();
 }
 
 export default function IngestionControl() {
@@ -118,6 +127,9 @@ export default function IngestionControl() {
   const [logTail, setLogTail] = useState<LogTailResponse | null>(null);
   const [operationsOverview, setOperationsOverview] = useState<OperationsOverviewResponse | null>(null);
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = useState<JobRun | null>(null);
+  const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -194,7 +206,27 @@ export default function IngestionControl() {
     if (!schedulerDirty && response.scheduler) {
       setSchedulerConfig(response.scheduler);
     }
+    if (!selectedJobId && response.jobs?.[0]?.id) {
+      setSelectedJobId(response.jobs[0].id);
+    }
     setLoadingOverview(false);
+  };
+
+  const loadSelectedJob = async (jobId: string, options?: { silent?: boolean }) => {
+    setLoadingSelectedJob(true);
+    const response = await apiService.getOperationJob(jobId);
+    if (!response.success || !response.job) {
+      if (!options?.silent) {
+        const message = response.error || 'Failed to load mission details';
+        setError(message);
+        appendLog('error', message);
+      }
+      setLoadingSelectedJob(false);
+      return;
+    }
+
+    setSelectedJob(response.job);
+    setLoadingSelectedJob(false);
   };
 
   useEffect(() => {
@@ -208,12 +240,15 @@ export default function IngestionControl() {
     const intervalId = window.setInterval(() => {
       loadLogTail(selectedLogName, { silent: true });
       loadOperationsOverview({ silent: true });
+      if (selectedJobId) {
+        loadSelectedJob(selectedJobId, { silent: true });
+      }
     }, 8000);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [selectedLogName]);
+  }, [selectedLogName, selectedJobId]);
 
   const enabledSources = useMemo(
     () => sources.filter((source) => source.enabled),
@@ -244,6 +279,14 @@ export default function IngestionControl() {
 
     setLiveFetchLimit(selectedSource.settings.max_posts_per_fetch || 20);
   }, [selectedSource?.id]);
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setSelectedJob(null);
+      return;
+    }
+    loadSelectedJob(selectedJobId, { silent: true });
+  }, [selectedJobId]);
 
   const runAction = async (
     actionKey: string,
@@ -756,7 +799,27 @@ export default function IngestionControl() {
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Enabled Sources</div>
-                  <div className="mt-2 text-2xl font-bold text-slate-900">{enabledSources.length}</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">
+                    {operationsOverview?.stats?.enabled_sources ?? enabledSources.length}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Total Posts</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">
+                    {operationsOverview?.stats?.total_posts ?? 0}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Topics Count</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">
+                    {operationsOverview?.stats?.total_topics ?? 0}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Briefings Count</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">
+                    {operationsOverview?.stats?.total_briefings ?? 0}
+                  </div>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Selected Source</div>
@@ -796,32 +859,146 @@ export default function IngestionControl() {
                 </div>
               )}
 
-              <div className="space-y-3">
-                {(operationsOverview?.jobs || []).slice(0, 8).map((job) => (
-                  <div key={job.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-semibold text-slate-900">
-                        {job.job_type}
-                        {job.source_display_name ? ` · ${job.source_display_name}` : ''}
+              <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+                <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-1">
+                  {(operationsOverview?.jobs || []).map((job) => {
+                    const estimatedTokens = formatEstimatedTokens(job.payload?.estimated_tokens);
+                    const isSelected = selectedJobId === job.id;
+                    return (
+                      <button
+                        key={job.id}
+                        type="button"
+                        onClick={() => setSelectedJobId(job.id)}
+                        className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                          isSelected
+                            ? 'border-indigo-300 bg-indigo-50 shadow-sm'
+                            : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-semibold text-slate-900">
+                            {job.job_type}
+                            {job.source_display_name ? ` · ${job.source_display_name}` : ''}
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                            job.status === 'failed'
+                              ? 'bg-rose-100 text-rose-700'
+                              : job.status === 'running'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {job.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{job.message || 'No message'}</div>
+                        {typeof job.progress === 'number' && job.progress > 0 ? (
+                          <div className="mt-3">
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, job.progress)}%` }} />
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                          {formatJobTimestamp(job.started_at) && <span>Started {formatJobTimestamp(job.started_at)}</span>}
+                          {formatJobTimestamp(job.finished_at) && <span>Finished {formatJobTimestamp(job.finished_at)}</span>}
+                          {formatJobDuration(job.started_at, job.finished_at) && <span>Duration {formatJobDuration(job.started_at, job.finished_at)}</span>}
+                          {estimatedTokens && <span>Estimated tokens {estimatedTokens}</span>}
+                          {job.event_count ? <span>Events {job.event_count}</span> : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Mission Detail</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">
+                        {selectedJob?.job_type || 'Select a mission'}
                       </div>
-                      <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
-                        job.status === 'failed'
-                          ? 'bg-rose-100 text-rose-700'
-                          : job.status === 'running'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {job.status}
-                      </span>
                     </div>
-                    <div className="mt-1 text-xs text-slate-500">{job.message || 'No message'}</div>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                      {formatJobTimestamp(job.started_at) && <span>Started {formatJobTimestamp(job.started_at)}</span>}
-                      {formatJobTimestamp(job.finished_at) && <span>Finished {formatJobTimestamp(job.finished_at)}</span>}
-                      {formatJobDuration(job.started_at, job.finished_at) && <span>Duration {formatJobDuration(job.started_at, job.finished_at)}</span>}
-                    </div>
+                    {loadingSelectedJob ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : null}
                   </div>
-                ))}
+
+                  {selectedJob ? (
+                    <div className="space-y-4">
+                      {(() => {
+                        const missionEvents = Array.isArray(selectedJob.payload?.events) ? selectedJob.payload?.events : [];
+                        return (
+                          <>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Source</div>
+                          <div className="mt-2 font-medium text-slate-900">{selectedJob.source_display_name || 'Global job'}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Status</div>
+                          <div className="mt-2 font-medium text-slate-900">{selectedJob.status}</div>
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Started</div>
+                          <div className="mt-2 font-medium text-slate-900">{formatJobTimestamp(selectedJob.started_at) || 'Unknown'}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Finished</div>
+                          <div className="mt-2 font-medium text-slate-900">{formatJobTimestamp(selectedJob.finished_at) || 'Still running'}</div>
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Duration</div>
+                          <div className="mt-2 font-medium text-slate-900">{formatJobDuration(selectedJob.started_at, selectedJob.finished_at) || 'In progress'}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                          <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Estimated Tokens</div>
+                          <div className="mt-2 font-medium text-slate-900">{formatEstimatedTokens(selectedJob.payload?.estimated_tokens) || 'n/a'}</div>
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Progress</div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, Number(selectedJob.progress || 0))}%` }} />
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">{Math.round(Number(selectedJob.progress || 0))}% complete</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
+                        <div className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Mission Log</div>
+                        <div className="max-h-[16rem] space-y-3 overflow-y-auto pr-1 text-xs leading-6">
+                          {missionEvents.length ? missionEvents.map((event: any, index: number) => (
+                            <div key={`${event.at || 'event'}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-2">
+                              <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                                <span>{event.level || 'info'}</span>
+                                <span>{formatJobTimestamp(event.at) || event.at || 'Unknown time'}</span>
+                              </div>
+                              <div className="mt-2 text-slate-100">{event.message || 'No message'}</div>
+                              {typeof event.progress === 'number' ? (
+                                <div className="mt-1 text-slate-400">Progress: {Math.round(Number(event.progress))}%</div>
+                              ) : null}
+                            </div>
+                          )) : (
+                            <div className="text-slate-400">No mission events were recorded for this job.</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Payload</div>
+                        <pre className="max-h-[14rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
+                          {formatJson(selectedJob.payload || null)}
+                        </pre>
+                      </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
+                      Choose a mission from the feed to inspect its progress, payload, and full mission log.
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="mt-4 space-y-2">

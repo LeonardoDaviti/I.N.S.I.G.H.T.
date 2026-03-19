@@ -87,6 +87,26 @@ export interface BriefingResponse {
   posts_processed?: number;
   total_posts_fetched?: number;
   posts?: Post[]; // Array of individual source posts
+  format?: string;
+  saved_briefing_id?: string | null;
+  cached?: boolean;
+  estimated_tokens?: number;
+  error?: string;
+}
+
+export interface WeeklyBriefingResponse {
+  success: boolean;
+  briefing?: string;
+  format?: string;
+  saved_briefing_id?: string | null;
+  cached?: boolean;
+  date?: string;
+  week_start?: string | null;
+  week_end?: string | null;
+  subject_key?: string | null;
+  daily_briefings_used?: number;
+  days_covered?: string[];
+  estimated_tokens?: number;
   error?: string;
 }
 
@@ -206,6 +226,8 @@ export interface JobRun {
   source_platform?: string | null;
   message?: string | null;
   payload?: Record<string, any>;
+  progress?: number;
+  event_count?: number;
   started_at?: string | null;
   finished_at?: string | null;
 }
@@ -241,6 +263,12 @@ export interface OperationsOverviewResponse {
   stats?: Record<string, any>;
 }
 
+export interface OperationJobResponse {
+  success?: boolean;
+  error?: string;
+  job?: JobRun | null;
+}
+
 export interface PostNotesPayload {
   post_id: string;
   notes_markdown: string;
@@ -263,6 +291,7 @@ export interface PostSummaryResponse {
   updated_at?: string | null;
   cached?: boolean;
   categories?: string[];
+  estimated_tokens?: number;
 }
 
 export interface PostChatResponse {
@@ -271,6 +300,8 @@ export interface PostChatResponse {
   post_id?: string;
   answer?: string;
   source?: string;
+  estimated_tokens?: number;
+  context?: Record<string, any>;
 }
 
 export interface RedditComment {
@@ -303,6 +334,7 @@ export interface RedditCommentsBriefingResponse {
   updated_at?: string | null;
   comment_count?: number;
   cached?: boolean;
+  estimated_tokens?: number;
 }
 
 export interface SyncSourcesResponse {
@@ -398,6 +430,21 @@ class ApiService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async generateWeeklyBriefing(date: string, refresh = false): Promise<WeeklyBriefingResponse> {
+    try {
+      return await this.makeRequest<WeeklyBriefingResponse>('/api/weekly', {
+        method: 'POST',
+        body: JSON.stringify({ date, refresh }),
+      });
+    } catch (error) {
+      console.error('Failed to generate weekly briefing:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
   }
@@ -809,6 +856,19 @@ class ApiService {
         jobs: [],
         source_health: [],
         alerts: [],
+      };
+    }
+  }
+
+  async getOperationJob(jobId: string): Promise<OperationJobResponse> {
+    try {
+      return await this.makeRequest<OperationJobResponse>(`/api/operations/jobs/${jobId}`);
+    } catch (error) {
+      console.error('Failed to load operation job detail:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        job: null,
       };
     }
   }

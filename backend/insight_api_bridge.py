@@ -47,6 +47,14 @@ class InsightApiBridge:
         except Exception:
             return
 
+    def _append_job_event_safe(self, job_id: str | None, **kwargs) -> None:
+        if not job_id:
+            return
+        try:
+            self.operations_service.append_job_event(job_id, **kwargs)
+        except Exception:
+            return
+
     def _record_source_status_safe(self, source_id: str, **kwargs) -> None:
         try:
             self.operations_service.record_source_status(source_id, **kwargs)
@@ -374,7 +382,23 @@ class InsightApiBridge:
             payload={"desired_posts": desired_posts},
         )
         try:
-            result = await self.source_fetch_service.archive_source(source_id, desired_posts)
+            self._append_job_event_safe(
+                job_id,
+                message="Archive job started",
+                level="info",
+                payload={"desired_posts": desired_posts},
+            )
+            result = await self.source_fetch_service.archive_source(
+                source_id,
+                desired_posts,
+                progress_callback=lambda event: self._append_job_event_safe(
+                    job_id,
+                    message=str(event.get("message") or event.get("stage") or "Archive progress"),
+                    level="info",
+                    progress=event.get("progress"),
+                    payload=event,
+                ),
+            )
             if result.get("success"):
                 self._record_source_status_safe(
                     source_id,
@@ -500,12 +524,16 @@ class InsightApiBridge:
             payload={"date": date_str},
         )
         try:
+            self._append_job_event_safe(job_id, message=f"Starting daily briefing for {date_str}", level="info")
             result = await self.briefing_service.generate_daily_briefing(date_str)
             self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
-                payload=result,
+                payload={
+                    **result,
+                    "estimated_tokens": result.get("estimated_tokens"),
+                },
             )
             return result
         except Exception as e:
@@ -529,6 +557,7 @@ class InsightApiBridge:
             payload={"date": date_str, "include_unreferenced": include_unreferenced},
         )
         try:
+            self._append_job_event_safe(job_id, message=f"Starting topic briefing for {date_str}", level="info")
             result = await self.briefing_service.generate_daily_briefing_with_topics(
                 date_str,
                 include_unreferenced,
@@ -538,7 +567,38 @@ class InsightApiBridge:
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
-                payload=result,
+                payload={
+                    **result,
+                    "estimated_tokens": result.get("estimated_tokens"),
+                },
+            )
+            return result
+        except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"date": date_str})
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def generate_weekly_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+        """Generate a DB-backed weekly briefing."""
+        job_id = self._start_job_safe(
+            "weekly_briefing",
+            trigger="manual",
+            message=f"Generate weekly briefing for {date_str}",
+            payload={"date": date_str, "refresh": refresh},
+        )
+        try:
+            self._append_job_event_safe(job_id, message=f"Starting weekly briefing anchored at {date_str}", level="info")
+            result = await self.briefing_service.generate_weekly_briefing(date_str, refresh=refresh)
+            self._finish_job_safe(
+                job_id,
+                status="success" if result.get("success") else "failed",
+                message=result.get("error") or f"Combined {result.get('daily_briefings_used', 0)} daily briefings",
+                payload={
+                    **result,
+                    "estimated_tokens": result.get("estimated_tokens"),
+                },
             )
             return result
         except Exception as e:
@@ -687,6 +747,15 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "jobs": [], "source_health": [], "alerts": []}
 
+    def get_operation_job(self, job_id: str) -> Dict[str, Any]:
+        try:
+            job = self.operations_service.get_job(job_id)
+            if not job:
+                return {"success": False, "error": f"Job {job_id} not found", "job": None}
+            return {"success": True, "job": job}
+        except Exception as e:
+            return {"success": False, "error": str(e), "job": None}
+
     # ============= YOUTUBE =============
 
     def list_youtube_channel_videos(self, source_handle: str, limit: int | None = None) -> Dict[str, Any]:
@@ -782,27 +851,87 @@ class InsightApiBridge:
             return {"success": False, "error": str(e), "post_id": post_id}
 
     def get_post_summary(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "post_analysis",
+            trigger="manual",
+            message=f"Generate summary for post {post_id}",
+            payload={"post_id": post_id, "refresh": refresh},
+        )
         try:
-            return {"success": True, **self.post_detail_service.get_or_generate_summary(post_id, refresh=refresh)}
+            self._append_job_event_safe(job_id, message=f"Generating summary for post {post_id}", level="info")
+            result = {"success": True, **self.post_detail_service.get_or_generate_summary(post_id, refresh=refresh)}
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Post summary ready",
+                payload=result,
+            )
+            return result
         except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
     def chat_about_post(self, post_id: str, question: str) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "post_chat_message",
+            trigger="manual",
+            message=f"Chat about post {post_id}",
+            payload={"post_id": post_id, "question_chars": len(question or "")},
+        )
         try:
-            return self.post_detail_service.chat_about_post(post_id, question)
+            self._append_job_event_safe(job_id, message=f"Submitting post chat prompt for {post_id}", level="info")
+            result = self.post_detail_service.chat_about_post(post_id, question)
+            self._finish_job_safe(
+                job_id,
+                status="success" if result.get("success") else "failed",
+                message="Post chat response ready" if result.get("success") else result.get("error"),
+                payload=result,
+            )
+            return result
         except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
     async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "reddit_comments_fetch",
+            trigger="manual",
+            message=f"Fetch Reddit comments for {post_id}",
+            payload={"post_id": post_id, "limit": limit, "refresh": refresh},
+        )
         try:
-            return {"success": True, **await self.post_detail_service.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)}
+            self._append_job_event_safe(job_id, message=f"Fetching Reddit comments for {post_id}", level="info")
+            result = {"success": True, **await self.post_detail_service.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)}
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message=f"Fetched {result.get('comment_count', 0)} comments",
+                payload=result,
+            )
+            return result
         except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
     async def get_reddit_comments_briefing(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "reddit_comments_briefing",
+            trigger="manual",
+            message=f"Generate Reddit comments briefing for {post_id}",
+            payload={"post_id": post_id, "limit": limit, "refresh": refresh},
+        )
         try:
-            return {"success": True, **await self.post_detail_service.get_or_generate_reddit_comments_briefing(post_id, limit=limit, refresh=refresh)}
+            self._append_job_event_safe(job_id, message=f"Generating Reddit comments briefing for {post_id}", level="info")
+            result = {"success": True, **await self.post_detail_service.get_or_generate_reddit_comments_briefing(post_id, limit=limit, refresh=refresh)}
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Reddit discussion briefing ready",
+                payload=result,
+            )
+            return result
         except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
     # ============= TOPICS RETRIEVAL =============
