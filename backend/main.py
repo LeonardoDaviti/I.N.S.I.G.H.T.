@@ -53,6 +53,7 @@ class BriefingRequest(BaseModel):
     date: str  # Format: "YYYY-MM-DD"
     includeTopics: bool | None = None
     includeUnreferenced: bool | None = True
+    refresh: bool | None = False
 
 
 class ArchiveRequest(BaseModel):
@@ -398,6 +399,7 @@ async def generate_daily_briefing(request: BriefingRequest):
             result = await api_bridge.generate_daily_briefing_with_topics(
                 date,
                 include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
+                refresh=bool(request.refresh),
             )
         else:
             result = await api_bridge.generate_daily_briefing(date)
@@ -421,6 +423,7 @@ async def generate_daily_briefing(request: BriefingRequest):
         if isinstance(result, dict) and result.get("topics") is not None:
             response_payload.update({
                 "enhanced": result.get("enhanced", True),
+                "cached": result.get("cached", False),
                 "topics": result.get("topics", []),
                 "unreferenced_posts": result.get("unreferenced_posts", [])
             })
@@ -442,7 +445,11 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
             raise HTTPException(status_code=400, detail="Date parameter required")
 
         include_unreferenced = True if request.includeUnreferenced is None else request.includeUnreferenced
-        result = await api_bridge.generate_daily_briefing_with_topics(date, include_unreferenced=include_unreferenced)
+        result = await api_bridge.generate_daily_briefing_with_topics(
+            date,
+            include_unreferenced=include_unreferenced,
+            refresh=bool(request.refresh),
+        )
         if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
             logger.error(f"❌ Engine error: {result['error']}")
             return {"success": False, "error": result["error"]}
@@ -455,6 +462,7 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
             "briefing": result.get("briefing", ""),
             "format": result.get("format", "markdown"),
             "saved_briefing_id": result.get("saved_briefing_id"),
+            "cached": result.get("cached", False),
             "topics": result.get("topics", []),
             "unreferenced_posts": result.get("unreferenced_posts", []),
             "posts": result.get("posts", {}),

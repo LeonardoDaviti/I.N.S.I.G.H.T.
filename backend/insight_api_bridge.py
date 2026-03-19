@@ -33,6 +33,26 @@ class InsightApiBridge:
         self.post_detail_service = PostDetailService(self.db)
         self.youtube_service = YouTubeService(self.db)
 
+    def _start_job_safe(self, *args, **kwargs) -> str | None:
+        try:
+            return self.operations_service.start_job(*args, **kwargs)
+        except Exception:
+            return None
+
+    def _finish_job_safe(self, job_id: str | None, **kwargs) -> None:
+        if not job_id:
+            return
+        try:
+            self.operations_service.finish_job(job_id, **kwargs)
+        except Exception:
+            return
+
+    def _record_source_status_safe(self, source_id: str, **kwargs) -> None:
+        try:
+            self.operations_service.record_source_status(source_id, **kwargs)
+        except Exception:
+            return
+
     def _export_sources_json(self) -> None:
         try:
             self.source_config_sync_service.sync_db_to_json()
@@ -347,7 +367,7 @@ class InsightApiBridge:
 
     async def run_archive(self, source_id: str, desired_posts: int | None = None) -> Dict[str, Any]:
         """Archive posts for a single source into the shared posts table."""
-        job_id = self.operations_service.start_job(
+        job_id = self._start_job_safe(
             "archive_source",
             trigger="manual",
             source_id=source_id,
@@ -356,14 +376,14 @@ class InsightApiBridge:
         try:
             result = await self.source_fetch_service.archive_source(source_id, desired_posts)
             if result.get("success"):
-                self.operations_service.record_source_status(
+                self._record_source_status_safe(
                     source_id,
                     status="healthy",
                     message=f"Archived {result.get('posts_fetched', 0)} posts",
                     trigger="manual",
                     fetched_posts=result.get("posts_fetched"),
                 )
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Archived {result.get('posts_fetched', 0)} posts",
@@ -371,13 +391,13 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.record_source_status(
+            self._record_source_status_safe(
                 source_id,
                 status="error",
                 message=str(e),
                 trigger="manual",
             )
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="failed",
                 message=str(e),
@@ -416,7 +436,7 @@ class InsightApiBridge:
 
     async def fetch_source_now(self, source_id: str, limit: int | None = None) -> Dict[str, Any]:
         """Fetch the latest posts for a single source immediately."""
-        job_id = self.operations_service.start_job(
+        job_id = self._start_job_safe(
             "fetch_source_now",
             trigger="manual",
             source_id=source_id,
@@ -424,14 +444,14 @@ class InsightApiBridge:
         )
         try:
             result = await self.source_fetch_service.ingest_source_now(source_id, limit)
-            self.operations_service.record_source_status(
+            self._record_source_status_safe(
                 source_id,
                 status="healthy",
                 message=f"Fetched {result.get('posts_fetched', 0)} posts",
                 trigger="manual",
                 fetched_posts=result.get("posts_fetched"),
             )
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="success",
                 message=f"Fetched {result.get('posts_fetched', 0)} posts",
@@ -439,13 +459,13 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.record_source_status(
+            self._record_source_status_safe(
                 source_id,
                 status="error",
                 message=str(e),
                 trigger="manual",
             )
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="failed",
                 message=str(e),
@@ -473,7 +493,7 @@ class InsightApiBridge:
 
     async def generate_daily_briefing(self, date_str: str) -> Dict[str, Any]:
         """Generate a DB-backed daily briefing."""
-        job_id = self.operations_service.start_job(
+        job_id = self._start_job_safe(
             "daily_briefing",
             trigger="manual",
             message=f"Generate daily briefing for {date_str}",
@@ -481,7 +501,7 @@ class InsightApiBridge:
         )
         try:
             result = await self.briefing_service.generate_daily_briefing(date_str)
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
@@ -489,7 +509,7 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.finish_job(job_id, status="failed", message=str(e), payload={"date": date_str})
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"date": date_str})
             return {
                 "success": False,
                 "error": str(e),
@@ -499,17 +519,22 @@ class InsightApiBridge:
         self,
         date_str: str,
         include_unreferenced: bool = True,
+        refresh: bool = False,
     ) -> Dict[str, Any]:
         """Generate a DB-backed topic briefing."""
-        job_id = self.operations_service.start_job(
+        job_id = self._start_job_safe(
             "topic_briefing",
             trigger="manual",
             message=f"Generate topic briefing for {date_str}",
             payload={"date": date_str, "include_unreferenced": include_unreferenced},
         )
         try:
-            result = await self.briefing_service.generate_daily_briefing_with_topics(date_str, include_unreferenced)
-            self.operations_service.finish_job(
+            result = await self.briefing_service.generate_daily_briefing_with_topics(
+                date_str,
+                include_unreferenced,
+                refresh=refresh,
+            )
+            self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
@@ -517,7 +542,7 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.finish_job(job_id, status="failed", message=str(e), payload={"date": date_str})
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"date": date_str})
             return {
                 "success": False,
                 "error": str(e),
@@ -604,10 +629,10 @@ class InsightApiBridge:
 
     async def ingest_posts(self):
         """Ingest posts from all sources."""
-        job_id = self.operations_service.start_job("ingest_all", trigger="manual")
+        job_id = self._start_job_safe("ingest_all", trigger="manual")
         try:
             result = await ingest_posts(trigger="manual")
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Ingested {result.get('posts_ingested', 0)} posts",
@@ -615,7 +640,7 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.finish_job(job_id, status="failed", message=str(e))
+            self._finish_job_safe(job_id, status="failed", message=str(e))
             return {
                 "success": False,
                 "error": str(e),
@@ -625,10 +650,10 @@ class InsightApiBridge:
 
     async def safe_ingest_posts(self):
         """Ingest posts from all sources that need updating."""
-        job_id = self.operations_service.start_job("safe_ingest", trigger="manual")
+        job_id = self._start_job_safe("safe_ingest", trigger="manual")
         try:
             result = await safe_ingest_posts(trigger="manual")
-            self.operations_service.finish_job(
+            self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Ingested {result.get('posts_ingested', 0)} posts",
@@ -636,7 +661,7 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self.operations_service.finish_job(job_id, status="failed", message=str(e))
+            self._finish_job_safe(job_id, status="failed", message=str(e))
             return {
                 "success": False,
                 "error": str(e),

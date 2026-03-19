@@ -89,6 +89,7 @@ class GeminiProcessor:
     def __init__(self):
         self.api_key: Optional[str] = None
         self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        self.model_name = self.model
         self.model_fallbacks = _parse_csv_env("GEMINI_MODEL_FALLBACKS") or list(DEFAULT_FALLBACK_MODELS)
         self.temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0.1"))
         self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
@@ -207,12 +208,21 @@ POSTS:
         return await self.topic_briefing_with_numeric_ids(posts)
 
     def analyze_single_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
-        """Summarize a single post."""
+        """Summarize a single post and suggest tags in one request."""
         if not self.is_setup:
             return {"success": False, "error": "Processor not setup. Call setup_processor() first"}
 
         prompt = f"""
-Summarize this post in 2-4 sentences of markdown.
+Return ONLY valid JSON with this exact structure:
+{{
+  "summary": "2-4 sentence markdown summary",
+  "tags": ["tag one", "tag two", "tag three"]
+}}
+
+Rules:
+- Keep tags short, concrete, and lowercase when possible.
+- Use 0 to 5 tags.
+- Do not include commentary outside the JSON.
 
 Source: {post.get("source", "unknown")}
 Title: {post.get("title", "")}
@@ -220,8 +230,22 @@ Content:
 {post.get("content", "")[:3000]}
 """
         try:
-            summary = self._generate_text_sync(prompt)
-            return {"success": True, "summary": summary}
+            result = self._extract_json_from_response(self._generate_text_sync(prompt))
+            tags = result.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            cleaned_tags = []
+            for tag in tags:
+                text = str(tag).strip().lower()
+                if not text or text in cleaned_tags:
+                    continue
+                cleaned_tags.append(text[:48])
+            return {
+                "success": True,
+                "summary": str(result.get("summary", "")).strip(),
+                "tags": cleaned_tags[:5],
+                "model": self.model_name,
+            }
         except Exception as exc:
             return {"success": False, "error": f"Analysis failed: {exc}"}
 
@@ -438,6 +462,7 @@ POSTS:
                     text = self._response_text(response)
                     if not text:
                         raise RuntimeError(f"Gemini returned empty response for model {model}")
+                    self.model_name = model
                     return self._clean_markdown_response(text)
                 except Exception as exc:  # noqa: BLE001
                     if _looks_like_missing_model(exc):

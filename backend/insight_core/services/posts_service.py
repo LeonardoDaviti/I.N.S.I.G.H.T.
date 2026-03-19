@@ -40,3 +40,11 @@ class PostsService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_source_post_stats(cur, source_id)
+
+    def update_post_categories(self, post_id: str, categories: List[str]) -> bool:
+        """Update the stored categories for a post."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                updated = self.repo.update_post_categories(cur, post_id, categories)
+                conn.commit()
+                return updated

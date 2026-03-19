@@ -50,6 +50,17 @@ class TopicsRepository:
         self.logger.debug(f"Topics exist for {target_date}: {exists}")
         return exists
 
+    def delete_topics_by_date(self, cur: Cursor, target_date: date) -> int:
+        """Delete all topics for a date; cascading removes topic_posts and connections."""
+        query = """
+            DELETE FROM topics
+            WHERE date = %s
+            RETURNING id
+        """
+        cur.execute(query, (target_date,))
+        deleted = cur.fetchall()
+        return len(deleted)
+
     def get_topic_by_id(self, cur: Cursor, topic_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve a single topic by ID.
@@ -331,25 +342,45 @@ class TopicsRepository:
         if embedding is not None:
             embedding_str = '[' + ','.join(str(x) for x in embedding) + ']'
         
-        query = """
-            INSERT INTO topics (
-                date,
+        if embedding_str is None:
+            query = """
+                INSERT INTO topics (
+                    date,
+                    title,
+                    summary,
+                    embedding,
+                    is_outlier
+                )
+                VALUES (%s, %s, %s, NULL, %s)
+                RETURNING id
+            """
+            params = (
+                target_date,
                 title,
                 summary,
-                embedding,
-                is_outlier
+                is_outlier,
             )
-            VALUES (%s, %s, %s, %s::vector(1024), %s)
-            RETURNING id
-        """
-        
-        cur.execute(query, (
-            target_date,
-            title,
-            summary,
-            embedding_str,
-            is_outlier
-        ))
+        else:
+            query = """
+                INSERT INTO topics (
+                    date,
+                    title,
+                    summary,
+                    embedding,
+                    is_outlier
+                )
+                VALUES (%s, %s, %s, %s::vector(1024), %s)
+                RETURNING id
+            """
+            params = (
+                target_date,
+                title,
+                summary,
+                embedding_str,
+                is_outlier,
+            )
+
+        cur.execute(query, params)
         
         row = cur.fetchone()
         topic_id = str(row[0])
@@ -575,4 +606,3 @@ class TopicsRepository:
         
         cur.executemany(query, connections)
         self.logger.info(f"Batch inserted {len(connections)} connections")
-

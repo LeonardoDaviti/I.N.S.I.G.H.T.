@@ -55,6 +55,14 @@ class TopicsService:
             with conn.cursor() as cur:
                 return self.repo.get_topics_by_date(cur, target_date)
 
+    def delete_topics_by_date(self, target_date: date) -> int:
+        """Delete all topics for a specific date."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                deleted = self.repo.delete_topics_by_date(cur, target_date)
+                conn.commit()
+                return deleted
+
     def get_posts_for_topic(self, topic_id: str) -> List[Dict[str, Any]]:
         """Get all posts associated with a specific topic."""
         with psycopg.connect(self.db_url) as conn:
@@ -273,4 +281,3 @@ class TopicsService:
                     f"for date {target_date}"
                 )
                 return topic_id
-

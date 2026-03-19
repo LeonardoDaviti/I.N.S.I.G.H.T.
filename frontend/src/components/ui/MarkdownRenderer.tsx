@@ -80,12 +80,12 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             </p>
           ),
           h1: ({ children }) => (
-            <h1 className="mt-6 mb-4 border-b-2 border-[var(--gold-shadow)] pb-2 text-2xl font-bold text-[var(--text-normal)]">
+            <h1 className="mt-6 mb-4 border-b-2 border-[var(--accent-strong)] pb-2 text-2xl font-bold text-[var(--text-normal)]">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="mt-5 mb-3 text-xl font-semibold text-[var(--gold-shadow)]">
+            <h2 className="mt-5 mb-3 text-xl font-semibold text-[var(--accent-strong)]">
               {children}
             </h2>
           ),
@@ -100,7 +100,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             </strong>
           ),
           em: ({ children }) => (
-            <em className="italic text-[var(--gold-shadow)]">
+            <em className="italic text-[var(--accent-strong)]">
               {children}
             </em>
           ),
@@ -120,7 +120,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             </li>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="my-4 rounded-r-lg border-l-4 border-[var(--gold-shadow)] bg-[var(--text-highlight-bg)] py-2 pl-4">
+            <blockquote className="my-4 rounded-r-lg border-l-4 border-[var(--accent-strong)] bg-[var(--text-highlight-bg)] py-2 pl-4">
               <div className="italic text-[var(--text-normal)]">
                 {children}
               </div>
@@ -179,7 +179,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline transition-colors duration-200 text-[var(--gold-shadow)] hover:text-[var(--text-normal)]"
+              className="underline transition-colors duration-200 text-[var(--accent-strong)] hover:text-[var(--text-normal)]"
             >
               {children}
             </a>

@@ -108,10 +108,11 @@ export interface BriefingTopicsResponse {
   posts_processed?: number;
   total_posts_fetched?: number;
   enhanced?: boolean;
+  cached?: boolean;
   topics?: Topic[];
-  // posts map keyed by numeric post_id
+  // posts map keyed by database post UUID
   posts?: Record<string, Post>;
-  // list of numeric post IDs not referenced by any topic
+  // list of database post UUIDs not referenced by any named topic
   unreferenced_posts?: string[];
   error?: string;
 }
@@ -261,6 +262,7 @@ export interface PostSummaryResponse {
   model?: string;
   updated_at?: string | null;
   cached?: boolean;
+  categories?: string[];
 }
 
 export interface PostChatResponse {
@@ -370,13 +372,17 @@ class ApiService {
 
   async generateBriefingWithTopics(
     date: string,
-    opts?: { includeUnreferenced?: boolean }
+    opts?: { includeUnreferenced?: boolean; refresh?: boolean }
   ): Promise<BriefingTopicsResponse> {
     try {
       const endpoint = `/api/daily/topics`;
       const response = await this.makeRequest<BriefingTopicsResponse>(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ date, includeUnreferenced: opts?.includeUnreferenced ?? true })
+        body: JSON.stringify({
+          date,
+          includeUnreferenced: opts?.includeUnreferenced ?? true,
+          refresh: opts?.refresh ?? false,
+        })
       });
       return response;
     } catch (error) {

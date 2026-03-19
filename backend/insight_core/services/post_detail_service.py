@@ -10,6 +10,7 @@ import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.services.posts_service import PostsService
 
 
 class PostDetailService:
@@ -19,6 +20,7 @@ class PostDetailService:
         self.db_url = db_url
         self.logger = get_component_logger("post_detail_service")
         self.processor = GeminiProcessor()
+        self.posts_service = PostsService(db_url)
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         with psycopg.connect(self.db_url) as conn:
@@ -135,7 +137,9 @@ class PostDetailService:
         if not post:
             raise ValueError(f"Post {post_id} not found")
 
-        if not refresh:
+        current_categories = post.get("categories") or []
+
+        if not refresh and current_categories:
             cached = self._get_cached_summary(post_id)
             if cached:
                 return {
@@ -144,9 +148,17 @@ class PostDetailService:
                     "model": cached["summary_model"],
                     "updated_at": cached["updated_at"],
                     "cached": True,
+                    "categories": current_categories,
                 }
 
-        summary_markdown, model = self._generate_summary(post)
+        summary_markdown, model, generated_tags = self._generate_summary(post)
+        final_categories = current_categories or generated_tags
+        if generated_tags and not current_categories:
+            try:
+                self.posts_service.update_post_categories(post_id, generated_tags)
+                final_categories = generated_tags
+            except Exception as exc:
+                self.logger.warning("Failed to persist generated tags for %s: %s", post_id, exc)
         cached = self._save_summary_cache(post_id, summary_markdown, model)
         return {
             "post_id": post_id,
@@ -154,6 +166,7 @@ class PostDetailService:
             "model": cached["summary_model"],
             "updated_at": cached["updated_at"],
             "cached": False,
+            "categories": final_categories,
         }
 
     def chat_about_post(self, post_id: str, question: str) -> Dict[str, Any]:
@@ -219,26 +232,70 @@ class PostDetailService:
             "updated_at": updated_at.isoformat(),
         }
 
-    def _generate_summary(self, post: Dict[str, Any]) -> tuple[str, str]:
+    def _generate_summary(self, post: Dict[str, Any]) -> tuple[str, str, List[str]]:
         if self.processor.setup_processor():
             result = self.processor.analyze_single_post(post)
             if result.get("success"):
-                return result["summary"], self.processor.model_name
+                tags = self._normalize_tags(result.get("tags"))
+                summary = str(result.get("summary") or "").strip() or self._fallback_summary(post, tags=tags)
+                model = str(result.get("model") or getattr(self.processor, "model_name", "gemini"))
+                return summary, model, tags
 
-        return self._fallback_summary(post), "fallback"
+        fallback_tags = self._fallback_tags(post)
+        return self._fallback_summary(post, tags=fallback_tags), "fallback", fallback_tags
 
-    def _fallback_summary(self, post: Dict[str, Any]) -> str:
+    def _fallback_summary(self, post: Dict[str, Any], tags: Optional[List[str]] = None) -> str:
         title = (post.get("title") or "Untitled post").strip()
         content = (post.get("content") or "").strip()
         excerpt = " ".join(content.split())[:900].strip()
-        tags = ", ".join((post.get("categories") or [])[:5]) or "No tags"
+        resolved_tags = ", ".join((tags or post.get("categories") or [])[:5]) or "No tags"
         return (
             f"## Executive Summary\n"
             f"**{title}** from **{post.get('source_display_name') or post.get('source')}**. "
-            f"The post is tagged with: {tags}.\n\n"
+            f"The post is tagged with: {resolved_tags}.\n\n"
             f"## Core Material\n"
             f"{excerpt or 'No textual content was stored for this post.'}"
         )
+
+    def _normalize_tags(self, tags: Any) -> List[str]:
+        if not isinstance(tags, list):
+            return []
+        normalized: List[str] = []
+        for tag in tags:
+            text = str(tag or "").strip().lower()
+            if not text or text in normalized:
+                continue
+            normalized.append(text[:48])
+        return normalized[:5]
+
+    def _fallback_tags(self, post: Dict[str, Any]) -> List[str]:
+        if post.get("categories"):
+            return list(post["categories"])[:5]
+
+        candidates = []
+        source = str(post.get("platform") or "").strip().lower()
+        if source:
+            candidates.append(source)
+
+        text = " ".join(
+            part for part in [
+                str(post.get("title") or ""),
+                str(post.get("content") or ""),
+            ] if part
+        ).lower()
+
+        keyword_map = {
+            "ai": ["ai", "llm", "model", "models", "agent", "agents", "openai", "gemini", "claude"],
+            "research": ["paper", "research", "study", "benchmark"],
+            "video": ["video", "youtube", "watch"],
+            "policy": ["policy", "law", "regulation", "government"],
+            "coding": ["code", "coding", "programming", "dev", "developer"],
+            "infrastructure": ["server", "infra", "deployment", "docker", "kubernetes"],
+        }
+        for tag, keywords in keyword_map.items():
+            if any(keyword in text for keyword in keywords) and tag not in candidates:
+                candidates.append(tag)
+        return candidates[:5]
 
     def _fallback_answer(self, post: Dict[str, Any], question: str) -> str:
         del question

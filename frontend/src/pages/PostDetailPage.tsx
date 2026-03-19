@@ -86,6 +86,7 @@ export default function PostDetailPage() {
   const loadSummary = async (refresh = false) => {
     if (!postId) return;
     setLoadingSummary(true);
+    setError(null);
     const response = await apiService.getPostSummary(postId, refresh);
     if (!response.success) {
       setError(response.error || 'Failed to generate post summary');
@@ -94,6 +95,9 @@ export default function PostDetailPage() {
     }
     setSummary(response.summary_markdown || null);
     setSummaryModel(response.model || null);
+    if (response.categories?.length) {
+      setPost((current) => current ? { ...current, categories: response.categories } : current);
+    }
     setLoadingSummary(false);
   };
 
@@ -225,7 +229,7 @@ export default function PostDetailPage() {
           <div className="space-y-6">
             <section className="app-panel p-6">
               <div className="mb-4 flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-[var(--gold-shadow)]" />
+                <Sparkles className="h-5 w-5 text-[var(--accent-strong)]" />
                 <h2 className="text-lg font-semibold text-[var(--text-normal)]">AI Summary</h2>
               </div>
               {loadingSummary && !summary ? (
@@ -249,7 +253,7 @@ export default function PostDetailPage() {
 
             <section className="app-panel p-6">
               <div className="mb-4 flex items-center gap-2">
-                <Tags className="h-5 w-5 text-[var(--gold-shadow)]" />
+                <Tags className="h-5 w-5 text-[var(--accent-strong)]" />
                 <h2 className="text-lg font-semibold text-[var(--text-normal)]">Post Intelligence</h2>
               </div>
               <div className="grid gap-3 md:grid-cols-2">

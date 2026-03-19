@@ -14,6 +14,11 @@ class HTTPException(Exception):
         self.detail = detail
 
 
+def Query(default: Any = None, **kwargs) -> Any:
+    del kwargs
+    return default
+
+
 @dataclass
 class Route:
     method: str

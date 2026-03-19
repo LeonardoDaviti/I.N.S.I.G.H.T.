@@ -92,7 +92,7 @@ class OperationsService:
                     VALUES (%s, 'running', %s, %s, %s, %s::jsonb)
                     RETURNING id
                     """,
-                    (job_type, trigger, source_id, message, json.dumps(self._json_safe(payload or {}))),
+                    (job_type, trigger, source_id, message, json.dumps(self._prepare_payload(payload or {}))),
                 )
                 job_id = str(cur.fetchone()[0])
             conn.commit()
@@ -123,8 +123,8 @@ class OperationsService:
                     (
                         status,
                         message,
-                        json.dumps(self._json_safe(payload or {})),
-                        json.dumps(self._json_safe(payload or {})),
+                        json.dumps(self._prepare_payload(payload or {})),
+                        json.dumps(self._prepare_payload(payload or {})),
                         job_id,
                     ),
                 )
@@ -291,4 +291,58 @@ class OperationsService:
                 return value.isoformat()
             except Exception:
                 return str(value)
+        return value
+
+    def _prepare_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._json_safe(self._compact_payload(payload))
+
+    def _compact_payload(self, value: Any, *, parent_key: str | None = None) -> Any:
+        if isinstance(value, dict):
+            compacted: Dict[str, Any] = {}
+            for key, item in value.items():
+                if key == "posts":
+                    if isinstance(item, dict):
+                        compacted[key] = {
+                            "count": len(item),
+                            "sample_ids": list(item.keys())[:5],
+                        }
+                    elif isinstance(item, list):
+                        compacted[key] = {"count": len(item)}
+                    else:
+                        compacted[key] = self._compact_payload(item, parent_key=key)
+                    continue
+                compacted[key] = self._compact_payload(item, parent_key=key)
+            return compacted
+
+        if isinstance(value, list):
+            if parent_key == "topics":
+                summarized = []
+                for item in value[:12]:
+                    if isinstance(item, dict):
+                        summarized.append(
+                            {
+                                "id": item.get("id"),
+                                "title": item.get("title"),
+                                "post_count": len(item.get("post_ids", []) or []),
+                                "is_outlier": item.get("is_outlier", False),
+                            }
+                        )
+                    else:
+                        summarized.append(self._compact_payload(item, parent_key=parent_key))
+                if len(value) > 12:
+                    summarized.append({"truncated_topics": len(value) - 12})
+                return summarized
+
+            if len(value) > 20:
+                preview = [self._compact_payload(item, parent_key=parent_key) for item in value[:10]]
+                preview.append({"truncated_items": len(value) - 10})
+                return preview
+            return [self._compact_payload(item, parent_key=parent_key) for item in value]
+
+        if isinstance(value, str):
+            limit = 1200 if parent_key not in {"briefing", "summary_markdown", "content", "content_html"} else 600
+            if len(value) > limit:
+                return value[:limit] + "... [truncated]"
+            return value
+
         return value

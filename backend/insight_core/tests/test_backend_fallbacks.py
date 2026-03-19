@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from backend.insight_core.db.repo_sources import SourcesRepository
 from backend.insight_core.processors.ai.gemini_processor import GeminiProcessor
 from backend.insight_core.services.briefing_service import BriefingService
+from backend.insight_core.services.post_detail_service import PostDetailService
 
 
 class GeminiProcessorFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -163,6 +164,113 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["briefing"], "## Executive Summary\nNo key fallback")
         self.assertEqual(result["saved_briefing_id"], "briefing-2")
+
+    async def test_generate_topic_briefing_uses_cached_payload_without_regenerating(self):
+        service = BriefingService("postgresql:///unused")
+
+        class FakePostsService:
+            def get_posts_by_date(self, target_date):
+                return [
+                    {
+                        "id": "post-1",
+                        "source": "https://karpathy.bearblog.dev/feed/",
+                        "title": "Cached topic source",
+                        "content": "RLVR is gaining momentum.",
+                        "date": "2026-03-12T00:00:00+00:00",
+                    }
+                ]
+
+        class FakeStoreService:
+            def get_briefing(self, subject_type, subject_key, variant="default"):
+                return {
+                    "id": "briefing-topics-1",
+                    "render_format": "markdown",
+                    "content": "## Cached Topic Briefing",
+                    "payload": {
+                        "topics": [
+                            {"id": "topic-1", "title": "RLVR", "summary": "cached", "post_ids": ["post-1"]},
+                        ],
+                        "unreferenced_posts": [],
+                    },
+                }
+
+        class FakeTopicsService:
+            def topics_exist_for_date(self, target_date):
+                return True
+
+            def get_topics_by_date(self, target_date):
+                return [
+                    {"id": "topic-1", "title": "RLVR", "summary": "cached", "is_outlier": False},
+                ]
+
+            def get_posts_for_topic(self, topic_id):
+                return [{"id": "post-1"}]
+
+        class FakeProcessor:
+            def setup_processor(self):
+                raise AssertionError("Processor should not be called when cached topic briefing exists")
+
+        service.posts_service = FakePostsService()
+        service.store_service = FakeStoreService()
+        service.topics_service = FakeTopicsService()
+        service.processor = FakeProcessor()
+
+        result = await service.generate_daily_briefing_with_topics("2026-03-12")
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["briefing"], "## Cached Topic Briefing")
+        self.assertEqual(result["topics"][0]["post_ids"], ["post-1"])
+
+
+class PostDetailServiceTests(unittest.TestCase):
+    def test_generate_summary_uses_model_from_processor_result(self):
+        service = PostDetailService("postgresql:///unused")
+
+        class FakeProcessor:
+            def setup_processor(self):
+                return True
+
+            def analyze_single_post(self, post):
+                return {
+                    "success": True,
+                    "summary": "## Summary\nUseful signal.",
+                    "tags": ["ai", "research"],
+                    "model": "gemini-test",
+                }
+
+        service.processor = FakeProcessor()
+
+        summary, model, tags = service._generate_summary({
+            "title": "Test post",
+            "content": "Some content",
+            "source": "test-source",
+        })
+
+        self.assertEqual(summary, "## Summary\nUseful signal.")
+        self.assertEqual(model, "gemini-test")
+        self.assertEqual(tags, ["ai", "research"])
+
+    def test_generate_summary_fallback_uses_generated_tags_in_markdown(self):
+        service = PostDetailService("postgresql:///unused")
+
+        class FakeProcessor:
+            def setup_processor(self):
+                return False
+
+        service.processor = FakeProcessor()
+
+        summary, model, tags = service._generate_summary({
+            "title": "Nitter post",
+            "content": "A short note about model training.",
+            "source": "karpathy",
+            "platform": "rss",
+            "categories": [],
+        })
+
+        self.assertEqual(model, "fallback")
+        self.assertEqual(tags, ["rss", "ai"])
+        self.assertIn("The post is tagged with: rss, ai.", summary)
 
 
 if __name__ == "__main__":

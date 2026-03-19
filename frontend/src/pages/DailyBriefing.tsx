@@ -77,6 +77,7 @@ export default function DailyBriefing() {
   
   // Topics-based briefing state
   const [isGeneratingTopics, setIsGeneratingTopics] = useState(false);
+  const [isRefreshingTopics, setIsRefreshingTopics] = useState(false);
   const [topicsBriefing, setTopicsBriefing] = useState<string | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [postsMap, setPostsMap] = useState<Record<string, Post>>({});
@@ -555,8 +556,12 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleGenerateTopicBriefing = async () => {
-    setIsGeneratingTopics(true);
+  const handleGenerateTopicBriefing = async (refresh = false) => {
+    if (refresh) {
+      setIsRefreshingTopics(true);
+    } else {
+      setIsGeneratingTopics(true);
+    }
     setError(null);
     setTopicsBriefing(null);
     setTopics([]);
@@ -567,7 +572,10 @@ export default function DailyBriefing() {
     setActiveView('briefing');
     
     try {
-      const response: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate, { includeUnreferenced: true });
+      const response: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate, {
+        includeUnreferenced: true,
+        refresh,
+      });
       if (response.success) {
         setTopicsBriefing(response.briefing || null);
         setTopics(response.topics || []);
@@ -584,6 +592,7 @@ export default function DailyBriefing() {
       setError(err instanceof Error ? err.message : 'Network error occurred');
     } finally {
       setIsGeneratingTopics(false);
+      setIsRefreshingTopics(false);
     }
   };
 
@@ -707,8 +716,8 @@ export default function DailyBriefing() {
               )}
             </button>
             <button
-              onClick={handleGenerateTopicBriefing}
-              disabled={isGeneratingTopics}
+              onClick={() => handleGenerateTopicBriefing(false)}
+              disabled={isGeneratingTopics || isRefreshingTopics}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
             >
               {isGeneratingTopics ? (
@@ -720,6 +729,23 @@ export default function DailyBriefing() {
                 <>
                   <BarChart3 className="w-4 h-4" />
                   Topic Briefing
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => handleGenerateTopicBriefing(true)}
+              disabled={isGeneratingTopics || isRefreshingTopics}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
+            >
+              {isRefreshingTopics ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh Topics
                 </>
               )}
             </button>

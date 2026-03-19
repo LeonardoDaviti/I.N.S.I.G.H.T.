@@ -292,6 +292,18 @@ class PostsRepository:
             "latest_fetched_at": row[3],
         }
 
+    def update_post_categories(self, cur: Cursor, post_id: str, categories: List[str]) -> bool:
+        """Persist generated categories for a single post."""
+        query = """
+            UPDATE posts
+            SET categories = %s::jsonb,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING id
+        """
+        cur.execute(query, (self._json_dumps(categories), post_id))
+        return cur.fetchone() is not None
+
     def _build_content_hash(self, title: Optional[str], content: str, content_html: Optional[str]) -> str:
         """Create a stable digest for dedupe and update tracking."""
         payload = "\n".join(

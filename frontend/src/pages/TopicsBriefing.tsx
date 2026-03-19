@@ -15,31 +15,34 @@ export default function TopicsBriefing() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [postsMap, setPostsMap] = useState<Record<string, Post>>({});
   const [unreferencedIds, setUnreferencedIds] = useState<string[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [openTopic, setOpenTopic] = useState<string | null>(null);
   // expanded state per post: key = `${topicId}:${postId}`
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
 
-  const handleGenerate = async () => {
-    setIsGenerating(true);
+  const runTopicBriefing = async (refresh = false) => {
+    if (refresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsGenerating(true);
+    }
     setError(null);
     setBriefing(null);
     setTopics([]);
-  setPostsMap({});
-  setUnreferencedIds([]);
-  try {
-      const res: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate);
+    setPostsMap({});
+    setUnreferencedIds([]);
+    try {
+      const res: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(selectedDate, { refresh });
       if (res.success) {
         setBriefing(res.briefing || null);
         setTopics(res.topics || []);
-    setPostsMap(res.posts || {});
-    setUnreferencedIds(res.unreferenced_posts || []);
-    // open first topic by default
-    const first = (res.topics || [])[0];
-    setOpenTopic(first ? first.id : null);
-    // default expand all posts initially
-    const nextExpanded: Record<string, boolean> = {};
-    (res.topics || []).forEach((t) => (t.post_ids || []).forEach((pid) => { nextExpanded[`${t.id}:${pid}`] = true; }));
-    setExpandedPosts(nextExpanded);
+        setPostsMap(res.posts || {});
+        setUnreferencedIds(res.unreferenced_posts || []);
+        const first = (res.topics || [])[0];
+        setOpenTopic(first ? first.id : null);
+        const nextExpanded: Record<string, boolean> = {};
+        (res.topics || []).forEach((t) => (t.post_ids || []).forEach((pid) => { nextExpanded[`${t.id}:${pid}`] = true; }));
+        setExpandedPosts(nextExpanded);
       } else {
         setError(res.error || 'Failed to generate topics');
       }
@@ -47,8 +50,12 @@ export default function TopicsBriefing() {
       setError(e instanceof Error ? e.message : 'Network error');
     } finally {
       setIsGenerating(false);
+      setIsRefreshing(false);
     }
   };
+
+  const handleGenerate = async () => runTopicBriefing(false);
+  const handleRefresh = async () => runTopicBriefing(true);
 
   const allPostsArray = useMemo(() => Object.entries(postsMap).sort((a, b) => Number(a[0]) - Number(b[0])), [postsMap]);
 
@@ -82,10 +89,17 @@ export default function TopicsBriefing() {
           </div>
           <button
             onClick={handleGenerate}
-            disabled={isGenerating}
+            disabled={isGenerating || isRefreshing}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isGenerating ? (<><RefreshCw className="w-4 h-4 animate-spin" /> Generating...</>) : 'Generate'}
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={isGenerating || isRefreshing}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isRefreshing ? (<><RefreshCw className="w-4 h-4 animate-spin" /> Refreshing...</>) : (<><RefreshCw className="w-4 h-4" /> Refresh Cached Topics</>)}
           </button>
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
