@@ -35,6 +35,12 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source(cur, source_id)
 
+    def get_posts_by_ids(self, post_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get multiple posts by UUID."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_posts_by_ids(cur, post_ids)
+
     def get_source_post_stats(self, source_id: str) -> Dict[str, Any]:
         """Get aggregate storage stats for a source."""
         with psycopg.connect(self.db_url) as conn:

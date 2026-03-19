@@ -250,6 +250,57 @@ class PostsRepository:
         
         return posts
 
+    def get_posts_by_ids(self, cur: Cursor, post_ids: List[str]) -> List[Dict[str, Any]]:
+        """Retrieve multiple posts by UUID, preserving caller order as much as possible."""
+        if not post_ids:
+            return []
+
+        query = """
+            SELECT
+                p.id,
+                p.url,
+                p.content,
+                p.published_at,
+                p.fetched_at,
+                p.content_html,
+                p.metadata,
+                p.media_urls,
+                p.categories,
+                p.title,
+                s.platform,
+                s.handle_or_url,
+                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
+            FROM posts p
+            JOIN sources s ON p.source_id = s.id
+            WHERE p.id = ANY(%s::uuid[])
+        """
+        cur.execute(query, (post_ids,))
+        rows = cur.fetchall()
+
+        posts_by_id = {
+            str(row[0]): {
+                'id': str(row[0]),
+                'url': row[1],
+                'content': row[2],
+                'date': row[3],
+                'published_at': row[3],
+                'fetched_at': row[4],
+                'content_html': row[5],
+                'metadata': row[6] or {},
+                'media_urls': row[7],
+                'categories': row[8],
+                'title': row[9],
+                'platform': row[10],
+                'handle_or_url': row[11],
+                'source': row[11],
+                'source_display_name': row[12],
+            }
+            for row in rows
+        }
+
+        ordered = [posts_by_id[post_id] for post_id in post_ids if post_id in posts_by_id]
+        return ordered
+
     def get_post_count(self, source_id) -> int:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:

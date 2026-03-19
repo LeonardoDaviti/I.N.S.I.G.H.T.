@@ -305,7 +305,7 @@ class OperationsService:
         self.sources_service.merge_source_settings(source_id, {"ops": next_ops})
 
     def get_operations_overview(self) -> Dict[str, Any]:
-        jobs = self.list_recent_jobs(120)
+        jobs = self.list_recent_jobs(200)
         source_health = self.get_source_health()
         counts = self.get_database_counts()
         alerts = [

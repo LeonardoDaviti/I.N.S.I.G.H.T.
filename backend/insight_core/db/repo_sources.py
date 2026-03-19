@@ -205,6 +205,11 @@ class SourcesRepository:
                 "last_archived_at": None,
                 "last_live_fetch_at": None,
                 "source_type": None,
+                "remaining_posts": None,
+                "rate_limit": {},
+                "checkpoint": None,
+                "resume_ready": False,
+                "history": [],
             },
         }
 

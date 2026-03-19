@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiService } from '../services/api';
 import type {
+  ArchiveCatalogEntry,
   ArchiveResponse,
   JobRun,
   LiveFetchResponse,
@@ -104,6 +105,27 @@ function formatEstimatedTokens(value: unknown) {
   return num.toLocaleString();
 }
 
+function extractEstimatedTokens(payload?: Record<string, any> | null) {
+  return formatEstimatedTokens(payload?.estimated_tokens ?? payload?.token_usage?.estimated_tokens);
+}
+
+function archiveDotClasses(status?: string | null) {
+  switch (status) {
+    case 'archived':
+      return 'bg-emerald-500';
+    case 'partial':
+      return 'bg-amber-500';
+    default:
+      return 'bg-rose-500';
+  }
+}
+
+function formatArchiveRatio(entry?: ArchiveCatalogEntry | null) {
+  if (!entry) return '0/?';
+  const available = typeof entry.available_posts === 'number' ? entry.available_posts.toLocaleString() : '?';
+  return `${(entry.stored_posts || 0).toLocaleString()}/${available}`;
+}
+
 export default function IngestionControl() {
   const navigate = useNavigate();
   const [sources, setSources] = useState<SourceWithSettings[]>([]);
@@ -124,6 +146,12 @@ export default function IngestionControl() {
   const [briefingResult, setBriefingResult] = useState<Record<string, any> | null>(null);
   const [topicBriefingResult, setTopicBriefingResult] = useState<Record<string, any> | null>(null);
   const [archiveResult, setArchiveResult] = useState<ArchiveResponse | null>(null);
+  const [archiveCatalog, setArchiveCatalog] = useState<ArchiveCatalogEntry[]>([]);
+  const [loadingArchiveCatalog, setLoadingArchiveCatalog] = useState(false);
+  const [archiveResume, setArchiveResume] = useState(true);
+  const [archivePageDelay, setArchivePageDelay] = useState(5);
+  const [archiveBatchSize, setArchiveBatchSize] = useState(10);
+  const [archiveBatchCooldown, setArchiveBatchCooldown] = useState(30);
   const [logTail, setLogTail] = useState<LogTailResponse | null>(null);
   const [operationsOverview, setOperationsOverview] = useState<OperationsOverviewResponse | null>(null);
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null);
@@ -212,6 +240,22 @@ export default function IngestionControl() {
     setLoadingOverview(false);
   };
 
+  const loadArchiveCatalog = async (options?: { silent?: boolean }) => {
+    setLoadingArchiveCatalog(true);
+    const response = await apiService.getArchiveCatalog();
+    if (!response.success) {
+      if (!options?.silent) {
+        const message = response.error || 'Failed to load archive catalog';
+        setError(message);
+        appendLog('error', message);
+      }
+      setLoadingArchiveCatalog(false);
+      return;
+    }
+    setArchiveCatalog(response.sources || []);
+    setLoadingArchiveCatalog(false);
+  };
+
   const loadSelectedJob = async (jobId: string, options?: { silent?: boolean }) => {
     setLoadingSelectedJob(true);
     const response = await apiService.getOperationJob(jobId);
@@ -232,6 +276,7 @@ export default function IngestionControl() {
   useEffect(() => {
     loadSources();
     loadOperationsOverview();
+    loadArchiveCatalog();
   }, []);
 
   useEffect(() => {
@@ -240,6 +285,7 @@ export default function IngestionControl() {
     const intervalId = window.setInterval(() => {
       loadLogTail(selectedLogName, { silent: true });
       loadOperationsOverview({ silent: true });
+      loadArchiveCatalog({ silent: true });
       if (selectedJobId) {
         loadSelectedJob(selectedJobId, { silent: true });
       }
@@ -262,6 +308,11 @@ export default function IngestionControl() {
 
   const availableLogs = logTail?.available_logs?.length ? logTail.available_logs : DEFAULT_LOG_OPTIONS;
 
+  const selectedArchiveEntry = useMemo(
+    () => archiveCatalog.find((entry) => entry.source_id === selectedSourceId) || null,
+    [archiveCatalog, selectedSourceId],
+  );
+
   useEffect(() => {
     if (!enabledSources.length) {
       return;
@@ -278,6 +329,12 @@ export default function IngestionControl() {
     }
 
     setLiveFetchLimit(selectedSource.settings.max_posts_per_fetch || 20);
+    const archiveSettings = selectedSource.settings.archive || {};
+    const archiveRateLimit = archiveSettings.rate_limit || {};
+    setArchiveResume(Boolean(archiveSettings.resume_ready));
+    setArchivePageDelay(Number(archiveRateLimit.page_delay_seconds || (selectedSource.platform === 'reddit' ? 2 : 5)));
+    setArchiveBatchSize(Number(archiveRateLimit.batch_size || 10));
+    setArchiveBatchCooldown(Number(archiveRateLimit.batch_cooldown_seconds || 30));
   }, [selectedSource?.id]);
 
   useEffect(() => {
@@ -310,8 +367,9 @@ export default function IngestionControl() {
       onSuccess(result);
       appendLog('success', `${startMessage} completed`);
 
-      if (['ingest', 'safe-ingest', 'source-fetch', 'archive-run', 'sync-json-to-db', 'sync-db-to-json'].includes(actionKey)) {
+      if (['ingest', 'safe-ingest', 'source-fetch', 'archive-run', 'archive-run-fresh', 'sync-json-to-db', 'sync-db-to-json'].includes(actionKey)) {
         await loadSources({ silent: true });
+        await loadArchiveCatalog({ silent: true });
       }
       await loadOperationsOverview({ silent: true });
       await loadLogTail(selectedLogName, { silent: true });
@@ -621,7 +679,7 @@ export default function IngestionControl() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-[1.6fr_0.8fr]">
+              <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr_0.8fr]">
                 <div>
                   <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                     Source
@@ -650,6 +708,14 @@ export default function IngestionControl() {
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
                   />
                 </div>
+                <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 md:mt-7">
+                  <span>Resume from checkpoint</span>
+                  <input
+                    type="checkbox"
+                    checked={archiveResume}
+                    onChange={(e) => setArchiveResume(e.target.checked)}
+                  />
+                </label>
               </div>
 
               {selectedSource && (
@@ -659,10 +725,60 @@ export default function IngestionControl() {
                     <span>Platform: {selectedSource.platform}</span>
                     <span>Enabled: {selectedSource.enabled ? 'yes' : 'no'}</span>
                     <span>Stored posts: {selectedSource.post_count}</span>
-                    {selectedSource.settings.archive?.status && <span>Archive status: {selectedSource.settings.archive.status}</span>}
+                    {selectedArchiveEntry?.archive_status && <span>Archive status: {selectedArchiveEntry.archive_status}</span>}
+                    {selectedArchiveEntry?.resume_ready ? <span>Resume ready</span> : <span>No checkpoint</span>}
                   </div>
                 </div>
               )}
+
+              <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Rate Limit Control</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Fine-tune archive pacing for the selected source before planning or running it.
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Page Delay
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={archivePageDelay}
+                      onChange={(e) => setArchivePageDelay(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Batch Size
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={archiveBatchSize}
+                      onChange={(e) => setArchiveBatchSize(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Batch Cooldown
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={archiveBatchCooldown}
+                      onChange={(e) => setArchiveBatchCooldown(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                    />
+                  </div>
+                </div>
+              </div>
 
               <div className="mt-4 flex flex-wrap gap-3">
                 <button
@@ -683,7 +799,12 @@ export default function IngestionControl() {
                   onClick={() => selectedSourceId && runAction(
                     'archive-plan',
                     'Archive plan requested',
-                    () => apiService.planArchive(selectedSourceId, desiredPosts),
+                    () => apiService.planArchive(selectedSourceId, desiredPosts, {
+                      resume: archiveResume,
+                      pageDelaySeconds: archivePageDelay,
+                      batchSize: archiveBatchSize,
+                      batchCooldownSeconds: archiveBatchCooldown,
+                    }),
                     (result) => setArchiveResult(result),
                   )}
                   disabled={!selectedSourceId || runningAction !== null}
@@ -695,14 +816,37 @@ export default function IngestionControl() {
                   type="button"
                   onClick={() => selectedSourceId && runAction(
                     'archive-run',
-                    'Archive run started',
-                    () => apiService.runArchive(selectedSourceId, desiredPosts),
+                    archiveResume ? 'Archive resume started' : 'Archive run started',
+                    () => apiService.runArchive(selectedSourceId, desiredPosts, {
+                      resume: archiveResume,
+                      pageDelaySeconds: archivePageDelay,
+                      batchSize: archiveBatchSize,
+                      batchCooldownSeconds: archiveBatchCooldown,
+                    }),
                     (result) => setArchiveResult(result),
                   )}
                   disabled={!selectedSourceId || runningAction !== null}
                   className="rounded-2xl bg-amber-500 px-4 py-3 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
                 >
-                  {runningAction === 'archive-run' ? 'Archiving…' : 'Run Archive'}
+                  {runningAction === 'archive-run' ? 'Archiving…' : archiveResume ? 'Continue Archive' : 'Run Archive'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedSourceId && runAction(
+                    'archive-run-fresh',
+                    'Fresh archive run started',
+                    () => apiService.runArchive(selectedSourceId, desiredPosts, {
+                      resume: false,
+                      pageDelaySeconds: archivePageDelay,
+                      batchSize: archiveBatchSize,
+                      batchCooldownSeconds: archiveBatchCooldown,
+                    }),
+                    (result) => setArchiveResult(result),
+                  )}
+                  disabled={!selectedSourceId || runningAction !== null}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {runningAction === 'archive-run-fresh' ? 'Starting…' : 'Start Fresh'}
                 </button>
               </div>
 
@@ -711,6 +855,49 @@ export default function IngestionControl() {
                 <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-6">
                   {formatJson(archiveResult as Record<string, any> | null)}
                 </pre>
+              </div>
+
+              <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Archive Catalog</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Enabled sources only. Green means full archive, orange partial, red untouched.
+                    </div>
+                  </div>
+                  {loadingArchiveCatalog ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : null}
+                </div>
+                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  {archiveCatalog.map((entry) => {
+                    const isSelected = entry.source_id === selectedSourceId;
+                    return (
+                      <button
+                        key={entry.source_id}
+                        type="button"
+                        onClick={() => setSelectedSourceId(entry.source_id)}
+                        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                          isSelected
+                            ? 'border-amber-300 bg-amber-50'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`h-2.5 w-2.5 rounded-full ${archiveDotClasses(entry.archive_status)}`} />
+                          <div>
+                            <div className="font-medium text-slate-900">{entry.display_name}</div>
+                            <div className="text-xs text-slate-500">
+                              {entry.platform} · {formatArchiveRatio(entry)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                          <div>{entry.archive_status || 'not_archived'}</div>
+                          <div>{entry.resume_ready ? 'resume ready' : 'fresh only'}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </section>
           </div>
@@ -792,7 +979,7 @@ export default function IngestionControl() {
                   <p className="mt-1 text-sm text-slate-500">Quick read of the current registry before you trigger work.</p>
                 </div>
               </div>
-              <div className="grid gap-3">
+              <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sources</div>
                   <div className="mt-2 text-2xl font-bold text-slate-900">{sources.length}</div>
@@ -862,7 +1049,7 @@ export default function IngestionControl() {
               <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                 <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-1">
                   {(operationsOverview?.jobs || []).map((job) => {
-                    const estimatedTokens = formatEstimatedTokens(job.payload?.estimated_tokens);
+                    const estimatedTokens = extractEstimatedTokens(job.payload);
                     const isSelected = selectedJobId === job.id;
                     return (
                       <button
@@ -954,7 +1141,7 @@ export default function IngestionControl() {
                         </div>
                         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
                           <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Estimated Tokens</div>
-                          <div className="mt-2 font-medium text-slate-900">{formatEstimatedTokens(selectedJob.payload?.estimated_tokens) || 'n/a'}</div>
+                          <div className="mt-2 font-medium text-slate-900">{extractEstimatedTokens(selectedJob.payload) || 'n/a'}</div>
                         </div>
                       </div>
                       <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">

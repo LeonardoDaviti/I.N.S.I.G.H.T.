@@ -107,7 +107,17 @@ export interface WeeklyBriefingResponse {
   daily_briefings_used?: number;
   days_covered?: string[];
   estimated_tokens?: number;
+  topics?: Topic[];
+  posts?: Record<string, Post>;
+  variant?: string;
   error?: string;
+}
+
+export interface WeeklyTopicTimelineEntry {
+  date?: string | null;
+  summary?: string | null;
+  source_topics?: string[];
+  post_ids?: string[];
 }
 
 export interface Topic {
@@ -116,6 +126,7 @@ export interface Topic {
   summary: string | null;
   post_ids?: string[]; // For AI-generated topics (legacy)
   posts?: Post[]; // For database topics
+  timeline?: WeeklyTopicTimelineEntry[];
   is_outlier?: boolean;
   created_at?: string;
   post_count?: number;
@@ -179,6 +190,29 @@ export interface ArchiveResponse {
   success?: boolean;
   error?: string;
   [key: string]: any;
+}
+
+export interface ArchiveCatalogEntry {
+  source_id: string;
+  display_name: string;
+  platform: string;
+  enabled: boolean;
+  stored_posts: number;
+  available_posts?: number | null;
+  archive_status?: string | null;
+  resume_ready?: boolean;
+  source_type?: string | null;
+  last_archived_at?: string | null;
+  last_live_fetch_at?: string | null;
+  checkpoint?: Record<string, any> | null;
+  rate_limit?: Record<string, any>;
+}
+
+export interface ArchiveCatalogResponse {
+  success?: boolean;
+  error?: string;
+  sources?: ArchiveCatalogEntry[];
+  total?: number;
 }
 
 export interface LiveFetchResponse {
@@ -434,11 +468,11 @@ class ApiService {
     }
   }
 
-  async generateWeeklyBriefing(date: string, refresh = false): Promise<WeeklyBriefingResponse> {
+  async generateWeeklyBriefing(date: string, refresh = false, includeTopics = false): Promise<WeeklyBriefingResponse> {
     try {
       return await this.makeRequest<WeeklyBriefingResponse>('/api/weekly', {
         method: 'POST',
-        body: JSON.stringify({ date, refresh }),
+        body: JSON.stringify({ date, refresh, includeTopics }),
       });
     } catch (error) {
       console.error('Failed to generate weekly briefing:', error);
@@ -782,11 +816,40 @@ class ApiService {
     }
   }
 
-  async planArchive(sourceId: string, desiredPosts?: number): Promise<ArchiveResponse> {
+  async getArchiveCatalog(): Promise<ArchiveCatalogResponse> {
+    try {
+      return await this.makeRequest<ArchiveCatalogResponse>('/api/archive/catalog');
+    } catch (error) {
+      console.error('Failed to get archive catalog:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        sources: [],
+        total: 0,
+      };
+    }
+  }
+
+  async planArchive(
+    sourceId: string,
+    desiredPosts?: number,
+    options?: {
+      resume?: boolean;
+      pageDelaySeconds?: number;
+      batchSize?: number;
+      batchCooldownSeconds?: number;
+    },
+  ): Promise<ArchiveResponse> {
     try {
       return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/plan`, {
         method: 'POST',
-        body: JSON.stringify({ desiredPosts }),
+        body: JSON.stringify({
+          desiredPosts,
+          resume: options?.resume ?? true,
+          pageDelaySeconds: options?.pageDelaySeconds,
+          batchSize: options?.batchSize,
+          batchCooldownSeconds: options?.batchCooldownSeconds,
+        }),
       });
     } catch (error) {
       console.error('Failed to plan archive:', error);
@@ -797,11 +860,26 @@ class ApiService {
     }
   }
 
-  async runArchive(sourceId: string, desiredPosts?: number): Promise<ArchiveResponse> {
+  async runArchive(
+    sourceId: string,
+    desiredPosts?: number,
+    options?: {
+      resume?: boolean;
+      pageDelaySeconds?: number;
+      batchSize?: number;
+      batchCooldownSeconds?: number;
+    },
+  ): Promise<ArchiveResponse> {
     try {
       return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/run`, {
         method: 'POST',
-        body: JSON.stringify({ desiredPosts }),
+        body: JSON.stringify({
+          desiredPosts,
+          resume: options?.resume ?? true,
+          pageDelaySeconds: options?.pageDelaySeconds,
+          batchSize: options?.batchSize,
+          batchCooldownSeconds: options?.batchCooldownSeconds,
+        }),
       });
     } catch (error) {
       console.error('Failed to run archive:', error);

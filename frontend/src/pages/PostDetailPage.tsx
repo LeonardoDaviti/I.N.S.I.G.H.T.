@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Download,
@@ -45,6 +45,7 @@ function defaultNotesTemplate(post?: Post | null) {
 
 export default function PostDetailPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { postId } = useParams();
   const [post, setPost] = useState<Post | null>(null);
   const [notes, setNotes] = useState('');
@@ -227,7 +228,14 @@ export default function PostDetailPage() {
           <div>
             <button
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() => {
+                const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+                if (returnTo) {
+                  navigate(returnTo);
+                  return;
+                }
+                navigate('/briefing');
+              }}
               className="mb-3 inline-flex items-center gap-2 text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text-normal)]"
             >
               <ArrowLeft className="h-4 w-4" />

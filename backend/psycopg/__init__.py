@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Iterable, List, Optional, Sequence
@@ -96,10 +97,23 @@ def _run_psql(dsn: str, sql_text: str, expect_output: bool) -> str:
     if expect_output:
         command.extend(["-A", "-t"])
 
-    command.extend(["-c", sql_text])
+    # Large SQL payloads can exceed the OS argv limit when they are passed
+    # through `-c`. Spill them to a temporary file so local development remains
+    # stable even for large cached briefing payloads.
+    if len(sql_text) > 12000:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sql") as handle:
+            handle.write(sql_text)
+            handle.flush()
+            result = subprocess.run(
+                [*command, "-f", handle.name],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout
 
     result = subprocess.run(
-        command,
+        [*command, "-c", sql_text],
         check=True,
         capture_output=True,
         text=True,

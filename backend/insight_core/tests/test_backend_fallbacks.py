@@ -93,6 +93,36 @@ class GeminiProcessorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## Major Developments", result)
         self.assertIn("2026-03-17", result)
 
+    async def test_weekly_topic_briefing_falls_back_when_generation_fails(self):
+        processor = GeminiProcessor()
+        processor.is_setup = True
+        processor.api_key = "test"
+
+        async def fail_generate(prompt):
+            raise RuntimeError("quota exceeded")
+
+        processor._generate_text = fail_generate
+
+        result = await processor.weekly_topic_briefing(
+            "2026-03-16 to 2026-03-22",
+            [
+                {
+                    "date": "2026-03-17",
+                    "briefing": "## Daily Topic Briefing",
+                    "topics": [
+                        {
+                            "title": "RLVR",
+                            "summary": "RLVR was a recurring theme.",
+                            "post_ids": ["post-1", "post-2"],
+                        }
+                    ],
+                }
+            ],
+        )
+
+        self.assertIn("weekly_briefing", result)
+        self.assertEqual(result["topics"][0]["title"], "RLVR")
+
 
 class SourcesRepositoryJsonSafeTests(unittest.TestCase):
     def test_make_json_safe_converts_nested_datetimes(self):
@@ -278,6 +308,62 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["cached"])
         self.assertEqual(result["briefing"], "## Executive Weekly Summary\nCached weekly view")
         self.assertEqual(result["daily_briefings_used"], 2)
+
+    async def test_generate_weekly_topic_briefing_uses_cached_payload_without_regenerating(self):
+        service = BriefingService("postgresql:///unused")
+
+        class FakeStoreService:
+            def get_briefing(self, subject_type, subject_key, variant="default"):
+                if subject_type == "weekly_briefing" and variant == "topics":
+                    return {
+                        "id": "weekly-topics-1",
+                        "render_format": "markdown",
+                        "content": "## Weekly Topic Briefing",
+                        "payload": {
+                            "days_covered": ["2026-03-16", "2026-03-17"],
+                            "daily_briefings_used": 2,
+                            "estimated_tokens": 111,
+                            "topics": [
+                                {
+                                    "id": "weekly-topic-1",
+                                    "title": "RLVR",
+                                    "summary": "Weekly RLVR thread",
+                                    "post_ids": ["post-1"],
+                                    "timeline": [
+                                        {"date": "2026-03-16", "summary": "Start", "post_ids": ["post-1"]},
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                return None
+
+        class FakePostsService:
+            def get_posts_by_ids(self, post_ids):
+                return [
+                    {
+                        "id": "post-1",
+                        "source": "https://karpathy.bearblog.dev/feed/",
+                        "title": "RLVR weekly anchor",
+                        "content": "RLVR matured.",
+                        "platform": "rss",
+                    }
+                ]
+
+        class FakeProcessor:
+            def setup_processor(self):
+                raise AssertionError("Processor should not be called when cached weekly topic briefing exists")
+
+        service.store_service = FakeStoreService()
+        service.posts_service = FakePostsService()
+        service.processor = FakeProcessor()
+
+        result = await service.generate_weekly_topic_briefing("2026-03-18")
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["variant"], "topics")
+        self.assertEqual(result["topics"][0]["title"], "RLVR")
 
 
 class PostDetailServiceTests(unittest.TestCase):

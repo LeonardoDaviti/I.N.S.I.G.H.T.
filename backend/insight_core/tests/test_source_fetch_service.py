@@ -111,6 +111,23 @@ class SourceFetchServiceTests(unittest.TestCase):
         self.assertEqual(self.service._estimate_seconds("nitter_rss", 10), 100)
         self.assertEqual(self.service._estimate_seconds("nitter_rss", 11), 131)
 
+    def test_resolve_rate_limit_prefers_overrides(self):
+        rate_limit = self.service._resolve_rate_limit(
+            "telegram_rss",
+            {"page_delay_seconds": 7, "batch_size": 8, "batch_cooldown_seconds": 20},
+            {"page_delay_seconds": 3, "batch_size": 4},
+        )
+
+        self.assertEqual(rate_limit["page_delay_seconds"], 3)
+        self.assertEqual(rate_limit["batch_size"], 4)
+        self.assertEqual(rate_limit["batch_cooldown_seconds"], 20)
+
+    def test_checkpoint_is_resumable_for_cursor_and_page_modes(self):
+        self.assertTrue(self.service._checkpoint_is_resumable({"mode": "telegram_page", "next_page": 5}))
+        self.assertTrue(self.service._checkpoint_is_resumable({"mode": "nitter_cursor", "cursor": "abc"}))
+        self.assertTrue(self.service._checkpoint_is_resumable({"mode": "reddit_after", "after": "t3_123"}))
+        self.assertFalse(self.service._checkpoint_is_resumable({"mode": "generic_rss"}))
+
     def test_origin_resolution_uses_source_host(self):
         self.assertEqual(
             self.service._telegram_origin("https://tg.i-c-a.su/rss/denissexy?limit=50"),

@@ -84,23 +84,46 @@ class SourceFetchService:
             if host.strip()
         }
 
-    async def plan_archive(self, source_id: str, desired_posts: Optional[int] = None) -> Dict[str, Any]:
+    async def plan_archive(
+        self,
+        source_id: str,
+        desired_posts: Optional[int] = None,
+        *,
+        resume: bool = True,
+        rate_limit_overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Inspect a source and estimate archive effort."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
 
         inspection = await self.inspect_source(source)
+        source_with_settings = self.sources_service.get_source_with_settings(source_id)
+        current_archive = (source_with_settings.get("settings") or {}).get("archive", {})
+        effective_rate_limit = self._resolve_rate_limit(
+            inspection["source_type"],
+            current_archive.get("rate_limit"),
+            rate_limit_overrides,
+        )
+        checkpoint = current_archive.get("checkpoint") if resume else None
+        resume_available = self._checkpoint_is_resumable(checkpoint)
+        resume_collected_posts = int((checkpoint or {}).get("collected_posts") or 0) if resume_available else 0
         desired = desired_posts or inspection["available_posts"] or source.get("settings", {}).get("max_posts_per_fetch", 50)
         desired = min(desired, inspection["available_posts"] or desired)
-        estimated_pages = self._estimate_pages(inspection["source_type"], desired, inspection["page_size"])
+        remaining_posts = max(0, desired - resume_collected_posts)
+        estimated_pages = self._estimate_pages(inspection["source_type"], remaining_posts, inspection["page_size"])
 
         inspection.update({
             "desired_posts": desired,
+            "remaining_posts": remaining_posts,
             "estimated_pages": estimated_pages,
-            "estimated_seconds": self._estimate_seconds(inspection["source_type"], estimated_pages),
+            "estimated_seconds": self._estimate_seconds(inspection["source_type"], estimated_pages, effective_rate_limit),
             "source_id": source_id,
             "current_stored_posts": self.posts_service.get_source_post_stats(source_id)["post_count"],
+            "resume": bool(resume and resume_available),
+            "resume_available": resume_available,
+            "checkpoint": checkpoint if resume_available else None,
+            "rate_limit": effective_rate_limit,
         })
 
         await self._record_archive_metadata(source_id, inspection, mode="plan")
@@ -111,68 +134,153 @@ class SourceFetchService:
         source_id: str,
         desired_posts: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
+        *,
+        resume: bool = True,
+        rate_limit_overrides: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Archive historical posts for a single source."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
 
-        plan = await self.plan_archive(source_id, desired_posts)
+        plan = await self.plan_archive(
+            source_id,
+            desired_posts,
+            resume=resume,
+            rate_limit_overrides=rate_limit_overrides,
+        )
         source_type = plan["source_type"]
         target_posts = plan["desired_posts"]
+        rate_limit = plan.get("rate_limit") or {}
+        checkpoint = plan.get("checkpoint") or {}
+        resume_collected_posts = int(checkpoint.get("collected_posts") or 0) if plan.get("resume") else 0
+        total_pages_fetched = int(checkpoint.get("pages_fetched") or 0) if plan.get("resume") else 0
+        total_posts_fetched = 0
+        total_inserted = 0
+        total_updated = 0
         await self._emit_progress(
             progress_callback,
             {
                 "stage": "planning_complete",
                 "source_type": source_type,
                 "target_posts": target_posts,
+                "remaining_posts": plan.get("remaining_posts", target_posts),
                 "estimated_pages": plan.get("estimated_pages"),
                 "estimated_seconds": plan.get("estimated_seconds"),
                 "message": f"Planning complete for {target_posts} posts",
-                "progress": 0,
+                "progress": min(100.0, (resume_collected_posts / max(target_posts, 1)) * 100.0),
             },
         )
 
+        if plan.get("remaining_posts", 0) <= 0:
+            post_stats = self.posts_service.get_source_post_stats(source_id)
+            result = {
+                **plan,
+                "success": True,
+                "posts_fetched": 0,
+                "pages_fetched": total_pages_fetched,
+                "posts_inserted": 0,
+                "posts_updated": 0,
+                "stored_posts": post_stats["post_count"],
+                "archive_status": self._derive_archive_status(post_stats["post_count"], plan["available_posts"]),
+                "message": "Archive already covers the requested range",
+            }
+            await self._record_archive_metadata(source_id, result, mode="archive")
+            return result
+
+        async def persist_archive_page(page_posts: List[Dict[str, Any]], checkpoint_payload: Dict[str, Any], _progress_payload: Dict[str, Any]) -> None:
+            nonlocal total_pages_fetched, total_posts_fetched, total_inserted, total_updated
+            if page_posts:
+                saved = self._persist_posts(source_id, page_posts)
+                total_posts_fetched += len(page_posts)
+                total_inserted += saved["inserted"]
+                total_updated += saved["updated"]
+            total_pages_fetched = int(checkpoint_payload.get("pages_fetched") or total_pages_fetched)
+            await self._record_archive_metadata(
+                source_id,
+                {
+                    **plan,
+                    "pages_fetched": total_pages_fetched,
+                    "posts_fetched": total_posts_fetched,
+                    "posts_inserted": total_inserted,
+                    "posts_updated": total_updated,
+                    "checkpoint": checkpoint_payload,
+                    "rate_limit": rate_limit,
+                },
+                mode="archive_progress",
+            )
+
         if source_type == "telegram_rss":
-            posts, pages_fetched = await self._collect_telegram_posts(
+            posts, pages_fetched, checkpoint = await self._collect_telegram_posts(
                 source["handle_or_url"],
                 target_posts,
+                start_page=int(checkpoint.get("next_page") or 1) if plan.get("resume") else 1,
+                initial_collected=resume_collected_posts,
+                initial_pages_fetched=total_pages_fetched,
                 progress_callback=progress_callback,
+                page_callback=persist_archive_page,
+                rate_limit=rate_limit,
             )
         elif source_type == "nitter_rss":
-            posts, pages_fetched = await self._collect_nitter_posts(
+            posts, pages_fetched, checkpoint = await self._collect_nitter_posts(
                 source["handle_or_url"],
                 target_posts,
+                cursor=checkpoint.get("cursor") if plan.get("resume") else None,
+                initial_collected=resume_collected_posts,
+                initial_pages_fetched=total_pages_fetched,
                 progress_callback=progress_callback,
+                page_callback=persist_archive_page,
+                rate_limit=rate_limit,
             )
         elif source_type == "youtube_channel":
             youtube_result = self.youtube_service.archive_channel_posts(source["handle_or_url"], target_posts)
             posts = youtube_result["posts"]
             pages_fetched = youtube_result["pages_fetched"]
+            checkpoint = {
+                "mode": "youtube",
+                "pages_fetched": pages_fetched,
+                "collected_posts": len(posts),
+            }
         elif source_type == "reddit_subreddit":
-            posts, pages_fetched = await self._collect_reddit_posts(
+            posts, pages_fetched, checkpoint = await self._collect_reddit_posts(
                 source["handle_or_url"],
                 target_posts,
+                after=checkpoint.get("after") if plan.get("resume") else None,
+                initial_collected=resume_collected_posts,
+                initial_pages_fetched=total_pages_fetched,
                 progress_callback=progress_callback,
+                page_callback=persist_archive_page,
+                rate_limit=rate_limit,
             )
         elif source_type == "generic_rss":
             posts = await self.fetch_live_posts(source, target_posts)
             pages_fetched = 1
+            checkpoint = {
+                "mode": "generic_rss",
+                "pages_fetched": 1,
+                "collected_posts": len(posts),
+            }
         else:
             raise ValueError(f"Archive is not supported for source type {source_type}")
 
-        saved = self._persist_posts(source_id, posts)
+        if source_type in {"generic_rss", "youtube_channel"}:
+            saved = self._persist_posts(source_id, posts)
+            total_posts_fetched += len(posts)
+            total_inserted += saved["inserted"]
+            total_updated += saved["updated"]
+            total_pages_fetched = pages_fetched
         post_stats = self.posts_service.get_source_post_stats(source_id)
 
         result = {
             **plan,
             "success": True,
-            "posts_fetched": len(posts),
-            "pages_fetched": pages_fetched,
-            "posts_inserted": saved["inserted"],
-            "posts_updated": saved["updated"],
+            "posts_fetched": total_posts_fetched,
+            "pages_fetched": total_pages_fetched,
+            "posts_inserted": total_inserted,
+            "posts_updated": total_updated,
             "stored_posts": post_stats["post_count"],
             "archive_status": self._derive_archive_status(post_stats["post_count"], plan["available_posts"]),
+            "checkpoint": checkpoint,
         }
 
         await self._record_archive_metadata(source_id, result, mode="archive")
@@ -181,12 +289,12 @@ class SourceFetchService:
             {
                 "stage": "completed",
                 "source_type": source_type,
-                "pages_fetched": pages_fetched,
-                "posts_fetched": len(posts),
-                "posts_inserted": saved["inserted"],
-                "posts_updated": saved["updated"],
+                "pages_fetched": total_pages_fetched,
+                "posts_fetched": total_posts_fetched,
+                "posts_inserted": total_inserted,
+                "posts_updated": total_updated,
                 "stored_posts": post_stats["post_count"],
-                "message": f"Archive completed with {len(posts)} posts",
+                "message": f"Archive completed with {total_posts_fetched} posts",
                 "progress": 100,
             },
         )
@@ -245,11 +353,11 @@ class SourceFetchService:
         source_type = self.classify_source(source)
 
         if source_type == "telegram_rss":
-            posts, _ = await self._collect_telegram_posts(source["handle_or_url"], limit, apply_rate_limits=False)
+            posts, _, _ = await self._collect_telegram_posts(source["handle_or_url"], limit, apply_rate_limits=False)
             return posts
 
         if source_type == "nitter_rss":
-            posts, _ = await self._collect_nitter_posts(source["handle_or_url"], limit)
+            posts, _, _ = await self._collect_nitter_posts(source["handle_or_url"], limit)
             return posts
 
         if source_type == "youtube_channel":
@@ -444,133 +552,201 @@ class SourceFetchService:
         target_posts: int,
         apply_rate_limits: bool = True,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        *,
+        start_page: int = 1,
+        initial_collected: int = 0,
+        initial_pages_fetched: int = 0,
+        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
+        rate_limit: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
         username = self._extract_telegram_username(source_url)
         collected: List[Dict[str, Any]] = []
         seen_urls = set()
-        page = 1
-        pages_fetched = 0
+        page = max(1, int(start_page or 1))
+        pages_fetched = int(initial_pages_fetched or 0)
+        checkpoint = {
+            "mode": "telegram_page",
+            "next_page": page,
+            "pages_fetched": pages_fetched,
+            "collected_posts": int(initial_collected or 0),
+        }
 
-        while len(collected) < target_posts:
+        while (len(collected) + initial_collected) < target_posts:
             page_posts = await self._fetch_telegram_page(source_url, username, page)
             if not page_posts:
                 break
 
             pages_fetched += 1
+            unique_page_posts: List[Dict[str, Any]] = []
             for post in page_posts:
                 if post["url"] not in seen_urls:
                     seen_urls.add(post["url"])
+                    unique_page_posts.append(post)
                     collected.append(post)
-                    if len(collected) >= target_posts:
+                    if (len(collected) + initial_collected) >= target_posts:
                         break
 
+            checkpoint = {
+                "mode": "telegram_page",
+                "next_page": page + 1,
+                "last_page": page,
+                "pages_fetched": pages_fetched,
+                "collected_posts": len(collected) + initial_collected,
+            }
+            progress_payload = {
+                "stage": "page_fetched",
+                "platform": "telegram",
+                "page": page,
+                "pages_fetched": pages_fetched,
+                "posts_collected": len(collected) + initial_collected,
+                "target_posts": target_posts,
+                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100),
+                "message": f"Fetched Telegram page {page}",
+            }
+            await self._emit_page(page_callback, unique_page_posts, checkpoint, progress_payload)
             await self._emit_progress(
                 progress_callback,
-                {
-                    "stage": "page_fetched",
-                    "platform": "telegram",
-                    "page": page,
-                    "pages_fetched": pages_fetched,
-                    "posts_collected": len(collected),
-                    "target_posts": target_posts,
-                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
-                    "message": f"Fetched Telegram page {page}",
-                },
+                progress_payload,
             )
 
             page += 1
-            if len(collected) < target_posts and apply_rate_limits:
-                await self._sleep_between_telegram_pages(pages_fetched)
+            if (len(collected) + initial_collected) < target_posts and apply_rate_limits:
+                await self._sleep_between_telegram_pages(pages_fetched, rate_limit)
 
-        return collected[:target_posts], pages_fetched
+        return collected[: max(0, target_posts - initial_collected)], pages_fetched, checkpoint
 
     async def _collect_nitter_posts(
         self,
         source_url: str,
         target_posts: int,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        *,
+        cursor: Optional[str] = None,
+        initial_collected: int = 0,
+        initial_pages_fetched: int = 0,
+        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
+        rate_limit: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
         username = self._extract_nitter_username(source_url)
         collected: List[Dict[str, Any]] = []
         seen_urls = set()
-        cursor: Optional[str] = None
-        pages_fetched = 0
+        current_cursor: Optional[str] = cursor
+        pages_fetched = int(initial_pages_fetched or 0)
+        checkpoint = {
+            "mode": "nitter_cursor",
+            "cursor": current_cursor,
+            "pages_fetched": pages_fetched,
+            "collected_posts": int(initial_collected or 0),
+        }
 
-        while len(collected) < target_posts:
-            page_posts, next_cursor = await self._fetch_nitter_page(source_url, username, cursor)
+        while (len(collected) + initial_collected) < target_posts:
+            page_posts, next_cursor = await self._fetch_nitter_page(source_url, username, current_cursor)
             if not page_posts:
                 break
 
             pages_fetched += 1
+            unique_page_posts: List[Dict[str, Any]] = []
             for post in page_posts:
                 if post["url"] not in seen_urls:
                     seen_urls.add(post["url"])
+                    unique_page_posts.append(post)
                     collected.append(post)
-                    if len(collected) >= target_posts:
+                    if (len(collected) + initial_collected) >= target_posts:
                         break
 
+            checkpoint = {
+                "mode": "nitter_cursor",
+                "cursor": next_cursor,
+                "last_cursor": current_cursor,
+                "pages_fetched": pages_fetched,
+                "collected_posts": len(collected) + initial_collected,
+            }
+            progress_payload = {
+                "stage": "page_fetched",
+                "platform": "nitter",
+                "pages_fetched": pages_fetched,
+                "posts_collected": len(collected) + initial_collected,
+                "target_posts": target_posts,
+                "cursor": next_cursor,
+                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100),
+                "message": f"Fetched Nitter page {pages_fetched}",
+            }
+            await self._emit_page(page_callback, unique_page_posts, checkpoint, progress_payload)
             await self._emit_progress(
                 progress_callback,
-                {
-                    "stage": "page_fetched",
-                    "platform": "nitter",
-                    "pages_fetched": pages_fetched,
-                    "posts_collected": len(collected),
-                    "target_posts": target_posts,
-                    "cursor": next_cursor,
-                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
-                    "message": f"Fetched Nitter page {pages_fetched}",
-                },
+                progress_payload,
             )
 
-            if len(collected) >= target_posts or not next_cursor or next_cursor == cursor:
+            if (len(collected) + initial_collected) >= target_posts or not next_cursor or next_cursor == current_cursor:
                 break
 
-            cursor = next_cursor
-            await self._sleep_between_nitter_pages(pages_fetched)
+            current_cursor = next_cursor
+            await self._sleep_between_nitter_pages(pages_fetched, rate_limit)
 
-        return collected[:target_posts], pages_fetched
+        return collected[: max(0, target_posts - initial_collected)], pages_fetched, checkpoint
 
     async def _collect_reddit_posts(
         self,
         source_handle: str,
         target_posts: int,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        *,
+        after: Optional[str] = None,
+        initial_collected: int = 0,
+        initial_pages_fetched: int = 0,
+        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
+        rate_limit: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
         subreddit = self._extract_reddit_subreddit(source_handle)
         collected: List[Dict[str, Any]] = []
-        after: Optional[str] = None
-        pages_fetched = 0
+        current_after: Optional[str] = after
+        pages_fetched = int(initial_pages_fetched or 0)
+        checkpoint = {
+            "mode": "reddit_after",
+            "after": current_after,
+            "pages_fetched": pages_fetched,
+            "collected_posts": int(initial_collected or 0),
+        }
 
-        while len(collected) < target_posts:
-            page_limit = min(100, target_posts - len(collected))
-            page_posts, after = await self._fetch_reddit_page(subreddit, after=after, limit=page_limit)
+        while (len(collected) + initial_collected) < target_posts:
+            page_limit = min(100, target_posts - (len(collected) + initial_collected))
+            page_posts, next_after = await self._fetch_reddit_page(subreddit, after=current_after, limit=page_limit)
             if not page_posts:
                 break
 
             pages_fetched += 1
             collected.extend(page_posts)
+            checkpoint = {
+                "mode": "reddit_after",
+                "after": next_after,
+                "last_after": current_after,
+                "pages_fetched": pages_fetched,
+                "collected_posts": len(collected) + initial_collected,
+            }
+            progress_payload = {
+                "stage": "page_fetched",
+                "platform": "reddit",
+                "pages_fetched": pages_fetched,
+                "posts_collected": len(collected) + initial_collected,
+                "target_posts": target_posts,
+                "after": next_after,
+                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100),
+                "message": f"Fetched Reddit page {pages_fetched}",
+            }
+            await self._emit_page(page_callback, page_posts, checkpoint, progress_payload)
             await self._emit_progress(
                 progress_callback,
-                {
-                    "stage": "page_fetched",
-                    "platform": "reddit",
-                    "pages_fetched": pages_fetched,
-                    "posts_collected": len(collected),
-                    "target_posts": target_posts,
-                    "after": after,
-                    "progress": min(100.0, (len(collected) / max(target_posts, 1)) * 100),
-                    "message": f"Fetched Reddit page {pages_fetched}",
-                },
+                progress_payload,
             )
 
-            if not after:
+            if not next_after:
                 break
 
-            if len(collected) < target_posts:
-                await asyncio.sleep(self.REDDIT_PAGE_DELAY_SECONDS)
+            current_after = next_after
+            if (len(collected) + initial_collected) < target_posts:
+                await asyncio.sleep(int((rate_limit or {}).get("page_delay_seconds", self.REDDIT_PAGE_DELAY_SECONDS)))
 
-        return collected[:target_posts], pages_fetched
+        return collected[: max(0, target_posts - initial_collected)], pages_fetched, checkpoint
 
     async def _fetch_telegram_page(self, source_url: str, username: str, page: int) -> List[Dict[str, Any]]:
         telegram_origin = self._telegram_origin(source_url)
@@ -743,6 +919,19 @@ class SourceFetchService:
         if asyncio.iscoroutine(result):
             await result
 
+    async def _emit_page(
+        self,
+        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]],
+        page_posts: List[Dict[str, Any]],
+        checkpoint: Dict[str, Any],
+        progress_payload: Dict[str, Any],
+    ) -> None:
+        if page_callback is None:
+            return
+        result = page_callback(page_posts, checkpoint, progress_payload)
+        if asyncio.iscoroutine(result):
+            await result
+
     def _fetch_text_sync(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         request = urllib.request.Request(
             url,
@@ -898,47 +1087,60 @@ class SourceFetchService:
         posts = await self._fetch_telegram_page(source_url, username, page)
         return bool(posts)
 
-    async def _sleep_between_telegram_pages(self, pages_fetched: int) -> None:
-        if pages_fetched % self.TELEGRAM_BATCH_SIZE == 0:
-            await asyncio.sleep(self.TELEGRAM_BATCH_COOLDOWN_SECONDS)
+    async def _sleep_between_telegram_pages(self, pages_fetched: int, rate_limit: Optional[Dict[str, Any]] = None) -> None:
+        page_delay = int((rate_limit or {}).get("page_delay_seconds", self.TELEGRAM_PAGE_DELAY_SECONDS))
+        batch_size = max(1, int((rate_limit or {}).get("batch_size", self.TELEGRAM_BATCH_SIZE)))
+        batch_cooldown = int((rate_limit or {}).get("batch_cooldown_seconds", self.TELEGRAM_BATCH_COOLDOWN_SECONDS))
+        if pages_fetched % batch_size == 0:
+            await asyncio.sleep(batch_cooldown)
         else:
-            await asyncio.sleep(self.TELEGRAM_PAGE_DELAY_SECONDS)
+            await asyncio.sleep(page_delay)
 
-    async def _sleep_between_nitter_pages(self, pages_fetched: int) -> None:
-        if pages_fetched % self.NITTER_BATCH_SIZE == 0:
-            await asyncio.sleep(self.NITTER_BATCH_COOLDOWN_SECONDS)
+    async def _sleep_between_nitter_pages(self, pages_fetched: int, rate_limit: Optional[Dict[str, Any]] = None) -> None:
+        page_delay = int((rate_limit or {}).get("page_delay_seconds", self.NITTER_PAGE_DELAY_SECONDS))
+        batch_size = max(1, int((rate_limit or {}).get("batch_size", self.NITTER_BATCH_SIZE)))
+        batch_cooldown = int((rate_limit or {}).get("batch_cooldown_seconds", self.NITTER_BATCH_COOLDOWN_SECONDS))
+        if pages_fetched % batch_size == 0:
+            await asyncio.sleep(batch_cooldown)
         else:
-            await asyncio.sleep(self.NITTER_PAGE_DELAY_SECONDS)
+            await asyncio.sleep(page_delay)
 
     def _estimate_pages(self, source_type: str, desired_posts: int, page_size: int) -> int:
         if desired_posts <= 0:
             return 0
         return max(1, math.ceil(desired_posts / max(page_size, 1)))
 
-    def _estimate_seconds(self, source_type: str, estimated_pages: int) -> int:
+    def _estimate_seconds(self, source_type: str, estimated_pages: int, rate_limit: Optional[Dict[str, Any]] = None) -> int:
         if estimated_pages <= 0:
             return 0
 
         if source_type == "telegram_rss":
+            page_delay = int((rate_limit or {}).get("page_delay_seconds", self.TELEGRAM_PAGE_DELAY_SECONDS))
+            batch_size = max(1, int((rate_limit or {}).get("batch_size", self.TELEGRAM_BATCH_SIZE)))
+            batch_cooldown = int((rate_limit or {}).get("batch_cooldown_seconds", self.TELEGRAM_BATCH_COOLDOWN_SECONDS))
             total = estimated_pages
             for page_number in range(1, estimated_pages):
-                if page_number % self.TELEGRAM_BATCH_SIZE == 0:
-                    total += self.TELEGRAM_BATCH_COOLDOWN_SECONDS
+                if page_number % batch_size == 0:
+                    total += batch_cooldown
                 else:
-                    total += self.TELEGRAM_PAGE_DELAY_SECONDS
+                    total += page_delay
             return total
 
         if source_type == "nitter_rss":
+            page_delay = int((rate_limit or {}).get("page_delay_seconds", self.NITTER_PAGE_DELAY_SECONDS))
+            batch_size = max(1, int((rate_limit or {}).get("batch_size", self.NITTER_BATCH_SIZE)))
+            batch_cooldown = int((rate_limit or {}).get("batch_cooldown_seconds", self.NITTER_BATCH_COOLDOWN_SECONDS))
             total = estimated_pages
             for page_number in range(1, estimated_pages):
-                if page_number % self.NITTER_BATCH_SIZE == 0:
-                    total += self.NITTER_BATCH_COOLDOWN_SECONDS
+                if page_number % batch_size == 0:
+                    total += batch_cooldown
                 else:
-                    total += self.NITTER_PAGE_DELAY_SECONDS
+                    total += page_delay
             return total
 
         if source_type == "reddit_subreddit":
-            return estimated_pages + max(0, estimated_pages - 1) * self.REDDIT_PAGE_DELAY_SECONDS
+            page_delay = int((rate_limit or {}).get("page_delay_seconds", self.REDDIT_PAGE_DELAY_SECONDS))
+            return estimated_pages + max(0, estimated_pages - 1) * page_delay
 
         if source_type == "youtube_channel":
             return estimated_pages + max(0, estimated_pages - 1) * self.YOUTUBE_PAGE_DELAY_SECONDS
@@ -968,23 +1170,32 @@ class SourceFetchService:
         current_archive = (merged_settings or {}).get("archive", {})
 
         archive_status = current_archive.get("status", "not_archived")
-        if mode == "archive":
+        if mode in {"archive", "archive_progress"}:
             archive_status = self._derive_archive_status(stats["post_count"], data.get("available_posts"))
+        history = list(current_archive.get("history") or [])
+        if mode in {"plan", "archive", "live"}:
+            history.append(self._archive_history_event(mode, stats, data))
+        checkpoint = self._prepare_checkpoint(current_archive, data, mode)
 
         archive_settings = {
             "archive": {
                 "status": archive_status,
                 "stored_posts": stats["post_count"],
-                "available_posts": data.get("available_posts"),
-                "first_post_date": data.get("first_post_date"),
+                "available_posts": data.get("available_posts", current_archive.get("available_posts")),
+                "first_post_date": data.get("first_post_date", current_archive.get("first_post_date")),
                 "last_archived_at": datetime.now(timezone.utc).isoformat() if mode == "archive" else current_archive.get("last_archived_at"),
                 "last_live_fetch_at": datetime.now(timezone.utc).isoformat() if mode == "live" else current_archive.get("last_live_fetch_at"),
-                "source_type": data.get("source_type"),
+                "source_type": data.get("source_type", current_archive.get("source_type")),
                 "page_size": data.get("page_size", current_archive.get("page_size")),
                 "estimated_pages": data.get("estimated_pages", current_archive.get("estimated_pages")),
                 "estimated_seconds": data.get("estimated_seconds", current_archive.get("estimated_seconds")),
                 "last_requested_posts": data.get("desired_posts", current_archive.get("last_requested_posts")),
                 "last_pages_fetched": data.get("pages_fetched", current_archive.get("last_pages_fetched")),
+                "remaining_posts": data.get("remaining_posts", current_archive.get("remaining_posts")),
+                "rate_limit": data.get("rate_limit", current_archive.get("rate_limit")),
+                "checkpoint": checkpoint,
+                "resume_ready": self._checkpoint_is_resumable(checkpoint),
+                "history": history[-40:],
             }
         }
 
@@ -996,6 +1207,81 @@ class SourceFetchService:
         if available_posts and stored_posts >= available_posts:
             return "archived"
         return "partial"
+
+    def _resolve_rate_limit(
+        self,
+        source_type: str,
+        current_rate_limit: Optional[Dict[str, Any]] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if source_type == "telegram_rss":
+            defaults: Dict[str, Any] = {
+                "page_delay_seconds": self.TELEGRAM_PAGE_DELAY_SECONDS,
+                "batch_size": self.TELEGRAM_BATCH_SIZE,
+                "batch_cooldown_seconds": self.TELEGRAM_BATCH_COOLDOWN_SECONDS,
+            }
+        elif source_type == "nitter_rss":
+            defaults = {
+                "page_delay_seconds": self.NITTER_PAGE_DELAY_SECONDS,
+                "batch_size": self.NITTER_BATCH_SIZE,
+                "batch_cooldown_seconds": self.NITTER_BATCH_COOLDOWN_SECONDS,
+            }
+        elif source_type == "reddit_subreddit":
+            defaults = {
+                "page_delay_seconds": self.REDDIT_PAGE_DELAY_SECONDS,
+            }
+        else:
+            defaults = {
+                "page_delay_seconds": 0,
+            }
+
+        normalized = {**defaults}
+        for payload in (current_rate_limit or {}, overrides or {}):
+            for key, value in payload.items():
+                if value is None or key not in defaults:
+                    continue
+                normalized[key] = max(0, int(value))
+        if "batch_size" in normalized:
+            normalized["batch_size"] = max(1, int(normalized["batch_size"]))
+        return normalized
+
+    def _checkpoint_is_resumable(self, checkpoint: Any) -> bool:
+        if not isinstance(checkpoint, dict):
+            return False
+        if checkpoint.get("mode") == "telegram_page":
+            return bool(checkpoint.get("next_page"))
+        if checkpoint.get("mode") == "nitter_cursor":
+            return checkpoint.get("cursor") is not None
+        if checkpoint.get("mode") == "reddit_after":
+            return checkpoint.get("after") is not None
+        return False
+
+    def _prepare_checkpoint(self, current_archive: Dict[str, Any], data: Dict[str, Any], mode: str) -> Optional[Dict[str, Any]]:
+        if mode == "archive_progress":
+            checkpoint = data.get("checkpoint")
+            return dict(checkpoint) if isinstance(checkpoint, dict) else current_archive.get("checkpoint")
+        if mode == "archive":
+            checkpoint = data.get("checkpoint")
+            if not isinstance(checkpoint, dict):
+                return None
+            next_checkpoint = dict(checkpoint)
+            next_checkpoint["completed_at"] = datetime.now(timezone.utc).isoformat()
+            if data.get("archive_status") == "archived":
+                next_checkpoint["completed"] = True
+            return next_checkpoint
+        return current_archive.get("checkpoint")
+
+    def _archive_history_event(self, mode: str, stats: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "status": data.get("archive_status") or data.get("status"),
+            "stored_posts": stats.get("post_count", 0),
+            "available_posts": data.get("available_posts"),
+            "desired_posts": data.get("desired_posts"),
+            "pages_fetched": data.get("pages_fetched"),
+            "source_type": data.get("source_type"),
+        }
 
     def _normalize_feed_urls(self, value: str) -> str:
         if not isinstance(value, str):

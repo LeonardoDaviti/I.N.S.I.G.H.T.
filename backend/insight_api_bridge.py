@@ -359,10 +359,52 @@ class InsightApiBridge:
 
     # ============= ARCHIVE =============
 
-    async def get_archive_plan(self, source_id: str, desired_posts: int | None = None) -> Dict[str, Any]:
+    def get_archive_catalog(self) -> Dict[str, Any]:
+        try:
+            sources = self.sources_service.get_all_sources_with_settings()
+            catalog = []
+            for source in sources:
+                if not source.get("enabled"):
+                    continue
+                archive = (source.get("settings") or {}).get("archive", {})
+                catalog.append(
+                    {
+                        "source_id": source["id"],
+                        "display_name": (source.get("settings") or {}).get("display_name") or source["handle_or_url"],
+                        "platform": source["platform"],
+                        "enabled": bool(source.get("enabled")),
+                        "stored_posts": int(archive.get("stored_posts") or source.get("post_count") or 0),
+                        "available_posts": archive.get("available_posts"),
+                        "archive_status": archive.get("status") or "not_archived",
+                        "resume_ready": bool(archive.get("resume_ready")),
+                        "source_type": archive.get("source_type"),
+                        "last_archived_at": archive.get("last_archived_at"),
+                        "last_live_fetch_at": archive.get("last_live_fetch_at"),
+                        "checkpoint": archive.get("checkpoint"),
+                        "rate_limit": archive.get("rate_limit") or {},
+                    }
+                )
+            catalog.sort(key=lambda item: (item["archive_status"] != "partial", item["archive_status"] != "not_archived", item["display_name"].lower()))
+            return {"success": True, "sources": catalog, "total": len(catalog)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "sources": [], "total": 0}
+
+    async def get_archive_plan(
+        self,
+        source_id: str,
+        desired_posts: int | None = None,
+        *,
+        resume: bool = True,
+        rate_limit_overrides: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         """Inspect a source and estimate archive effort."""
         try:
-            plan = await self.source_fetch_service.plan_archive(source_id, desired_posts)
+            plan = await self.source_fetch_service.plan_archive(
+                source_id,
+                desired_posts,
+                resume=resume,
+                rate_limit_overrides=rate_limit_overrides,
+            )
             return {
                 "success": True,
                 "archive": plan,
@@ -373,20 +415,31 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
-    async def run_archive(self, source_id: str, desired_posts: int | None = None) -> Dict[str, Any]:
+    async def run_archive(
+        self,
+        source_id: str,
+        desired_posts: int | None = None,
+        *,
+        resume: bool = True,
+        rate_limit_overrides: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         """Archive posts for a single source into the shared posts table."""
         job_id = self._start_job_safe(
             "archive_source",
             trigger="manual",
             source_id=source_id,
-            payload={"desired_posts": desired_posts},
+            payload={
+                "desired_posts": desired_posts,
+                "resume": resume,
+                "rate_limit": rate_limit_overrides or {},
+            },
         )
         try:
             self._append_job_event_safe(
                 job_id,
                 message="Archive job started",
                 level="info",
-                payload={"desired_posts": desired_posts},
+                payload={"desired_posts": desired_posts, "resume": resume, "rate_limit": rate_limit_overrides or {}},
             )
             result = await self.source_fetch_service.archive_source(
                 source_id,
@@ -398,6 +451,8 @@ class InsightApiBridge:
                     progress=event.get("progress"),
                     payload=event,
                 ),
+                resume=resume,
+                rate_limit_overrides=rate_limit_overrides,
             )
             if result.get("success"):
                 self._record_source_status_safe(
@@ -595,6 +650,34 @@ class InsightApiBridge:
                 job_id,
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Combined {result.get('daily_briefings_used', 0)} daily briefings",
+                payload={
+                    **result,
+                    "estimated_tokens": result.get("estimated_tokens"),
+                },
+            )
+            return result
+        except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"date": date_str})
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def generate_weekly_topic_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+        """Generate a DB-backed weekly topic briefing."""
+        job_id = self._start_job_safe(
+            "weekly_topic_briefing",
+            trigger="manual",
+            message=f"Generate weekly topic briefing for {date_str}",
+            payload={"date": date_str, "refresh": refresh},
+        )
+        try:
+            self._append_job_event_safe(job_id, message=f"Starting weekly topic briefing anchored at {date_str}", level="info")
+            result = await self.briefing_service.generate_weekly_topic_briefing(date_str, refresh=refresh)
+            self._finish_job_safe(
+                job_id,
+                status="success" if result.get("success") else "failed",
+                message=result.get("error") or f"Combined {result.get('daily_briefings_used', 0)} daily topic briefings",
                 payload={
                     **result,
                     "estimated_tokens": result.get("estimated_tokens"),

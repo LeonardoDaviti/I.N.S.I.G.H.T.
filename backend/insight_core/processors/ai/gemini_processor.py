@@ -96,9 +96,9 @@ class GeminiProcessor:
         self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
         self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "10"))
         self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
-        self.single_post_context_chars = int(os.environ.get("GEMINI_SINGLE_POST_CONTEXT_CHARS", "32000"))
+        self.single_post_context_chars = int(os.environ.get("GEMINI_SINGLE_POST_CONTEXT_CHARS", "120000"))
         self.single_post_notes_chars = int(os.environ.get("GEMINI_SINGLE_POST_NOTES_CHARS", "10000"))
-        self.single_post_comments_chars = int(os.environ.get("GEMINI_SINGLE_POST_COMMENTS_CHARS", "20000"))
+        self.single_post_comments_chars = int(os.environ.get("GEMINI_SINGLE_POST_COMMENTS_CHARS", "40000"))
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
         self._client: Any | None = None
@@ -146,8 +146,10 @@ Write concise markdown with these sections:
 Requirements:
 - Use only the supplied posts
 - Merge duplicate stories across sources instead of repeating them
+- Separate original developments from downstream commentary when possible
+- Prioritize what materially changes decisions, monitoring, or allocation of attention
 - Call out source names when useful
-- Keep the whole briefing compact and high-signal
+- Write for a principal with very limited time: high signal, high consequence, no filler
 - Do not mention missing data or your own process
 
 POSTS:
@@ -192,8 +194,11 @@ Rules:
 - Create as many topics as needed.
 - Put related posts together, even across different sources.
 - Include replies for Nitter when they belong to the same topic.
+- Prefer the original source event over downstream commentary when titles collide.
+- Treat commentary/reaction posts as part of the same story when they are clearly about the same underlying event.
 - Do not invent post IDs.
 - Keep titles concrete and specific.
+- The daily briefing should read like an analyst memo, not a generic recap.
 
 POSTS:
 {numbered_posts}
@@ -225,7 +230,9 @@ Requirements:
 - Use only the supplied daily briefings.
 - Merge repeated stories into one thread instead of restating them day by day.
 - Emphasize what changed across the week.
+- Distinguish primary developments from commentary, reactions, and follow-on validation.
 - Keep it compact, specific, and high-signal.
+- Write for a decision-maker who needs consequences, not narration.
 - Do not mention missing data or your own process.
 
 WEEK:
@@ -239,6 +246,50 @@ DAILY BRIEFINGS:
         except Exception as exc:
             self.logger.warning("Falling back to deterministic weekly briefing: %s", exc)
             return self._fallback_weekly_briefing(week_label, daily_briefings)
+
+    async def weekly_topic_briefing(self, week_label: str, daily_topic_briefings: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate a weekly story/timeline view from daily topic briefings."""
+        prompt = f"""
+Return ONLY valid JSON with this exact structure:
+{{
+  "weekly_briefing": "markdown weekly topic synthesis",
+  "topics": [
+    {{
+      "title": "story title",
+      "summary": "2-5 sentence summary",
+      "post_ids": ["post-uuid-1", "post-uuid-2"],
+      "timeline": [
+        {{
+          "date": "YYYY-MM-DD",
+          "summary": "what changed on this date",
+          "source_topics": ["daily topic title"],
+          "post_ids": ["post-uuid-1"]
+        }}
+      ]
+    }}
+  ]
+}}
+
+Rules:
+- Use only post IDs that exist in the supplied daily topic briefings.
+- Merge same-story developments across different days into one weekly topic.
+- Focus on evolution over time: what started, what changed, what intensified, what faded.
+- Distinguish the core event from commentary/reactions around it.
+- Write the weekly_briefing like an executive intelligence memo for a principal with limited time.
+- Do not output any text outside the JSON.
+
+WEEK:
+{week_label}
+
+DAILY TOPIC BRIEFINGS:
+{self._format_daily_topic_briefings(daily_topic_briefings)}
+"""
+        try:
+            response_text = await self._generate_text(prompt)
+            return self._extract_json_from_response(response_text)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic weekly topic briefing: %s", exc)
+            return self._fallback_weekly_topic_briefing(week_label, daily_topic_briefings)
 
     def analyze_single_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """Summarize a single post and suggest tags in one request."""
@@ -261,6 +312,7 @@ Rules:
   - ## Core Thesis
   - ## Key Signals
   - ## Why It Matters
+  - ## Decision Relevance
 - Stay grounded in the supplied post only.
 - Do not include commentary outside the JSON.
 
@@ -319,6 +371,7 @@ Answer the user's question using only this post.
 If the answer is not present, say that clearly.
 Use the full supplied material, including fetched Reddit comments, when relevant.
 Prefer precise answers over vague summaries.
+Write as an analyst helping a high-context operator understand the post, not as a generic chatbot.
 
 Source: {post.get("source", "unknown")}
 URL: {post.get("url", "")}
@@ -477,6 +530,33 @@ POSTS:
             )
         return "\n\n---\n\n".join(blocks)
 
+    def _format_daily_topic_briefings(self, daily_topic_briefings: List[Dict[str, Any]]) -> str:
+        blocks = []
+        for item in daily_topic_briefings:
+            topic_lines = []
+            for topic in item.get("topics") or []:
+                topic_lines.append(
+                    "\n".join(
+                        [
+                            f"Topic: {topic.get('title') or 'Untitled topic'}",
+                            f"Summary: {topic.get('summary') or ''}",
+                            f"Post IDs: {', '.join(topic.get('post_ids') or [])}",
+                        ]
+                    ).strip()
+                )
+            blocks.append(
+                "\n".join(
+                    [
+                        f"Date: {item.get('date') or 'unknown'}",
+                        "Daily briefing:",
+                        str(item.get("briefing") or "").strip(),
+                        "Topics:",
+                        "\n\n".join(topic_lines) if topic_lines else "No topics",
+                    ]
+                ).strip()
+            )
+        return "\n\n---\n\n".join(blocks)
+
     def _first_sentence(self, value: str) -> str:
         text = re.sub(r"\s+", " ", str(value or "")).strip()
         if not text:
@@ -573,6 +653,49 @@ POSTS:
             *(watchlist[:5] or ["- No watchlist items were generated."]),
         ]
         return "\n".join(sections)
+
+    def _fallback_weekly_topic_briefing(self, week_label: str, daily_topic_briefings: List[Dict[str, Any]]) -> Dict[str, Any]:
+        grouped: Dict[str, Dict[str, Any]] = {}
+        for day in daily_topic_briefings:
+            current_date = day.get("date") or "unknown"
+            for topic in day.get("topics") or []:
+                title = str(topic.get("title") or "Untitled Topic").strip()
+                bucket = grouped.setdefault(
+                    title,
+                    {
+                        "title": title,
+                        "summary": str(topic.get("summary") or "").strip(),
+                        "post_ids": [],
+                        "timeline": [],
+                    },
+                )
+                for post_id in topic.get("post_ids") or []:
+                    post_key = str(post_id)
+                    if post_key not in bucket["post_ids"]:
+                        bucket["post_ids"].append(post_key)
+                bucket["timeline"].append(
+                    {
+                        "date": current_date,
+                        "summary": str(topic.get("summary") or "").strip() or f"{title} remained active on {current_date}.",
+                        "source_topics": [title],
+                        "post_ids": [str(post_id) for post_id in topic.get("post_ids") or []],
+                    }
+                )
+
+        ordered_topics = list(grouped.values())
+        weekly_lines = [
+            "## Executive Weekly Topic Summary",
+            f"- {len(ordered_topics)} weekly story threads were synthesized for {week_label}.",
+            "",
+            "## Story Evolution",
+        ]
+        for topic in ordered_topics[:6]:
+            weekly_lines.append(f"- **{topic['title']}**: {topic['summary'] or 'This topic persisted across the week.'}")
+
+        return {
+            "weekly_briefing": "\n".join(weekly_lines),
+            "topics": ordered_topics,
+        }
 
     async def _generate_text(self, prompt: str) -> str:
         return await asyncio.to_thread(self._generate_text_sync, prompt)

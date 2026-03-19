@@ -284,6 +284,112 @@ class BriefingService:
             "estimated_tokens": estimated_tokens,
         }
 
+    async def generate_weekly_topic_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+        """Generate a weekly topic/timeline briefing from stored daily topic briefings."""
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        week_start = target_date - timedelta(days=target_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        subject_key = f"{week_start.isoformat()}__{week_end.isoformat()}"
+        week_label = f"{week_start.isoformat()} to {week_end.isoformat()}"
+
+        if not refresh:
+            cached = self.store_service.get_briefing("weekly_briefing", subject_key, "topics")
+            if cached:
+                return self._build_cached_weekly_topic_response(
+                    cached_briefing=cached,
+                    date_str=date_str,
+                    week_start=week_start.isoformat(),
+                    week_end=week_end.isoformat(),
+                    subject_key=subject_key,
+                )
+
+        daily_topic_briefings: List[Dict[str, Any]] = []
+        combined_posts: Dict[str, Dict[str, Any]] = {}
+        for offset in range(7):
+            current_date = (week_start + timedelta(days=offset)).isoformat()
+            result = await self.generate_daily_briefing_with_topics(
+                current_date,
+                include_unreferenced=False,
+                refresh=False,
+            )
+            if not result.get("success") or not (result.get("topics") or []):
+                continue
+            for post_id, post in (result.get("posts") or {}).items():
+                combined_posts[post_id] = post
+            daily_topic_briefings.append(
+                {
+                    "date": current_date,
+                    "briefing": result.get("briefing", ""),
+                    "topics": result.get("topics") or [],
+                }
+            )
+
+        if not daily_topic_briefings:
+            return {
+                "success": False,
+                "error": f"No topic briefings or posts found for week {week_label}",
+                "date": date_str,
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "subject_key": subject_key,
+            }
+
+        setup_ok = self.processor.setup_processor()
+        try:
+            if not setup_ok:
+                raise RuntimeError("Gemini processor setup failed")
+            await self.processor.connect()
+            topic_result = await self.processor.weekly_topic_briefing(week_label, daily_topic_briefings)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic weekly topic briefing for %s: %s", week_label, exc)
+            topic_result = self.processor._fallback_weekly_topic_briefing(week_label, daily_topic_briefings)
+        finally:
+            try:
+                await self.processor.disconnect()
+            except Exception:
+                pass
+
+        normalized_topics = self._normalize_weekly_topic_result(
+            topic_result=topic_result,
+            posts_map=combined_posts,
+        )
+        estimated_tokens = self._count_tokens(topic_result.get("weekly_briefing", ""))
+        payload = {
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+            "days_covered": [item["date"] for item in daily_topic_briefings],
+            "daily_briefings_used": len(daily_topic_briefings),
+            "estimated_tokens": estimated_tokens,
+            "topics": normalized_topics,
+        }
+        saved = self.store_service.save_briefing(
+            subject_type="weekly_briefing",
+            subject_key=subject_key,
+            variant="topics",
+            render_format="markdown",
+            title=f"Weekly Topic Briefing {week_label}",
+            content=topic_result.get("weekly_briefing", ""),
+            payload=payload,
+        )
+
+        return {
+            "success": True,
+            "briefing": topic_result.get("weekly_briefing", ""),
+            "format": "markdown",
+            "saved_briefing_id": saved["id"],
+            "cached": False,
+            "date": date_str,
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+            "subject_key": subject_key,
+            "daily_briefings_used": len(daily_topic_briefings),
+            "days_covered": payload["days_covered"],
+            "estimated_tokens": estimated_tokens,
+            "topics": normalized_topics,
+            "posts": combined_posts,
+            "variant": "topics",
+        }
+
     def _build_cached_topic_response(
         self,
         *,
@@ -460,3 +566,91 @@ class BriefingService:
         if callable(counter):
             return int(counter(text))
         return max(1, len(str(text or "")) // 4)
+
+    def _build_cached_weekly_topic_response(
+        self,
+        *,
+        cached_briefing: Dict[str, Any],
+        date_str: str,
+        week_start: str,
+        week_end: str,
+        subject_key: str,
+    ) -> Dict[str, Any]:
+        payload = cached_briefing.get("payload") or {}
+        normalized_topics = payload.get("topics") or []
+        post_ids: List[str] = []
+        for topic in normalized_topics:
+            for post_id in topic.get("post_ids") or []:
+                if post_id not in post_ids:
+                    post_ids.append(post_id)
+            for item in topic.get("timeline") or []:
+                for post_id in item.get("post_ids") or []:
+                    if post_id not in post_ids:
+                        post_ids.append(post_id)
+
+        posts = {
+            post["id"]: post
+            for post in self.posts_service.get_posts_by_ids(post_ids)
+            if post.get("id")
+        }
+        return {
+            "success": True,
+            "briefing": cached_briefing.get("content", ""),
+            "format": cached_briefing.get("render_format", "markdown"),
+            "saved_briefing_id": cached_briefing.get("id"),
+            "cached": True,
+            "date": date_str,
+            "week_start": week_start,
+            "week_end": week_end,
+            "subject_key": subject_key,
+            "daily_briefings_used": payload.get("daily_briefings_used", 0),
+            "days_covered": payload.get("days_covered", []),
+            "estimated_tokens": payload.get("estimated_tokens", self._count_tokens(cached_briefing.get("content", ""))),
+            "topics": normalized_topics,
+            "posts": posts,
+            "variant": "topics",
+        }
+
+    def _normalize_weekly_topic_result(
+        self,
+        *,
+        topic_result: Dict[str, Any],
+        posts_map: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        normalized_topics: List[Dict[str, Any]] = []
+        for index, topic in enumerate(topic_result.get("topics") or [], start=1):
+            post_ids: List[str] = []
+            for post_id in topic.get("post_ids") or []:
+                post_key = str(post_id)
+                if post_key in posts_map and post_key not in post_ids:
+                    post_ids.append(post_key)
+
+            timeline_entries: List[Dict[str, Any]] = []
+            for entry in topic.get("timeline") or []:
+                entry_post_ids: List[str] = []
+                for post_id in entry.get("post_ids") or []:
+                    post_key = str(post_id)
+                    if post_key in posts_map and post_key not in entry_post_ids:
+                        entry_post_ids.append(post_key)
+                        if post_key not in post_ids:
+                            post_ids.append(post_key)
+                timeline_entries.append(
+                    {
+                        "date": entry.get("date"),
+                        "summary": entry.get("summary"),
+                        "source_topics": entry.get("source_topics") or [],
+                        "post_ids": entry_post_ids,
+                    }
+                )
+
+            normalized_topics.append(
+                {
+                    "id": topic.get("id") or f"weekly-topic-{index}",
+                    "title": topic.get("title") or f"Weekly Topic {index}",
+                    "summary": topic.get("summary"),
+                    "post_ids": post_ids,
+                    "timeline": timeline_entries,
+                    "is_outlier": False,
+                }
+            )
+        return normalized_topics

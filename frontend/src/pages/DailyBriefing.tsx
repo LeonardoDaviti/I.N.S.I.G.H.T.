@@ -1,5 +1,5 @@
 import React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
@@ -60,7 +60,8 @@ function getPlatformTone(platform?: string) {
 
 export default function DailyBriefing() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initializedFromUrlRef = useRef(false);
   // Focus mode
   const [focusMode, setFocusMode] = useState(false);
   
@@ -71,13 +72,17 @@ export default function DailyBriefing() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [briefingData, setBriefingData] = useState<string | null>(null);
   const [isGeneratingWeekly, setIsGeneratingWeekly] = useState(false);
+  const [isGeneratingWeeklyTopics, setIsGeneratingWeeklyTopics] = useState(false);
   const [weeklyBriefing, setWeeklyBriefing] = useState<string | null>(null);
   const [weeklyMeta, setWeeklyMeta] = useState<{
     weekStart?: string | null;
     weekEnd?: string | null;
     dailyBriefingsUsed?: number;
     cached?: boolean;
+    variant?: string | null;
   } | null>(null);
+  const [weeklyTopics, setWeeklyTopics] = useState<Topic[]>([]);
+  const [weeklyPostsMap, setWeeklyPostsMap] = useState<Record<string, Post>>({});
   const [briefingStats, setBriefingStats] = useState<{
     postsProcessed: number;
     totalFetched: number;
@@ -164,10 +169,37 @@ export default function DailyBriefing() {
   }, []);
 
   const toggleTopic = (topicId: string) => {
-    setOpenTopics((prev) => ({
-      ...prev,
-      [topicId]: !prev[topicId],
-    }));
+    setOpenTopics((prev) => {
+      const next = {
+        ...prev,
+        [topicId]: !prev[topicId],
+      };
+      const mode = searchParams.get('mode');
+      if (mode && ['topics', 'db-topics', 'weekly-topics'].includes(mode)) {
+        const openIds = Object.keys(next).filter((key) => next[key]);
+        updateRouteState({
+          topic: openIds.join(',') || null,
+        });
+      }
+      return next;
+    });
+  };
+
+  const updateRouteState = (params: Record<string, string | null | undefined>) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === '') {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+    });
+    setSearchParams(next, { replace: true });
+  };
+
+  const currentReturnUrl = () => {
+    const query = searchParams.toString();
+    return query ? `/briefing?${query}` : '/briefing';
   };
 
   const loadSourcesWithCounts = async () => {
@@ -197,19 +229,27 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleLoadDatabasePosts = async () => {
+  const handleLoadDatabasePosts = async (options?: { dateOverride?: string }) => {
+    const targetDate = options?.dateOverride || selectedDate;
     setActiveView('all-posts');
     setSelectedSourceId(null);
+    updateRouteState({
+      date: targetDate,
+      view: 'all-posts',
+      mode: 'db-posts',
+      source: null,
+      topic: null,
+    });
     
     // 🔍 STEP 1: Check cache first (like checking your photocopies at home)
-    if (postsCache.byDate[selectedDate]) {
-      console.log(`⚡ Using cached posts for date: ${selectedDate}`);
-      const cachedPosts = postsCache.byDate[selectedDate];
+    if (postsCache.byDate[targetDate]) {
+      console.log(`⚡ Using cached posts for date: ${targetDate}`);
+      const cachedPosts = postsCache.byDate[targetDate];
       setDatabasePosts(cachedPosts);
       setDisplayedPosts(cachedPosts);
       setDatabasePostsStats({
         total: cachedPosts.length,
-        date: selectedDate,
+        date: targetDate,
         source: 'cache'  // Indicate it came from cache
       });
       return; // ✨ Done! No API call needed!
@@ -222,8 +262,8 @@ export default function DailyBriefing() {
     setDatabasePostsStats(null);
     
     try {
-      console.log(`📖 Loading posts from database for date: ${selectedDate}`);
-      const response = await apiService.getDailyPosts(selectedDate);
+      console.log(`📖 Loading posts from database for date: ${targetDate}`);
+      const response = await apiService.getDailyPosts(targetDate);
       
       if (response.success) {
         console.log(`✅ Loaded ${response.total} posts from database`);
@@ -233,7 +273,7 @@ export default function DailyBriefing() {
           ...prev,
           byDate: {
             ...prev.byDate,
-            [selectedDate]: response.posts
+            [targetDate]: response.posts
           }
         }));
         
@@ -256,9 +296,17 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleLoadTopics = async () => {
+  const handleLoadTopics = async (options?: { dateOverride?: string; topicIds?: string[] }) => {
+    const targetDate = options?.dateOverride || selectedDate;
     setActiveView('briefing');  // Switch to briefing view to show topics
     setSelectedSourceId(null);
+    updateRouteState({
+      date: targetDate,
+      view: 'briefing',
+      mode: 'db-topics',
+      source: null,
+      topic: (options?.topicIds || []).join(',') || null,
+    });
     
     setIsLoadingTopics(true);
     setError(null);
@@ -266,8 +314,8 @@ export default function DailyBriefing() {
     setTopicsStats(null);
     
     try {
-      console.log(`📚 Loading topics from database for date: ${selectedDate}`);
-      const response = await apiService.getTopicsByDate(selectedDate);
+      console.log(`📚 Loading topics from database for date: ${targetDate}`);
+      const response = await apiService.getTopicsByDate(targetDate);
       
       if (response.success) {
         console.log(`✅ Loaded ${response.total} topics from database`);
@@ -277,10 +325,15 @@ export default function DailyBriefing() {
           total: response.total,
           date: response.date
         });
+        if (options?.topicIds?.length) {
+          const nextOpenTopics: Record<string, boolean> = {};
+          options.topicIds.forEach((topicId) => { nextOpenTopics[topicId] = true; });
+          setOpenTopics(nextOpenTopics);
+        }
         
         // If no topics found, show helpful message
         if (response.total === 0) {
-          setError(response.message || `No topics found for ${selectedDate}. Generate topics first using the backend script.`);
+          setError(response.message || `No topics found for ${targetDate}. Generate topics first using the backend script.`);
         }
       } else {
         console.error('❌ Failed to load topics:', response.error);
@@ -409,6 +462,13 @@ export default function DailyBriefing() {
   const handleLoadAllPosts = async () => {
     setActiveView('all-posts');
     setSelectedSourceId(null);
+    updateRouteState({
+      date: selectedDate,
+      view: 'all-posts',
+      mode: 'all-posts',
+      source: null,
+      topic: null,
+    });
     
     // 🔍 STEP 1: Check cache first
     if (postsCache.allPosts && postsCache.allPosts.length > 0) {
@@ -490,6 +550,13 @@ export default function DailyBriefing() {
   const handleLoadSourcePosts = async (sourceId: string) => {
     setActiveView('source');
     setSelectedSourceId(sourceId);
+    updateRouteState({
+      date: selectedDate,
+      view: 'source',
+      mode: 'source-posts',
+      source: sourceId,
+      topic: null,
+    });
     
     // 🔍 STEP 1: Check cache first (the magic happens here!)
     if (postsCache.bySource[sourceId]) {
@@ -537,22 +604,32 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleGenerateBriefing = async () => {
+  const handleGenerateBriefing = async (options?: { dateOverride?: string }) => {
+    const targetDate = options?.dateOverride || selectedDate;
     setIsGenerating(true);
     setError(null);
     setBriefingData(null);
     setWeeklyBriefing(null);
     setWeeklyMeta(null);
+    setWeeklyTopics([]);
+    setWeeklyPostsMap({});
     setBriefingStats(null);
     setTopicsBriefing(null);
     setTopics([]);
     setPostsMap({});
     setOpenTopics({});
     setActiveView('briefing');
+    updateRouteState({
+      date: targetDate,
+      view: 'briefing',
+      mode: 'daily',
+      source: null,
+      topic: null,
+    });
 
     try {
-      console.log(`🚀 Generating briefing for date: ${selectedDate}`);
-      const response: BriefingResponse = await apiService.generateBriefing(selectedDate);
+      console.log(`🚀 Generating briefing for date: ${targetDate}`);
+      const response: BriefingResponse = await apiService.generateBriefing(targetDate);
       
       if (response.success && response.briefing) {
         console.log('✅ Briefing generated successfully');
@@ -560,7 +637,7 @@ export default function DailyBriefing() {
         setBriefingStats({
           postsProcessed: response.posts_processed || 0,
           totalFetched: response.total_posts_fetched || 0,
-          date: response.date || selectedDate
+          date: response.date || targetDate
         });
       } else {
         console.error('❌ Briefing generation failed:', response.error);
@@ -574,7 +651,8 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleGenerateWeeklyBriefing = async (refresh = false) => {
+  const handleGenerateWeeklyBriefing = async (refresh = false, options?: { dateOverride?: string }) => {
+    const targetDate = options?.dateOverride || selectedDate;
     setIsGeneratingWeekly(true);
     setError(null);
     setBriefingData(null);
@@ -582,11 +660,20 @@ export default function DailyBriefing() {
     setTopicsBriefing(null);
     setTopics([]);
     setPostsMap({});
+    setWeeklyTopics([]);
+    setWeeklyPostsMap({});
     setOpenTopics({});
     setActiveView('briefing');
+    updateRouteState({
+      date: targetDate,
+      view: 'briefing',
+      mode: 'weekly',
+      source: null,
+      topic: null,
+    });
 
     try {
-      const response = await apiService.generateWeeklyBriefing(selectedDate, refresh);
+      const response = await apiService.generateWeeklyBriefing(targetDate, refresh, false);
       if (response.success) {
         setWeeklyBriefing(response.briefing || null);
         setWeeklyMeta({
@@ -594,6 +681,7 @@ export default function DailyBriefing() {
           weekEnd: response.week_end,
           dailyBriefingsUsed: response.daily_briefings_used,
           cached: response.cached,
+          variant: response.variant || 'default',
         });
       } else {
         setError(response.error || 'Failed to generate weekly briefing');
@@ -605,12 +693,64 @@ export default function DailyBriefing() {
     }
   };
 
+  const handleGenerateWeeklyTopicBriefing = async (refresh = false, options?: { dateOverride?: string; topicIds?: string[] }) => {
+    const targetDate = options?.dateOverride || selectedDate;
+    setIsGeneratingWeeklyTopics(true);
+    setError(null);
+    setBriefingData(null);
+    setBriefingStats(null);
+    setTopicsBriefing(null);
+    setTopics([]);
+    setPostsMap({});
+    setWeeklyTopics([]);
+    setWeeklyPostsMap({});
+    setOpenTopics({});
+    setActiveView('briefing');
+    updateRouteState({
+      date: targetDate,
+      view: 'briefing',
+      mode: 'weekly-topics',
+      source: null,
+      topic: (options?.topicIds || []).join(',') || null,
+    });
+
+    try {
+      const response = await apiService.generateWeeklyBriefing(targetDate, refresh, true);
+      if (response.success) {
+        setWeeklyBriefing(response.briefing || null);
+        setWeeklyMeta({
+          weekStart: response.week_start,
+          weekEnd: response.week_end,
+          dailyBriefingsUsed: response.daily_briefings_used,
+          cached: response.cached,
+          variant: response.variant || 'topics',
+        });
+        setWeeklyTopics(response.topics || []);
+        setWeeklyPostsMap(response.posts || {});
+        const requestedTopicIds = options?.topicIds || [];
+        const nextOpenTopics: Record<string, boolean> = {};
+        if (requestedTopicIds.length) {
+          requestedTopicIds.forEach((topicId) => { nextOpenTopics[topicId] = true; });
+        } else if (response.topics?.[0]?.id) {
+          nextOpenTopics[response.topics[0].id] = true;
+        }
+        setOpenTopics(nextOpenTopics);
+      } else {
+        setError(response.error || 'Failed to generate weekly topic briefing');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error occurred');
+    } finally {
+      setIsGeneratingWeeklyTopics(false);
+    }
+  };
+
   const handleGenerateTopicBriefing = async (
     refresh = false,
-    options?: { dateOverride?: string; topicId?: string | null }
+    options?: { dateOverride?: string; topicIds?: string[] | null }
   ) => {
     const targetDate = options?.dateOverride || selectedDate;
-    const requestedTopicId = options?.topicId || null;
+    const requestedTopicIds = options?.topicIds || [];
     if (refresh) {
       setIsRefreshingTopics(true);
     } else {
@@ -620,12 +760,21 @@ export default function DailyBriefing() {
     setTopicsBriefing(null);
     setWeeklyBriefing(null);
     setWeeklyMeta(null);
+    setWeeklyTopics([]);
+    setWeeklyPostsMap({});
     setTopics([]);
     setPostsMap({});
     setOpenTopics({});
     setBriefingData(null);
     setBriefingStats(null);
     setActiveView('briefing');
+    updateRouteState({
+      date: targetDate,
+      view: 'briefing',
+      mode: 'topics',
+      source: null,
+      topic: requestedTopicIds.join(',') || null,
+    });
     
     try {
       const response: BriefingTopicsResponse = await apiService.generateBriefingWithTopics(targetDate, {
@@ -638,8 +787,8 @@ export default function DailyBriefing() {
         setPostsMap(response.posts || {});
         const first = (response.topics || [])[0];
         const nextOpenTopics: Record<string, boolean> = {};
-        if (requestedTopicId) {
-          nextOpenTopics[requestedTopicId] = true;
+        if (requestedTopicIds.length) {
+          requestedTopicIds.forEach((topicId) => { nextOpenTopics[topicId] = true; });
         } else if (first?.id) {
           nextOpenTopics[first.id] = true;
         }
@@ -718,24 +867,63 @@ export default function DailyBriefing() {
     }
   };
 
-  const topicQueryMode = searchParams.get('mode');
-  const topicQueryDate = searchParams.get('date');
-  const topicQueryId = searchParams.get('topic');
-
   useEffect(() => {
-    const mode = topicQueryMode;
-    const requestedDate = topicQueryDate;
-    const requestedTopicId = topicQueryId;
-    if (mode !== 'topics' || !requestedDate) {
+    if (initializedFromUrlRef.current) {
       return;
     }
+    initializedFromUrlRef.current = true;
 
-    setSelectedDate(requestedDate);
-    handleGenerateTopicBriefing(false, {
-      dateOverride: requestedDate,
-      topicId: requestedTopicId,
-    });
-  }, [topicQueryMode, topicQueryDate, topicQueryId]);
+    const mode = searchParams.get('mode');
+    const requestedDate = searchParams.get('date');
+    const requestedView = searchParams.get('view');
+    const requestedSourceId = searchParams.get('source');
+    const requestedTopicIds = (searchParams.get('topic') || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (requestedDate) {
+      setSelectedDate(requestedDate);
+    }
+
+    if (requestedView === 'source' && requestedSourceId) {
+      handleLoadSourcePosts(requestedSourceId);
+      return;
+    }
+    if (requestedView === 'all-posts' && mode === 'all-posts') {
+      handleLoadAllPosts();
+      return;
+    }
+    if (mode === 'db-posts' && requestedDate) {
+      handleLoadDatabasePosts({ dateOverride: requestedDate });
+      return;
+    }
+    if (mode === 'db-topics' && requestedDate) {
+      handleLoadTopics({ dateOverride: requestedDate, topicIds: requestedTopicIds });
+      return;
+    }
+    if (mode === 'daily' && requestedDate) {
+      handleGenerateBriefing({ dateOverride: requestedDate });
+      return;
+    }
+    if (mode === 'topics' && requestedDate) {
+      handleGenerateTopicBriefing(false, {
+        dateOverride: requestedDate,
+        topicIds: requestedTopicIds,
+      });
+      return;
+    }
+    if (mode === 'weekly' && requestedDate) {
+      handleGenerateWeeklyBriefing(false, { dateOverride: requestedDate });
+      return;
+    }
+    if (mode === 'weekly-topics' && requestedDate) {
+      handleGenerateWeeklyTopicBriefing(false, {
+        dateOverride: requestedDate,
+        topicIds: requestedTopicIds,
+      });
+    }
+  }, [searchParams]);
 
   const briefingTitle = weeklyBriefing || briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
 
@@ -831,6 +1019,23 @@ export default function DailyBriefing() {
               )}
             </button>
             <button
+              onClick={() => handleGenerateWeeklyTopicBriefing(false)}
+              disabled={isGeneratingWeeklyTopics}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-teal-700 text-white rounded-lg hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
+            >
+              {isGeneratingWeeklyTopics ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Calendar className="w-4 h-4" />
+                  Weekly Topics
+                </>
+              )}
+            </button>
+            <button
               onClick={() => handleGenerateTopicBriefing(true)}
               disabled={isGeneratingTopics || isRefreshingTopics}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
@@ -912,7 +1117,9 @@ export default function DailyBriefing() {
             <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
               <div className="flex items-center gap-2 mb-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-slate-700" />
-                <span className="text-xs font-medium text-slate-800">Weekly Briefing</span>
+                <span className="text-xs font-medium text-slate-800">
+                  {weeklyMeta.variant === 'topics' ? 'Weekly Topic Briefing' : 'Weekly Briefing'}
+                </span>
               </div>
               <div className="text-xs text-slate-700 space-y-0.5">
                 <div>🗓️ {weeklyMeta.weekStart} → {weeklyMeta.weekEnd}</div>
@@ -1085,13 +1292,133 @@ export default function DailyBriefing() {
               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">{briefingTitle}</h1>
 
               {/* Standard Briefing */}
-              {weeklyBriefing && (
+              {weeklyBriefing && weeklyMeta?.variant !== 'topics' && (
                 <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
                   <h3 className="text-base font-semibold text-gray-900 mb-3.5">
                     📆 Weekly Intelligence Briefing
                   </h3>
                   <div className="prose max-w-none">
                     <MarkdownRenderer content={weeklyBriefing} />
+                  </div>
+                </div>
+              )}
+
+              {weeklyBriefing && weeklyMeta?.variant === 'topics' && (
+                <div className="space-y-4">
+                  <div className="bg-white border border-gray-200 rounded-lg p-4">
+                    <h3 className="text-base font-semibold text-gray-900 mb-3.5">
+                      🗓️ Weekly Topic Briefing
+                    </h3>
+                    <div className="prose max-w-none">
+                      <MarkdownRenderer content={weeklyBriefing} />
+                    </div>
+                  </div>
+                  <div className="bg-white border border-gray-200 rounded-lg p-4">
+                    <h3 className="text-base font-semibold text-gray-900 mb-3.5">📈 Topic Evolution By Week</h3>
+                    <div className="space-y-3.5">
+                      {weeklyTopics.map((topic, tIndex) => {
+                        const isOpen = Boolean(openTopics[topic.id]);
+                        return (
+                          <div key={topic.id || `weekly_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                            <button
+                              onClick={() => toggleTopic(topic.id)}
+                              className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
+                            >
+                              <span className="text-gray-900 font-bold tracking-tight text-base">
+                                {tIndex + 1}. {topic.title || 'Untitled Topic'}
+                              </span>
+                              <span className="text-xs text-gray-500">{isOpen ? 'Collapse' : 'Expand'}</span>
+                            </button>
+                            {isOpen && (
+                              <div className="px-4 pb-4">
+                                {topic.summary && (
+                                  <div className="text-xs text-gray-700 leading-relaxed mb-3.5">
+                                    <MarkdownRenderer content={topic.summary} />
+                                  </div>
+                                )}
+                                {(topic.timeline || []).length > 0 && (
+                                  <div className="mb-4 space-y-3">
+                                    {(topic.timeline || []).map((entry, entryIndex) => (
+                                      <div key={`${topic.id}-timeline-${entryIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">
+                                            {entry.date || 'Unknown date'}
+                                          </div>
+                                          {(entry.source_topics || []).length > 0 && (
+                                            <div className="text-[11px] text-gray-500">
+                                              {(entry.source_topics || []).join(' · ')}
+                                            </div>
+                                          )}
+                                        </div>
+                                        {entry.summary && (
+                                          <div className="mt-2 text-xs text-gray-700 leading-relaxed">
+                                            <MarkdownRenderer content={entry.summary} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="space-y-2.5">
+                                  {(topic.post_ids || []).map((pid, rIndex) => {
+                                    const post = weeklyPostsMap[pid];
+                                    if (!post) return null;
+                                    const key = `${topic.id}:${pid}`;
+                                    const isExpanded = expandedPosts[key] ?? false;
+                                    return (
+                                      <div key={`${pid}_${rIndex}`} className="border border-gray-200 rounded-xl overflow-hidden">
+                                        <button
+                                          type="button"
+                                          className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
+                                          onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
+                                        >
+                                          <div>
+                                            <h4 className="text-sm font-semibold text-gray-900">{post.title || 'Post'}</h4>
+                                            <div className="mt-1 text-xs text-gray-600">
+                                              {post.source_display_name || post.source} • {post.platform}
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            {post.id && (
+                                              <button
+                                                type="button"
+                                                className="text-indigo-600 hover:text-indigo-800"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
+                                                }}
+                                              >
+                                                <FileText className="w-4 h-4" />
+                                              </button>
+                                            )}
+                                            {post.url && (
+                                              <a
+                                                href={post.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-indigo-600 hover:text-indigo-800"
+                                                onClick={(e) => e.stopPropagation()}
+                                              >
+                                                <ExternalLink className="w-4 h-4" />
+                                              </a>
+                                            )}
+                                          </div>
+                                        </button>
+                                        {isExpanded && (
+                                          <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none">
+                                            <MarkdownRenderer content={getRenderablePostContent(post)} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1163,7 +1490,7 @@ export default function DailyBriefing() {
                                               className="text-indigo-600 hover:text-indigo-800"
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                navigate(`/posts/${post.id}`);
+                                                navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
                                               }}
                                             >
                                               <FileText className="w-4 h-4" />
@@ -1344,7 +1671,7 @@ export default function DailyBriefing() {
                                               className="text-teal-600 hover:text-teal-800"
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                navigate(`/posts/${post.id}`);
+                                                navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
                                               }}
                                             >
                                               <FileText className="w-4 h-4" />
@@ -1479,7 +1806,7 @@ export default function DailyBriefing() {
                                 className="text-indigo-600 hover:text-indigo-800 p-1"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/posts/${post.id}`);
+                                  navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
                                 }}
                               >
                                 <FileText className="w-3.5 h-3.5" />

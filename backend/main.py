@@ -58,6 +58,10 @@ class BriefingRequest(BaseModel):
 
 class ArchiveRequest(BaseModel):
     desiredPosts: int | None = None
+    resume: bool | None = True
+    pageDelaySeconds: int | None = None
+    batchSize: int | None = None
+    batchCooldownSeconds: int | None = None
 
 
 class YouTubeChannelRequest(BaseModel):
@@ -382,13 +386,32 @@ async def get_archive_status(source_id: str):
         logger.exception(f"Failed to get archive status for {source_id}")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/archive/catalog")
+async def get_archive_catalog():
+    """List enabled sources with their persisted archive status."""
+    try:
+        logger.info("📦 Fetching archive catalog")
+        return api_bridge.get_archive_catalog()
+    except Exception as e:
+        logger.exception("Failed to fetch archive catalog")
+        return {"success": False, "error": str(e), "sources": [], "total": 0}
+
 
 @app.post("/api/archive/{source_id}/plan")
 async def plan_archive(source_id: str, request: ArchiveRequest):
     """Estimate archive effort for a source."""
     try:
         logger.info(f"🧭 Planning archive for source: {source_id}")
-        return await api_bridge.get_archive_plan(source_id, request.desiredPosts)
+        return await api_bridge.get_archive_plan(
+            source_id,
+            request.desiredPosts,
+            resume=bool(request.resume),
+            rate_limit_overrides={
+                "page_delay_seconds": request.pageDelaySeconds,
+                "batch_size": request.batchSize,
+                "batch_cooldown_seconds": request.batchCooldownSeconds,
+            },
+        )
     except Exception as e:
         logger.exception(f"Failed to plan archive for {source_id}")
         return {"success": False, "error": str(e)}
@@ -399,7 +422,16 @@ async def run_archive(source_id: str, request: ArchiveRequest):
     """Run an archive job for a single source."""
     try:
         logger.info(f"📦 Running archive for source: {source_id}")
-        return await api_bridge.run_archive(source_id, request.desiredPosts)
+        return await api_bridge.run_archive(
+            source_id,
+            request.desiredPosts,
+            resume=bool(request.resume),
+            rate_limit_overrides={
+                "page_delay_seconds": request.pageDelaySeconds,
+                "batch_size": request.batchSize,
+                "batch_cooldown_seconds": request.batchCooldownSeconds,
+            },
+        )
     except Exception as e:
         logger.exception(f"Failed to run archive for {source_id}")
         return {"success": False, "error": str(e)}
@@ -517,7 +549,10 @@ async def generate_weekly_briefing(request: BriefingRequest):
         if not date:
             raise HTTPException(status_code=400, detail="Date parameter required")
 
-        result = await api_bridge.generate_weekly_briefing(date, refresh=bool(request.refresh))
+        if request.includeTopics:
+            result = await api_bridge.generate_weekly_topic_briefing(date, refresh=bool(request.refresh))
+        else:
+            result = await api_bridge.generate_weekly_briefing(date, refresh=bool(request.refresh))
         if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
             logger.error(f"❌ Engine error: {result['error']}")
             return {"success": False, "error": result["error"]}
@@ -535,6 +570,9 @@ async def generate_weekly_briefing(request: BriefingRequest):
             "daily_briefings_used": result.get("daily_briefings_used", 0),
             "days_covered": result.get("days_covered", []),
             "estimated_tokens": result.get("estimated_tokens"),
+            "topics": result.get("topics", []),
+            "posts": result.get("posts", {}),
+            "variant": result.get("variant", "default"),
         }
     except HTTPException:
         raise
