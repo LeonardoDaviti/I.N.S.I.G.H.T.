@@ -24,6 +24,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
 import psycopg
 
+from insight_core.connectors import create_connector
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.posts_service import PostsService
@@ -142,6 +143,54 @@ class SourceFetchService:
 
         await self._record_archive_metadata(source_id, result, mode="archive")
         return result
+
+    async def ingest_source_now(self, source_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
+        """Fetch the latest posts for a single source immediately."""
+        source = self.sources_service.get_source_by_id(source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+
+        source_settings = source.get("settings") or {}
+        target_limit = max(1, int(limit or source_settings.get("max_posts_per_fetch", 20) or 20))
+        display_name = source_settings.get("display_name") or source["handle_or_url"]
+        platform = source["platform"]
+
+        if platform in {"rss", "reddit", "youtube"}:
+            posts = await self.fetch_live_posts(source, target_limit)
+        else:
+            connector = create_connector(platform)
+            if connector is None:
+                raise ValueError(f"Connector unavailable or not configured for platform {platform}")
+
+            setup_connector = getattr(connector, "setup_connector", None)
+            if callable(setup_connector):
+                setup_connector()
+
+            await connector.connect()
+            try:
+                posts = await connector.fetch_posts(source["handle_or_url"], limit=target_limit)
+            finally:
+                await connector.disconnect()
+
+        saved = self._persist_posts(source_id, posts)
+        if platform in {"rss", "reddit", "youtube"}:
+            await self.record_live_fetch(source_id, source, fetched_posts=len(posts))
+
+        post_stats = self.posts_service.get_source_post_stats(source_id)
+        return {
+            "success": True,
+            "source_id": source_id,
+            "source": {
+                "display_name": display_name,
+                "platform": platform,
+                "handle_or_url": source["handle_or_url"],
+            },
+            "fetched_limit": target_limit,
+            "posts_fetched": len(posts),
+            "posts_inserted": saved["inserted"],
+            "posts_updated": saved["updated"],
+            "stored_posts": post_stats["post_count"],
+        }
 
     async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         """Fetch latest posts for an RSS-style source."""

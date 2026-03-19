@@ -46,6 +46,7 @@ export interface SourceSettings {
   fetch_delay_seconds?: number;
   priority?: number;
   max_posts_per_fetch?: number;
+  archive?: Record<string, any>;
 }
 
 export interface SourceWithSettings {
@@ -125,6 +126,7 @@ export interface TopicsResponse {
 }
 
 export interface Post {
+  id?: string;
   title?: string;
   content: string;
   // When available (e.g., RSS), original HTML content of the post
@@ -137,12 +139,72 @@ export interface Post {
   url?: string;
   feed_title?: string;
   media_urls?: string[];
+  published_at?: string | null;
 }
 
 export interface SourceStats {
   success: boolean;
   data?: Record<string, any>;
   error?: string;
+}
+
+export interface ArchiveResponse {
+  success?: boolean;
+  error?: string;
+  [key: string]: any;
+}
+
+export interface LiveFetchResponse {
+  success?: boolean;
+  error?: string;
+  source_id?: string;
+  source?: {
+    display_name?: string;
+    platform?: string;
+    handle_or_url?: string;
+  };
+  fetched_limit?: number;
+  posts_fetched?: number;
+  posts_inserted?: number;
+  posts_updated?: number;
+  stored_posts?: number;
+}
+
+export interface LogTailResponse {
+  success?: boolean;
+  error?: string;
+  log?: string;
+  available_logs?: string[];
+  path?: string;
+  exists?: boolean;
+  updated_at?: number | null;
+  lines?: string[];
+}
+
+export interface SyncSourcesResponse {
+  success: boolean;
+  error?: string;
+  message?: string;
+  [key: string]: any;
+}
+
+export interface YouTubeVideoPreview {
+  video_id: string;
+  url: string;
+  title: string;
+  description?: string;
+  published_at?: string | null;
+  channel_title?: string | null;
+  channel_id?: string | null;
+  source_handle: string;
+}
+
+export interface YouTubeChannelVideosResponse {
+  success?: boolean;
+  error?: string;
+  channel?: Record<string, any>;
+  total_videos?: number;
+  videos?: YouTubeVideoPreview[];
 }
 
 class ApiService {
@@ -256,6 +318,20 @@ class ApiService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update sources'
+      };
+    }
+  }
+
+  async syncSources(direction: 'json-to-db' | 'db-to-json'): Promise<SyncSourcesResponse> {
+    try {
+      return await this.makeRequest<SyncSourcesResponse>(`/api/sources/sync/${direction}`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to sync sources:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to sync sources',
       };
     }
   }
@@ -382,6 +458,96 @@ class ApiService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
+  }
+
+  async getArchiveStatus(sourceId: string): Promise<ArchiveResponse> {
+    try {
+      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/status`);
+    } catch (error) {
+      console.error('Failed to get archive status:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async planArchive(sourceId: string, desiredPosts?: number): Promise<ArchiveResponse> {
+    try {
+      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/plan`, {
+        method: 'POST',
+        body: JSON.stringify({ desiredPosts }),
+      });
+    } catch (error) {
+      console.error('Failed to plan archive:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async runArchive(sourceId: string, desiredPosts?: number): Promise<ArchiveResponse> {
+    try {
+      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/run`, {
+        method: 'POST',
+        body: JSON.stringify({ desiredPosts }),
+      });
+    } catch (error) {
+      console.error('Failed to run archive:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async fetchSourceNow(sourceId: string, limit?: number): Promise<LiveFetchResponse> {
+    try {
+      return await this.makeRequest<LiveFetchResponse>(`/api/sources/${sourceId}/fetch-now`, {
+        method: 'POST',
+        body: JSON.stringify({ limit }),
+      });
+    } catch (error) {
+      console.error('Failed to fetch source now:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async getIngestionLogs(log = 'application', lines = 200): Promise<LogTailResponse> {
+    try {
+      const params = new URLSearchParams({
+        log,
+        lines: String(lines),
+      });
+      return await this.makeRequest<LogTailResponse>(`/api/ingestion/logs?${params.toString()}`);
+    } catch (error) {
+      console.error('Failed to load ingestion logs:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        log,
+        lines: [],
+      };
+    }
+  }
+
+  async listYouTubeChannelVideos(source: string, limit = 1): Promise<YouTubeChannelVideosResponse> {
+    try {
+      return await this.makeRequest<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', {
+        method: 'POST',
+        body: JSON.stringify({ source, limit }),
+      });
+    } catch (error) {
+      console.error('Failed to preview YouTube channel:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
   }

@@ -28,6 +28,13 @@ export default function Index() {
           >
             Configure Sources
           </Link>
+
+          <Link
+            to="/ingestion"
+            className="block w-full p-3 bg-card text-foreground border border-border rounded-lg text-center hover:bg-accent transition-colors"
+          >
+            Ingestion Control
+          </Link>
         </div>
       </div>
       

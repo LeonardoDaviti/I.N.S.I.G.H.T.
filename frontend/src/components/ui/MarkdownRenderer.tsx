@@ -9,10 +9,36 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
+function decodeHtmlEntities(input: string): string {
+  if (typeof document === 'undefined') {
+    return input
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = input;
+  return textarea.value;
+}
+
+function normalizeRendererContent(content: string): string {
+  const looksLikeEscapedHtml = /&lt;(?:!--|\/?(?:p|div|span|a|img|ul|ol|li|blockquote|code|pre|h[1-6]|table|thead|tbody|tr|td|th))/i.test(content);
+  if (!looksLikeEscapedHtml) {
+    return content;
+  }
+
+  return decodeHtmlEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim();
+}
+
 export default function MarkdownRenderer({ content, className = "" }: MarkdownRendererProps) {
   if (!content) {
     return <p className="text-gray-500 italic">No content available</p>;
   }
+
+  const normalizedContent = normalizeRendererContent(content);
 
   return (
     <div className={`markdown-content ${className}`}>
@@ -163,8 +189,8 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
           ),
         }}
       >
-        {content}
+        {normalizedContent}
       </ReactMarkdown>
     </div>
   );
-} 
+}

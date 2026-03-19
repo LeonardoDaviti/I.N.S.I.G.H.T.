@@ -7,6 +7,7 @@ from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
+from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.youtube_service import YouTubeService
 
 from insight_core.scripts.ingest import ingest_posts
@@ -25,6 +26,7 @@ class InsightApiBridge:
         self.briefing_service = BriefingService(self.db)
         self.source_fetch_service = SourceFetchService(self.db)
         self.source_config_sync_service = SourceConfigSyncService(self.db)
+        self.system_logs_service = SystemLogsService()
         self.youtube_service = YouTubeService(self.db)
 
     def _export_sources_json(self) -> None:
@@ -374,6 +376,29 @@ class InsightApiBridge:
                 "success": False,
                 "error": str(e),
                 "source_id": source_id,
+            }
+
+    async def fetch_source_now(self, source_id: str, limit: int | None = None) -> Dict[str, Any]:
+        """Fetch the latest posts for a single source immediately."""
+        try:
+            return await self.source_fetch_service.ingest_source_now(source_id, limit)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "source_id": source_id,
+            }
+
+    def get_ingestion_logs(self, log_name: str = "application", lines: int = 200) -> Dict[str, Any]:
+        """Return recent shared log lines for ingestion/backend operations."""
+        try:
+            return self.system_logs_service.get_log_tail(log_name, lines)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "log": log_name,
+                "lines": [],
             }
 
     # ============= BRIEFINGS =============

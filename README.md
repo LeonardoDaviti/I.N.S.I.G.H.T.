@@ -81,6 +81,7 @@ Scheduler defaults:
 - daily briefing generation enabled by default
 - topic briefing generation disabled by default
 - archive is never run automatically; archive remains a manual API action only
+- backend and ingestion share a persistent `insight_logs` volume so the frontend can inspect recent runtime logs from the Ingestion Control screen
 
 ## Quick Start
 
@@ -132,6 +133,12 @@ What happens automatically on startup:
 - daily briefings are generated automatically after ingestion when enabled
 - source changes made in the API are exported back into `sources.json`
 
+Frontend operational pages:
+
+- `/briefing`: daily briefing view and source browser
+- `/ingestion`: manual ingestion, single-source fetch, archive control, registry sync, and recent runtime logs
+- `/settings/sources`: source registry editing
+
 ## Ports
 
 These are configurable in `.env`:
@@ -143,6 +150,8 @@ The backend CORS config follows `FRONTEND_PUBLIC_URL` and can be overridden with
 For the frontend, the recommended default is to leave `VITE_API_URL` empty so the built UI uses same-origin `/api` through Nginx. That is the safest option for homelab access from other devices.
 
 PostgreSQL is intentionally internal-only in Docker Compose. The backend and ingestion containers reach it over the Docker network as `postgres:5432`, so there is no host port conflict and no public DB exposure by default.
+
+Logs are stored in the shared Docker volume mounted at `/app/logs` inside the backend and ingestion containers. The frontend reads those logs through the backend API, so you can inspect recent scheduler/fetch activity without shelling into the server.
 
 ## Normal Local Run Without Docker
 
@@ -187,6 +196,26 @@ npm run dev
 
 If you inspect another database, you will not see your sources/posts/briefings. The runtime database is always the one from `DATABASE_URL`.
 
+Local logs are written under `./logs` when you run the project from the repo root.
+
+## Manual Operations
+
+If you add a source and do not want to wait for the next 20-hour cycle:
+
+1. Open `/settings/sources` and add the source.
+2. Open `/ingestion`.
+3. Use `Fetch Source Now` for that source.
+4. If you want a backfill, use `Plan Archive` or `Run Archive`.
+5. If you want a new briefing immediately, run `Generate Daily` for the target date.
+
+The Ingestion Control page also exposes:
+
+- `Run Full Ingestion`
+- `Run Safe Ingestion`
+- `Sync JSON -> DB`
+- `Sync DB -> JSON`
+- live tail of shared backend/scheduler logs
+
 ## Updating On Server
 
 Because backend and frontend images are built from this repo, the normal update flow is:
@@ -202,6 +231,13 @@ Notes:
 - `git pull` updates your local repo
 - `docker compose build --pull` rebuilds local images and refreshes base images
 - `docker compose up -d --remove-orphans` rolls the updated containers
+
+If you changed backend/frontend code and want a clean rebuild:
+
+```bash
+docker compose build --no-cache backend ingestion frontend
+docker compose up -d --remove-orphans
+```
 
 If only environment variables changed:
 

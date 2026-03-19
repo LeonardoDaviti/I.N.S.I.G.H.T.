@@ -357,7 +357,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       if (!settingsResult.success) {
         toast.error('Source added but settings failed to save');
       } else {
-        toast.success('Source added with settings!');
+        toast.success('Source added with settings. Open Ingestion Control to fetch it now.');
       }
 
       // 5. Reload sources again to get updated settings
@@ -647,14 +647,23 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
         {/* Title and Save */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Sources Configuration</h1>
-          <button
-            onClick={onSave}
-            disabled={!dirty || saving}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 shadow-sm"
-          >
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-            Save
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/ingestion')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-sm"
+            >
+              <Settings className="w-4 h-4" />
+              Ingestion
+            </button>
+            <button
+              onClick={onSave}
+              disabled={!dirty || saving}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 shadow-sm"
+            >
+              {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+              Save
+            </button>
+          </div>
         </div>
 
         {/* Global Actions and Counters */}
@@ -895,5 +904,3 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
 
   
 }
-
-

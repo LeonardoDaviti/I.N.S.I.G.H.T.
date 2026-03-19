@@ -1,14 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Plus } from 'lucide-react';
 import type { SourceState } from '../types';
+import { apiService } from '../services/api';
 
 interface Template {
   id: string;
   name: string;
   color: string;
   platform: string;
-  urlPattern: string;
   variableName: string;
+  variableLabel?: string;
+  placeholder?: string;
+  helperText?: string;
+  buildHandle: (value: string) => string;
+  buildDisplayName?: (value: string) => string;
   defaultSettings: {
     fetch_delay_seconds: number;
     priority: number;
@@ -23,12 +28,50 @@ const TEMPLATES: Template[] = [
     name: 'Nitter',
     color: '#FF6C60',
     platform: 'rss',
-    urlPattern: 'https://nitter.local/{username}/rss',
     variableName: 'username',
+    variableLabel: 'Username',
+    placeholder: 'Enter username...',
+    helperText: 'Creates a source like https://nitter.local/{username}/rss',
+    buildHandle: (value) => `https://nitter.local/${value.replace(/^@/, '').trim()}/rss`,
+    buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     defaultSettings: {
       fetch_delay_seconds: 10,
       priority: 999,
       max_posts_per_fetch: 50,
+    },
+  },
+  {
+    id: 'telegram-rss',
+    name: 'Telegram RSS',
+    color: '#0EA5E9',
+    platform: 'rss',
+    variableName: 'username',
+    variableLabel: 'Channel Username',
+    placeholder: 'Enter channel username...',
+    helperText: 'Creates a source like https://telegram.local/rss/seeallochnaya?limit=50',
+    buildHandle: (value) => `https://telegram.local/rss/${value.replace(/^@/, '').trim()}?limit=50`,
+    buildDisplayName: (value) => value.replace(/^@/, '').trim(),
+    defaultSettings: {
+      fetch_delay_seconds: 5,
+      priority: 999,
+      max_posts_per_fetch: 50,
+    },
+  },
+  {
+    id: 'youtube-handle',
+    name: 'YouTube',
+    color: '#EF4444',
+    platform: 'youtube',
+    variableName: 'channel',
+    variableLabel: 'Channel Handle',
+    placeholder: 'Enter channel handle...',
+    helperText: 'Use the YouTube @handle. Example: LAWRENCESYSTEMS',
+    buildHandle: (value) => `https://www.youtube.com/@${value.replace(/^@/, '').trim()}`,
+    buildDisplayName: (value) => `@${value.replace(/^@/, '').trim()}`,
+    defaultSettings: {
+      fetch_delay_seconds: 2,
+      priority: 999,
+      max_posts_per_fetch: 5,
     },
   },
 ];
@@ -55,8 +98,13 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
   const [fetchDelay, setFetchDelay] = useState(1);
   const [priority, setPriority] = useState(999);
   const [maxPosts, setMaxPosts] = useState(50);
+  const [isResolvingChannel, setIsResolvingChannel] = useState(false);
+  const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(null);
   
   const modalRef = useRef<HTMLDivElement>(null);
+  const youtubeLookupValue = selectedTemplate?.id === 'youtube-handle'
+    ? (templateVariable.trim() ? selectedTemplate.buildHandle(templateVariable.trim()) : '')
+    : (platform === 'youtube' ? handleOrUrl.trim() : '');
 
   // Get templates for this platform
   const availableTemplates = TEMPLATES.filter(t => t.platform === platform);
@@ -78,15 +126,48 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
   // Update URL when template variable changes
   useEffect(() => {
     if (selectedTemplate && templateVariable) {
-      const url = selectedTemplate.urlPattern.replace(`{${selectedTemplate.variableName}}`, templateVariable);
-      setHandleOrUrl(url);
+      const normalized = templateVariable.trim();
+      const sourceValue = selectedTemplate.buildHandle(normalized);
+      setHandleOrUrl(sourceValue);
       
       // Auto-fill display name if user hasn't manually edited it
       if (!displayNameManuallyEdited) {
-        setDisplayName(templateVariable);
+        setDisplayName(selectedTemplate.buildDisplayName?.(normalized) || normalized);
       }
     }
   }, [selectedTemplate, templateVariable, displayNameManuallyEdited]);
+
+  useEffect(() => {
+    if (platform !== 'youtube' || !youtubeLookupValue) {
+      setIsResolvingChannel(false);
+      setResolvedChannelName(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsResolvingChannel(true);
+
+    const timeout = window.setTimeout(async () => {
+      const preview = await apiService.listYouTubeChannelVideos(youtubeLookupValue, 1);
+      if (cancelled) return;
+
+      const channelTitle = preview.videos?.[0]?.channel_title?.trim();
+      if (channelTitle) {
+        setResolvedChannelName(channelTitle);
+        if (!displayNameManuallyEdited) {
+          setDisplayName(channelTitle);
+        }
+      } else {
+        setResolvedChannelName(null);
+      }
+      setIsResolvingChannel(false);
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [platform, youtubeLookupValue, displayNameManuallyEdited]);
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
@@ -98,6 +179,8 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     setHandleOrUrl('');
     setDisplayName('');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
+    setIsResolvingChannel(false);
+    setResolvedChannelName(null);
   };
 
   const handleAdd = () => {
@@ -169,19 +252,33 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
           {selectedTemplate && (
             <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
               <label htmlFor="template-var" className="block text-sm font-medium text-blue-900 mb-1">
-                {selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1)} (for {selectedTemplate.name})
+                {(selectedTemplate.variableLabel || selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1))} (for {selectedTemplate.name})
               </label>
               <input
                 id="template-var"
                 type="text"
                 value={templateVariable}
                 onChange={(e) => setTemplateVariable(e.target.value)}
-                placeholder={`Enter ${selectedTemplate.variableName}...`}
+                placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}...`}
                 className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
               />
-              <p className="text-xs text-blue-700 mt-1">
-                → {selectedTemplate.urlPattern.replace(`{${selectedTemplate.variableName}}`, templateVariable || `{${selectedTemplate.variableName}}`)}
+              <p className="text-xs text-blue-700 mt-1 break-all">
+                → {selectedTemplate.buildHandle(templateVariable || `{${selectedTemplate.variableName}}`)}
               </p>
+              {selectedTemplate.helperText && (
+                <p className="text-xs text-blue-700/80 mt-1">
+                  {selectedTemplate.helperText}
+                </p>
+              )}
+              {platform === 'youtube' && youtubeLookupValue && (
+                <p className="text-xs mt-2 text-red-700">
+                  {isResolvingChannel
+                    ? 'Resolving channel title...'
+                    : resolvedChannelName
+                      ? `Resolved channel: ${resolvedChannelName}`
+                      : 'Could not resolve channel title yet. The handle will still work as a source.'}
+                </p>
+              )}
             </div>
           )}
 
@@ -311,4 +408,3 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     </div>
   );
 }
-

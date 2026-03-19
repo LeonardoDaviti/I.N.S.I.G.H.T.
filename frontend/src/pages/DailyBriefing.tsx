@@ -1,12 +1,65 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
 import type { BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 
+function getRenderablePostContent(post: Post): string {
+  const raw = (post.content_html || post.content || '').trim();
+  if (!raw) return '';
+
+  const looksLikeEscapedHtml = /&lt;(?:!--|\/?(?:p|div|span|a|img|ul|ol|li|blockquote|code|pre|h[1-6]|table|thead|tbody|tr|td|th))/i.test(raw);
+  if (!looksLikeEscapedHtml || typeof document === 'undefined') {
+    return raw;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = raw;
+  return textarea.value.replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim();
+}
+
+async function copyPostText(post: Post): Promise<void> {
+  const container = document.createElement('div');
+  container.innerHTML = getRenderablePostContent(post);
+  const text = (container.textContent || container.innerText || post.content || '').trim();
+  await navigator.clipboard.writeText(text);
+}
+
+function getPlatformTone(platform?: string) {
+  switch ((platform || '').toLowerCase()) {
+    case 'reddit':
+      return {
+        card: 'border-l-4 border-l-orange-500 bg-orange-50/30',
+        badge: 'bg-orange-100 text-orange-700 border-orange-200',
+      };
+    case 'youtube':
+      return {
+        card: 'border-l-4 border-l-red-500 bg-red-50/20',
+        badge: 'bg-red-100 text-red-700 border-red-200',
+      };
+    case 'telegram':
+      return {
+        card: 'border-l-4 border-l-sky-500 bg-sky-50/30',
+        badge: 'bg-sky-100 text-sky-700 border-sky-200',
+      };
+    case 'rss':
+      return {
+        card: 'border-l-4 border-l-indigo-500 bg-indigo-50/20',
+        badge: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+      };
+    default:
+      return {
+        card: 'border-l-4 border-l-slate-400 bg-white',
+        badge: 'bg-slate-100 text-slate-700 border-slate-200',
+      };
+  }
+}
+
 export default function DailyBriefing() {
+  const navigate = useNavigate();
   // Focus mode
   const [focusMode, setFocusMode] = useState(false);
   
@@ -862,6 +915,13 @@ export default function DailyBriefing() {
         <div className="border-t border-gray-200 pt-4">
           <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Actions</h3>
           <div className="space-y-1.5">
+            <button
+              onClick={() => navigate('/ingestion')}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Ingestion Control
+            </button>
             <button 
               onClick={() => setActiveView('configure')}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
@@ -947,7 +1007,7 @@ export default function DailyBriefing() {
                                       </button>
                                       {isExpanded && (
                                         <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none">
-                                          <MarkdownRenderer content={post.content_html || post.content} />
+                                          <MarkdownRenderer content={getRenderablePostContent(post)} />
                                         </div>
                                       )}
                                     </div>
@@ -1070,14 +1130,16 @@ export default function DailyBriefing() {
                                   const key = `${topic.id}:${post.id ||rIndex}`;
                                   const isExpanded = expandedPosts[key] ?? false;
                                   const platformLabel = (post?.platform || 'unknown').toUpperCase();
+                                  const tone = getPlatformTone(post.platform);
+                                  const renderContent = getRenderablePostContent(post);
                                   let dateLabel = 'Unknown date';
                                   try {
-                                    const d = new Date(post?.date as string);
+                                    const d = new Date((post?.date || post?.published_at) as string);
                                     if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
                                   } catch {}
                                   
                                   return (
-                                    <div key={key} className="border border-gray-200 rounded-xl overflow-hidden relative">
+                                    <div key={key} className={`border border-gray-200 rounded-xl overflow-hidden relative ${tone.card}`}>
                                       <button
                                         type="button"
                                         className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
@@ -1088,8 +1150,14 @@ export default function DailyBriefing() {
                                             <span className="shrink-0 w-6 h-6 rounded-md bg-teal-50 text-teal-700 text-xs font-semibold flex items-center justify-center">{rIndex + 1}</span>
                                             <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{post.title || `${platformLabel} Post`}</h4>
                                           </div>
-                                          <div className="mt-1 text-xs text-gray-600 flex items-center gap-3 ml-8">
-                                            <span>📡 {post.source}</span>
+                                          <div className="mt-1 ml-8 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${tone.badge}`}>
+                                              {platformLabel}
+                                            </span>
+                                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5">
+                                              {dateLabel}
+                                            </span>
+                                            <span className="truncate max-w-[22rem]">📡 {post.source}</span>
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -1119,10 +1187,7 @@ export default function DailyBriefing() {
                                             onClick={async (e) => {
                                               e.stopPropagation();
                                               try {
-                                                const tmp = document.createElement('div');
-                                                tmp.innerHTML = (post.content_html || post.content) as string;
-                                                const text = (tmp.textContent || tmp.innerText || '').trim();
-                                                await navigator.clipboard.writeText(text);
+                                                await copyPostText(post);
                                                 setCopied((prev) => ({ ...prev, [key]: true }));
                                                 setTimeout(() => setCopied((prev) => ({ ...prev, [key]: false })), 1500);
                                               } catch {}
@@ -1139,7 +1204,7 @@ export default function DailyBriefing() {
                                       )}
                                       {isExpanded && (
                                         <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none border-t border-gray-100">
-                                          <MarkdownRenderer content={post.content_html || post.content} />
+                                          <MarkdownRenderer content={renderContent} />
                                         </div>
                                       )}
                                     </div>
@@ -1191,14 +1256,16 @@ export default function DailyBriefing() {
                     const key = `post:${index}`;
                     const isExpanded = postsExpanded[key] ?? true;
                     const platformLabel = (post?.platform || 'unknown').toUpperCase();
+                    const tone = getPlatformTone(post.platform);
+                    const renderContent = getRenderablePostContent(post);
                     let dateLabel = 'Unknown date';
                     try {
-                      const d = new Date(post?.date as string);
+                      const d = new Date((post?.date || post?.published_at) as string);
                       if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
                     } catch (_) {}
 
                     return (
-                      <div key={index} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm relative">
+                      <div key={index} className={`border border-gray-200 rounded-xl overflow-hidden shadow-sm relative ${tone.card}`}>
                         <button
                           type="button"
                           className={`w-full text-left px-4 py-3 flex items-start justify-between transition-colors ${isExpanded ? 'bg-gray-50' : ''} hover:bg-gray-50`}
@@ -1206,8 +1273,14 @@ export default function DailyBriefing() {
                         >
                           <div className="flex-1">
                             <h4 className="text-sm font-semibold text-gray-900 leading-snug">{post.title || `${platformLabel} Post`}</h4>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-gray-600">
-                              <span>📡 {post.source}</span>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${tone.badge}`}>
+                                {platformLabel}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5">
+                                {dateLabel}
+                              </span>
+                              <span className="truncate max-w-[26rem]">📡 {post.source}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-2.5 ml-2.5">
@@ -1227,10 +1300,7 @@ export default function DailyBriefing() {
                               onClick={async (e) => {
                                 e.stopPropagation();
                                 try {
-                                  const tmp = document.createElement('div');
-                                  tmp.innerHTML = (post.content_html || post.content) as string;
-                                  const text = (tmp.textContent || tmp.innerText || '').trim();
-                                  await navigator.clipboard.writeText(text);
+                                  await copyPostText(post);
                                   setCopied((prev) => ({ ...prev, [key]: true }));
                                   setTimeout(() => setCopied((prev) => ({ ...prev, [key]: false })), 1500);
                                 } catch {}
@@ -1247,7 +1317,7 @@ export default function DailyBriefing() {
                         )}
                         {isExpanded && (
                           <div className="p-3.5 pt-2.5 text-gray-800 text-xs leading-relaxed prose max-w-none">
-                            <MarkdownRenderer content={post.content_html || post.content} />
+                            <MarkdownRenderer content={renderContent} />
                           </div>
                         )}
                       </div>

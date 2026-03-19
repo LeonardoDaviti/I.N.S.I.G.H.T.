@@ -2,7 +2,7 @@ import logging
 import os
 from typing import List, Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -83,6 +83,10 @@ class YouTubeProgressRequest(BaseModel):
     progressSeconds: int
     notesMarkdown: str | None = None
     completed: bool | None = None
+
+
+class LiveFetchRequest(BaseModel):
+    limit: int | None = None
 
 @app.get("/")
 async def root():
@@ -297,6 +301,17 @@ async def run_archive(source_id: str, request: ArchiveRequest):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/sources/{source_id}/fetch-now")
+async def fetch_source_now(source_id: str, request: LiveFetchRequest):
+    """Fetch the latest posts for a single source immediately."""
+    try:
+        logger.info(f"⚡ Fetching source immediately: {source_id}")
+        return await api_bridge.fetch_source_now(source_id, request.limit)
+    except Exception as e:
+        logger.exception(f"Failed to fetch source immediately: {source_id}")
+        return {"success": False, "error": str(e), "source_id": source_id}
+
+
 # Briefing generation endpoints
 
 
@@ -433,6 +448,20 @@ async def safe_ingest_posts():
     except Exception as e:
         logger.exception("Failed to ingest posts from all sources that need updating")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/ingestion/logs")
+async def get_ingestion_logs(
+    log: str = Query(default="application"),
+    lines: int = Query(default=200, ge=1, le=1000),
+):
+    """Return recent shared backend/ingestion log lines."""
+    try:
+        logger.info(f"📜 Fetching log tail: log={log} lines={lines}")
+        return api_bridge.get_ingestion_logs(log, lines)
+    except Exception as e:
+        logger.exception("Failed to fetch ingestion logs")
+        return {"success": False, "error": str(e), "log": log, "lines": []}
 
 
 # ============= YOUTUBE ENDPOINTS =============
