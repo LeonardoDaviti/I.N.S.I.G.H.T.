@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Component } from 'react';
+import type { ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -23,6 +24,36 @@ type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
 };
+
+type PostDetailPageErrorBoundaryState = {
+  hasError: boolean;
+};
+
+class PostDetailPageErrorBoundary extends Component<
+  { children: ReactNode },
+  PostDetailPageErrorBoundaryState
+> {
+  state: PostDetailPageErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <section className="app-panel p-6">
+          <div className="text-lg font-semibold text-[var(--text-normal)]">Post intelligence unavailable</div>
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            One of the post-detail render blocks failed to load. The rest of the post view remains available.
+          </p>
+        </section>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 function defaultNotesTemplate(post?: Post | null) {
   return `# Notes for ${post?.title || 'This Post'}
@@ -67,43 +98,13 @@ export default function PostDetailPage() {
   const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [chatting, setChatting] = useState(false);
-  const [chatContext, setChatContext] = useState<Record<string, any> | null>(null);
+  const [chatContext, setChatContext] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sourceLabel = useMemo(
     () => post?.source_display_name || post?.source || 'Unknown source',
     [post],
   );
-
-  const loadPost = async () => {
-    if (!postId) {
-      setError('Missing post id');
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    const response = await apiService.getPostDetail(postId);
-    if (!response.success || !response.post) {
-      setError(response.error || 'Failed to load post');
-      setLoading(false);
-      return;
-    }
-
-    setPost(response.post);
-    setNotes(response.notes?.notes_markdown || defaultNotesTemplate(response.post));
-    const discussion = response.post.metadata?.reddit_discussion as Record<string, any> | undefined;
-    setComments(Array.isArray(discussion?.comments) ? discussion?.comments : []);
-    setCommentsFetchedAt(discussion?.fetched_at || null);
-    setCommentsBriefing(discussion?.briefing?.summary_markdown || null);
-    setCommentsBriefingModel(discussion?.briefing?.model || null);
-    setCommentsBriefingEstimatedTokens(discussion?.briefing?.estimated_tokens || null);
-    setSummary(null);
-    setSummaryModel(null);
-    setSummaryEstimatedTokens(null);
-    setLoading(false);
-  };
 
   const loadSummary = async (refresh = false) => {
     if (!postId) return;
@@ -125,7 +126,59 @@ export default function PostDetailPage() {
   };
 
   useEffect(() => {
-    loadPost();
+    let active = true;
+
+    const loadPost = async () => {
+      if (!postId) {
+        if (active) {
+          setError('Missing post id');
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (active) {
+        setLoading(true);
+        setError(null);
+      }
+
+      const response = await apiService.getPostDetail(postId);
+      if (!active) {
+        return;
+      }
+
+      if (!response.success || !response.post) {
+        setError(response.error || 'Failed to load post');
+        setLoading(false);
+        return;
+      }
+
+      setPost(response.post);
+      setNotes(response.notes?.notes_markdown || defaultNotesTemplate(response.post));
+      const metadata = response.post.metadata && typeof response.post.metadata === 'object' && !Array.isArray(response.post.metadata)
+        ? response.post.metadata as Record<string, unknown>
+        : null;
+      const discussion = metadata?.reddit_discussion && typeof metadata.reddit_discussion === 'object' && !Array.isArray(metadata.reddit_discussion)
+        ? metadata.reddit_discussion as Record<string, unknown>
+        : null;
+      setComments(Array.isArray(discussion?.comments) ? discussion.comments as RedditComment[] : []);
+      setCommentsFetchedAt(discussion?.fetched_at || null);
+      const briefing = discussion?.briefing && typeof discussion.briefing === 'object' && !Array.isArray(discussion.briefing)
+        ? discussion.briefing as Record<string, unknown>
+        : null;
+      setCommentsBriefing(typeof briefing?.summary_markdown === 'string' ? briefing.summary_markdown : null);
+      setCommentsBriefingModel(typeof briefing?.model === 'string' ? briefing.model : null);
+      setCommentsBriefingEstimatedTokens(typeof briefing?.estimated_tokens === 'number' ? briefing.estimated_tokens : null);
+      setSummary(null);
+      setSummaryModel(null);
+      setSummaryEstimatedTokens(null);
+      setLoading(false);
+    };
+
+    void loadPost();
+    return () => {
+      active = false;
+    };
   }, [postId]);
 
   const fetchComments = async (refresh = false) => {
@@ -196,8 +249,21 @@ export default function PostDetailPage() {
         content: response.answer || response.error || 'No response returned.',
       },
     ]);
-    setChatContext(response.context || null);
+    setChatContext(response.context && typeof response.context === 'object' && !Array.isArray(response.context) ? response.context as Record<string, unknown> : null);
     setChatting(false);
+  };
+
+  const categories = Array.isArray(post.categories) ? post.categories : [];
+  const topics = Array.isArray(post.topics) ? post.topics : [];
+  const platformLabel = typeof post.platform === 'string' ? post.platform.toUpperCase() : '';
+  const renderContent = typeof post.content_html === 'string'
+    ? post.content_html
+    : typeof post.content === 'string'
+      ? post.content
+      : '';
+  const safeCommentPreview = (comment: RedditComment) => {
+    const body = typeof comment.body === 'string' ? comment.body : '';
+    return body.slice(0, 24);
   };
 
   if (loading) {
@@ -250,7 +316,7 @@ export default function PostDetailPage() {
                 {sourceLabel}
               </span>
               <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                {post.platform?.toUpperCase()}
+                {platformLabel}
               </span>
               {post.published_at && (
                 <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
@@ -334,7 +400,7 @@ export default function PostDetailPage() {
             <section className="app-panel p-6">
               <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
               <div className="prose max-w-none">
-                <MarkdownRenderer content={post.content_html || post.content || ''} />
+                <MarkdownRenderer content={renderContent} />
               </div>
             </section>
 
@@ -387,13 +453,15 @@ export default function PostDetailPage() {
                     {comments.length ? (
                       <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
                         {comments.map((comment) => (
-                          <div key={comment.id || `${comment.author}-${comment.created_at}-${comment.body.slice(0, 24)}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-4 py-3">
+                          <div key={comment.id || `${comment.author || 'unknown'}-${comment.created_at || 'unknown'}-${safeCommentPreview(comment)}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-4 py-3">
                             <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
                               <span>{comment.author || 'unknown'}</span>
                               <span>Score {comment.score ?? 0}</span>
                               <span>Depth {comment.depth ?? 0}</span>
                             </div>
-                            <div className="text-sm leading-7 text-[var(--text-normal)] whitespace-pre-wrap">{comment.body}</div>
+                            <div className="text-sm leading-7 text-[var(--text-normal)] whitespace-pre-wrap">
+                              {typeof comment.body === 'string' ? comment.body : ''}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -416,8 +484,8 @@ export default function PostDetailPage() {
                 <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm">
                   <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Tags</div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {(post.categories || []).length ? (
-                      post.categories?.map((category) => (
+                    {categories.length ? (
+                      categories.map((category) => (
                         <span key={category} className="rounded-full bg-[var(--text-highlight-bg)] px-3 py-1 text-xs font-medium text-[var(--text-normal)]">
                           {category}
                         </span>
@@ -430,8 +498,8 @@ export default function PostDetailPage() {
                 <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm">
                   <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Connected Topics</div>
                   <div className="mt-2 space-y-2">
-                    {(post.topics || []).length ? (
-                      post.topics?.map((topic) => (
+                    {topics.length ? (
+                      topics.map((topic) => (
                         <button
                           key={topic.id}
                           type="button"
@@ -451,7 +519,9 @@ export default function PostDetailPage() {
             </section>
 
             {postId && (
-              <PostIntelligenceInspector postId={postId} post={post} />
+              <PostDetailPageErrorBoundary>
+                <PostIntelligenceInspector postId={postId} post={post} />
+              </PostDetailPageErrorBoundary>
             )}
           </div>
 

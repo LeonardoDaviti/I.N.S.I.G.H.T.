@@ -12,6 +12,7 @@ import MarkdownRenderer from './ui/MarkdownRenderer';
 import { apiService } from '../services/api';
 import type {
   EvidenceDebug,
+  EvidenceArtifact,
   EventDebug,
   MemoryDebug,
   Post,
@@ -79,6 +80,14 @@ function SectionCard({
   );
 }
 
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function safeString(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
 export default function PostIntelligenceInspector({ postId, post }: Props) {
   const [activeTab, setActiveTab] = useState<InspectorTab>('evidence');
   const [evidence, setEvidence] = useState<EvidenceDebug | null>(null);
@@ -99,7 +108,7 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
     setActiveTab('evidence');
   }, [postId]);
 
-  const loadEvidence = async (refresh = false) => {
+  const loadEvidence = async () => {
     setLoadingTab('evidence');
     const response = await apiService.getPostEvidence(postId);
     if (!response.success || !response.evidence) {
@@ -107,7 +116,14 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
       setLoadingTab(null);
       return;
     }
-    setEvidence(response.evidence);
+    setEvidence({
+      ...response.evidence,
+      artifacts: asArray<EvidenceArtifact>(response.evidence.artifacts),
+      relations: {
+        outgoing: asArray(response.evidence.relations?.outgoing),
+        incoming: asArray(response.evidence.relations?.incoming),
+      },
+    });
     setLoadingTab(null);
   };
 
@@ -119,7 +135,16 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
       setLoadingTab(null);
       return;
     }
-    setMemory(response.memory);
+    const normalizedMentions = asArray(response.memory.mentions).map((mention) => ({
+      ...mention,
+      candidates: asArray(mention.candidates),
+    }));
+    setMemory({
+      ...response.memory,
+      mentions: normalizedMentions,
+      entities: asArray(response.memory.entities),
+      candidates: asArray(response.memory.candidates),
+    });
     setLoadingTab(null);
   };
 
@@ -131,7 +156,17 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
       setLoadingTab(null);
       return;
     }
-    setEvents(response.events);
+    const normalizedEvents = asArray(response.events.events).map((event) => ({
+      ...event,
+      evidence: asArray(event.evidence),
+      entities: asArray(event.entities),
+    }));
+    setEvents({
+      ...response.events,
+      events: normalizedEvents,
+      evidence: asArray(response.events.evidence),
+      entities: asArray(response.events.entities),
+    });
     setLoadingTab(null);
   };
 
@@ -143,7 +178,7 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
       setLoadingTab(null);
       return;
     }
-    setStories(response.stories || []);
+    setStories(asArray(response.stories));
     setLoadingTab(null);
   };
 
@@ -195,9 +230,11 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
 
   const renderEvidence = () => {
     const payload = evidence?.post || {};
-    const outgoing = evidence?.relations?.outgoing || [];
-    const incoming = evidence?.relations?.incoming || [];
-    const artifacts = evidence?.artifacts || [];
+    const outgoing = asArray(evidence?.relations?.outgoing);
+    const incoming = asArray(evidence?.relations?.incoming);
+    const artifacts = asArray(evidence?.artifacts);
+    const titleHash = safeString(payload.title_hash);
+    const contentHash = safeString(payload.content_hash);
 
     return (
       <div className="space-y-4">
@@ -206,8 +243,8 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
             <InfoChip label="language" value={payload.language_code} kind="primary" />
             <InfoChip label="host" value={payload.url_host} />
             <InfoChip label="norm" value={payload.normalization_version} />
-            <InfoChip label="title hash" value={payload.title_hash?.slice?.(0, 12)} />
-            <InfoChip label="content hash" value={payload.content_hash?.slice?.(0, 12)} />
+            <InfoChip label="title hash" value={titleHash ? titleHash.slice(0, 12) : null} />
+            <InfoChip label="content hash" value={contentHash ? contentHash.slice(0, 12) : null} />
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-3 text-sm">
@@ -289,8 +326,8 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
 
   const renderMemory = () => {
     const sourceProfile = memory?.source_profile;
-    const mentions = memory?.mentions || [];
-    const entities = memory?.entities || [];
+    const mentions = asArray(memory?.mentions);
+    const entities = asArray(memory?.entities);
 
     return (
       <div className="space-y-4">
@@ -330,12 +367,12 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
                       <InfoChip label="confidence" value={mention.extractor_confidence ? Math.round(mention.extractor_confidence * 100) + '%' : null} />
                       <InfoChip label="extractor" value={mention.extractor_name} />
                     </div>
-                    {mention.candidates?.length ? (
-                      <div className="space-y-2">
-                        {mention.candidates.map((candidate) => (
-                          <div key={`${candidate.mention_id}-${candidate.entity_id}-${candidate.candidate_method}`} className="rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-2">
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <span className="font-medium text-[var(--text-normal)]">{candidate.canonical_name}</span>
+                      {mention.candidates?.length ? (
+                        <div className="space-y-2">
+                          {asArray(mention.candidates).map((candidate) => (
+                            <div key={`${candidate.mention_id}-${candidate.entity_id}-${candidate.candidate_method}`} className="rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-2">
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="font-medium text-[var(--text-normal)]">{candidate.canonical_name}</span>
                               <span className="rounded-full border px-2 py-0.5 text-[var(--text-muted)]">{candidate.candidate_method}</span>
                               {candidate.selected && <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800">selected</span>}
                               <span className="rounded-full border px-2 py-0.5 text-[var(--text-muted)]">{Math.round(candidate.score * 100)}%</span>
@@ -375,7 +412,7 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
   };
 
   const renderEvents = () => {
-    const eventList = events?.events || [];
+    const eventList = asArray(events?.events);
 
     return (
       <div className="space-y-4">
@@ -394,9 +431,9 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
                   <InfoChip label="first seen" value={event.first_seen_at ? formatDate(event.first_seen_at) : null} />
                   <InfoChip label="last seen" value={event.last_seen_at ? formatDate(event.last_seen_at) : null} />
                 </div>
-                {event.evidence?.length ? (
+                {asArray(event.evidence).length ? (
                   <div className="mt-3 space-y-2">
-                    {event.evidence.map((evidence) => (
+                    {asArray(event.evidence).map((evidence) => (
                       <div key={`${evidence.event_id}-${evidence.created_at}`} className="rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-2 text-sm">
                         <div className="flex flex-wrap items-center gap-2 text-xs">
                           <span className="rounded-full border px-2 py-0.5 text-[var(--text-muted)]">{evidence.stance}</span>
@@ -408,9 +445,9 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
                     ))}
                   </div>
                 ) : null}
-                {event.entities?.length ? (
+                {asArray(event.entities).length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {event.entities.map((entity) => (
+                    {asArray(event.entities).map((entity) => (
                       <span key={`${entity.event_id}-${entity.entity_id}-${entity.role}`} className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
                         {entity.entity.canonical_name} • {entity.role || 'entity'}
                       </span>
@@ -426,6 +463,7 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
   };
 
   const renderStory = () => {
+    const storyList = asArray(stories);
     return (
       <div className="space-y-4">
         {primaryStory ? (
@@ -455,9 +493,9 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
           </SectionCard>
         )}
 
-        <SectionCard title={`All Story Links (${stories.length})`} subtitle="Cross-post story associations">
+        <SectionCard title={`All Story Links (${storyList.length})`} subtitle="Cross-post story associations">
           <div className="space-y-3">
-            {stories.length ? stories.map((story) => (
+            {storyList.length ? storyList.map((story) => (
               <div key={story.id} className="rounded-xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-[var(--text-normal)]">{story.canonical_title}</span>
