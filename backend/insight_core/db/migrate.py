@@ -5,7 +5,7 @@ import glob
 from dotenv import load_dotenv
 import psycopg
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Set, List
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -56,14 +56,24 @@ def discover_migrations(mig_dir: Path) -> List[Path]:
     files = sorted(glob.glob(str(mig_dir / "*.sql")))
     return [Path(f) for f in files]
 
-def apply_one(cur: psycopg.Cursor, path: Path, version: str) -> None:
-    """Apply a single SQL migration and record it in schema_migrations."""
+def apply_one(cur: psycopg.Cursor, path: Path, version: str) -> bool:
+    """Apply a single SQL migration and record it in schema_migrations.
+
+    Returns True when this process recorded the migration version itself and
+    False when the version was already present.
+    """
     sql = path.read_text(encoding="utf-8")
     cur.execute(sql)
     cur.execute(
-        "INSERT INTO schema_migrations(version, applied_at) VALUES (%s, %s)",
-        (version, datetime.utcnow()),
+        """
+        INSERT INTO schema_migrations(version, applied_at)
+        VALUES (%s, %s)
+        ON CONFLICT (version) DO NOTHING
+        RETURNING version
+        """,
+        (version, datetime.now(timezone.utc)),
     )
+    return cur.fetchone() is not None
 
 def main():
     """Entry point: apply any pending migrations automaically"""
@@ -105,8 +115,11 @@ def main():
                 for version, path in pending:
                     logger.info("Applying %s...", version)
                     try:
-                        apply_one(cur, path, version)
-                        logger.info("Applied %s", version)
+                        recorded = apply_one(cur, path, version)
+                        if recorded:
+                            logger.info("Applied %s", version)
+                        else:
+                            logger.info("Migration %s was already recorded; SQL was still executed idempotently", version)
                     except Exception as e:
                         logger.error("Failed applying %s; %s", version, e)
                         raise
