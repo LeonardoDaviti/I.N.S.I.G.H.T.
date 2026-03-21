@@ -15,6 +15,10 @@ INSIGHT should stop treating those as separate, flat items when they are obvious
 This is not just deduplication.
 This is the beginning of story intelligence.
 
+For the concrete implementation shape of this idea, also read:
+
+- `plan/STORIES_IMPLEMENTATION_PLAN.md`
+
 ## Mental Model
 
 Do not start by asking "how do I cluster similar titles?"
