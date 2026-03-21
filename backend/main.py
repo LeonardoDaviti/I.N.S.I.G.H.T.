@@ -117,6 +117,15 @@ class PostCommentsRequest(BaseModel):
     limit: int | None = 80
     refresh: bool | None = False
 
+
+class EvidenceRebuildPostRequest(BaseModel):
+    postId: str
+
+
+class EvidenceRebuildDateRequest(BaseModel):
+    date: str
+    limit: int | None = None
+
 @app.get("/")
 async def root():
     return {
@@ -248,6 +257,26 @@ async def get_post_evidence(post_id: str):
     except Exception as e:
         logger.exception("Failed to get post evidence")
         return {"success": False, "error": str(e), "evidence": None}
+
+
+@app.post("/api/evidence/rebuild-for-post")
+async def rebuild_evidence_for_post(request: EvidenceRebuildPostRequest):
+    try:
+        logger.info(f"🔄 Rebuilding evidence for post: {request.postId}")
+        return api_bridge.rebuild_post_evidence(request.postId)
+    except Exception as e:
+        logger.exception("Failed to rebuild post evidence")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/evidence/rebuild-for-date")
+async def rebuild_evidence_for_date(request: EvidenceRebuildDateRequest):
+    try:
+        logger.info(f"🔄 Rebuilding evidence for date: {request.date}")
+        return api_bridge.rebuild_evidence_for_date(request.date, limit=request.limit)
+    except Exception as e:
+        logger.exception("Failed to rebuild evidence for date")
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/api/posts/item/{post_id}/notes")

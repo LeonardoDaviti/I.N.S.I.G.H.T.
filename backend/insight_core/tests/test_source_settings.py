@@ -9,7 +9,7 @@ Tests:
 - Settings merging logic
 """
 import os
-import pytest
+import unittest
 import psycopg
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.services.sources_service import SourcesService
@@ -18,14 +18,17 @@ from insight_core.services.sources_service import SourcesService
 DATABASE_URL = os.getenv('TEST_DATABASE_URL') or os.getenv('DATABASE_URL')
 
 if not DATABASE_URL:
-    pytest.skip("No DATABASE_URL found, skipping database tests", allow_module_level=True)
+    DATABASE_URL = None
 
 
-class TestSourceSettings:
+class TestSourceSettings(unittest.TestCase):
     """Test source settings CRUD operations."""
     
-    def setup_method(self):
+    def setUp(self):
         """Initialize repository before each test."""
+        if not DATABASE_URL:
+            self.skipTest("No DATABASE_URL found, skipping database tests")
+
         self.repo = SourcesRepository(DATABASE_URL)
         self.service = SourcesService(DATABASE_URL)
         
@@ -41,8 +44,11 @@ class TestSourceSettings:
                 self.test_source_id = str(cur.fetchone()[0])
                 conn.commit()
     
-    def teardown_method(self):
+    def tearDown(self):
         """Clean up after each test."""
+        if not getattr(self, "test_source_id", None):
+            return
+
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 # Delete test source
@@ -55,9 +61,9 @@ class TestSourceSettings:
             with conn.cursor() as cur:
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
                 
-                assert isinstance(settings, dict)
+                self.assertIsInstance(settings, dict)
                 # Should have at least the default fields
-                assert 'fetch_delay_seconds' in settings or 'priority' in settings
+                self.assertTrue('fetch_delay_seconds' in settings or 'priority' in settings)
     
     def test_update_source_settings(self):
         """Test updating source settings."""
@@ -73,14 +79,14 @@ class TestSourceSettings:
                 success = self.repo.update_source_settings(cur, self.test_source_id, new_settings)
                 conn.commit()
                 
-                assert success is True
+                self.assertTrue(success is True)
                 
                 # Verify settings were updated
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
-                assert settings["display_name"] == "Test Feed"
-                assert settings["fetch_delay_seconds"] == 10
-                assert settings["priority"] == 5
-                assert settings["max_posts_per_fetch"] == 100
+                self.assertEqual(settings["display_name"], "Test Feed")
+                self.assertEqual(settings["fetch_delay_seconds"], 10)
+                self.assertEqual(settings["priority"], 5)
+                self.assertEqual(settings["max_posts_per_fetch"], 100)
     
     def test_settings_override_defaults(self):
         """Test that source settings override hardcoded defaults."""
@@ -96,9 +102,9 @@ class TestSourceSettings:
                 settings = self.repo.get_source_settings(cur, self.test_source_id)
                 
                 # Custom priority should override default
-                assert settings["priority"] == 1
+                self.assertEqual(settings["priority"], 1)
                 # Other fields should come from platform defaults
-                assert "fetch_delay_seconds" in settings
+                self.assertIn("fetch_delay_seconds", settings)
     
     def test_service_update_validation(self):
         """Test that service validates settings before updating."""
@@ -110,23 +116,22 @@ class TestSourceSettings:
         
         result = self.service.update_source_settings(self.test_source_id, settings)
         
-        assert result["source_id"] == self.test_source_id
-        assert result["settings"]["display_name"] == "Valid Feed"
-        assert result["settings"]["fetch_delay_seconds"] == 5
-        assert "invalid_field" not in result["settings"]
+        self.assertEqual(result["source_id"], self.test_source_id)
+        self.assertEqual(result["settings"]["display_name"], "Valid Feed")
+        self.assertEqual(result["settings"]["fetch_delay_seconds"], 5)
+        self.assertNotIn("invalid_field", result["settings"])
     
     def test_get_all_sources_with_settings(self):
         """Test getting all sources with their merged settings."""
         sources = self.service.get_all_sources_with_settings()
         
-        assert isinstance(sources, list)
+        self.assertIsInstance(sources, list)
         # Find our test source
         test_source = next((s for s in sources if s["id"] == self.test_source_id), None)
-        assert test_source is not None
-        assert "settings" in test_source
-        assert isinstance(test_source["settings"], dict)
+        self.assertIsNotNone(test_source)
+        self.assertIn("settings", test_source)
+        self.assertIsInstance(test_source["settings"], dict)
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
+    unittest.main(verbosity=2)

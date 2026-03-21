@@ -933,10 +933,58 @@ class InsightApiBridge:
             return {"success": False, "error": str(e), "evidence": None}
 
     def rebuild_post_evidence(self, post_id: str) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "evidence_enrichment",
+            trigger="manual",
+            message=f"Rebuild evidence for post {post_id}",
+            payload={"post_id": post_id},
+        )
         try:
-            result = self.evidence_service.rebuild_post_evidence(post_id)
-            return {"success": True, "result": result}
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding evidence for post {post_id}", level="info")
+            result = self.evidence_service.rebuild_post_evidence(post_id, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Evidence rebuilt for post",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
         except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"post_id": post_id},
+            )
+            return {"success": False, "error": str(e)}
+
+    def rebuild_evidence_for_date(self, date_value: str, limit: int | None = None) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "evidence_enrichment",
+            trigger="manual",
+            message=f"Rebuild evidence for date {date_value}",
+            payload={"date": date_value, "limit": limit},
+        )
+        try:
+            target_date = date.fromisoformat(date_value)
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding evidence for date {target_date.isoformat()}", level="info")
+            result = self.evidence_service.rebuild_date_evidence(target_date, limit=limit, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Evidence rebuilt for date",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"date": date_value, "limit": limit},
+            )
             return {"success": False, "error": str(e)}
 
     def get_post_notes(self, post_id: str) -> Dict[str, Any]:

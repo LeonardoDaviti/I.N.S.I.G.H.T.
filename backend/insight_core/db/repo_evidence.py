@@ -299,12 +299,12 @@ class EvidenceRepository:
                 a.url_host,
                 a.display_title,
                 a.status,
-                a.metadata,
+                a.metadata AS artifact_metadata,
                 pa.relation_type,
                 pa.confidence,
                 pa.is_primary,
-                pa.metadata,
-                pa.created_at
+                pa.metadata AS link_metadata,
+                pa.created_at AS linked_at
             FROM post_artifacts pa
             JOIN artifacts a ON a.id = pa.artifact_id
             WHERE pa.post_id = %s

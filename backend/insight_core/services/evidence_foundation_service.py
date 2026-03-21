@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -93,6 +93,45 @@ class EvidenceFoundationService:
         return {
             "success": True,
             "source_id": source_id,
+            "posts_processed": processed,
+            "artifacts_linked": artifacts,
+            "relations_created": relations,
+        }
+
+    def rebuild_date_evidence(
+        self,
+        target_date: date,
+        *,
+        job_run_id: str | None = None,
+        limit: int | None = None,
+    ) -> Dict[str, Any]:
+        """Re-run evidence enrichment for all posts on one date."""
+        posts = self.posts_service.get_posts_by_date(target_date)
+        posts = list(reversed(posts))
+        if limit is not None:
+            posts = posts[: max(0, int(limit))]
+
+        processed = 0
+        artifacts = 0
+        relations = 0
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                for post in posts:
+                    result = self.process_post(
+                        cur,
+                        post["id"],
+                        post,
+                        job_run_id=job_run_id,
+                        allow_relations=True,
+                    )
+                    processed += 1
+                    artifacts += int(result.get("artifacts_linked", 0))
+                    relations += int(result.get("relations_created", 0))
+            conn.commit()
+
+        return {
+            "success": True,
+            "date": target_date.isoformat(),
             "posts_processed": processed,
             "artifacts_linked": artifacts,
             "relations_created": relations,
@@ -209,7 +248,7 @@ class EvidenceFoundationService:
                     relations.append(syndicated)
                 continue
 
-            translation = self._detect_translation(post_id, post, evidence, candidate, artifact_ids)
+            translation = self._detect_translation(cur, post_id, post, evidence, candidate, artifact_ids)
             if translation:
                 key = (
                     translation["from_post_id"],
@@ -372,6 +411,7 @@ class EvidenceFoundationService:
 
     def _detect_translation(
         self,
+        cur: psycopg.Cursor,
         post_id: str,
         post: Dict[str, Any],
         evidence: Dict[str, Any],
