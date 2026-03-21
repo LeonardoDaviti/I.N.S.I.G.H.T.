@@ -239,6 +239,17 @@ async def get_post_detail(post_id: str):
         return {"success": False, "error": str(e), "post": None}
 
 
+@app.get("/api/posts/item/{post_id}/evidence")
+async def get_post_evidence(post_id: str):
+    """Get the evidence/debug view for a single post."""
+    try:
+        logger.info(f"🧩 Fetching post evidence: {post_id}")
+        return api_bridge.get_post_evidence(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post evidence")
+        return {"success": False, "error": str(e), "evidence": None}
+
+
 @app.get("/api/posts/item/{post_id}/notes")
 async def get_post_notes(post_id: str):
     try:

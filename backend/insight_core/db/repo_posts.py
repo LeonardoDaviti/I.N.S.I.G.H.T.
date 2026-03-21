@@ -1,4 +1,4 @@
-import os, sys, json, hashlib
+import os, sys, json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -11,6 +11,7 @@ from psycopg import Connection, Cursor
 
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 from insight_core.db.ensure_db import ensure_database
+from insight_core.utils.evidence import build_post_evidence_fields
 
 
 class PostsRepository:
@@ -49,8 +50,16 @@ class PostsRepository:
         title = post.get("title", None)
         content_html = post.get("content_html", None)
         lang = post.get("lang", None)
-        content_hash = self._build_content_hash(title, content, content_html)
         metadata = self._json_dumps(post.get("metadata", {}))
+        evidence = build_post_evidence_fields(post)
+        content_hash = evidence.get("content_hash") or self._build_content_hash(title, content, content_html)
+        language_code = evidence.get("language_code")
+        language_confidence = evidence.get("language_confidence")
+        normalized_url = evidence.get("normalized_url")
+        canonical_url = evidence.get("canonical_url")
+        url_host = evidence.get("url_host")
+        title_hash = evidence.get("title_hash")
+        normalization_version = evidence.get("normalization_version")
 
         # SQL QUERY
         # Build SQL query
@@ -65,11 +74,19 @@ class PostsRepository:
                 content_html, 
                 lang,
                 content_hash,
+                language_code,
+                language_confidence,
+                normalized_url,
+                canonical_url,
+                url_host,
+                title_hash,
+                normalization_version,
+                enriched_at,
                 metadata,
                 media_urls, 
                 categories
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s::jsonb, %s::jsonb, %s::jsonb)
             ON CONFLICT (url) DO UPDATE SET
                 external_id = COALESCE(EXCLUDED.external_id, posts.external_id),
                 published_at = COALESCE(EXCLUDED.published_at, posts.published_at),
@@ -78,6 +95,14 @@ class PostsRepository:
                 content_html = COALESCE(EXCLUDED.content_html, posts.content_html),
                 lang = COALESCE(EXCLUDED.lang, posts.lang),
                 content_hash = COALESCE(EXCLUDED.content_hash, posts.content_hash),
+                language_code = EXCLUDED.language_code,
+                language_confidence = EXCLUDED.language_confidence,
+                normalized_url = EXCLUDED.normalized_url,
+                canonical_url = EXCLUDED.canonical_url,
+                url_host = EXCLUDED.url_host,
+                title_hash = EXCLUDED.title_hash,
+                normalization_version = EXCLUDED.normalization_version,
+                enriched_at = now(),
                 metadata = COALESCE(EXCLUDED.metadata, posts.metadata),
                 media_urls = EXCLUDED.media_urls,
                 categories = EXCLUDED.categories,
@@ -97,6 +122,13 @@ class PostsRepository:
             content_html,
             lang,
             content_hash,
+            language_code,
+            language_confidence,
+            normalized_url,
+            canonical_url,
+            url_host,
+            title_hash,
+            normalization_version,
             metadata,
             media_urls,
             categories
@@ -117,8 +149,15 @@ class PostsRepository:
 
     def upsert_posts_batch(self, cur: Cursor, posts: List[Dict[str, Any]], source_id: str) -> Dict[str, int]:
         """Save multiple posts. Returns dict of (post_id, was_inserted) for each post."""
-        # Call upsert_post for each post
-        pass
+        inserted = 0
+        updated = 0
+        for post in posts:
+            _, was_inserted = self.upsert_post(cur, post, source_id)
+            if was_inserted:
+                inserted += 1
+            else:
+                updated += 1
+        return {"inserted": inserted, "updated": updated}
 
     # ===============================
     # READ OPERATIONS
@@ -148,6 +187,16 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.lang,
+                p.language_code,
+                p.language_confidence,
+                p.normalized_url,
+                p.canonical_url,
+                p.url_host,
+                p.title_hash,
+                p.content_hash,
+                p.normalization_version,
+                p.enriched_at,
                 s.platform,
                 s.handle_or_url
             FROM posts p
@@ -176,9 +225,19 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'platform': row[10],
-                'handle_or_url': row[11],
-                'source': row[11]              # For Frontend
+                'lang': row[10],
+                'language_code': row[11],
+                'language_confidence': row[12],
+                'normalized_url': row[13],
+                'canonical_url': row[14],
+                'url_host': row[15],
+                'title_hash': row[16],
+                'content_hash': row[17],
+                'normalization_version': row[18],
+                'enriched_at': row[19],
+                'platform': row[20],
+                'handle_or_url': row[21],
+                'source': row[21],              # For Frontend
             }
             posts.append(post)
 
@@ -212,6 +271,16 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.lang,
+                p.language_code,
+                p.language_confidence,
+                p.normalized_url,
+                p.canonical_url,
+                p.url_host,
+                p.title_hash,
+                p.content_hash,
+                p.normalization_version,
+                p.enriched_at,
                 s.platform,
                 s.handle_or_url
             FROM posts p
@@ -240,9 +309,19 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'platform': row[10],
-                'handle_or_url': row[11],
-                'source': row[11]              # For Frontend
+                'lang': row[10],
+                'language_code': row[11],
+                'language_confidence': row[12],
+                'normalized_url': row[13],
+                'canonical_url': row[14],
+                'url_host': row[15],
+                'title_hash': row[16],
+                'content_hash': row[17],
+                'normalization_version': row[18],
+                'enriched_at': row[19],
+                'platform': row[20],
+                'handle_or_url': row[21],
+                'source': row[21],              # For Frontend
             }
             posts.append(post)
 
@@ -267,6 +346,16 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.lang,
+                p.language_code,
+                p.language_confidence,
+                p.normalized_url,
+                p.canonical_url,
+                p.url_host,
+                p.title_hash,
+                p.content_hash,
+                p.normalization_version,
+                p.enriched_at,
                 s.platform,
                 s.handle_or_url,
                 COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
@@ -290,10 +379,20 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'platform': row[10],
-                'handle_or_url': row[11],
-                'source': row[11],
-                'source_display_name': row[12],
+                'lang': row[10],
+                'language_code': row[11],
+                'language_confidence': row[12],
+                'normalized_url': row[13],
+                'canonical_url': row[14],
+                'url_host': row[15],
+                'title_hash': row[16],
+                'content_hash': row[17],
+                'normalization_version': row[18],
+                'enriched_at': row[19],
+                'platform': row[20],
+                'handle_or_url': row[21],
+                'source': row[21],
+                'source_display_name': row[22],
             }
             for row in rows
         }

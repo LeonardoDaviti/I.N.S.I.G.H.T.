@@ -7,6 +7,7 @@ from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
+from insight_core.services.evidence_foundation_service import EvidenceFoundationService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.post_detail_service import PostDetailService
@@ -28,6 +29,7 @@ class InsightApiBridge:
         self.briefing_service = BriefingService(self.db)
         self.source_fetch_service = SourceFetchService(self.db)
         self.source_config_sync_service = SourceConfigSyncService(self.db)
+        self.evidence_service = EvidenceFoundationService(self.db)
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
         self.post_detail_service = PostDetailService(self.db)
@@ -920,6 +922,22 @@ class InsightApiBridge:
             return {"success": True, "post": post, "notes": notes}
         except Exception as e:
             return {"success": False, "error": str(e), "post": None}
+
+    def get_post_evidence(self, post_id: str) -> Dict[str, Any]:
+        try:
+            evidence = self.evidence_service.get_post_evidence_debug(post_id)
+            if not evidence:
+                return {"success": False, "error": f"Post {post_id} not found", "evidence": None}
+            return {"success": True, "evidence": evidence}
+        except Exception as e:
+            return {"success": False, "error": str(e), "evidence": None}
+
+    def rebuild_post_evidence(self, post_id: str) -> Dict[str, Any]:
+        try:
+            result = self.evidence_service.rebuild_post_evidence(post_id)
+            return {"success": True, "result": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def get_post_notes(self, post_id: str) -> Dict[str, Any]:
         try:

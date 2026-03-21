@@ -42,6 +42,16 @@ class PostDetailService:
                       p.media_urls,
                       p.categories,
                       p.metadata,
+                      p.lang,
+                      p.language_code,
+                      p.language_confidence,
+                      p.normalized_url,
+                      p.canonical_url,
+                      p.url_host,
+                      p.title_hash,
+                      p.content_hash,
+                      p.normalization_version,
+                      p.enriched_at,
                       p.created_at,
                       p.updated_at,
                       s.platform,
@@ -74,7 +84,7 @@ class PostDetailService:
         if not row:
             return None
 
-        source_settings = row[16] or {}
+        source_settings = row[26] or {}
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -88,12 +98,22 @@ class PostDetailService:
             "media_urls": row[9] or [],
             "categories": row[10] or [],
             "metadata": row[11] or {},
-            "created_at": row[12].isoformat() if row[12] else None,
-            "updated_at": row[13].isoformat() if row[13] else None,
-            "platform": row[14],
-            "source": row[15],
-            "source_display_name": source_settings.get("display_name") or row[15],
-            "topics": row[17] or [],
+            "lang": row[12],
+            "language_code": row[13],
+            "language_confidence": float(row[14]) if row[14] is not None else None,
+            "normalized_url": row[15],
+            "canonical_url": row[16],
+            "url_host": row[17],
+            "title_hash": row[18],
+            "content_hash": row[19],
+            "normalization_version": row[20],
+            "enriched_at": row[21].isoformat() if row[21] else None,
+            "created_at": row[22].isoformat() if row[22] else None,
+            "updated_at": row[23].isoformat() if row[23] else None,
+            "platform": row[24],
+            "source": row[25],
+            "source_display_name": source_settings.get("display_name") or row[25],
+            "topics": row[27] or [],
         }
 
     def get_notes(self, post_id: str) -> Dict[str, Any]:
