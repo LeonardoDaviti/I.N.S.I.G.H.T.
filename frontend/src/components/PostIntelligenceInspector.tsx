@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   BookOpen,
   BrainCircuit,
+  Calendar,
   FlaskConical,
   Loader2,
   RefreshCw,
