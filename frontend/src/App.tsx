@@ -3,6 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import Index from './pages/Index';
 import DailyBriefing from './pages/DailyBriefing';
+import StoriesExplorerPage from './pages/StoriesExplorerPage';
+import VerticalBriefingPage from './pages/VerticalBriefingPage';
+import AnalystInboxPage from './pages/AnalystInboxPage';
 import IngestionControl from './pages/IngestionControl';
 import PostDetailPage from './pages/PostDetailPage';
 import SourcesConfig from './pages/SourcesConfig';
@@ -23,8 +26,12 @@ function App() {
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/briefing" element={<DailyBriefing />} />
+              <Route path="/briefing/vertical" element={<VerticalBriefingPage />} />
+              <Route path="/briefing/vertical/source/:sourceId" element={<VerticalBriefingPage />} />
               <Route path="/ingestion" element={<IngestionControl />} />
               <Route path="/briefing/topics" element={<DailyBriefing />} />
+              <Route path="/stories" element={<StoriesExplorerPage />} />
+              <Route path="/inbox" element={<AnalystInboxPage />} />
               <Route path="/posts/:postId" element={<PostDetailPage />} />
               <Route path="/settings/sources" element={<SourcesConfig />} />
             </Routes>

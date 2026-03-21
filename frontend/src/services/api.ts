@@ -371,6 +371,414 @@ export interface RedditCommentsBriefingResponse {
   estimated_tokens?: number;
 }
 
+export interface EvidenceArtifact {
+  id: string;
+  artifact_type: string;
+  canonical_url: string;
+  normalized_url: string;
+  url_host?: string | null;
+  display_title?: string | null;
+  status?: string;
+  metadata?: Record<string, any>;
+  relation_type?: string;
+  confidence?: number;
+  is_primary?: boolean;
+  link_metadata?: Record<string, any>;
+  created_at?: string | null;
+}
+
+export interface EvidenceRelation {
+  from_post_id?: string;
+  to_post_id?: string;
+  relation_type: string;
+  method?: string;
+  confidence?: number;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+}
+
+export interface EvidenceDebug {
+  post?: Record<string, any>;
+  artifacts?: EvidenceArtifact[];
+  relations?: {
+    outgoing?: EvidenceRelation[];
+    incoming?: EvidenceRelation[];
+  };
+}
+
+export interface MemoryMentionCandidate {
+  mention_id: string;
+  entity_id: string;
+  candidate_method: string;
+  score: number;
+  selected: boolean;
+  resolver_version: string;
+  created_at?: string | null;
+  mention_text?: string | null;
+  normalized_mention?: string | null;
+  entity_type?: string | null;
+  canonical_name?: string | null;
+  normalized_name?: string | null;
+}
+
+export interface MemoryMention {
+  id: string;
+  post_id: string;
+  mention_text: string;
+  normalized_mention: string;
+  language_code?: string | null;
+  entity_type_predicted: string;
+  role?: string | null;
+  char_start?: number | null;
+  char_end?: number | null;
+  extractor_confidence?: number;
+  extractor_name?: string | null;
+  extractor_version?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  candidates?: MemoryMentionCandidate[];
+}
+
+export interface MemoryEntity {
+  post_id: string;
+  entity_id: string;
+  mention_id: string;
+  resolution_status: string;
+  confidence: number;
+  role?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  entity: {
+    id: string;
+    entity_type: string;
+    canonical_name: string;
+    canonical_name_pivot?: string | null;
+    normalized_name: string;
+    description?: string | null;
+    status?: string;
+    review_state?: string;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+  };
+  mention: {
+    id: string;
+    mention_text: string;
+    normalized_mention: string;
+    entity_type_predicted: string;
+  };
+}
+
+export interface MemorySourceProfile {
+  source_id: string;
+  language_code?: string | null;
+  publisher_type?: string | null;
+  country_code?: string | null;
+  is_primary_reporter?: boolean;
+  reliability_notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface MemoryDebug {
+  post?: Record<string, any>;
+  source_profile?: MemorySourceProfile;
+  mentions?: MemoryMention[];
+  entities?: MemoryEntity[];
+  candidates?: MemoryMentionCandidate[];
+}
+
+export interface EventEvidence {
+  event_id: string;
+  event: {
+    id: string;
+    event_type: string;
+    title: string;
+    normalized_event_key?: string | null;
+    status?: string;
+    confidence?: number;
+    occurred_at?: string | null;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+  };
+  stance: string;
+  evidence_snippet?: string | null;
+  confidence?: number;
+  extractor_version?: string | null;
+  created_at?: string | null;
+}
+
+export interface EventEntityLink {
+  event_id: string;
+  entity_id: string;
+  role?: string | null;
+  created_at?: string | null;
+  event: {
+    id: string;
+    event_type: string;
+    title: string;
+    normalized_event_key?: string | null;
+  };
+  entity: {
+    id: string;
+    entity_type: string;
+    canonical_name: string;
+    normalized_name: string;
+    review_state?: string;
+  };
+}
+
+export interface EventDebug {
+  post?: Record<string, any>;
+  events?: Array<EventEvidence["event"] & { evidence?: EventEvidence[]; entities?: EventEntityLink[] }>;
+  evidence?: EventEvidence[];
+  entities?: EventEntityLink[];
+}
+
+export interface StoryAnchorPost {
+  id: string;
+  url?: string | null;
+  title?: string | null;
+  published_at?: string | null;
+  source_id?: string | null;
+  platform?: string | null;
+  handle_or_url?: string | null;
+  normalized_url?: string | null;
+  canonical_url?: string | null;
+  url_host?: string | null;
+}
+
+export interface StoryCard {
+  id: string;
+  canonical_title: string;
+  canonical_summary?: string | null;
+  story_kind?: string;
+  status?: string;
+  anchor_post_id?: string | null;
+  anchor_confidence?: number;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  created_by_method?: string | null;
+  resolution_version?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  updated_at?: string | null;
+  post_count?: number;
+  update_count?: number;
+  anchor_post?: StoryAnchorPost | null;
+  role?: string;
+  relevance_score?: number;
+  anchor_score?: number;
+  is_anchor_candidate?: boolean;
+  evidence_weight?: number;
+  added_by_method?: string | null;
+  added_at?: string | null;
+  story_post_metadata?: Record<string, any>;
+}
+
+export interface StoryPostEntry {
+  story_id: string;
+  post_id: string;
+  role?: string | null;
+  relevance_score?: number;
+  anchor_score?: number;
+  is_anchor_candidate?: boolean;
+  evidence_weight?: number;
+  added_by_method?: string | null;
+  added_at?: string | null;
+  metadata?: Record<string, any>;
+  post: Post;
+}
+
+export interface StoryUpdatePostEntry {
+  story_update_id: string;
+  post_id: string;
+  role?: string | null;
+  created_at?: string | null;
+  post: Post;
+}
+
+export interface StoryUpdateEntry {
+  id: string;
+  story_id: string;
+  update_date?: string | null;
+  title: string;
+  summary: string;
+  importance_score?: number;
+  created_by_method?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  updated_at?: string | null;
+  post_count?: number;
+  posts?: StoryUpdatePostEntry[];
+}
+
+export interface StoryDetail extends StoryCard {
+  posts?: StoryPostEntry[];
+  posts_by_role?: Record<string, StoryPostEntry[]>;
+  updates?: StoryUpdateEntry[];
+  timeline?: StoryUpdateEntry[];
+}
+
+export interface StoryTimelineResponse {
+  story_id: string;
+  story?: StoryCard;
+  timeline?: StoryUpdateEntry[];
+}
+
+export interface InboxBatch {
+  id: string;
+  scope_type: string;
+  scope_value?: string | null;
+  generated_for_date?: string | null;
+  status?: string;
+  item_count?: number;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  updated_at?: string | null;
+  pending_count?: number;
+  acted_count?: number;
+}
+
+export interface InboxItem {
+  id: string;
+  batch_id: string;
+  batch_scope_type?: string;
+  batch_scope_value?: string | null;
+  batch_generated_for_date?: string | null;
+  batch_status?: string;
+  batch_item_count?: number;
+  batch_metadata?: Record<string, any>;
+  batch_created_at?: string | null;
+  batch_updated_at?: string | null;
+  target_type: string;
+  target_id: string;
+  status: string;
+  priority_score?: number;
+  novelty_score?: number;
+  evidence_score?: number;
+  duplication_penalty?: number;
+  source_priority_score?: number;
+  reason_summary?: string | null;
+  reasons?: Array<Record<string, any>>;
+  surfaced_at?: string | null;
+  acted_at?: string | null;
+  metadata?: Record<string, any>;
+  item_created_at?: string | null;
+  item_updated_at?: string | null;
+  target_preview?: Record<string, any> | null;
+}
+
+export interface InboxAction {
+  id: string;
+  inbox_item_id?: string | null;
+  target_type: string;
+  target_id: string;
+  action_type: string;
+  actor_id?: string | null;
+  created_by?: string | null;
+  payload?: Record<string, any>;
+  created_at?: string | null;
+  item_status?: string | null;
+  batch_id?: string | null;
+  scope_type?: string | null;
+  scope_value?: string | null;
+  generated_for_date?: string | null;
+}
+
+export interface InboxItemDetail {
+  success?: boolean;
+  error?: string;
+  item?: InboxItem | null;
+  target?: Record<string, any> | null;
+  actions?: InboxAction[];
+}
+
+export interface InboxBatchResponse {
+  success?: boolean;
+  error?: string;
+  batch?: InboxBatch | null;
+  items?: InboxItem[];
+  total?: number;
+}
+
+export interface InboxBatchesResponse {
+  success?: boolean;
+  error?: string;
+  batches?: InboxBatch[];
+  total?: number;
+}
+
+export interface InboxItemsResponse {
+  success?: boolean;
+  error?: string;
+  items?: InboxItem[];
+  total?: number;
+}
+
+export interface InboxActionsResponse {
+  success?: boolean;
+  error?: string;
+  actions?: InboxAction[];
+  total?: number;
+}
+
+export interface InboxActionResponse {
+  success?: boolean;
+  error?: string;
+  action?: InboxAction | null;
+  item?: InboxItem | null;
+  side_effects?: Array<Record<string, any>>;
+}
+
+export interface VerticalBriefingTrack {
+  id: string;
+  title: string;
+  summary?: string;
+  track_kind?: string;
+  post_ids?: string[];
+  timeline?: Array<{
+    date?: string | null;
+    summary?: string | null;
+    post_ids?: string[];
+  }>;
+  story_titles?: string[];
+  entity_hints?: string[];
+  evidence_cluster_count?: number;
+  raw_post_count?: number;
+  unique_post_count?: number;
+}
+
+export interface VerticalBriefingResponse {
+  success?: boolean;
+  error?: string;
+  briefing?: string;
+  vertical_briefing?: string;
+  format?: string;
+  saved_briefing_id?: string | null;
+  cached?: boolean;
+  scope_type?: string;
+  scope_id?: string;
+  source_id?: string;
+  source_label?: string;
+  start_date?: string;
+  end_date?: string;
+  subject_key?: string;
+  posts_processed?: number;
+  total_posts_fetched?: number;
+  estimated_tokens?: number;
+  tracks?: VerticalBriefingTrack[];
+  posts?: Record<string, Post>;
+  variant?: string;
+}
+
+export interface RebuildResponse {
+  success?: boolean;
+  error?: string;
+  job_id?: string | null;
+  result?: Record<string, any>;
+  [key: string]: any;
+}
+
 export interface SyncSourcesResponse {
   success: boolean;
   error?: string;
@@ -995,6 +1403,257 @@ class ApiService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
+    }
+  }
+
+  async getPostEvidence(postId: string): Promise<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }>(`/api/posts/item/${postId}/evidence`);
+    } catch (error) {
+      console.error('Failed to get post evidence:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', evidence: null };
+    }
+  }
+
+  async getPostMemory(postId: string): Promise<{ success?: boolean; error?: string; memory?: MemoryDebug | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; memory?: MemoryDebug | null }>(`/api/posts/item/${postId}/memory`);
+    } catch (error) {
+      console.error('Failed to get post memory:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', memory: null };
+    }
+  }
+
+  async getPostEvents(postId: string): Promise<{ success?: boolean; error?: string; events?: EventDebug | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; events?: EventDebug | null }>(`/api/posts/item/${postId}/events`);
+    } catch (error) {
+      console.error('Failed to get post events:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', events: null };
+    }
+  }
+
+  async getPostStory(postId: string): Promise<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }>(`/api/posts/item/${postId}/story`);
+    } catch (error) {
+      console.error('Failed to get post story:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', post_id: postId, stories: [], primary_story: null };
+    }
+  }
+
+  async rebuildEvidenceForPost(postId: string): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-post', {
+        method: 'POST',
+        body: JSON.stringify({ postId }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild evidence for post:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async rebuildEvidenceForDate(date: string, limit?: number): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-date', {
+        method: 'POST',
+        body: JSON.stringify({ date, limit }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild evidence for date:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async rebuildMemoryForPost(postId: string): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-post', {
+        method: 'POST',
+        body: JSON.stringify({ postId }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild memory for post:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async rebuildMemoryForDate(date: string, limit?: number): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-date', {
+        method: 'POST',
+        body: JSON.stringify({ date, limit }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild memory for date:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async rebuildEventsForPost(postId: string): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-post', {
+        method: 'POST',
+        body: JSON.stringify({ postId }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild events for post:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async rebuildEventsForDate(date: string, limit?: number): Promise<RebuildResponse> {
+    try {
+      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-date', {
+        method: 'POST',
+        body: JSON.stringify({ date, limit }),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild events for date:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+    }
+  }
+
+  async getStories(filters?: { status?: string; storyKind?: string; limit?: number; offset?: number }): Promise<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }> {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.storyKind) params.set('storyKind', filters.storyKind);
+      if (filters?.limit != null) params.set('limit', String(filters.limit));
+      if (filters?.offset != null) params.set('offset', String(filters.offset));
+      const endpoint = params.toString() ? `/api/stories?${params.toString()}` : '/api/stories';
+      return await this.makeRequest<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }>(endpoint);
+    } catch (error) {
+      console.error('Failed to get stories:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', stories: [], total: 0 };
+    }
+  }
+
+  async getStory(storyId: string): Promise<{ success?: boolean; error?: string; story?: StoryDetail | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; story?: StoryDetail | null }>(`/api/stories/${storyId}`);
+    } catch (error) {
+      console.error('Failed to get story:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story: null };
+    }
+  }
+
+  async getStoryTimeline(storyId: string): Promise<StoryTimelineResponse & { success?: boolean; error?: string }> {
+    try {
+      return await this.makeRequest<StoryTimelineResponse & { success?: boolean; error?: string }>(`/api/stories/${storyId}/timeline`);
+    } catch (error) {
+      console.error('Failed to get story timeline:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story_id: storyId, timeline: [] };
+    }
+  }
+
+  async getInbox(batchId?: string, limit = 20): Promise<InboxBatchResponse> {
+    try {
+      const params = new URLSearchParams();
+      if (batchId) params.set('batchId', batchId);
+      params.set('limit', String(limit));
+      const endpoint = `/api/inbox${params.toString() ? `?${params.toString()}` : ''}`;
+      return await this.makeRequest<InboxBatchResponse>(endpoint);
+    } catch (error) {
+      console.error('Failed to get inbox:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
+    }
+  }
+
+  async getInboxBatches(limit = 50, offset = 0): Promise<InboxBatchesResponse> {
+    try {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      return await this.makeRequest<InboxBatchesResponse>(`/api/inbox/batches?${params.toString()}`);
+    } catch (error) {
+      console.error('Failed to get inbox batches:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batches: [], total: 0 };
+    }
+  }
+
+  async getInboxItems(filters?: { batchId?: string; status?: string; targetType?: string; sourceId?: string; generatedForDate?: string; limit?: number; offset?: number }): Promise<InboxItemsResponse> {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.batchId) params.set('batchId', filters.batchId);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.targetType) params.set('targetType', filters.targetType);
+      if (filters?.sourceId) params.set('sourceId', filters.sourceId);
+      if (filters?.generatedForDate) params.set('generatedForDate', filters.generatedForDate);
+      params.set('limit', String(filters?.limit ?? 100));
+      params.set('offset', String(filters?.offset ?? 0));
+      return await this.makeRequest<InboxItemsResponse>(`/api/inbox/items?${params.toString()}`);
+    } catch (error) {
+      console.error('Failed to get inbox items:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', items: [], total: 0 };
+    }
+  }
+
+  async getInboxItem(itemId: string): Promise<InboxItemDetail> {
+    try {
+      return await this.makeRequest<InboxItemDetail>(`/api/inbox/items/${itemId}`);
+    } catch (error) {
+      console.error('Failed to get inbox item:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', item: null, target: null, actions: [] };
+    }
+  }
+
+  async rebuildInbox(payload?: { generatedForDate?: string; scopeType?: string; scopeValue?: string; limit?: number; actorId?: string }): Promise<InboxBatchResponse> {
+    try {
+      return await this.makeRequest<InboxBatchResponse>('/api/inbox/rebuild', {
+        method: 'POST',
+        body: JSON.stringify(payload || {}),
+      });
+    } catch (error) {
+      console.error('Failed to rebuild inbox:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
+    }
+  }
+
+  async recordInboxAction(itemId: string, payload: { actionType: string; actorId?: string; payload?: Record<string, any> }): Promise<InboxActionResponse> {
+    try {
+      return await this.makeRequest<InboxActionResponse>(`/api/inbox/items/${itemId}/actions`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error('Failed to record inbox action:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', action: null, item: null, side_effects: [] };
+    }
+  }
+
+  async getInboxActions(filters?: { limit?: number; offset?: number; targetType?: string; targetId?: string; inboxItemId?: string }): Promise<InboxActionsResponse> {
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(filters?.limit ?? 100));
+      params.set('offset', String(filters?.offset ?? 0));
+      if (filters?.targetType) params.set('targetType', filters.targetType);
+      if (filters?.targetId) params.set('targetId', filters.targetId);
+      if (filters?.inboxItemId) params.set('inboxItemId', filters.inboxItemId);
+      return await this.makeRequest<InboxActionsResponse>(`/api/inbox/actions?${params.toString()}`);
+    } catch (error) {
+      console.error('Failed to get inbox actions:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', actions: [], total: 0 };
+    }
+  }
+
+  async getVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
+    try {
+      const params = new URLSearchParams({ start, end });
+      return await this.makeRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`);
+    } catch (error) {
+      console.error('Failed to get vertical briefing:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
+    }
+  }
+
+  async refreshVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
+    try {
+      const params = new URLSearchParams({ start, end });
+      return await this.makeRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to refresh vertical briefing:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
     }
   }
 

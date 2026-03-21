@@ -15,6 +15,7 @@ import {
   MessagesSquare,
 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
+import PostIntelligenceInspector from '../components/PostIntelligenceInspector';
 import { apiService } from '../services/api';
 import type { Post, RedditComment } from '../services/api';
 
@@ -448,6 +449,10 @@ export default function PostDetailPage() {
                 </div>
               </div>
             </section>
+
+            {postId && (
+              <PostIntelligenceInspector postId={postId} post={post} />
+            )}
           </div>
 
           <aside className="space-y-6">
