@@ -11,6 +11,7 @@ from psycopg import Connection, Cursor
 
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 from insight_core.db.ensure_db import ensure_database
+from insight_core.utils.entity_memory import build_post_memory_fields
 from insight_core.utils.evidence import build_post_evidence_fields
 
 
@@ -51,6 +52,7 @@ class PostsRepository:
         content_html = post.get("content_html", None)
         lang = post.get("lang", None)
         metadata = self._json_dumps(post.get("metadata", {}))
+        memory_fields = build_post_memory_fields(post)
         evidence = build_post_evidence_fields(post)
         content_hash = evidence.get("content_hash") or self._build_content_hash(title, content, content_html)
         language_code = evidence.get("language_code")
@@ -73,6 +75,12 @@ class PostsRepository:
                 content, 
                 content_html, 
                 lang,
+                title_original,
+                body_original,
+                title_pivot,
+                summary_pivot,
+                title_pivot_version,
+                summary_pivot_version,
                 content_hash,
                 language_code,
                 language_confidence,
@@ -86,7 +94,7 @@ class PostsRepository:
                 media_urls, 
                 categories
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s::jsonb, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s::jsonb, %s::jsonb, %s::jsonb)
             ON CONFLICT (url) DO UPDATE SET
                 external_id = COALESCE(EXCLUDED.external_id, posts.external_id),
                 published_at = COALESCE(EXCLUDED.published_at, posts.published_at),
@@ -94,6 +102,12 @@ class PostsRepository:
                 content = COALESCE(EXCLUDED.content, posts.content),
                 content_html = COALESCE(EXCLUDED.content_html, posts.content_html),
                 lang = COALESCE(EXCLUDED.lang, posts.lang),
+                title_original = COALESCE(EXCLUDED.title_original, posts.title_original),
+                body_original = COALESCE(EXCLUDED.body_original, posts.body_original),
+                title_pivot = EXCLUDED.title_pivot,
+                summary_pivot = EXCLUDED.summary_pivot,
+                title_pivot_version = EXCLUDED.title_pivot_version,
+                summary_pivot_version = EXCLUDED.summary_pivot_version,
                 content_hash = COALESCE(EXCLUDED.content_hash, posts.content_hash),
                 language_code = EXCLUDED.language_code,
                 language_confidence = EXCLUDED.language_confidence,
@@ -121,6 +135,12 @@ class PostsRepository:
             content,
             content_html,
             lang,
+            memory_fields.get("title_original"),
+            memory_fields.get("body_original"),
+            memory_fields.get("title_pivot"),
+            memory_fields.get("summary_pivot"),
+            memory_fields.get("title_pivot_version"),
+            memory_fields.get("summary_pivot_version"),
             content_hash,
             language_code,
             language_confidence,
@@ -187,6 +207,7 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.source_id,
                 p.lang,
                 p.language_code,
                 p.language_confidence,
@@ -197,6 +218,12 @@ class PostsRepository:
                 p.content_hash,
                 p.normalization_version,
                 p.enriched_at,
+                p.title_original,
+                p.body_original,
+                p.title_pivot,
+                p.summary_pivot,
+                p.title_pivot_version,
+                p.summary_pivot_version,
                 s.platform,
                 s.handle_or_url
             FROM posts p
@@ -225,19 +252,26 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'lang': row[10],
-                'language_code': row[11],
-                'language_confidence': row[12],
-                'normalized_url': row[13],
-                'canonical_url': row[14],
-                'url_host': row[15],
-                'title_hash': row[16],
-                'content_hash': row[17],
-                'normalization_version': row[18],
-                'enriched_at': row[19],
-                'platform': row[20],
-                'handle_or_url': row[21],
-                'source': row[21],              # For Frontend
+                'source_id': str(row[10]),
+                'lang': row[11],
+                'language_code': row[12],
+                'language_confidence': row[13],
+                'normalized_url': row[14],
+                'canonical_url': row[15],
+                'url_host': row[16],
+                'title_hash': row[17],
+                'content_hash': row[18],
+                'normalization_version': row[19],
+                'enriched_at': row[20],
+                'title_original': row[21],
+                'body_original': row[22],
+                'title_pivot': row[23],
+                'summary_pivot': row[24],
+                'title_pivot_version': row[25],
+                'summary_pivot_version': row[26],
+                'platform': row[27],
+                'handle_or_url': row[28],
+                'source': row[28],              # For Frontend
             }
             posts.append(post)
 
@@ -271,6 +305,7 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.source_id,
                 p.lang,
                 p.language_code,
                 p.language_confidence,
@@ -281,8 +316,15 @@ class PostsRepository:
                 p.content_hash,
                 p.normalization_version,
                 p.enriched_at,
+                p.title_original,
+                p.body_original,
+                p.title_pivot,
+                p.summary_pivot,
+                p.title_pivot_version,
+                p.summary_pivot_version,
                 s.platform,
-                s.handle_or_url
+                s.handle_or_url,
+                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
             FROM posts p
             JOIN sources s ON p.source_id = s.id
             WHERE p.source_id = %s
@@ -309,19 +351,27 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'lang': row[10],
-                'language_code': row[11],
-                'language_confidence': row[12],
-                'normalized_url': row[13],
-                'canonical_url': row[14],
-                'url_host': row[15],
-                'title_hash': row[16],
-                'content_hash': row[17],
-                'normalization_version': row[18],
-                'enriched_at': row[19],
-                'platform': row[20],
-                'handle_or_url': row[21],
-                'source': row[21],              # For Frontend
+                'source_id': str(row[10]),
+                'lang': row[11],
+                'language_code': row[12],
+                'language_confidence': row[13],
+                'normalized_url': row[14],
+                'canonical_url': row[15],
+                'url_host': row[16],
+                'title_hash': row[17],
+                'content_hash': row[18],
+                'normalization_version': row[19],
+                'enriched_at': row[20],
+                'title_original': row[21],
+                'body_original': row[22],
+                'title_pivot': row[23],
+                'summary_pivot': row[24],
+                'title_pivot_version': row[25],
+                'summary_pivot_version': row[26],
+                'platform': row[27],
+                'handle_or_url': row[28],
+                'source': row[28],              # For Frontend
+                'source_display_name': row[29],
             }
             posts.append(post)
 
@@ -346,6 +396,7 @@ class PostsRepository:
                 p.media_urls,
                 p.categories,
                 p.title,
+                p.source_id,
                 p.lang,
                 p.language_code,
                 p.language_confidence,
@@ -356,6 +407,12 @@ class PostsRepository:
                 p.content_hash,
                 p.normalization_version,
                 p.enriched_at,
+                p.title_original,
+                p.body_original,
+                p.title_pivot,
+                p.summary_pivot,
+                p.title_pivot_version,
+                p.summary_pivot_version,
                 s.platform,
                 s.handle_or_url,
                 COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
@@ -379,20 +436,27 @@ class PostsRepository:
                 'media_urls': row[7],
                 'categories': row[8],
                 'title': row[9],
-                'lang': row[10],
-                'language_code': row[11],
-                'language_confidence': row[12],
-                'normalized_url': row[13],
-                'canonical_url': row[14],
-                'url_host': row[15],
-                'title_hash': row[16],
-                'content_hash': row[17],
-                'normalization_version': row[18],
-                'enriched_at': row[19],
-                'platform': row[20],
-                'handle_or_url': row[21],
-                'source': row[21],
-                'source_display_name': row[22],
+                'source_id': str(row[10]),
+                'lang': row[11],
+                'language_code': row[12],
+                'language_confidence': row[13],
+                'normalized_url': row[14],
+                'canonical_url': row[15],
+                'url_host': row[16],
+                'title_hash': row[17],
+                'content_hash': row[18],
+                'normalization_version': row[19],
+                'enriched_at': row[20],
+                'title_original': row[21],
+                'body_original': row[22],
+                'title_pivot': row[23],
+                'summary_pivot': row[24],
+                'title_pivot_version': row[25],
+                'summary_pivot_version': row[26],
+                'platform': row[27],
+                'handle_or_url': row[28],
+                'source': row[28],
+                'source_display_name': row[29],
             }
             for row in rows
         }

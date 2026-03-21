@@ -52,6 +52,12 @@ class PostDetailService:
                       p.content_hash,
                       p.normalization_version,
                       p.enriched_at,
+                      p.title_original,
+                      p.body_original,
+                      p.title_pivot,
+                      p.summary_pivot,
+                      p.title_pivot_version,
+                      p.summary_pivot_version,
                       p.created_at,
                       p.updated_at,
                       s.platform,
@@ -84,7 +90,7 @@ class PostDetailService:
         if not row:
             return None
 
-        source_settings = row[26] or {}
+        source_settings = row[32] or {}
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -108,12 +114,18 @@ class PostDetailService:
             "content_hash": row[19],
             "normalization_version": row[20],
             "enriched_at": row[21].isoformat() if row[21] else None,
-            "created_at": row[22].isoformat() if row[22] else None,
-            "updated_at": row[23].isoformat() if row[23] else None,
-            "platform": row[24],
-            "source": row[25],
-            "source_display_name": source_settings.get("display_name") or row[25],
-            "topics": row[27] or [],
+            "title_original": row[22],
+            "body_original": row[23],
+            "title_pivot": row[24],
+            "summary_pivot": row[25],
+            "title_pivot_version": row[26],
+            "summary_pivot_version": row[27],
+            "created_at": row[28].isoformat() if row[28] else None,
+            "updated_at": row[29].isoformat() if row[29] else None,
+            "platform": row[30],
+            "source": row[31],
+            "source_display_name": source_settings.get("display_name") or row[31],
+            "topics": row[33] or [],
         }
 
     def get_notes(self, post_id: str) -> Dict[str, Any]:

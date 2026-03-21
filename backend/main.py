@@ -126,6 +126,24 @@ class EvidenceRebuildDateRequest(BaseModel):
     date: str
     limit: int | None = None
 
+
+class MemoryRebuildPostRequest(BaseModel):
+    postId: str
+
+
+class MemoryRebuildDateRequest(BaseModel):
+    date: str
+    limit: int | None = None
+
+
+class EventRebuildPostRequest(BaseModel):
+    postId: str
+
+
+class EventRebuildDateRequest(BaseModel):
+    date: str
+    limit: int | None = None
+
 @app.get("/")
 async def root():
     return {
@@ -259,6 +277,17 @@ async def get_post_evidence(post_id: str):
         return {"success": False, "error": str(e), "evidence": None}
 
 
+@app.get("/api/posts/item/{post_id}/memory")
+async def get_post_memory(post_id: str):
+    """Get the entity-memory debug view for a single post."""
+    try:
+        logger.info(f"🧠 Fetching post memory: {post_id}")
+        return api_bridge.get_post_memory(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post memory")
+        return {"success": False, "error": str(e), "memory": None}
+
+
 @app.post("/api/evidence/rebuild-for-post")
 async def rebuild_evidence_for_post(request: EvidenceRebuildPostRequest):
     try:
@@ -276,6 +305,57 @@ async def rebuild_evidence_for_date(request: EvidenceRebuildDateRequest):
         return api_bridge.rebuild_evidence_for_date(request.date, limit=request.limit)
     except Exception as e:
         logger.exception("Failed to rebuild evidence for date")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/memory/rebuild-for-post")
+async def rebuild_memory_for_post(request: MemoryRebuildPostRequest):
+    try:
+        logger.info(f"🔄 Rebuilding entity memory for post: {request.postId}")
+        return api_bridge.rebuild_post_memory(request.postId)
+    except Exception as e:
+        logger.exception("Failed to rebuild entity memory for post")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/memory/rebuild-for-date")
+async def rebuild_memory_for_date(request: MemoryRebuildDateRequest):
+    try:
+        logger.info(f"🔄 Rebuilding entity memory for date: {request.date}")
+        return api_bridge.rebuild_memory_for_date(request.date, limit=request.limit)
+    except Exception as e:
+        logger.exception("Failed to rebuild entity memory for date")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/posts/item/{post_id}/events")
+async def get_post_events(post_id: str):
+    """Get the event-memory debug view for a single post."""
+    try:
+        logger.info(f"📅 Fetching post events: {post_id}")
+        return api_bridge.get_post_events(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post events")
+        return {"success": False, "error": str(e), "events": None}
+
+
+@app.post("/api/events/rebuild-for-post")
+async def rebuild_events_for_post(request: EventRebuildPostRequest):
+    try:
+        logger.info(f"🔄 Rebuilding event memory for post: {request.postId}")
+        return api_bridge.rebuild_post_events(request.postId)
+    except Exception as e:
+        logger.exception("Failed to rebuild event memory for post")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/events/rebuild-for-date")
+async def rebuild_events_for_date(request: EventRebuildDateRequest):
+    try:
+        logger.info(f"🔄 Rebuilding event memory for date: {request.date}")
+        return api_bridge.rebuild_events_for_date(request.date, limit=request.limit)
+    except Exception as e:
+        logger.exception("Failed to rebuild event memory for date")
         return {"success": False, "error": str(e)}
 
 

@@ -7,6 +7,8 @@ from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
+from insight_core.services.entity_memory_service import EntityMemoryService
+from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.evidence_foundation_service import EvidenceFoundationService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
@@ -29,6 +31,8 @@ class InsightApiBridge:
         self.briefing_service = BriefingService(self.db)
         self.source_fetch_service = SourceFetchService(self.db)
         self.source_config_sync_service = SourceConfigSyncService(self.db)
+        self.entity_memory_service = EntityMemoryService(self.db)
+        self.event_memory_service = EventMemoryService(self.db)
         self.evidence_service = EvidenceFoundationService(self.db)
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
@@ -932,6 +936,24 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "evidence": None}
 
+    def get_post_memory(self, post_id: str) -> Dict[str, Any]:
+        try:
+            memory = self.entity_memory_service.get_post_memory_debug(post_id)
+            if not memory:
+                return {"success": False, "error": f"Post {post_id} not found", "memory": None}
+            return {"success": True, "memory": memory}
+        except Exception as e:
+            return {"success": False, "error": str(e), "memory": None}
+
+    def get_post_events(self, post_id: str) -> Dict[str, Any]:
+        try:
+            events = self.event_memory_service.get_post_event_debug(post_id)
+            if not events:
+                return {"success": False, "error": f"Post {post_id} not found", "events": None}
+            return {"success": True, "events": events}
+        except Exception as e:
+            return {"success": False, "error": str(e), "events": None}
+
     def rebuild_post_evidence(self, post_id: str) -> Dict[str, Any]:
         job_id = self._start_job_safe(
             "evidence_enrichment",
@@ -975,6 +997,116 @@ class InsightApiBridge:
                 job_id,
                 status="success",
                 message="Evidence rebuilt for date",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"date": date_value, "limit": limit},
+            )
+            return {"success": False, "error": str(e)}
+
+    def rebuild_post_memory(self, post_id: str) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "entity_memory",
+            trigger="manual",
+            message=f"Rebuild entity memory for post {post_id}",
+            payload={"post_id": post_id},
+        )
+        try:
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding entity memory for post {post_id}", level="info")
+            result = self.entity_memory_service.rebuild_post_memory(post_id, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Entity memory rebuilt for post",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"post_id": post_id},
+            )
+            return {"success": False, "error": str(e)}
+
+    def rebuild_memory_for_date(self, date_value: str, limit: int | None = None) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "entity_memory",
+            trigger="manual",
+            message=f"Rebuild entity memory for date {date_value}",
+            payload={"date": date_value, "limit": limit},
+        )
+        try:
+            target_date = date.fromisoformat(date_value)
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding entity memory for date {target_date.isoformat()}", level="info")
+            result = self.entity_memory_service.rebuild_date_memory(target_date, limit=limit, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Entity memory rebuilt for date",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"date": date_value, "limit": limit},
+            )
+            return {"success": False, "error": str(e)}
+
+    def rebuild_post_events(self, post_id: str) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "event_memory",
+            trigger="manual",
+            message=f"Rebuild event memory for post {post_id}",
+            payload={"post_id": post_id},
+        )
+        try:
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding event memory for post {post_id}", level="info")
+            result = self.event_memory_service.rebuild_post_events(post_id, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Event memory rebuilt for post",
+                payload=result,
+            )
+            return {"success": True, "job_id": job_id, "result": result}
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={"post_id": post_id},
+            )
+            return {"success": False, "error": str(e)}
+
+    def rebuild_events_for_date(self, date_value: str, limit: int | None = None) -> Dict[str, Any]:
+        job_id = self._start_job_safe(
+            "event_memory",
+            trigger="manual",
+            message=f"Rebuild event memory for date {date_value}",
+            payload={"date": date_value, "limit": limit},
+        )
+        try:
+            target_date = date.fromisoformat(date_value)
+            if job_id:
+                self._append_job_event_safe(job_id, message=f"Rebuilding event memory for date {target_date.isoformat()}", level="info")
+            result = self.event_memory_service.rebuild_date_events(target_date, limit=limit, job_run_id=job_id)
+            self._finish_job_safe(
+                job_id,
+                status="success",
+                message="Event memory rebuilt for date",
                 payload=result,
             )
             return {"success": True, "job_id": job_id, "result": result}

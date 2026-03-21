@@ -14,6 +14,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 import asyncio
 from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_posts import PostsRepository
+from insight_core.services.entity_memory_service import EntityMemoryService
+from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.source_fetch_service import SourceFetchService
@@ -148,14 +150,27 @@ async def ingest_posts(trigger: str = "manual"):
     # 4. Save to database
     db_start_time = time.time()
     repo = PostsRepository(db_url)
+    memory_service = EntityMemoryService(db_url)
+    event_service = EventMemoryService(db_url)
     per_source_fetch_counts = {}
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             for post in all_posts:
-                source_id = post.pop("_source_id")
+                post_copy = dict(post)
+                source_id = post_copy.pop("_source_id")
                 per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
-                repo.upsert_post(cur, post, source_id)
+                repo.upsert_post(cur, post_copy, source_id)
         conn.commit()
+
+    if all_posts:
+        try:
+            memory_service.process_posts(all_posts)
+        except Exception as exc:
+            logger.warning("Entity memory enrichment skipped: %s", exc)
+        try:
+            event_service.process_posts(all_posts)
+        except Exception as exc:
+            logger.warning("Event memory enrichment skipped: %s", exc)
 
     for source_id, fetched_posts in per_source_fetch_counts.items():
         source = source_lookup.get(source_id)

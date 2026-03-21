@@ -27,7 +27,9 @@ import psycopg
 from insight_core.connectors import create_connector
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.posts_service import PostsService
+from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
 
@@ -65,6 +67,8 @@ class SourceFetchService:
         self.sources_service = SourcesService(db_url)
         self.posts_service = PostsService(db_url)
         self.posts_repo = PostsRepository(db_url)
+        self.memory_service = EntityMemoryService(db_url)
+        self.event_service = EventMemoryService(db_url)
         self.youtube_service = YouTubeService(db_url)
         self.logger = get_component_logger("source_fetch_service")
         self.timeout = int(os.getenv("RSS_TIMEOUT_SECONDS", str(self.DEFAULT_TIMEOUT_SECONDS)))
@@ -1161,7 +1165,42 @@ class SourceFetchService:
                         updated += 1
             conn.commit()
 
-        return {"inserted": inserted, "updated": updated}
+        if posts:
+            try:
+                memory_result = self.memory_service.process_posts(
+                    [
+                        {
+                            **post,
+                            "_source_id": source_id,
+                        }
+                        for post in posts
+                    ]
+                )
+            except Exception as exc:
+                self.logger.warning("Entity memory enrichment skipped for %s: %s", source_id, exc)
+                memory_result = {"posts_processed": 0, "mentions_created": 0, "entities_linked": 0}
+            try:
+                self.event_service.process_posts(
+                    [
+                        {
+                            **post,
+                            "_source_id": source_id,
+                        }
+                        for post in posts
+                    ]
+                )
+            except Exception as exc:
+                self.logger.warning("Event memory enrichment skipped for %s: %s", source_id, exc)
+        else:
+            memory_result = {"posts_processed": 0, "mentions_created": 0, "entities_linked": 0}
+
+        return {
+            "inserted": inserted,
+            "updated": updated,
+            "memory_processed": int(memory_result.get("posts_processed", 0)),
+            "memory_mentions": int(memory_result.get("mentions_created", 0)),
+            "memory_entities": int(memory_result.get("entities_linked", 0)),
+        }
 
     async def _record_archive_metadata(self, source_id: str, data: Dict[str, Any], mode: str) -> None:
         stats = self.posts_service.get_source_post_stats(source_id)
