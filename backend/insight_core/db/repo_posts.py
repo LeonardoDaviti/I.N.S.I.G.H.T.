@@ -379,11 +379,14 @@ class PostsRepository:
         
         return posts
 
-    def get_posts_by_ids(self, cur: Cursor, post_ids: List[str]) -> List[Dict[str, Any]]:
-        """Retrieve multiple posts by UUID, preserving caller order as much as possible."""
-        if not post_ids:
-            return []
-
+    def get_posts_by_source_and_range(
+        self,
+        cur: Cursor,
+        source_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve posts for a specific source within an inclusive date range."""
         query = """
             SELECT
                 p.id,
@@ -418,9 +421,113 @@ class PostsRepository:
                 COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
             FROM posts p
             JOIN sources s ON p.source_id = s.id
-            WHERE p.id = ANY(%s::uuid[])
+            WHERE p.source_id = %s
+              AND DATE(COALESCE(p.published_at, p.fetched_at)) BETWEEN %s AND %s
+            ORDER BY DATE(COALESCE(p.published_at, p.fetched_at)) ASC, COALESCE(p.published_at, p.fetched_at) ASC, p.created_at ASC
         """
-        cur.execute(query, (post_ids,))
+        cur.execute(query, (source_id, start_date, end_date))
+        rows = cur.fetchall()
+
+        if not rows:
+            self.logger.info(
+                "No posts found for source %s in range %s to %s",
+                source_id,
+                start_date,
+                end_date,
+            )
+            return []
+
+        posts = []
+        for row in rows:
+            post = {
+                'id': str(row[0]),
+                'url': row[1],
+                'content': row[2],
+                'date': row[3],
+                'published_at': row[3],
+                'fetched_at': row[4],
+                'content_html': row[5],
+                'metadata': row[6] or {},
+                'media_urls': row[7],
+                'categories': row[8],
+                'title': row[9],
+                'source_id': str(row[10]),
+                'lang': row[11],
+                'language_code': row[12],
+                'language_confidence': row[13],
+                'normalized_url': row[14],
+                'canonical_url': row[15],
+                'url_host': row[16],
+                'title_hash': row[17],
+                'content_hash': row[18],
+                'normalization_version': row[19],
+                'enriched_at': row[20],
+                'title_original': row[21],
+                'body_original': row[22],
+                'title_pivot': row[23],
+                'summary_pivot': row[24],
+                'title_pivot_version': row[25],
+                'summary_pivot_version': row[26],
+                'platform': row[27],
+                'handle_or_url': row[28],
+                'source': row[28],
+                'source_display_name': row[29],
+            }
+            posts.append(post)
+
+        self.logger.info(
+            "Successfully got %s posts for source %s in range %s to %s",
+            len(posts),
+            source_id,
+            start_date,
+            end_date,
+        )
+        return posts
+
+    def get_posts_by_ids(self, cur: Cursor, post_ids: List[str]) -> List[Dict[str, Any]]:
+        """Retrieve multiple posts by UUID, preserving caller order as much as possible."""
+        if not post_ids:
+            return []
+
+        requested_rows = ", ".join(f"(%s::uuid, {index})" for index in range(1, len(post_ids) + 1))
+        query = """
+            SELECT
+                p.id,
+                p.url,
+                p.content,
+                p.published_at,
+                p.fetched_at,
+                p.content_html,
+                p.metadata,
+                p.media_urls,
+                p.categories,
+                p.title,
+                p.source_id,
+                p.lang,
+                p.language_code,
+                p.language_confidence,
+                p.normalized_url,
+                p.canonical_url,
+                p.url_host,
+                p.title_hash,
+                p.content_hash,
+                p.normalization_version,
+                p.enriched_at,
+                p.title_original,
+                p.body_original,
+                p.title_pivot,
+                p.summary_pivot,
+                p.title_pivot_version,
+                p.summary_pivot_version,
+                s.platform,
+                s.handle_or_url,
+                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
+            FROM posts p
+            JOIN sources s ON p.source_id = s.id
+            JOIN (VALUES {requested_rows}) AS requested(post_id, ord) ON p.id = requested.post_id
+            ORDER BY requested.ord
+        """.format(requested_rows=requested_rows)
+        cur.execute(query, tuple(post_ids))
         rows = cur.fetchall()
 
         posts_by_id = {

@@ -35,6 +35,12 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source(cur, source_id)
 
+    def get_posts_by_source_and_range(self, source_id: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        """Get posts for a specific source within an inclusive date range."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_posts_by_source_and_range(cur, source_id, start_date, end_date)
+
     def get_posts_by_ids(self, post_ids: List[str]) -> List[Dict[str, Any]]:
         """Get multiple posts by UUID."""
         with psycopg.connect(self.db_url) as conn:

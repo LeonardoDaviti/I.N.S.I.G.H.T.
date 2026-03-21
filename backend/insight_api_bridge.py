@@ -10,6 +10,8 @@ from insight_core.services.source_config_sync_service import SourceConfigSyncSer
 from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.evidence_foundation_service import EvidenceFoundationService
+from insight_core.services.inbox_service import InboxService
+from insight_core.services.analyst_actions_service import AnalystActionsService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.post_detail_service import PostDetailService
@@ -39,6 +41,17 @@ class InsightApiBridge:
         self.operations_service = OperationsService(self.db)
         self.post_detail_service = PostDetailService(self.db)
         self.stories_service = StoriesService(self.db)
+        self.inbox_service = InboxService(
+            self.db,
+            operations_service=self.operations_service,
+            stories_service=self.stories_service,
+            post_detail_service=self.post_detail_service,
+        )
+        self.analyst_actions_service = AnalystActionsService(
+            self.db,
+            stories_service=self.stories_service,
+            post_detail_service=self.post_detail_service,
+        )
         self.youtube_service = YouTubeService(self.db)
 
     def _start_job_safe(self, *args, **kwargs) -> str | None:
@@ -699,6 +712,63 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
+    async def generate_source_vertical_briefing(
+        self,
+        source_id: str,
+        start_date: str,
+        end_date: str,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """Generate a DB-backed source vertical briefing."""
+        job_id = self._start_job_safe(
+            "vertical_briefing_source",
+            trigger="manual",
+            message=f"Generate vertical briefing for {source_id}",
+            payload={
+                "source_id": source_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "refresh": refresh,
+            },
+        )
+        try:
+            self._append_job_event_safe(
+                job_id,
+                message=f"Starting source vertical briefing for {source_id} ({start_date} to {end_date})",
+                level="info",
+            )
+            result = await self.briefing_service.generate_source_vertical_briefing(
+                source_id,
+                start_date,
+                end_date,
+                refresh=refresh,
+            )
+            self._finish_job_safe(
+                job_id,
+                status="success" if result.get("success") else "failed",
+                message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts into {len(result.get('tracks', []))} tracks",
+                payload={
+                    **result,
+                    "estimated_tokens": result.get("estimated_tokens"),
+                },
+            )
+            return result
+        except Exception as e:
+            self._finish_job_safe(
+                job_id,
+                status="failed",
+                message=str(e),
+                payload={
+                    "source_id": source_id,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
 
     # ============= POSTS RETRIEVAL =============
 
@@ -1012,6 +1082,108 @@ class InsightApiBridge:
             return {"success": True, **self.stories_service.get_post_story(post_id)}
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "stories": []}
+
+    # ============= INBOX =============
+
+    def get_inbox(self, batch_id: str | None = None, limit: int = 20) -> Dict[str, Any]:
+        try:
+            return self.inbox_service.get_inbox(batch_id=batch_id, limit=limit)
+        except Exception as e:
+            return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
+
+    def get_inbox_batches(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        try:
+            return self.inbox_service.list_batches(limit=limit, offset=offset)
+        except Exception as e:
+            return {"success": False, "error": str(e), "batches": [], "total": 0}
+
+    def get_inbox_items(
+        self,
+        *,
+        batch_id: str | None = None,
+        status: str | None = None,
+        target_type: str | None = None,
+        source_id: str | None = None,
+        generated_for_date: str | date | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        try:
+            return self.inbox_service.list_items(
+                batch_id=batch_id,
+                status=status,
+                target_type=target_type,
+                source_id=source_id,
+                generated_for_date=generated_for_date,
+                limit=limit,
+                offset=offset,
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e), "items": [], "total": 0}
+
+    def get_inbox_item(self, item_id: str) -> Dict[str, Any]:
+        try:
+            return self.inbox_service.get_item_detail(item_id)
+        except Exception as e:
+            return {"success": False, "error": str(e), "item": None, "target": None, "actions": []}
+
+    def rebuild_inbox(
+        self,
+        generated_for_date: str | date | None = None,
+        *,
+        scope_type: str = "daily_queue",
+        scope_value: str | None = None,
+        limit: int = 20,
+        actor_id: str | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            return self.inbox_service.rebuild_inbox(
+                generated_for_date=generated_for_date,
+                scope_type=scope_type,
+                scope_value=scope_value,
+                limit=limit,
+                actor_id=actor_id,
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
+
+    def record_inbox_action(
+        self,
+        item_id: str,
+        action_type: str,
+        *,
+        actor_id: str | None = None,
+        payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            return self.analyst_actions_service.record_action(
+                item_id,
+                action_type,
+                actor_id=actor_id,
+                payload=payload,
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e), "action": None, "item": None, "side_effects": []}
+
+    def get_inbox_actions(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        inbox_item_id: str | None = None,
+    ) -> Dict[str, Any]:
+        try:
+            return self.analyst_actions_service.list_actions(
+                limit=limit,
+                offset=offset,
+                target_type=target_type,
+                target_id=target_id,
+                inbox_item_id=inbox_item_id,
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e), "actions": [], "total": 0}
 
     def rebuild_post_evidence(self, post_id: str) -> Dict[str, Any]:
         job_id = self._start_job_safe(

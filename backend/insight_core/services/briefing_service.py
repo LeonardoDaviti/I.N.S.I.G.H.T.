@@ -3,22 +3,36 @@ DB-backed daily briefing generation.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
+import psycopg
+
+from insight_core.db.repo_evidence import EvidenceRepository
+from insight_core.db.repo_memory import MemoryRepository
+from insight_core.db.repo_stories import StoriesRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.posts_service import PostsService
+from insight_core.services.sources_service import SourcesService
 from insight_core.services.topics_service import TopicsService
+from insight_core.utils.entity_memory import normalize_entity_name
 
 
 class BriefingService:
     """Generate daily briefings from posts already stored in the database."""
 
+    VERTICAL_BRIEFING_VERSION = 2
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.posts_service = PostsService(db_url)
+        self.sources_service = SourcesService(db_url)
+        self.stories_repo = StoriesRepository(db_url)
+        self.memory_repo = MemoryRepository(db_url)
+        self.evidence_repo = EvidenceRepository(db_url)
         self.store_service = BriefingsStoreService(db_url)
         self.topics_service = TopicsService(db_url)
         self.processor = GeminiProcessor()
@@ -390,6 +404,157 @@ class BriefingService:
             "variant": "topics",
         }
 
+    async def generate_source_vertical_briefing(
+        self,
+        source_id: str,
+        start_date: str,
+        end_date: str,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """Generate a source-scoped vertical briefing across a date range."""
+        start = self._parse_date_str(start_date)
+        end = self._parse_date_str(end_date)
+        if end < start:
+            return {
+                "success": False,
+                "error": "end_date must be on or after start_date",
+                "vertical_briefing": "",
+                "tracks": [],
+                "posts": {},
+                "source_id": source_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "subject_key": self._vertical_subject_key(source_id, start_date, end_date),
+            }
+
+        subject_key = self._vertical_subject_key(source_id, start_date, end_date)
+        if not refresh:
+            cached = self.store_service.get_briefing("vertical_briefing", subject_key, "source")
+            if cached and (cached.get("payload") or {}).get("briefing_version") == self.VERTICAL_BRIEFING_VERSION:
+                return self._build_cached_vertical_briefing_response(
+                    source_id=source_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    subject_key=subject_key,
+                    cached_briefing=cached,
+                )
+
+        source = self.sources_service.get_source_with_settings(source_id)
+        source_label = (
+            (source.get("settings") or {}).get("display_name")
+            or source.get("handle_or_url")
+            or source_id
+        )
+        posts = self.posts_service.get_posts_by_source_and_range(source_id, start, end)
+
+        if not posts:
+            return {
+                "success": False,
+                "error": f"No posts found for source {source_id} between {start_date} and {end_date}",
+                "vertical_briefing": "",
+                "tracks": [],
+                "posts": {},
+                "source_id": source_id,
+                "source_label": source_label,
+                "start_date": start_date,
+                "end_date": end_date,
+                "subject_key": subject_key,
+            }
+
+        posts = self._build_vertical_briefing_context(posts)
+
+        setup_ok = self.processor.setup_processor()
+        try:
+            if not setup_ok:
+                raise RuntimeError("Gemini processor setup failed")
+            await self.processor.connect()
+            vertical_result = await self.processor.source_vertical_briefing(
+                posts,
+                source_label,
+                start_date,
+                end_date,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Falling back to deterministic source vertical briefing for %s: %s",
+                source_label,
+                exc,
+            )
+            vertical_result = self.processor._fallback_source_vertical_briefing(
+                source_label,
+                start_date,
+                end_date,
+                posts,
+            )
+        finally:
+            try:
+                await self.processor.disconnect()
+            except Exception:
+                pass
+
+        normalized = self._normalize_vertical_briefing_result(posts=posts, briefing_result=vertical_result)
+        vertical_briefing = vertical_result.get("vertical_briefing", "")
+        tracks = normalized["tracks"]
+        posts_map = normalized["posts"]
+        estimated_tokens = self._count_tokens(vertical_briefing)
+        unique_evidence_clusters = len(
+            {
+                str(post.get("vertical_evidence_cluster_key"))
+                for post in posts
+                if post.get("vertical_evidence_cluster_key")
+            }
+        )
+        story_linked_posts = sum(1 for post in posts if post.get("vertical_story_titles"))
+        entity_overlap_posts = sum(1 for post in posts if post.get("vertical_shared_entity_names"))
+        payload = {
+            "briefing_version": self.VERTICAL_BRIEFING_VERSION,
+            "scope_type": "source",
+            "scope_id": source_id,
+            "source_id": source_id,
+            "source_label": source_label,
+            "start_date": start_date,
+            "end_date": end_date,
+            "post_count": len(posts),
+            "unique_evidence_clusters": unique_evidence_clusters,
+            "story_linked_posts": story_linked_posts,
+            "entity_overlap_posts": entity_overlap_posts,
+            "track_count": len(tracks),
+            "estimated_tokens": estimated_tokens,
+            "tracks": tracks,
+            "signal_sources": ["stories", "entities", "evidence"],
+        }
+        saved = self.store_service.save_briefing(
+            subject_type="vertical_briefing",
+            subject_key=subject_key,
+            variant="source",
+            render_format="markdown",
+            title=f"Vertical Briefing {source_label} {start_date} to {end_date}",
+            content=vertical_briefing,
+            payload=payload,
+        )
+
+        return {
+            "success": True,
+            "briefing": vertical_briefing,
+            "vertical_briefing": vertical_briefing,
+            "format": "markdown",
+            "saved_briefing_id": saved["id"],
+            "cached": False,
+            "scope_type": "source",
+            "scope_id": source_id,
+            "source_id": source_id,
+            "source_label": source_label,
+            "start_date": start_date,
+            "end_date": end_date,
+            "subject_key": subject_key,
+            "posts_processed": len(posts),
+            "total_posts_fetched": len(posts),
+            "estimated_tokens": estimated_tokens,
+            "tracks": tracks,
+            "posts": posts_map,
+            "variant": "source",
+        }
+
     def _build_cached_topic_response(
         self,
         *,
@@ -435,6 +600,376 @@ class BriefingService:
             "cached": True,
             "estimated_tokens": (cached_briefing.get("payload") or {}).get("estimated_tokens", self._count_tokens(cached_briefing.get("content", ""))),
         }
+
+    def _build_cached_vertical_briefing_response(
+        self,
+        *,
+        source_id: str,
+        start_date: str,
+        end_date: str,
+        subject_key: str,
+        cached_briefing: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        payload = cached_briefing.get("payload") or {}
+        tracks = payload.get("tracks") or []
+        post_ids: List[str] = []
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            for post_id in track.get("post_ids") or []:
+                post_key = str(post_id)
+                if post_key not in post_ids:
+                    post_ids.append(post_key)
+            for entry in track.get("timeline") or []:
+                if not isinstance(entry, dict):
+                    continue
+                for post_id in entry.get("post_ids") or []:
+                    post_key = str(post_id)
+                    if post_key not in post_ids:
+                        post_ids.append(post_key)
+
+        posts = {
+            post["id"]: post
+            for post in self.posts_service.get_posts_by_ids(post_ids)
+            if post.get("id")
+        }
+        return {
+            "success": True,
+            "briefing": cached_briefing.get("content", ""),
+            "vertical_briefing": cached_briefing.get("content", ""),
+            "format": cached_briefing.get("render_format", "markdown"),
+            "saved_briefing_id": cached_briefing.get("id"),
+            "cached": True,
+            "scope_type": "source",
+            "scope_id": source_id,
+            "source_id": source_id,
+            "source_label": payload.get("source_label") or source_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "subject_key": subject_key,
+            "posts_processed": payload.get("post_count", len(post_ids)),
+            "total_posts_fetched": payload.get("post_count", len(post_ids)),
+            "estimated_tokens": payload.get(
+                "estimated_tokens",
+                self._count_tokens(cached_briefing.get("content", "")),
+            ),
+            "tracks": tracks,
+            "posts": posts,
+            "variant": "source",
+        }
+
+    def _normalize_vertical_briefing_result(
+        self,
+        *,
+        posts: List[Dict[str, Any]],
+        briefing_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        posts_map = {
+            str(post["id"]): {
+                **post,
+                "post_id": str(post["id"]),
+            }
+            for post in posts
+            if post.get("id")
+        }
+
+        normalized_tracks: List[Dict[str, Any]] = []
+        for index, track in enumerate(briefing_result.get("tracks") or [], start=1):
+            if not isinstance(track, dict):
+                continue
+            raw_post_ids = [str(post_id) for post_id in (track.get("post_ids") or [])]
+            track_post_ids: List[str] = []
+            for post_id in raw_post_ids:
+                if post_id in posts_map and post_id not in track_post_ids:
+                    track_post_ids.append(post_id)
+
+            timeline_entries: List[Dict[str, Any]] = []
+            for entry in track.get("timeline") or []:
+                if not isinstance(entry, dict):
+                    continue
+                entry_post_ids: List[str] = []
+                for post_id in entry.get("post_ids") or []:
+                    post_key = str(post_id)
+                    if post_key in posts_map and post_key not in entry_post_ids:
+                        entry_post_ids.append(post_key)
+                        if post_key not in track_post_ids:
+                            track_post_ids.append(post_key)
+                timeline_entries.append(
+                    {
+                        "date": entry.get("date"),
+                        "summary": entry.get("summary"),
+                        "post_ids": entry_post_ids,
+                    }
+                )
+
+            if not track_post_ids:
+                continue
+
+            track_kind = str(track.get("track_kind") or "").strip()
+            if track_kind not in {"project_thread", "recurring_theme", "one_off_update"}:
+                track_kind = "recurring_theme" if len(track_post_ids) > 1 else "one_off_update"
+
+            story_titles = [
+                str(title).strip()
+                for title in (track.get("story_titles") or [])
+                if str(title).strip()
+            ]
+            entity_hints = [
+                str(entity).strip()
+                for entity in (track.get("entity_hints") or [])
+                if str(entity).strip()
+            ]
+            evidence_cluster_count = int(track.get("evidence_cluster_count") or len(timeline_entries) or 1)
+            raw_post_count = int(track.get("raw_post_count") or len(track_post_ids))
+            unique_post_count = int(track.get("unique_post_count") or len(track_post_ids))
+
+            normalized_tracks.append(
+                {
+                    "id": str(track.get("id") or f"track-{index}"),
+                    "title": track.get("title") or f"Track {index}",
+                    "summary": track.get("summary") or "",
+                    "track_kind": track_kind,
+                    "post_ids": track_post_ids,
+                    "timeline": timeline_entries,
+                    "story_titles": story_titles,
+                    "entity_hints": entity_hints,
+                    "evidence_cluster_count": evidence_cluster_count,
+                    "raw_post_count": raw_post_count,
+                    "unique_post_count": unique_post_count,
+                }
+            )
+
+        return {
+            "tracks": normalized_tracks,
+            "posts": posts_map,
+        }
+
+    def _vertical_subject_key(self, source_id: str, start_date: str, end_date: str) -> str:
+        return f"source:{source_id}:{start_date}:{end_date}"
+
+    def _parse_date_str(self, value: str) -> date:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+
+    def _build_vertical_briefing_context(self, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Annotate posts with story, entity, and evidence-dedupe signals."""
+        if not posts:
+            return posts
+
+        try:
+            story_links_by_post: Dict[str, List[Dict[str, Any]]] = {}
+            entity_links_by_post: Dict[str, List[Dict[str, Any]]] = {}
+            evidence_by_post: Dict[str, Dict[str, Any]] = {}
+            entity_counts: Counter[str] = Counter()
+            entity_display_by_key: Dict[str, str] = {}
+
+            with psycopg.connect(self.db_url) as conn:
+                with conn.cursor() as cur:
+                    for post in posts:
+                        post_id = str(post["id"])
+                        story_links = self.stories_repo.get_stories_for_post(cur, post_id)
+                        story_links_by_post[post_id] = story_links
+
+                        entity_links = self.memory_repo.get_post_entities(cur, post_id)
+                        entity_links_by_post[post_id] = entity_links
+
+                        evidence_by_post[post_id] = self.evidence_repo.get_post_evidence_debug(cur, post_id)
+
+                        seen_entity_keys: set[str] = set()
+                        for entity_link in entity_links:
+                            entity_key, entity_display = self._vertical_entity_signature(entity_link)
+                            if not entity_key or entity_key in seen_entity_keys:
+                                continue
+                            seen_entity_keys.add(entity_key)
+                            entity_counts[entity_key] += 1
+                            entity_display_by_key.setdefault(entity_key, entity_display)
+
+            cluster_map = self._vertical_evidence_clusters(posts, evidence_by_post)
+            enriched_posts: List[Dict[str, Any]] = []
+            for post in posts:
+                post_id = str(post["id"])
+                story_links = story_links_by_post.get(post_id, [])
+                entity_links = entity_links_by_post.get(post_id, [])
+                evidence = evidence_by_post.get(post_id) or {}
+                cluster_info = cluster_map.get(post_id) or {"key": post_id, "size": 1, "members": [post_id]}
+
+                story_titles = self._vertical_story_titles(story_links)
+                entity_pairs = self._vertical_entity_pairs(entity_links)
+                entity_pairs.sort(key=lambda item: (-entity_counts.get(item[0], 0), item[1].lower()))
+
+                entity_names = [display for _, display in entity_pairs[:5]]
+                shared_entity_names = [
+                    entity_display_by_key[key]
+                    for key, display in entity_pairs
+                    if entity_counts.get(key, 0) > 1
+                ][:4]
+                primary_story_title = story_titles[0] if story_titles else ""
+                track_hint = (
+                    primary_story_title
+                    or " / ".join(shared_entity_names[:2])
+                    or " / ".join(entity_names[:2])
+                    or self._vertical_fallback_track_hint(post)
+                )
+
+                enriched_posts.append(
+                    {
+                        **post,
+                        "vertical_story_links": story_links,
+                        "vertical_story_titles": story_titles,
+                        "vertical_primary_story_title": primary_story_title,
+                        "vertical_entity_names": entity_names,
+                        "vertical_shared_entity_names": shared_entity_names,
+                        "vertical_entity_overlap_count": len(shared_entity_names),
+                        "vertical_evidence_cluster_key": cluster_info["key"],
+                        "vertical_evidence_cluster_size": cluster_info["size"],
+                        "vertical_evidence_cluster_members": cluster_info["members"],
+                        "vertical_evidence_weight": round(1.0 / cluster_info["size"], 3) if cluster_info["size"] else 1.0,
+                        "vertical_track_hint": track_hint,
+                    }
+                )
+
+            return enriched_posts
+        except Exception as exc:
+            self.logger.warning("Vertical briefing context enrichment failed: %s", exc)
+            return posts
+
+    def _vertical_evidence_clusters(
+        self,
+        posts: List[Dict[str, Any]],
+        evidence_by_post: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Build conservative evidence-dedupe clusters for the supplied posts."""
+        post_lookup = {str(post["id"]): post for post in posts if post.get("id")}
+        if not post_lookup:
+            return {}
+
+        parent = {post_id: post_id for post_id in post_lookup}
+
+        def find(value: str) -> str:
+            while parent[value] != value:
+                parent[value] = parent[parent[value]]
+                value = parent[value]
+            return value
+
+        def union(left: str, right: str) -> None:
+            left_root = find(left)
+            right_root = find(right)
+            if left_root == right_root:
+                return
+            parent[right_root] = left_root
+
+        shared_keys: Dict[str, List[str]] = defaultdict(list)
+        safe_relation_types = {
+            "exact_duplicate",
+            "near_duplicate",
+            "references_same_artifact",
+            "syndicated_from",
+            "translation_of",
+        }
+
+        for post_id, evidence in evidence_by_post.items():
+            post_data = (evidence or {}).get("post") or {}
+            for value in (
+                post_data.get("normalized_url"),
+                post_data.get("canonical_url"),
+                post_data.get("content_hash"),
+                post_data.get("title_hash"),
+            ):
+                if value:
+                    shared_keys[f"value:{value}"].append(post_id)
+
+            for artifact in (evidence or {}).get("artifacts") or []:
+                artifact_id = artifact.get("id")
+                if artifact_id:
+                    shared_keys[f"artifact:{artifact_id}"].append(post_id)
+
+            for direction in ("outgoing", "incoming"):
+                for relation in ((evidence or {}).get("relations") or {}).get(direction, []):
+                    if relation.get("relation_type") not in safe_relation_types:
+                        continue
+                    other_post_id = relation.get("to_post_id") if direction == "outgoing" else relation.get("from_post_id")
+                    if other_post_id and other_post_id in parent:
+                        union(post_id, other_post_id)
+
+        for ids in shared_keys.values():
+            if len(ids) < 2:
+                continue
+            first = ids[0]
+            for other_id in ids[1:]:
+                union(first, other_id)
+
+        clusters: Dict[str, List[str]] = defaultdict(list)
+        for post_id in post_lookup:
+            clusters[find(post_id)].append(post_id)
+
+        cluster_map: Dict[str, Dict[str, Any]] = {}
+        for member_ids in clusters.values():
+            member_ids.sort(key=lambda pid: self._vertical_post_sort_key(post_lookup.get(pid) or {}))
+            canonical_id = member_ids[0]
+            cluster_size = len(member_ids)
+            for post_id in member_ids:
+                cluster_map[post_id] = {
+                    "key": canonical_id,
+                    "members": member_ids,
+                    "size": cluster_size,
+                }
+        return cluster_map
+
+    def _vertical_post_sort_key(self, post: Dict[str, Any]) -> str:
+        for key in ("published_at", "date", "fetched_at", "created_at"):
+            value = post.get(key)
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if value:
+                return str(value)
+        return str(post.get("id") or "")
+
+    def _vertical_fallback_track_hint(self, post: Dict[str, Any]) -> str:
+        title = str(post.get("title") or "").strip()
+        if title:
+            return title
+        content = " ".join(str(post.get("content") or "").split())
+        if not content:
+            return "recent update"
+        return " ".join(content.split()[:8]).strip()
+
+    def _vertical_entity_signature(self, entity_link: Dict[str, Any]) -> tuple[str, str]:
+        entity = entity_link.get("entity") or {}
+        mention = entity_link.get("mention") or {}
+        display = (
+            entity.get("canonical_name")
+            or entity.get("normalized_name")
+            or mention.get("mention_text")
+            or entity_link.get("entity_id")
+            or ""
+        )
+        display_text = str(display).strip()
+        normalized = normalize_entity_name(display_text) or display_text.lower()
+        return normalized, display_text
+
+    def _vertical_entity_pairs(self, entity_links: List[Dict[str, Any]]) -> List[tuple[str, str]]:
+        pairs: List[tuple[str, str]] = []
+        seen: set[str] = set()
+        for entity_link in entity_links:
+            entity_key, entity_display = self._vertical_entity_signature(entity_link)
+            if not entity_key or entity_key in seen:
+                continue
+            seen.add(entity_key)
+            pairs.append((entity_key, entity_display))
+        return pairs
+
+    def _vertical_story_titles(self, story_links: List[Dict[str, Any]]) -> List[str]:
+        titles: List[str] = []
+        seen: set[str] = set()
+        for story in story_links:
+            title = str(story.get("canonical_title") or "").strip()
+            if not title:
+                continue
+            normalized = title.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            titles.append(title)
+        return titles[:4]
 
     def _normalize_topic_result(
         self,

@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,63 @@ DEFAULT_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.0-flash",
 ]
+VERTICAL_TRACK_KINDS = {"project_thread", "recurring_theme", "one_off_update"}
+VERTICAL_GENERIC_LEADS = {
+    "a",
+    "an",
+    "analysis",
+    "another",
+    "briefing",
+    "daily",
+    "day",
+    "follow",
+    "followup",
+    "follow-up",
+    "latest",
+    "log",
+    "memo",
+    "more",
+    "new",
+    "note",
+    "notes",
+    "post",
+    "progress",
+    "recap",
+    "report",
+    "roundup",
+    "summary",
+    "thread",
+    "today",
+    "update",
+    "updates",
+    "weekly",
+    "yesterday",
+}
+VERTICAL_GENERIC_SUFFIXES = {
+    "analysis",
+    "commentary",
+    "day",
+    "draft",
+    "entry",
+    "followup",
+    "follow-up",
+    "log",
+    "memo",
+    "note",
+    "notes",
+    "post",
+    "progress",
+    "project",
+    "recap",
+    "report",
+    "roundup",
+    "summary",
+    "thread",
+    "today",
+    "update",
+    "updates",
+    "version",
+}
 
 
 def _status_code(exc: Exception) -> int | None:
@@ -290,6 +348,59 @@ DAILY TOPIC BRIEFINGS:
         except Exception as exc:
             self.logger.warning("Falling back to deterministic weekly topic briefing: %s", exc)
             return self._fallback_weekly_topic_briefing(week_label, daily_topic_briefings)
+
+    async def source_vertical_briefing(
+        self,
+        posts: List[Dict[str, Any]],
+        scope_label: str,
+        start_date: str,
+        end_date: str,
+    ) -> Dict[str, Any]:
+        """Generate a source-scoped vertical briefing across a date range."""
+        prompt = f"""
+Return ONLY valid JSON with this exact structure:
+{{
+  "vertical_briefing": "markdown source-scoped synthesis",
+  "tracks": [
+    {{
+      "title": "track title",
+      "summary": "2-5 sentence summary",
+      "track_kind": "project_thread",
+      "post_ids": ["post-uuid-1", "post-uuid-2"],
+      "timeline": [
+        {{
+          "date": "YYYY-MM-DD",
+          "summary": "what changed on this date",
+          "post_ids": ["post-uuid-1"]
+        }}
+      ]
+    }}
+  ]
+}}
+
+Rules:
+- Use only the supplied posts and post IDs.
+- Optimize for recurring threads inside one source, not for generic topic buckets.
+- Prefer fewer, stronger tracks. Aim for 2-6 tracks when possible.
+- Keep related posts together only when they clearly belong to the same recurring thread.
+- Prefer story links and entity overlap when those signals are present.
+- Treat posts in the same evidence cluster as one underlying signal when judging prominence.
+- Use track_kind values from this set: project_thread, recurring_theme, one_off_update.
+- Put a post into one_off_update only if it is a material isolated update.
+- Preserve exact post IDs and timeline evidence.
+- Do not output any text outside the JSON.
+
+SOURCE: {scope_label}
+DATE RANGE: {start_date} to {end_date}
+POSTS:
+{self._format_posts(posts, truncate_to=1200, include_uuid=True, include_dates=True)}
+"""
+        try:
+            response_text = await self._generate_text(prompt)
+            return self._extract_json_from_response(response_text)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic source vertical briefing: %s", exc)
+            return self._fallback_source_vertical_briefing(scope_label, start_date, end_date, posts)
 
     def analyze_single_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """Summarize a single post and suggest tags in one request."""
@@ -869,6 +980,7 @@ POSTS:
         truncate_to: int,
         numeric_ids: bool = False,
         include_uuid: bool = False,
+        include_dates: bool = False,
     ) -> str:
         lines: List[str] = []
         for index, post in enumerate(posts, start=1):
@@ -884,9 +996,24 @@ POSTS:
                 header += f" (UUID: {post.get('id')})"
 
             lines.append(header)
+            if include_dates:
+                posted_at = post.get("published_at") or post.get("date") or post.get("fetched_at") or "unknown"
+                lines.append(f"Published at: {posted_at}")
             lines.append(f"Source: {source}")
             if title:
                 lines.append(f"Title: {title}")
+            story_titles = self._vertical_story_titles(post)
+            if story_titles:
+                lines.append(f"Story links: {', '.join(story_titles)}")
+            entity_names = self._vertical_entity_names(post)
+            if entity_names:
+                lines.append(f"Entities: {', '.join(entity_names)}")
+            track_hint = str(post.get("vertical_track_hint") or "").strip()
+            if track_hint:
+                lines.append(f"Track hint: {track_hint}")
+            cluster_size = int(post.get("vertical_evidence_cluster_size") or 0)
+            if cluster_size > 1:
+                lines.append(f"Evidence cluster: {cluster_size} post(s) collapsed")
             lines.append(f"Key: {identifier}")
             lines.append(f"Content: {content}")
             lines.append("")
@@ -937,3 +1064,535 @@ POSTS:
 
         words = content.split()
         return " ".join(words[:10]).strip()
+
+    def _fallback_source_vertical_briefing(
+        self,
+        scope_label: str,
+        start_date: str,
+        end_date: str,
+        posts: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        clusters = self._vertical_compress_posts(posts)
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for cluster in clusters:
+            signature = self._vertical_cluster_signature(cluster)
+            grouped.setdefault(signature, []).append(cluster)
+
+        buckets = sorted(
+            grouped.items(),
+            key=lambda item: (
+                -len(item[1]),
+                -sum(cluster.get("raw_post_count", 0) for cluster in item[1]),
+                self._post_sort_key((item[1][0] or {}).get("representative") or {}) if item[1] else "",
+            ),
+        )
+        primary_buckets = buckets[:5]
+        overflow_clusters = [cluster for _, bucket_clusters in buckets[5:] for cluster in bucket_clusters]
+        if overflow_clusters:
+            primary_buckets.append(("Other Updates", overflow_clusters))
+
+        tracks: List[Dict[str, Any]] = []
+        for index, (signature, bucket_clusters) in enumerate(primary_buckets, start=1):
+            if not bucket_clusters:
+                continue
+
+            ordered_clusters = sorted(
+                bucket_clusters,
+                key=lambda cluster: self._post_sort_key(cluster.get("representative") or {}),
+            )
+
+            post_ids: List[str] = []
+            for cluster in ordered_clusters:
+                for post_id in cluster.get("post_ids") or []:
+                    if post_id not in post_ids:
+                        post_ids.append(post_id)
+            if not post_ids:
+                continue
+
+            story_titles = self._merge_cluster_story_titles([cluster.get("posts") for cluster in ordered_clusters if cluster.get("posts")]) if False else []
+            story_titles = self._collect_cluster_story_titles(ordered_clusters)
+            entity_hints = self._collect_cluster_entity_hints(ordered_clusters)
+            raw_post_count = sum(int(cluster.get("raw_post_count") or len(cluster.get("posts") or [])) for cluster in ordered_clusters)
+            evidence_cluster_count = len(ordered_clusters)
+
+            timeline = [
+                self._vertical_cluster_timeline_entry(cluster)
+                for cluster in ordered_clusters
+            ]
+            track_title = self._vertical_track_title(signature, ordered_clusters, index, signature == "Other Updates")
+            track_kind = self._vertical_track_kind(
+                ordered_clusters,
+                track_title=track_title,
+                story_titles=story_titles,
+                entity_hints=entity_hints,
+                is_overflow=signature == "Other Updates",
+            )
+            track_summary = self._vertical_track_summary(
+                track_title,
+                ordered_clusters,
+                raw_post_count=raw_post_count,
+                evidence_cluster_count=evidence_cluster_count,
+                story_titles=story_titles,
+                entity_hints=entity_hints,
+            )
+            tracks.append(
+                {
+                    "id": f"track-{index}",
+                    "title": track_title,
+                    "summary": track_summary,
+                    "track_kind": track_kind,
+                    "post_ids": post_ids,
+                    "timeline": timeline,
+                    "story_titles": story_titles,
+                    "entity_hints": entity_hints,
+                    "evidence_cluster_count": evidence_cluster_count,
+                    "raw_post_count": raw_post_count,
+                    "unique_post_count": len(post_ids),
+                }
+            )
+
+        vertical_briefing = self._build_vertical_briefing_markdown(
+            scope_label=scope_label,
+            start_date=start_date,
+            end_date=end_date,
+            posts=posts,
+            tracks=tracks,
+        )
+
+        return {
+            "vertical_briefing": vertical_briefing,
+            "tracks": tracks,
+        }
+
+    def _vertical_track_signature(self, post: Dict[str, Any]) -> str:
+        story_title = str(post.get("vertical_primary_story_title") or "").strip()
+        if story_title:
+            return story_title
+
+        track_hint = str(post.get("vertical_track_hint") or "").strip()
+        if track_hint:
+            return track_hint
+
+        entity_names = self._vertical_entity_names(post)
+        if entity_names:
+            return " / ".join(entity_names[:2]).strip()
+
+        text = self._normalize_vertical_text(post.get("title") or "") or self._normalize_vertical_text(post.get("content") or "")
+        if not text:
+            return "general"
+
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9\-']+", text.lower())
+            if token not in {"and", "or", "the", "a", "an", "to", "of", "for", "in", "on", "with", "from"}
+        ]
+        if not tokens:
+            return "general"
+
+        if tokens[0] in VERTICAL_GENERIC_LEADS and len(tokens) > 1:
+            signature_tokens = tokens[1:3]
+        elif len(tokens) > 1 and (tokens[1] in VERTICAL_GENERIC_SUFFIXES or re.fullmatch(r"v?\d+(?:\.\d+)?", tokens[1])):
+            signature_tokens = tokens[:1]
+        else:
+            signature_tokens = tokens[:2]
+
+        signature = " ".join(signature_tokens).strip()
+        return signature or tokens[0]
+
+    def _vertical_track_title(
+        self,
+        signature: str,
+        posts: List[Dict[str, Any]],
+        index: int,
+        is_overflow: bool = False,
+    ) -> str:
+        if is_overflow:
+            return "Other Updates"
+        if not signature or signature == "general":
+            first_item = posts[0] if posts else {}
+            first_post = first_item.get("representative") if isinstance(first_item, dict) and "representative" in first_item else first_item
+            fallback = self._post_topic(first_post)
+            return fallback[:80] or f"Track {index}"
+        if signature != signature.lower():
+            return signature[:80]
+        return signature.replace("-", " ").title()[:80]
+
+    def _vertical_track_kind(
+        self,
+        clusters: List[Dict[str, Any]],
+        *,
+        track_title: str,
+        story_titles: List[str],
+        entity_hints: List[str],
+        is_overflow: bool = False,
+    ) -> str:
+        if is_overflow:
+            return "one_off_update"
+
+        cluster_count = len(clusters)
+        text = track_title.lower()
+        project_hints = {
+            "agent",
+            "agents",
+            "autoresearch",
+            "build",
+            "coding",
+            "experiment",
+            "framework",
+            "launch",
+            "model",
+            "pipeline",
+            "project",
+            "research",
+            "system",
+            "tool",
+            "workflow",
+        }
+
+        if cluster_count > 1 and (story_titles or any(hint in text for hint in project_hints)):
+            return "project_thread"
+        if cluster_count > 1 and entity_hints:
+            return "recurring_theme"
+        if cluster_count > 1:
+            return "recurring_theme"
+        return "one_off_update"
+
+    def _vertical_track_summary(
+        self,
+        title: str,
+        clusters: List[Dict[str, Any]],
+        *,
+        raw_post_count: int,
+        evidence_cluster_count: int,
+        story_titles: List[str],
+        entity_hints: List[str],
+    ) -> str:
+        if not clusters:
+            return "No posts available for this track."
+        snippets: List[str] = []
+        for cluster in clusters[:3]:
+            snippet = self._vertical_cluster_brief(cluster)
+            if snippet:
+                snippets.append(snippet)
+
+        summary = f"{title} spans {evidence_cluster_count} evidence cluster(s) and {raw_post_count} post(s)"
+        if story_titles:
+            summary += f"; story links: {', '.join(story_titles[:2])}"
+        ordered_entity_hints = list(entity_hints)
+        for preferred in [title, *(story_titles[:1] if story_titles else [])]:
+            if not preferred:
+                continue
+            try:
+                index = next(
+                    idx
+                    for idx, hint in enumerate(ordered_entity_hints)
+                    if hint.lower() == str(preferred).lower()
+                )
+            except StopIteration:
+                continue
+            if index > 0:
+                ordered_entity_hints.insert(0, ordered_entity_hints.pop(index))
+            break
+        if ordered_entity_hints:
+            summary += f"; shared entities: {', '.join(ordered_entity_hints[:2])}"
+        if snippets:
+            summary += f": {'; '.join(snippets)}."
+        else:
+            summary += "."
+        return summary
+
+    def _build_vertical_briefing_markdown(
+        self,
+        *,
+        scope_label: str,
+        start_date: str,
+        end_date: str,
+        posts: List[Dict[str, Any]],
+        tracks: List[Dict[str, Any]],
+    ) -> str:
+        recurring_tracks = [track for track in tracks if track.get("track_kind") != "one_off_update"]
+        one_off_tracks = [track for track in tracks if track.get("track_kind") == "one_off_update"]
+        top_track_titles = [track.get("title") for track in recurring_tracks[:3] if track.get("title")]
+
+        lines: List[str] = [
+            "## Executive Summary",
+            (
+                f"- {len(posts)} post(s) from {scope_label} between {start_date} and {end_date} "
+                f"were organized into {len(tracks)} track(s)."
+            ),
+        ]
+        if top_track_titles:
+            lines.append(f"- Primary recurring threads: {', '.join(top_track_titles)}.")
+        else:
+            lines.append("- The source mostly expressed isolated updates in this range.")
+
+        lines.extend(["", "## Recurring Tracks"])
+        if recurring_tracks:
+            for track in recurring_tracks:
+                lines.extend(self._format_vertical_track_markdown(track))
+        else:
+            lines.append("- No strong recurring threads were identified.")
+
+        if one_off_tracks:
+            lines.extend(["", "## One-Off Updates"])
+            for track in one_off_tracks:
+                lines.extend(self._format_vertical_track_markdown(track, compact=True))
+
+        lines.extend(["", "## Signal Watchlist"])
+        if recurring_tracks:
+            for track in recurring_tracks[:4]:
+                title = track.get("title") or "Untitled track"
+                lines.append(f"- Watch the {title} thread for follow-on shifts.")
+        else:
+            lines.append("- Watch for whether isolated updates start repeating as a broader thread.")
+
+        return "\n".join(line for line in lines if line is not None).strip()
+
+    def _format_vertical_track_markdown(self, track: Dict[str, Any], compact: bool = False) -> List[str]:
+        title = track.get("title") or "Untitled track"
+        summary = track.get("summary") or ""
+        lines = [f"### {title}", summary or "No summary available."]
+        story_titles = track.get("story_titles") or []
+        if story_titles:
+            lines.append(f"- Story links: {', '.join(str(item) for item in story_titles[:4])}")
+        entity_hints = track.get("entity_hints") or []
+        if entity_hints:
+            lines.append(f"- Shared entities: {', '.join(str(item) for item in entity_hints[:4])}")
+        if track.get("evidence_cluster_count") is not None:
+            lines.append(f"- Evidence clusters: {track.get('evidence_cluster_count')}")
+        if track.get("raw_post_count") is not None:
+            lines.append(f"- Raw posts: {track.get('raw_post_count')}")
+        if compact:
+            if track.get("post_ids"):
+                lines.append(f"- Evidence: {', '.join(track.get('post_ids')[:4])}")
+            return lines
+
+        for entry in track.get("timeline") or []:
+            date_value = entry.get("date") or "unknown date"
+            post_ids = entry.get("post_ids") or []
+            evidence = f" ({', '.join(post_ids)})" if post_ids else ""
+            lines.append(f"- **{date_value}**: {entry.get('summary') or ''}{evidence}")
+        return lines
+
+    def _vertical_cluster_brief(self, cluster: Dict[str, Any]) -> str:
+        representative = cluster.get("representative") or {}
+        snippet = self._post_brief(representative).rstrip(".")
+        raw_post_count = int(cluster.get("raw_post_count") or len(cluster.get("posts") or []))
+        if raw_post_count > 1:
+            return f"{snippet} ({raw_post_count} posts collapsed)"
+        return snippet
+
+    def _collect_cluster_story_titles(self, clusters: List[Dict[str, Any]]) -> List[str]:
+        posts = [post for cluster in clusters for post in cluster.get("posts") or []]
+        return self._merge_cluster_story_titles(posts)
+
+    def _collect_cluster_entity_hints(self, clusters: List[Dict[str, Any]]) -> List[str]:
+        posts = [post for cluster in clusters for post in cluster.get("posts") or []]
+        shared = self._merge_cluster_shared_entities(posts)
+        return shared or self._merge_cluster_entity_names(posts)
+
+    def _vertical_cluster_timeline_entry(self, cluster: Dict[str, Any]) -> Dict[str, Any]:
+        representative = cluster.get("representative") or {}
+        raw_post_count = int(cluster.get("raw_post_count") or len(cluster.get("posts") or []))
+        summary = self._post_brief(representative)
+        if raw_post_count > 1:
+            summary = f"{summary.rstrip('.')} ({raw_post_count} posts collapsed)"
+        return {
+            "date": cluster.get("date") or self._vertical_post_date(representative),
+            "summary": summary,
+            "post_ids": list(cluster.get("post_ids") or []),
+        }
+
+    def _vertical_date_span(self, posts: List[Dict[str, Any]]) -> int:
+        dates = [self._vertical_post_date(post) for post in posts if self._vertical_post_date(post)]
+        if len(dates) < 2:
+            return 0
+        return self._date_distance_days(dates[0], dates[-1])
+
+    def _vertical_post_date(self, post: Dict[str, Any]) -> str:
+        value = post.get("published_at") or post.get("date") or post.get("fetched_at")
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if value is None:
+            return ""
+        text = str(value)
+        if "T" in text:
+            return text[:10]
+        return text
+
+    def _vertical_story_titles(self, post: Dict[str, Any]) -> List[str]:
+        titles: List[str] = []
+        seen: set[str] = set()
+        for title in post.get("vertical_story_titles") or []:
+            text = str(title).strip()
+            if not text:
+                continue
+            normalized = text.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            titles.append(text)
+        return titles[:4]
+
+    def _vertical_entity_names(self, post: Dict[str, Any]) -> List[str]:
+        names: List[str] = []
+        seen: set[str] = set()
+        for name in post.get("vertical_shared_entity_names") or []:
+            text = str(name).strip()
+            if not text:
+                continue
+            normalized = text.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            names.append(text)
+        if names:
+            return names[:4]
+
+        for name in post.get("vertical_entity_names") or []:
+            text = str(name).strip()
+            if not text:
+                continue
+            normalized = text.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            names.append(text)
+        return names[:4]
+
+    def _vertical_cluster_key(self, post: Dict[str, Any]) -> str:
+        key = str(post.get("vertical_evidence_cluster_key") or "").strip()
+        if key:
+            return key
+        return str(post.get("id") or "")
+
+    def _vertical_cluster_signature(self, cluster: Dict[str, Any]) -> str:
+        story_titles = cluster.get("story_titles") or []
+        if story_titles:
+            return str(story_titles[0]).strip()
+
+        shared_entities = cluster.get("shared_entity_names") or []
+        if shared_entities:
+            return " / ".join(str(name).strip() for name in shared_entities[:2] if str(name).strip())
+
+        track_hint = str(cluster.get("track_hint") or "").strip()
+        if track_hint:
+            return track_hint
+
+        representative = cluster.get("representative") or {}
+        return self._post_topic(representative) or "general"
+
+    def _vertical_compress_posts(self, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        clusters: Dict[str, Dict[str, Any]] = {}
+        for post in sorted(posts, key=self._post_sort_key):
+            cluster_key = self._vertical_cluster_key(post)
+            cluster = clusters.setdefault(
+                cluster_key,
+                {
+                    "key": cluster_key,
+                    "posts": [],
+                    "post_ids": [],
+                },
+            )
+            cluster["posts"].append(post)
+            post_id = str(post.get("id") or "")
+            if post_id and post_id not in cluster["post_ids"]:
+                cluster["post_ids"].append(post_id)
+
+        compressed: List[Dict[str, Any]] = []
+        for cluster_key, cluster in clusters.items():
+            cluster_posts = sorted(cluster["posts"], key=self._post_sort_key)
+            representative = cluster_posts[0] if cluster_posts else {}
+            story_titles = self._vertical_story_titles(representative)
+            if not story_titles:
+                story_titles = self._merge_cluster_story_titles(cluster_posts)
+            entity_names = self._vertical_entity_names(representative)
+            if not entity_names:
+                entity_names = self._merge_cluster_entity_names(cluster_posts)
+            track_hint = (
+                story_titles[0]
+                if story_titles
+                else " / ".join(entity_names[:2])
+                if entity_names
+                else self._post_topic(representative)
+            )
+            compressed.append(
+                {
+                    "key": cluster_key,
+                    "posts": cluster_posts,
+                    "representative": representative,
+                    "post_ids": [str(post.get("id")) for post in cluster_posts if post.get("id")],
+                    "story_titles": story_titles,
+                    "entity_names": entity_names,
+                    "shared_entity_names": self._merge_cluster_shared_entities(cluster_posts),
+                    "track_hint": track_hint,
+                    "raw_post_count": len(cluster_posts),
+                    "date": self._vertical_post_date(representative),
+                }
+            )
+
+        return compressed
+
+    def _merge_cluster_story_titles(self, posts: List[Dict[str, Any]]) -> List[str]:
+        counts: Counter[str] = Counter()
+        display_by_key: Dict[str, str] = {}
+        for post in posts:
+            for title in post.get("vertical_story_titles") or []:
+                text = str(title).strip()
+                if not text:
+                    continue
+                key = text.lower()
+                counts[key] += 1
+                display_by_key.setdefault(key, text)
+        ordered = [
+            display_by_key[key]
+            for key, _ in sorted(counts.items(), key=lambda item: (-item[1], display_by_key[item[0]].lower()))
+        ]
+        return ordered[:4]
+
+    def _merge_cluster_entity_names(self, posts: List[Dict[str, Any]]) -> List[str]:
+        counts: Counter[str] = Counter()
+        display_by_key: Dict[str, str] = {}
+        for post in posts:
+            for name in post.get("vertical_entity_names") or []:
+                text = str(name).strip()
+                if not text:
+                    continue
+                key = text.lower()
+                counts[key] += 1
+                display_by_key.setdefault(key, text)
+        ordered = [
+            display_by_key[key]
+            for key, _ in sorted(counts.items(), key=lambda item: (-item[1], display_by_key[item[0]].lower()))
+        ]
+        return ordered[:4]
+
+    def _merge_cluster_shared_entities(self, posts: List[Dict[str, Any]]) -> List[str]:
+        counts: Counter[str] = Counter()
+        display_by_key: Dict[str, str] = {}
+        for post in posts:
+            for name in post.get("vertical_entity_names") or []:
+                text = str(name).strip()
+                if not text:
+                    continue
+                key = text.lower()
+                counts[key] += 1
+                display_by_key.setdefault(key, text)
+        ordered = [
+            display_by_key[key]
+            for key, count in sorted(counts.items(), key=lambda item: (-item[1], display_by_key[item[0]].lower()))
+            if count > 1
+        ]
+        return ordered[:4]
+
+    def _date_distance_days(self, start: str, end: str) -> int:
+        try:
+            start_dt = datetime.fromisoformat(start[:10])
+            end_dt = datetime.fromisoformat(end[:10])
+        except ValueError:
+            return 0
+        return abs((end_dt - start_dt).days)
+
+    def _normalize_vertical_text(self, value: str) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        return text

@@ -144,6 +144,20 @@ class EventRebuildDateRequest(BaseModel):
     date: str
     limit: int | None = None
 
+
+class InboxRebuildRequest(BaseModel):
+    generatedForDate: str | None = None
+    scopeType: str | None = "daily_queue"
+    scopeValue: str | None = None
+    limit: int | None = 20
+    actorId: str | None = None
+
+
+class InboxActionRequest(BaseModel):
+    actionType: str
+    actorId: str | None = None
+    payload: Dict[str, Any] | None = None
+
 @app.get("/")
 async def root():
     return {
@@ -411,6 +425,127 @@ async def get_story_timeline(story_id: str):
     except Exception as e:
         logger.exception("Failed to get story timeline")
         return {"success": False, "error": str(e), "story": None, "timeline": []}
+
+
+@app.get("/api/inbox")
+async def get_inbox(batchId: str | None = None, limit: int = 20):
+    """Get the current inbox batch and its items."""
+    try:
+        logger.info("📥 Fetching inbox")
+        return api_bridge.get_inbox(batch_id=batchId, limit=int(limit or 20))
+    except Exception as e:
+        logger.exception("Failed to get inbox")
+        return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
+
+
+@app.get("/api/inbox/batches")
+async def get_inbox_batches(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """List inbox batches."""
+    try:
+        logger.info("📥 Fetching inbox batches")
+        return api_bridge.get_inbox_batches(limit=int(limit or 50), offset=int(offset or 0))
+    except Exception as e:
+        logger.exception("Failed to get inbox batches")
+        return {"success": False, "error": str(e), "batches": [], "total": 0}
+
+
+@app.get("/api/inbox/items")
+async def get_inbox_items(
+    batchId: str | None = None,
+    status: str | None = None,
+    targetType: str | None = None,
+    sourceId: str | None = None,
+    generatedForDate: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List inbox items with optional filters."""
+    try:
+        logger.info("📥 Fetching inbox items")
+        return api_bridge.get_inbox_items(
+            batch_id=batchId,
+            status=status,
+            target_type=targetType,
+            source_id=sourceId,
+            generated_for_date=generatedForDate,
+            limit=int(limit or 100),
+            offset=int(offset or 0),
+        )
+    except Exception as e:
+        logger.exception("Failed to get inbox items")
+        return {"success": False, "error": str(e), "items": [], "total": 0}
+
+
+@app.get("/api/inbox/items/{item_id}")
+async def get_inbox_item(item_id: str):
+    """Get one inbox item with target detail and prior actions."""
+    try:
+        logger.info(f"📥 Fetching inbox item: {item_id}")
+        return api_bridge.get_inbox_item(item_id)
+    except Exception as e:
+        logger.exception("Failed to get inbox item")
+        return {"success": False, "error": str(e), "item": None, "target": None, "actions": []}
+
+
+@app.post("/api/inbox/rebuild")
+async def rebuild_inbox(request: InboxRebuildRequest | None = None):
+    """Rebuild the analyst inbox queue."""
+    try:
+        logger.info("🔄 Rebuilding inbox")
+        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
+        return api_bridge.rebuild_inbox(
+            generated_for_date=payload.get("generatedForDate") or payload.get("generated_for_date"),
+            scope_type=payload.get("scopeType") or payload.get("scope_type") or "daily_queue",
+            scope_value=payload.get("scopeValue") or payload.get("scope_value"),
+            limit=int(payload.get("limit") or 20),
+            actor_id=payload.get("actorId") or payload.get("actor_id"),
+        )
+    except Exception as e:
+        logger.exception("Failed to rebuild inbox")
+        return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
+
+
+@app.post("/api/inbox/items/{item_id}/actions")
+async def record_inbox_action(item_id: str, request: InboxActionRequest):
+    """Record a durable analyst action for one inbox item."""
+    try:
+        logger.info(f"🧭 Recording inbox action for item: {item_id}")
+        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
+        return api_bridge.record_inbox_action(
+            item_id,
+            payload.get("actionType") or payload.get("action_type"),
+            actor_id=payload.get("actorId") or payload.get("actor_id"),
+            payload=payload.get("payload"),
+        )
+    except Exception as e:
+        logger.exception("Failed to record inbox action")
+        return {"success": False, "error": str(e), "action": None, "item": None, "side_effects": []}
+
+
+@app.get("/api/inbox/actions")
+async def get_inbox_actions(
+    limit: int = 100,
+    offset: int = 0,
+    targetType: str | None = None,
+    targetId: str | None = None,
+    inboxItemId: str | None = None,
+):
+    """List inbox action audit records."""
+    try:
+        logger.info("🧭 Fetching inbox actions")
+        return api_bridge.get_inbox_actions(
+            limit=int(limit or 100),
+            offset=int(offset or 0),
+            target_type=targetType,
+            target_id=targetId,
+            inbox_item_id=inboxItemId,
+        )
+    except Exception as e:
+        logger.exception("Failed to get inbox actions")
+        return {"success": False, "error": str(e), "actions": [], "total": 0}
 
 
 @app.get("/api/posts/item/{post_id}/notes")
@@ -753,6 +888,44 @@ async def generate_weekly_briefing(request: BriefingRequest):
     except Exception as e:
         logger.error(f"❌ Failed to generate weekly briefing: {e}")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/briefings/vertical/source/{source_id}")
+async def get_source_vertical_briefing(
+    source_id: str,
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Generate or fetch a cached source-scoped vertical briefing."""
+    try:
+        logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
+        if not start or not end:
+            raise HTTPException(status_code=400, detail="Start and end parameters required")
+        return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=False)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to get source vertical briefing")
+        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}}
+
+
+@app.post("/api/briefings/vertical/source/{source_id}/refresh")
+async def refresh_source_vertical_briefing(
+    source_id: str,
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Force regeneration of a source-scoped vertical briefing."""
+    try:
+        logger.info(f"🔄 Refreshing vertical briefing for source {source_id}")
+        if not start or not end:
+            raise HTTPException(status_code=400, detail="Start and end parameters required")
+        return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to refresh source vertical briefing")
+        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}}
 
 @app.get("/health")
 async def health_check():
