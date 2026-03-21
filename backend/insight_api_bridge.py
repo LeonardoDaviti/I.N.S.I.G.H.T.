@@ -13,6 +13,7 @@ from insight_core.services.evidence_foundation_service import EvidenceFoundation
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.stories_service import StoriesService
 from insight_core.services.youtube_service import YouTubeService
 
 from insight_core.scripts.ingest import ingest_posts
@@ -37,6 +38,7 @@ class InsightApiBridge:
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
         self.post_detail_service = PostDetailService(self.db)
+        self.stories_service = StoriesService(self.db)
         self.youtube_service = YouTubeService(self.db)
 
     def _start_job_safe(self, *args, **kwargs) -> str | None:
@@ -953,6 +955,63 @@ class InsightApiBridge:
             return {"success": True, "events": events}
         except Exception as e:
             return {"success": False, "error": str(e), "events": None}
+
+    def get_stories(
+        self,
+        *,
+        status: str | None = None,
+        story_kind: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        try:
+            limit = 100 if limit is None else int(limit)
+            offset = 0 if offset is None else int(offset)
+            stories = self.stories_service.list_stories(
+                status=status,
+                story_kind=story_kind,
+                limit=limit,
+                offset=offset,
+            )
+            return {
+                "success": True,
+                "stories": stories,
+                "total": len(stories),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "stories": [],
+                "total": 0,
+            }
+
+    def get_story(self, story_id: str) -> Dict[str, Any]:
+        try:
+            story = self.stories_service.get_story_detail(story_id)
+            if not story:
+                return {"success": False, "error": f"Story {story_id} not found", "story": None}
+            return {"success": True, "story": story}
+        except Exception as e:
+            return {"success": False, "error": str(e), "story": None}
+
+    def get_story_timeline(self, story_id: str) -> Dict[str, Any]:
+        try:
+            timeline = self.stories_service.get_story_timeline(story_id)
+            if not timeline:
+                return {"success": False, "error": f"Story {story_id} not found", "story": None, "timeline": []}
+            return {"success": True, **timeline}
+        except Exception as e:
+            return {"success": False, "error": str(e), "story": None, "timeline": []}
+
+    def get_post_story(self, post_id: str) -> Dict[str, Any]:
+        try:
+            post = self.post_detail_service.get_post_by_id(post_id)
+            if not post:
+                return {"success": False, "error": f"Post {post_id} not found", "post_id": post_id, "stories": []}
+            return {"success": True, **self.stories_service.get_post_story(post_id)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id, "stories": []}
 
     def rebuild_post_evidence(self, post_id: str) -> Dict[str, Any]:
         job_id = self._start_job_safe(

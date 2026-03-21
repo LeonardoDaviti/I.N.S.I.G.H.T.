@@ -339,6 +339,17 @@ async def get_post_events(post_id: str):
         return {"success": False, "error": str(e), "events": None}
 
 
+@app.get("/api/posts/item/{post_id}/story")
+async def get_post_story(post_id: str):
+    """Get the connected story view for a single post."""
+    try:
+        logger.info(f"📖 Fetching post story: {post_id}")
+        return api_bridge.get_post_story(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post story")
+        return {"success": False, "error": str(e), "stories": []}
+
+
 @app.post("/api/events/rebuild-for-post")
 async def rebuild_events_for_post(request: EventRebuildPostRequest):
     try:
@@ -357,6 +368,49 @@ async def rebuild_events_for_date(request: EventRebuildDateRequest):
     except Exception as e:
         logger.exception("Failed to rebuild event memory for date")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/stories")
+async def get_stories(
+    status: str | None = Query(default=None),
+    story_kind: str | None = Query(default=None, alias="storyKind"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """List persisted stories."""
+    try:
+        logger.info("📚 Fetching stories")
+        return api_bridge.get_stories(
+            status=status,
+            story_kind=story_kind,
+            limit=int(limit or 100),
+            offset=int(offset or 0),
+        )
+    except Exception as e:
+        logger.exception("Failed to get stories")
+        return {"success": False, "error": str(e), "stories": [], "total": 0}
+
+
+@app.get("/api/stories/{story_id}")
+async def get_story(story_id: str):
+    """Get a single story with attached evidence and updates."""
+    try:
+        logger.info(f"📚 Fetching story: {story_id}")
+        return api_bridge.get_story(story_id)
+    except Exception as e:
+        logger.exception("Failed to get story")
+        return {"success": False, "error": str(e), "story": None}
+
+
+@app.get("/api/stories/{story_id}/timeline")
+async def get_story_timeline(story_id: str):
+    """Get a story timeline with update-level evidence."""
+    try:
+        logger.info(f"📚 Fetching story timeline: {story_id}")
+        return api_bridge.get_story_timeline(story_id)
+    except Exception as e:
+        logger.exception("Failed to get story timeline")
+        return {"success": False, "error": str(e), "story": None, "timeline": []}
 
 
 @app.get("/api/posts/item/{post_id}/notes")
