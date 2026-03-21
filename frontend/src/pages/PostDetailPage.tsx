@@ -253,12 +253,12 @@ export default function PostDetailPage() {
     setChatting(false);
   };
 
-  const categories = Array.isArray(post.categories) ? post.categories : [];
-  const topics = Array.isArray(post.topics) ? post.topics : [];
-  const platformLabel = typeof post.platform === 'string' ? post.platform.toUpperCase() : '';
-  const renderContent = typeof post.content_html === 'string'
+  const categories = Array.isArray(post?.categories) ? post.categories : [];
+  const topics = Array.isArray(post?.topics) ? post.topics : [];
+  const platformLabel = typeof post?.platform === 'string' ? post.platform.toUpperCase() : '';
+  const renderContent = typeof post?.content_html === 'string'
     ? post.content_html
-    : typeof post.content === 'string'
+    : typeof post?.content === 'string'
       ? post.content
       : '';
   const safeCommentPreview = (comment: RedditComment) => {

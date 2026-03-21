@@ -105,6 +105,19 @@ function formatEstimatedTokens(value: unknown) {
   return num.toLocaleString();
 }
 
+function formatTimeRemaining(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 function extractEstimatedTokens(payload?: Record<string, any> | null) {
   return formatEstimatedTokens(payload?.estimated_tokens ?? payload?.token_usage?.estimated_tokens);
 }
@@ -160,6 +173,17 @@ export default function IngestionControl() {
   const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const tickId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(tickId);
+    };
+  }, []);
 
   const appendLog = (level: LogLevel, message: string) => {
     setLogs((prev) => [
@@ -313,6 +337,36 @@ export default function IngestionControl() {
     [archiveCatalog, selectedSourceId],
   );
 
+  const schedulerNextRunAt = useMemo(() => {
+    if (!schedulerConfig?.interval_hours) return null;
+
+    const schedulerJobs = (operationsOverview?.jobs || []).filter(
+      (job) => job.job_type === 'scheduler_cycle' && job.trigger === 'scheduler',
+    );
+    if (!schedulerJobs.length) return null;
+
+    const latestSchedulerJob = schedulerJobs.reduce((latest, current) => {
+      const latestAt = new Date(latest.finished_at || latest.started_at || '').getTime();
+      const currentAt = new Date(current.finished_at || current.started_at || '').getTime();
+      return currentAt > latestAt ? current : latest;
+    });
+
+    const baselineAt = latestSchedulerJob.finished_at || latestSchedulerJob.started_at;
+    if (!baselineAt) return null;
+
+    const baselineMs = new Date(baselineAt).getTime();
+    if (Number.isNaN(baselineMs)) return null;
+
+    return baselineMs + (Number(schedulerConfig.interval_hours) * 60 * 60 * 1000);
+  }, [operationsOverview?.jobs, schedulerConfig?.interval_hours]);
+
+  const schedulerCountdown = useMemo(() => {
+    if (!schedulerNextRunAt) return null;
+    const remaining = schedulerNextRunAt - nowMs;
+    if (remaining <= 0) return 'due now';
+    return formatTimeRemaining(remaining);
+  }, [schedulerNextRunAt, nowMs]);
+
   useEffect(() => {
     if (!enabledSources.length) {
       return;
@@ -425,6 +479,13 @@ export default function IngestionControl() {
             <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
               <Clock3 className="h-4 w-4 text-indigo-600" />
               {schedulerConfig ? `${schedulerConfig.interval_hours}-hour automatic cycle` : 'Loading...'}
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              {schedulerConfig
+                ? schedulerNextRunAt
+                  ? `Next ingestion in ${schedulerCountdown} (${new Date(schedulerNextRunAt).toLocaleString()})`
+                  : 'Next ingestion countdown will appear after the first scheduler cycle is recorded.'
+                : 'Reading scheduler status...'}
             </div>
           </div>
         </div>
