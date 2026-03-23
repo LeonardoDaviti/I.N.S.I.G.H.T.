@@ -253,23 +253,31 @@ async def safe_ingest_posts(trigger: str = "manual"):
     repo = PostsRepository(db_url)
     event_service = EventMemoryService(db_url)
     per_source_fetch_counts = {}
+    persisted_posts = []
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             for post in all_posts:
                 post_copy = dict(post)
                 source_id = post_copy.pop("_source_id")
                 per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
-                repo.upsert_post(cur, post_copy, source_id)
+                post_id, _ = repo.upsert_post(cur, post_copy, source_id)
+                persisted_posts.append(
+                    {
+                        **post_copy,
+                        "id": post_id,
+                        "_source_id": source_id,
+                    }
+                )
                 logger.info(f"Saved post: {post_copy['url']}")
         conn.commit()
 
-    if all_posts:
+    if persisted_posts:
         try:
-            EntityMemoryService(db_url).process_posts(all_posts)
+            EntityMemoryService(db_url).process_posts(persisted_posts)
         except Exception as exc:
             logger.warning("Entity memory enrichment skipped: %s", exc)
         try:
-            event_service.process_posts(all_posts)
+            event_service.process_posts(persisted_posts)
         except Exception as exc:
             logger.warning("Event memory enrichment skipped: %s", exc)
 

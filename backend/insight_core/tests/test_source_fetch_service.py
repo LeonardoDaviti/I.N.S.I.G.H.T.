@@ -2,6 +2,7 @@ import asyncio
 import unittest
 import sys
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -163,6 +164,57 @@ class SourceFetchServiceTests(unittest.TestCase):
 
         self.assertIn("<h1>Deep analysis</h1>", extracted)
         self.assertGreater(len(self.service._strip_html(extracted)), 500)
+
+    def test_persist_posts_enriches_with_persisted_ids(self):
+        class _FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeConnection:
+            def cursor(self):
+                return _FakeCursor()
+
+            def commit(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        posts = [
+            {"title": "Post One", "url": "https://example.com/1"},
+            {"title": "Post Two", "url": "https://example.com/2"},
+        ]
+
+        self.service.posts_repo = mock.Mock()
+        self.service.posts_repo.upsert_post.side_effect = [
+            ("post-1", True),
+            ("post-2", False),
+        ]
+        self.service.memory_service = mock.Mock()
+        self.service.memory_service.process_posts.return_value = {
+            "posts_processed": 2,
+            "mentions_created": 3,
+            "entities_linked": 4,
+        }
+        self.service.event_service = mock.Mock()
+
+        with mock.patch("insight_core.services.source_fetch_service.psycopg.connect", return_value=_FakeConnection()):
+            result = self.service._persist_posts("source-1", posts)
+
+        self.service.memory_service.process_posts.assert_called_once()
+        self.service.event_service.process_posts.assert_called_once()
+        enriched_posts = self.service.memory_service.process_posts.call_args.args[0]
+        self.assertEqual([post["id"] for post in enriched_posts], ["post-1", "post-2"])
+        self.assertTrue(all(post["_source_id"] == "source-1" for post in enriched_posts))
+        self.assertEqual(result["inserted"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["memory_processed"], 2)
 
 
 if __name__ == "__main__":

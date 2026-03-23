@@ -1235,41 +1235,33 @@ class SourceFetchService:
     def _persist_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> Dict[str, int]:
         inserted = 0
         updated = 0
+        persisted_posts: List[Dict[str, Any]] = []
 
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 for post in posts:
-                    _, was_inserted = self.posts_repo.upsert_post(cur, post, source_id)
+                    post_id, was_inserted = self.posts_repo.upsert_post(cur, post, source_id)
+                    persisted_posts.append(
+                        {
+                            **post,
+                            "id": post_id,
+                            "_source_id": source_id,
+                        }
+                    )
                     if was_inserted:
                         inserted += 1
                     else:
                         updated += 1
             conn.commit()
 
-        if posts:
+        if persisted_posts:
             try:
-                memory_result = self.memory_service.process_posts(
-                    [
-                        {
-                            **post,
-                            "_source_id": source_id,
-                        }
-                        for post in posts
-                    ]
-                )
+                memory_result = self.memory_service.process_posts(persisted_posts)
             except Exception as exc:
                 self.logger.warning("Entity memory enrichment skipped for %s: %s", source_id, exc)
                 memory_result = {"posts_processed": 0, "mentions_created": 0, "entities_linked": 0}
             try:
-                self.event_service.process_posts(
-                    [
-                        {
-                            **post,
-                            "_source_id": source_id,
-                        }
-                        for post in posts
-                    ]
-                )
+                self.event_service.process_posts(persisted_posts)
             except Exception as exc:
                 self.logger.warning("Event memory enrichment skipped for %s: %s", source_id, exc)
         else:

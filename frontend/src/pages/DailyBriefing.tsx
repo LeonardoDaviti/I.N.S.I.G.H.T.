@@ -1318,8 +1318,33 @@ export default function DailyBriefing() {
           )}
         </div>
 
+        {/* Actions */}
+        <div className="mb-6 border-t border-gray-200 pt-4">
+          <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Actions</h3>
+          <div className="space-y-1.5">
+            <button
+              onClick={() => navigate('/ingestion')}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Ingestion Control
+            </button>
+            <button 
+              onClick={() => setActiveView('configure')}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
+                activeView === 'configure'
+                  ? 'bg-indigo-50 text-indigo-900 border border-indigo-200'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Configure Sources
+            </button>
+          </div>
+        </div>
+
         {/* Sources Navigation */}
-        <div className="mb-6">
+        <div>
           <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Sources</h3>
           <nav className="space-y-1">
             {/* All Posts */}
@@ -1343,17 +1368,15 @@ export default function DailyBriefing() {
               </div>
             ) : sourcesData && Object.keys(sourcesData.platforms)
                 .filter(platform => {
-                  // Only show platforms with posts
                   const platformData = sourcesData.platforms[platform];
                   return platformData.total_count > 0;
                 })
                 .map((platform) => {
               const platformData = sourcesData.platforms[platform];
               const isExpanded = expandedPlatforms[platform];
-              
+
               return (
                 <div key={platform} className="space-y-1">
-                  {/* Platform header */}
                   <button
                     onClick={() => setExpandedPlatforms(prev => ({...prev, [platform]: !isExpanded}))}
                     className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
@@ -1365,11 +1388,10 @@ export default function DailyBriefing() {
                     <span className="text-xs text-gray-500">{platformData.total_count}</span>
                   </button>
 
-                  {/* Platform sources */}
                   {isExpanded && (
                     <div className="ml-3.5 space-y-1">
                       {platformData.sources
-                        .filter(source => source.post_count > 0) // Only show sources with posts
+                        .filter(source => source.post_count > 0)
                         .map((source) => (
                         <button
                           key={source.id}
@@ -1390,31 +1412,6 @@ export default function DailyBriefing() {
               );
             })}
           </nav>
-        </div>
-
-        {/* Actions */}
-        <div className="border-t border-gray-200 pt-4">
-          <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Actions</h3>
-          <div className="space-y-1.5">
-            <button
-              onClick={() => navigate('/ingestion')}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Ingestion Control
-            </button>
-            <button 
-              onClick={() => setActiveView('configure')}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
-                activeView === 'configure'
-                  ? 'bg-indigo-50 text-indigo-900 border border-indigo-200'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              Configure Sources
-            </button>
-          </div>
         </div>
       </div>
 
