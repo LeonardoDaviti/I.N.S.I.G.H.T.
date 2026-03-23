@@ -294,6 +294,18 @@ export default function DailyBriefing() {
     return query ? `/briefing?${query}` : '/briefing';
   };
 
+  const handleCopyPost = async (post: Post, key: string) => {
+    try {
+      await copyPostText(post);
+      setCopied((prev) => ({ ...prev, [key]: true }));
+      window.setTimeout(() => {
+        setCopied((prev) => ({ ...prev, [key]: false }));
+      }, 1800);
+    } catch {
+      setError('Failed to copy post text to clipboard');
+    }
+  };
+
   const loadSourcesWithCounts = async () => {
     setIsLoadingSources(true);
     try {
@@ -1845,17 +1857,18 @@ export default function DailyBriefing() {
                                             <Scissors className="w-3.5 h-3.5" />
                                           </button>
                                           <button
-                                            className="text-gray-600 hover:text-gray-900 p-1"
-                                            onClick={async (e) => {
+                                            type="button"
+                                            className={`p-1 rounded transition-colors ${copied[key]
+                                              ? 'text-emerald-700 bg-emerald-100'
+                                              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                                            }`}
+                                            title={copied[key] ? 'Copied to clipboard' : 'Copy post text'}
+                                            onClick={(e) => {
                                               e.stopPropagation();
-                                              try {
-                                                await copyPostText(post);
-                                                setCopied((prev) => ({ ...prev, [key]: true }));
-                                                setTimeout(() => setCopied((prev) => ({ ...prev, [key]: false })), 1500);
-                                              } catch {}
+                                              void handleCopyPost(post, key);
                                             }}
                                           >
-                                            <Copy className="w-3.5 h-3.5" />
+                                            {copied[key] ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                                           </button>
                                         </div>
                                       </button>
@@ -1970,17 +1983,18 @@ export default function DailyBriefing() {
                               </a>
                             )}
                             <button
-                              className="text-gray-600 hover:text-gray-900 p-1"
-                              onClick={async (e) => {
+                              type="button"
+                              className={`p-1 rounded transition-colors ${copied[key]
+                                ? 'text-emerald-700 bg-emerald-100'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                              }`}
+                              title={copied[key] ? 'Copied to clipboard' : 'Copy post text'}
+                              onClick={(e) => {
                                 e.stopPropagation();
-                                try {
-                                  await copyPostText(post);
-                                  setCopied((prev) => ({ ...prev, [key]: true }));
-                                  setTimeout(() => setCopied((prev) => ({ ...prev, [key]: false })), 1500);
-                                } catch {}
+                                void handleCopyPost(post, key);
                               }}
                             >
-                              <Copy className="w-3.5 h-3.5" />
+                              {copied[key] ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
                           </div>
                         </button>
