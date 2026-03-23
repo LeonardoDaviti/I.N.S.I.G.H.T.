@@ -4,7 +4,7 @@ import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCir
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
-import type { BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
+import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 
 function getRenderablePostContent(post: Post): string {
@@ -58,6 +58,92 @@ function getPlatformTone(platform?: string) {
   }
 }
 
+function BriefingReferenceStrip({
+  references,
+  onOpenPost,
+  className = '',
+}: {
+  references?: BriefingReference[] | null;
+  onOpenPost: (postId: string) => void;
+  className?: string;
+}) {
+  if (!references?.length) {
+    return null;
+  }
+
+  const visible = references.slice(0, 10);
+
+  return (
+    <div className={`rounded-2xl border border-gray-200 bg-white/80 p-4 ${className}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+            Referenced Posts
+          </div>
+          <div className="text-sm text-gray-600">
+            {references.length} source{references.length === 1 ? '' : 's'} linked to this briefing
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {visible.map((reference, index) => {
+          const post = reference.post;
+          const label = reference.display_label || post?.title || post?.source_display_name || post?.source || `Post ${index + 1}`;
+          const rawHighlight = reference.highlight?.highlight_text || reference.highlight?.commentary || '';
+          const highlight = rawHighlight.length > 220 ? `${rawHighlight.slice(0, 220)}…` : rawHighlight;
+          return (
+            <div key={reference.id || `${reference.post_id}-${index}`} className="min-w-[220px] max-w-[320px] rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => reference.post_id && onOpenPost(reference.post_id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="truncate text-sm font-semibold text-gray-900">{label}</div>
+                  <div className="mt-1 truncate text-xs text-gray-500">
+                    {post?.source_display_name || post?.source || reference.reference_role || 'reference'}
+                  </div>
+                </button>
+                <div className="flex items-center gap-2 text-gray-500">
+                  {post?.url && (
+                    <a
+                      href={post.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-gray-800"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                  {reference.post_id && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPost(reference.post_id!)}
+                      className="hover:text-gray-800"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {highlight && (
+                <div className="mt-2 text-xs leading-relaxed text-gray-600">
+                  {highlight}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {references.length > visible.length && (
+        <div className="mt-3 text-xs text-gray-500">
+          +{references.length - visible.length} more referenced posts
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DailyBriefing() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -71,6 +157,8 @@ export default function DailyBriefing() {
   // Briefing generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [briefingData, setBriefingData] = useState<string | null>(null);
+  const [briefingTakeaway, setBriefingTakeaway] = useState<string | null>(null);
+  const [briefingReferences, setBriefingReferences] = useState<BriefingReference[]>([]);
   const [isGeneratingWeekly, setIsGeneratingWeekly] = useState(false);
   const [isGeneratingWeeklyTopics, setIsGeneratingWeeklyTopics] = useState(false);
   const [weeklyBriefing, setWeeklyBriefing] = useState<string | null>(null);
@@ -80,9 +168,11 @@ export default function DailyBriefing() {
     dailyBriefingsUsed?: number;
     cached?: boolean;
     variant?: string | null;
+    oneSentenceTakeaway?: string | null;
   } | null>(null);
   const [weeklyTopics, setWeeklyTopics] = useState<Topic[]>([]);
   const [weeklyPostsMap, setWeeklyPostsMap] = useState<Record<string, Post>>({});
+  const [weeklyReferences, setWeeklyReferences] = useState<BriefingReference[]>([]);
   const [briefingStats, setBriefingStats] = useState<{
     postsProcessed: number;
     totalFetched: number;
@@ -93,8 +183,10 @@ export default function DailyBriefing() {
   const [isGeneratingTopics, setIsGeneratingTopics] = useState(false);
   const [isRefreshingTopics, setIsRefreshingTopics] = useState(false);
   const [topicsBriefing, setTopicsBriefing] = useState<string | null>(null);
+  const [topicsTakeaway, setTopicsTakeaway] = useState<string | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [postsMap, setPostsMap] = useState<Record<string, Post>>({});
+  const [topicsReferences, setTopicsReferences] = useState<BriefingReference[]>([]);
   const [openTopics, setOpenTopics] = useState<Record<string, boolean>>({});
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>({});
   
@@ -609,14 +701,19 @@ export default function DailyBriefing() {
     setIsGenerating(true);
     setError(null);
     setBriefingData(null);
+    setBriefingTakeaway(null);
+    setBriefingReferences([]);
     setWeeklyBriefing(null);
     setWeeklyMeta(null);
     setWeeklyTopics([]);
     setWeeklyPostsMap({});
+    setWeeklyReferences([]);
     setBriefingStats(null);
     setTopicsBriefing(null);
+    setTopicsTakeaway(null);
     setTopics([]);
     setPostsMap({});
+    setTopicsReferences([]);
     setOpenTopics({});
     setActiveView('briefing');
     updateRouteState({
@@ -634,6 +731,8 @@ export default function DailyBriefing() {
       if (response.success && response.briefing) {
         console.log('✅ Briefing generated successfully');
         setBriefingData(response.briefing);
+        setBriefingTakeaway(response.one_sentence_takeaway || null);
+        setBriefingReferences(response.references || []);
         setBriefingStats({
           postsProcessed: response.posts_processed || 0,
           totalFetched: response.total_posts_fetched || 0,
@@ -656,12 +755,17 @@ export default function DailyBriefing() {
     setIsGeneratingWeekly(true);
     setError(null);
     setBriefingData(null);
+    setBriefingTakeaway(null);
+    setBriefingReferences([]);
     setBriefingStats(null);
     setTopicsBriefing(null);
+    setTopicsTakeaway(null);
     setTopics([]);
     setPostsMap({});
+    setTopicsReferences([]);
     setWeeklyTopics([]);
     setWeeklyPostsMap({});
+    setWeeklyReferences([]);
     setOpenTopics({});
     setActiveView('briefing');
     updateRouteState({
@@ -682,7 +786,9 @@ export default function DailyBriefing() {
           dailyBriefingsUsed: response.daily_briefings_used,
           cached: response.cached,
           variant: response.variant || 'default',
+          oneSentenceTakeaway: response.one_sentence_takeaway || null,
         });
+        setWeeklyReferences(response.references || []);
       } else {
         setError(response.error || 'Failed to generate weekly briefing');
       }
@@ -698,12 +804,17 @@ export default function DailyBriefing() {
     setIsGeneratingWeeklyTopics(true);
     setError(null);
     setBriefingData(null);
+    setBriefingTakeaway(null);
+    setBriefingReferences([]);
     setBriefingStats(null);
     setTopicsBriefing(null);
+    setTopicsTakeaway(null);
     setTopics([]);
     setPostsMap({});
+    setTopicsReferences([]);
     setWeeklyTopics([]);
     setWeeklyPostsMap({});
+    setWeeklyReferences([]);
     setOpenTopics({});
     setActiveView('briefing');
     updateRouteState({
@@ -724,9 +835,11 @@ export default function DailyBriefing() {
           dailyBriefingsUsed: response.daily_briefings_used,
           cached: response.cached,
           variant: response.variant || 'topics',
+          oneSentenceTakeaway: response.one_sentence_takeaway || null,
         });
         setWeeklyTopics(response.topics || []);
         setWeeklyPostsMap(response.posts || {});
+        setWeeklyReferences(response.references || []);
         const requestedTopicIds = options?.topicIds || [];
         const nextOpenTopics: Record<string, boolean> = {};
         if (requestedTopicIds.length) {
@@ -758,14 +871,19 @@ export default function DailyBriefing() {
     }
     setError(null);
     setTopicsBriefing(null);
+    setTopicsTakeaway(null);
     setWeeklyBriefing(null);
     setWeeklyMeta(null);
     setWeeklyTopics([]);
     setWeeklyPostsMap({});
+    setWeeklyReferences([]);
     setTopics([]);
     setPostsMap({});
+    setTopicsReferences([]);
     setOpenTopics({});
     setBriefingData(null);
+    setBriefingTakeaway(null);
+    setBriefingReferences([]);
     setBriefingStats(null);
     setActiveView('briefing');
     updateRouteState({
@@ -783,8 +901,10 @@ export default function DailyBriefing() {
       });
       if (response.success) {
         setTopicsBriefing(response.briefing || null);
+        setTopicsTakeaway(response.one_sentence_takeaway || null);
         setTopics(response.topics || []);
         setPostsMap(response.posts || {});
+        setTopicsReferences(response.references || []);
         const first = (response.topics || [])[0];
         const nextOpenTopics: Record<string, boolean> = {};
         if (requestedTopicIds.length) {
@@ -926,6 +1046,10 @@ export default function DailyBriefing() {
   }, [searchParams]);
 
   const briefingTitle = weeklyBriefing || briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
+  const activeTakeaway = weeklyMeta?.oneSentenceTakeaway || briefingTakeaway || topicsTakeaway;
+  const openPostDetail = (postId: string) => {
+    navigate(`/posts/${postId}`, { state: { returnTo: currentReturnUrl() } });
+  };
 
   return (
     <div className="app-shell flex h-screen">
@@ -1290,6 +1414,16 @@ export default function DailyBriefing() {
           {activeView === 'briefing' && (
             <div className="space-y-6">
               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">{briefingTitle}</h1>
+              {activeTakeaway && (
+                <div className="rounded-2xl border border-gray-200 bg-white/80 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+                    One-Sentence Takeaway
+                  </div>
+                  <div className="mt-2 text-sm leading-7 text-gray-700">
+                    {activeTakeaway}
+                  </div>
+                </div>
+              )}
 
               {/* Standard Briefing */}
               {weeklyBriefing && weeklyMeta?.variant !== 'topics' && (
@@ -1299,6 +1433,9 @@ export default function DailyBriefing() {
                   </h3>
                   <div className="prose max-w-none">
                     <MarkdownRenderer content={weeklyBriefing} />
+                  </div>
+                  <div className="mt-4">
+                    <BriefingReferenceStrip references={weeklyReferences} onOpenPost={openPostDetail} />
                   </div>
                 </div>
               )}
@@ -1311,6 +1448,9 @@ export default function DailyBriefing() {
                     </h3>
                     <div className="prose max-w-none">
                       <MarkdownRenderer content={weeklyBriefing} />
+                    </div>
+                    <div className="mt-4">
+                      <BriefingReferenceStrip references={weeklyReferences} onOpenPost={openPostDetail} />
                     </div>
                   </div>
                   <div className="bg-white border border-gray-200 rounded-lg p-4">
@@ -1431,6 +1571,9 @@ export default function DailyBriefing() {
                   <div className="prose max-w-none">
                     <MarkdownRenderer content={briefingData} />
                   </div>
+                  <div className="mt-4">
+                    <BriefingReferenceStrip references={briefingReferences} onOpenPost={openPostDetail} />
+                  </div>
                 </div>
               )}
 
@@ -1443,6 +1586,9 @@ export default function DailyBriefing() {
                       <MarkdownRenderer content={topicsBriefing} />
                     </div>
                   )}
+                  <div className="mb-4">
+                    <BriefingReferenceStrip references={topicsReferences} onOpenPost={openPostDetail} />
+                  </div>
                   <div className="space-y-3.5">
                     {topics.map((topic, tIndex) => {
                       const isOpen = Boolean(openTopics[topic.id]);

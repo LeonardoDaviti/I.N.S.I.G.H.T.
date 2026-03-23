@@ -80,6 +80,35 @@ export interface BriefingRequest {
   date: string; // Format: "YYYY-MM-DD"
 }
 
+export interface BriefingHighlight {
+  id?: string;
+  post_id?: string;
+  highlight_text?: string;
+  highlight_kind?: string;
+  start_char?: number | null;
+  end_char?: number | null;
+  language_code?: string | null;
+  importance_score?: number;
+  commentary?: string | null;
+  extractor_name?: string | null;
+  extractor_version?: string | null;
+  created_at?: string | null;
+}
+
+export interface BriefingReference {
+  id?: string;
+  artifact_type?: string;
+  artifact_id?: string;
+  post_id?: string;
+  highlight_id?: string | null;
+  reference_role?: string;
+  display_label?: string | null;
+  order_index?: number;
+  created_at?: string | null;
+  post?: Post | null;
+  highlight?: BriefingHighlight | null;
+}
+
 export interface BriefingResponse {
   success: boolean;
   briefing?: string; // AI-generated briefing content
@@ -91,6 +120,8 @@ export interface BriefingResponse {
   saved_briefing_id?: string | null;
   cached?: boolean;
   estimated_tokens?: number;
+  one_sentence_takeaway?: string | null;
+  references?: BriefingReference[];
   error?: string;
 }
 
@@ -107,8 +138,10 @@ export interface WeeklyBriefingResponse {
   daily_briefings_used?: number;
   days_covered?: string[];
   estimated_tokens?: number;
+  one_sentence_takeaway?: string | null;
   topics?: Topic[];
   posts?: Record<string, Post>;
+  references?: BriefingReference[];
   variant?: string;
   error?: string;
 }
@@ -145,6 +178,8 @@ export interface BriefingTopicsResponse {
   posts?: Record<string, Post>;
   // list of database post UUIDs not referenced by any named topic
   unreferenced_posts?: string[];
+  one_sentence_takeaway?: string | null;
+  references?: BriefingReference[];
   error?: string;
 }
 
@@ -178,6 +213,30 @@ export interface Post {
   handle_or_url?: string;
   source_display_name?: string;
   topics?: Array<{ id: string; title: string; date?: string | null }>;
+}
+
+export interface PostHighlight {
+  id?: string;
+  post_id?: string;
+  highlight_text: string;
+  highlight_kind?: string;
+  start_char?: number | null;
+  end_char?: number | null;
+  language_code?: string | null;
+  importance_score?: number;
+  commentary?: string | null;
+  extractor_name?: string | null;
+  extractor_version?: string | null;
+  created_at?: string | null;
+}
+
+export interface ReaderState {
+  post_id?: string;
+  is_favorited?: boolean;
+  open_count?: number;
+  first_opened_at?: string | null;
+  last_opened_at?: string | null;
+  total_read_seconds?: number;
 }
 
 export interface SourceStats {
@@ -314,6 +373,10 @@ export interface PostDetailResponse {
   error?: string;
   post?: Post | null;
   notes?: PostNotesPayload;
+  summary?: PostSummaryResponse | null;
+  summary_references?: BriefingReference[];
+  highlights?: PostHighlight[];
+  reader_state?: ReaderState | null;
 }
 
 export interface PostSummaryResponse {
@@ -326,6 +389,35 @@ export interface PostSummaryResponse {
   cached?: boolean;
   categories?: string[];
   estimated_tokens?: number;
+  one_sentence_takeaway?: string | null;
+  highlights?: PostHighlight[];
+  references?: BriefingReference[];
+}
+
+export interface PostHighlightsResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  highlights?: PostHighlight[];
+  one_sentence_takeaway?: string | null;
+  cached?: boolean;
+  model?: string | null;
+}
+
+export interface PostReaderStateResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  reader_state?: ReaderState | null;
+}
+
+export interface PostInteractionResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  event?: Record<string, any> | null;
+  reader_state?: ReaderState | null;
+  favorited?: boolean;
 }
 
 export interface PostChatResponse {
@@ -1013,6 +1105,89 @@ class ApiService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         post: null,
+      };
+    }
+  }
+
+  async getPostHighlights(postId: string, refresh = false): Promise<PostHighlightsResponse> {
+    try {
+      return await this.makeRequest<PostHighlightsResponse>(`/api/posts/item/${postId}/highlights`, {
+        method: 'POST',
+        body: JSON.stringify({ refresh }),
+      });
+    } catch (error) {
+      console.error('Failed to get post highlights:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        highlights: [],
+      };
+    }
+  }
+
+  async getPostReaderState(postId: string): Promise<PostReaderStateResponse> {
+    try {
+      return await this.makeRequest<PostReaderStateResponse>(`/api/posts/item/${postId}/reader-state`);
+    } catch (error) {
+      console.error('Failed to get post reader state:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        reader_state: null,
+      };
+    }
+  }
+
+  async recordPostOpen(postId: string, metadata?: Record<string, any>): Promise<PostInteractionResponse> {
+    try {
+      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, {
+        method: 'POST',
+        body: JSON.stringify({ metadata }),
+      });
+    } catch (error) {
+      console.error('Failed to record post open:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+      };
+    }
+  }
+
+  async recordPostReadingSession(
+    postId: string,
+    durationSeconds: number,
+    metadata?: Record<string, any>,
+  ): Promise<PostInteractionResponse> {
+    try {
+      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, {
+        method: 'POST',
+        body: JSON.stringify({ durationSeconds, metadata }),
+      });
+    } catch (error) {
+      console.error('Failed to record post reading session:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+      };
+    }
+  }
+
+  async togglePostFavorite(postId: string, favorited: boolean): Promise<PostInteractionResponse> {
+    try {
+      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, {
+        method: 'POST',
+        body: JSON.stringify({ favorited }),
+      });
+    } catch (error) {
+      console.error('Failed to toggle post favorite:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
       };
     }
   }

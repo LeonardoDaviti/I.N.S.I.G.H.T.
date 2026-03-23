@@ -444,6 +444,144 @@ class PostDetailServiceTests(unittest.TestCase):
         self.assertEqual(signals, ["consensus", "recommendations"])
         self.assertGreater(estimated_tokens, 0)
 
+    def test_cached_summary_returns_highlights_and_summary_references(self):
+        service = PostDetailService("postgresql:///unused")
+
+        service.get_post_by_id = lambda post_id: {
+            "id": post_id,
+            "title": "Cached post",
+            "source": "test-source",
+            "source_display_name": "Test Source",
+            "content": "Some stored content.",
+            "categories": ["ai"],
+        }
+        service._get_cached_summary = lambda post_id: {
+            "summary_markdown": "## Summary\nCached",
+            "summary_model": "gemini-test",
+            "one_sentence_takeaway": "Cached takeaway.",
+            "updated_at": "2026-03-19T12:00:00+00:00",
+        }
+        service.get_post_highlights = lambda post_id: []
+        service._generate_and_store_highlights = lambda post, cached_summary_markdown=None, force=False: [
+            {
+                "id": "highlight-1",
+                "post_id": post["id"],
+                "highlight_text": "Key evidence",
+                "highlight_kind": "evidence",
+                "importance_score": 0.9,
+                "commentary": "Important detail.",
+            }
+        ]
+        service._save_post_summary_references = lambda post, highlights: [
+            {
+                "id": "reference-1",
+                "artifact_type": "post_summary",
+                "artifact_id": post["id"],
+                "post_id": post["id"],
+                "highlight_id": highlights[0]["id"],
+                "reference_role": "primary",
+                "display_label": post["title"],
+                "order_index": 0,
+                "highlight": {
+                    "highlight_text": "Key evidence",
+                    "highlight_kind": "evidence",
+                    "importance_score": 0.9,
+                    "commentary": "Important detail.",
+                },
+            }
+        ]
+
+        result = service.get_or_generate_summary("post-1", refresh=False)
+
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["one_sentence_takeaway"], "Cached takeaway.")
+        self.assertEqual(result["highlights"][0]["highlight_text"], "Key evidence")
+        self.assertEqual(result["references"][0]["highlight_id"], "highlight-1")
+        self.assertEqual(result["categories"], ["ai"])
+
+    def test_get_post_summary_references_uses_artifact_store(self):
+        service = PostDetailService("postgresql:///unused")
+
+        class FakeExplainabilityService:
+            def get_artifact_references(self, artifact_type, artifact_id):
+                return [
+                    {
+                        "id": "reference-1",
+                        "artifact_type": artifact_type,
+                        "artifact_id": artifact_id,
+                        "post_id": "post-1",
+                        "highlight_id": "highlight-1",
+                        "reference_role": "primary",
+                        "display_label": "Post title",
+                        "order_index": 0,
+                        "highlight": {
+                            "highlight_text": "Key evidence",
+                            "highlight_kind": "evidence",
+                            "importance_score": 0.9,
+                            "commentary": "Important detail.",
+                        },
+                    }
+                ]
+
+        service.explainability_service = FakeExplainabilityService()
+
+        references = service.get_post_summary_references("post-1")
+
+        self.assertEqual(references[0]["artifact_type"], "post_summary")
+        self.assertEqual(references[0]["highlight_id"], "highlight-1")
+
+    def test_get_post_summary_references_backfills_missing_artifact_refs(self):
+        service = PostDetailService("postgresql:///unused")
+
+        service.explainability_service = type(
+            "FakeExplainabilityService",
+            (),
+            {"get_artifact_references": lambda self, artifact_type, artifact_id: []},
+        )()
+        service.get_post_by_id = lambda post_id: {
+            "id": post_id,
+            "title": "Backfill post",
+            "source": "test-source",
+            "source_display_name": "Test Source",
+            "content": "Some stored content.",
+        }
+        service.get_post_highlights = lambda post_id: [
+            {
+                "id": "highlight-1",
+                "post_id": post_id,
+                "highlight_text": "Key evidence",
+                "highlight_kind": "evidence",
+                "importance_score": 0.9,
+                "commentary": "Important detail.",
+            }
+        ]
+
+        saved = {}
+
+        def fake_save(post, highlights):
+            saved["post_id"] = post["id"]
+            saved["highlights"] = highlights
+            return [
+                {
+                    "id": "reference-1",
+                    "artifact_type": "post_summary",
+                    "artifact_id": post["id"],
+                    "post_id": post["id"],
+                    "highlight_id": highlights[0]["id"],
+                    "reference_role": "primary",
+                    "display_label": post["title"],
+                    "order_index": 0,
+                }
+            ]
+
+        service._save_post_summary_references = fake_save
+
+        references = service.get_post_summary_references("post-1")
+
+        self.assertEqual(saved["post_id"], "post-1")
+        self.assertEqual(saved["highlights"][0]["id"], "highlight-1")
+        self.assertEqual(references[0]["highlight_id"], "highlight-1")
+
 
 class PostDetailDiscussionTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_reddit_comments_uses_cached_metadata_without_refetch(self):

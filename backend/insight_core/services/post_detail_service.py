@@ -10,6 +10,7 @@ import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.source_fetch_service import SourceFetchService
 
@@ -23,6 +24,7 @@ class PostDetailService:
         self.processor = GeminiProcessor()
         self.posts_service = PostsService(db_url)
         self.source_fetch_service = SourceFetchService(db_url)
+        self.explainability_service = ExplainabilityService(db_url)
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         with psycopg.connect(self.db_url) as conn:
@@ -128,6 +130,65 @@ class PostDetailService:
             "topics": row[33] or [],
         }
 
+    def get_post_highlights(self, post_id: str) -> List[Dict[str, Any]]:
+        return self.explainability_service.get_post_highlights(post_id)
+
+    def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
+        return self.explainability_service.get_post_reader_state(post_id)
+
+    def get_post_summary_references(self, post_id: str) -> List[Dict[str, Any]]:
+        references = self.explainability_service.get_artifact_references("post_summary", post_id)
+        if references:
+            return references
+
+        post = self.get_post_by_id(post_id)
+        if not post:
+            return []
+
+        highlights = self.get_post_highlights(post_id)
+        if not highlights:
+            return []
+
+        return self._save_post_summary_references(post, highlights)
+
+    def get_cached_summary(self, post_id: str) -> Optional[Dict[str, Any]]:
+        return self._get_cached_summary(post_id)
+
+    def record_post_open(self, post_id: str, *, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self.explainability_service.record_post_interaction(
+            post_id,
+            "opened",
+            metadata or {},
+        )
+
+    def record_reading_session(
+        self,
+        post_id: str,
+        *,
+        duration_seconds: int,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            **(metadata or {}),
+            "duration_seconds": max(0, int(duration_seconds)),
+        }
+        return self.explainability_service.record_post_interaction(
+            post_id,
+            "reading_session",
+            payload,
+        )
+
+    def toggle_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
+        interaction_type = "favorited" if favorited else "unfavorited"
+        stored = self.explainability_service.record_post_interaction(post_id, interaction_type, {"favorited": favorited})
+        state = self.get_post_reader_state(post_id)
+        return {
+            "post_id": post_id,
+            "favorited": state.get("is_favorited", False),
+            "interaction": stored,
+            "reader_state": state,
+        }
+
     def get_notes(self, post_id: str) -> Dict[str, Any]:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -176,6 +237,10 @@ class PostDetailService:
         if not refresh and current_categories:
             cached = self._get_cached_summary(post_id)
             if cached:
+                highlights = self.get_post_highlights(post_id)
+                if not highlights:
+                    highlights = self._generate_and_store_highlights(post, cached_summary_markdown=cached["summary_markdown"], force=False)
+                summary_references = self._save_post_summary_references(post, highlights)
                 return {
                     "post_id": post_id,
                     "summary_markdown": cached["summary_markdown"],
@@ -184,9 +249,13 @@ class PostDetailService:
                     "cached": True,
                     "categories": current_categories,
                     "estimated_tokens": self._count_tokens(cached["summary_markdown"]),
+                    "one_sentence_takeaway": cached.get("one_sentence_takeaway"),
+                    "highlights": highlights,
+                    "references": summary_references,
                 }
 
         summary_markdown, model, generated_tags, estimated_tokens = self._generate_summary(post)
+        highlights = self._generate_and_store_highlights(post, cached_summary_markdown=summary_markdown, force=True)
         final_categories = current_categories or generated_tags
         if generated_tags and not current_categories:
             try:
@@ -194,7 +263,9 @@ class PostDetailService:
                 final_categories = generated_tags
             except Exception as exc:
                 self.logger.warning("Failed to persist generated tags for %s: %s", post_id, exc)
-        cached = self._save_summary_cache(post_id, summary_markdown, model)
+        takeaway = self._takeaway_from_highlights(highlights) if highlights else None
+        cached = self._save_summary_cache(post_id, summary_markdown, model, one_sentence_takeaway=takeaway)
+        summary_references = self._save_post_summary_references(post, highlights)
         return {
             "post_id": post_id,
             "summary_markdown": summary_markdown,
@@ -203,6 +274,9 @@ class PostDetailService:
             "cached": False,
             "categories": final_categories,
             "estimated_tokens": estimated_tokens,
+            "one_sentence_takeaway": takeaway,
+            "highlights": highlights,
+            "references": summary_references,
         }
 
     def chat_about_post(self, post_id: str, question: str) -> Dict[str, Any]:
@@ -212,10 +286,15 @@ class PostDetailService:
 
         notes = self.get_notes(post_id)
         cached_summary = self._get_cached_summary(post_id)
+        highlights = self.get_post_highlights(post_id)
+        reader_state = self.get_post_reader_state(post_id)
         post_context = {
             **post,
             "notes_markdown": notes.get("notes_markdown", ""),
             "cached_summary_markdown": (cached_summary or {}).get("summary_markdown", ""),
+            "one_sentence_takeaway": (cached_summary or {}).get("one_sentence_takeaway", ""),
+            "post_highlights": highlights,
+            "reader_state": reader_state,
         }
 
         if self.processor.setup_processor():
@@ -237,6 +316,32 @@ class PostDetailService:
             "source": "fallback",
             "estimated_tokens": self._count_tokens((post.get("content") or "")[:4000]),
             "context": self._build_context_stats(post_context),
+        }
+
+    def get_or_generate_highlights(self, post_id: str, *, refresh: bool = False) -> Dict[str, Any]:
+        post = self.get_post_by_id(post_id)
+        if not post:
+            raise ValueError(f"Post {post_id} not found")
+
+        existing = self.get_post_highlights(post_id)
+        if existing and not refresh:
+            cached_summary = self._get_cached_summary(post_id)
+            return {
+                "post_id": post_id,
+                "highlights": existing,
+                "one_sentence_takeaway": (cached_summary or {}).get("one_sentence_takeaway")
+                or self._takeaway_from_highlights(existing),
+                "cached": True,
+                "model": (cached_summary or {}).get("summary_model"),
+            }
+
+        stored = self._generate_and_store_highlights(post, force=True)
+        return {
+            "post_id": post_id,
+            "highlights": stored,
+            "one_sentence_takeaway": self._takeaway_from_highlights(stored),
+            "cached": False,
+            "model": getattr(self.processor, "model_name", "gemini"),
         }
 
     async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
@@ -344,7 +449,7 @@ class PostDetailService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT summary_markdown, summary_model, updated_at FROM post_ai_cache WHERE post_id = %s",
+                    "SELECT summary_markdown, summary_model, one_sentence_takeaway, updated_at FROM post_ai_cache WHERE post_id = %s",
                     (post_id,),
                 )
                 row = cur.fetchone()
@@ -354,23 +459,33 @@ class PostDetailService:
         return {
             "summary_markdown": row[0],
             "summary_model": row[1],
-            "updated_at": row[2].isoformat() if row[2] else None,
+            "one_sentence_takeaway": row[2],
+            "updated_at": row[3].isoformat() if row[3] else None,
         }
 
-    def _save_summary_cache(self, post_id: str, summary_markdown: str, model: str) -> Dict[str, Any]:
+    def _save_summary_cache(
+        self,
+        post_id: str,
+        summary_markdown: str,
+        model: str,
+        *,
+        one_sentence_takeaway: str | None = None,
+    ) -> Dict[str, Any]:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO post_ai_cache (post_id, summary_markdown, summary_model, updated_at)
-                    VALUES (%s, %s, %s, now())
+                    INSERT INTO post_ai_cache (post_id, summary_markdown, summary_model, one_sentence_takeaway, highlights_updated_at, updated_at)
+                    VALUES (%s, %s, %s, %s, now(), now())
                     ON CONFLICT (post_id) DO UPDATE SET
                       summary_markdown = EXCLUDED.summary_markdown,
                       summary_model = EXCLUDED.summary_model,
+                      one_sentence_takeaway = EXCLUDED.one_sentence_takeaway,
+                      highlights_updated_at = EXCLUDED.highlights_updated_at,
                       updated_at = now()
                     RETURNING updated_at
                     """,
-                    (post_id, summary_markdown, model),
+                    (post_id, summary_markdown, model, one_sentence_takeaway),
                 )
                 updated_at = cur.fetchone()[0]
             conn.commit()
@@ -379,7 +494,99 @@ class PostDetailService:
             "summary_markdown": summary_markdown,
             "summary_model": model,
             "updated_at": updated_at.isoformat(),
+            "one_sentence_takeaway": one_sentence_takeaway,
         }
+
+    def _generate_and_store_highlights(
+        self,
+        post: Dict[str, Any],
+        *,
+        cached_summary_markdown: str | None = None,
+        force: bool = False,
+    ) -> List[Dict[str, Any]]:
+        post_id = str(post["id"])
+        existing = self.get_post_highlights(post_id)
+        if existing and not force:
+            return existing
+
+        if cached_summary_markdown:
+            post = {
+                **post,
+                "cached_summary_markdown": cached_summary_markdown,
+            }
+
+        if self.processor.setup_processor():
+            try:
+                result = self.processor.extract_post_highlights(post)
+                if result.get("success"):
+                    highlights = result.get("highlights") if isinstance(result.get("highlights"), list) else []
+                    stored = self.explainability_service.save_post_highlights(
+                        post_id,
+                        highlights,
+                        extractor_name="gemini",
+                        extractor_version=str(result.get("model") or getattr(self.processor, "model_name", "gemini")),
+                        language_code=post.get("language_code"),
+                    )
+                    return stored
+            except Exception as exc:
+                self.logger.warning("Highlight generation failed for %s: %s", post_id, exc)
+
+        stored = self.explainability_service.save_post_highlights(
+            post_id,
+            self.processor._fallback_post_highlights(post),
+            extractor_name="fallback",
+            extractor_version="fallback",
+            language_code=post.get("language_code"),
+        )
+        return stored
+
+    def _save_post_summary_references(
+        self,
+        post: Dict[str, Any],
+        highlights: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        post_id = str(post["id"])
+        artifact_type = "post_summary"
+        try:
+            existing = self.explainability_service.get_artifact_references(artifact_type, post_id)
+            if existing:
+                return existing
+        except Exception as exc:
+            self.logger.warning("Failed to load summary references for %s: %s", post_id, exc)
+
+        if not highlights:
+            return []
+
+        references: List[Dict[str, Any]] = []
+        for index, highlight in enumerate(highlights[:3]):
+            highlight_id = highlight.get("id")
+            references.append(
+                {
+                    "artifact_type": artifact_type,
+                    "artifact_id": post_id,
+                    "post_id": post_id,
+                    "highlight_id": highlight_id,
+                    "reference_role": "primary" if index == 0 else "supporting",
+                    "display_label": post.get("title") or post.get("source_display_name") or post.get("source") or "Post summary",
+                    "order_index": index,
+                }
+            )
+
+        try:
+            self.explainability_service.save_artifact_references(artifact_type, post_id, references)
+            return self.explainability_service.get_artifact_references(artifact_type, post_id)
+        except Exception as exc:
+            self.logger.warning("Failed to save summary references for %s: %s", post_id, exc)
+            return []
+
+    def _takeaway_from_highlights(self, highlights: List[Dict[str, Any]]) -> str | None:
+        if not highlights:
+            return None
+        first = highlights[0]
+        text = str(first.get("highlight_text") or first.get("text") or "").strip()
+        if not text:
+            return None
+        return text if text.endswith((".", "!", "?")) else f"{text}."
 
     def _generate_reddit_comments_briefing(self, post: Dict[str, Any], comments: List[Dict[str, Any]]) -> tuple[str, str, List[str], int]:
         if self.processor.setup_processor():
@@ -415,6 +622,8 @@ class PostDetailService:
             "summary_chars": len(str(post.get("cached_summary_markdown") or "")),
             "topics_loaded": len(post.get("topics") or []),
             "reddit_comments_loaded": len(comments or []),
+            "highlights_loaded": len(post.get("post_highlights") or []),
+            "reader_open_count": int((post.get("reader_state") or {}).get("open_count") or 0),
         }
 
     def _count_tokens(self, text: str) -> int:

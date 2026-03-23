@@ -109,8 +109,25 @@ class PostSummaryRequest(BaseModel):
     refresh: bool | None = False
 
 
+class PostHighlightsRequest(BaseModel):
+    refresh: bool | None = False
+
+
 class PostChatRequest(BaseModel):
     question: str
+
+
+class PostReaderSessionRequest(BaseModel):
+    durationSeconds: int
+    metadata: Dict[str, Any] | None = None
+
+
+class PostFavoriteRequest(BaseModel):
+    favorited: bool
+
+
+class PostOpenRequest(BaseModel):
+    metadata: Dict[str, Any] | None = None
 
 
 class PostCommentsRequest(BaseModel):
@@ -277,7 +294,62 @@ async def get_post_detail(post_id: str):
         return api_bridge.get_post_detail(post_id)
     except Exception as e:
         logger.exception("Failed to get post detail")
-        return {"success": False, "error": str(e), "post": None}
+        return {"success": False, "error": str(e), "post": None, "summary": None, "summary_references": [], "highlights": [], "reader_state": None}
+
+
+@app.post("/api/posts/item/{post_id}/highlights")
+async def get_post_highlights(post_id: str, request: PostHighlightsRequest):
+    try:
+        logger.info(f"✨ Fetching post highlights: {post_id}")
+        return api_bridge.get_post_highlights(post_id, refresh=bool(request.refresh))
+    except Exception as e:
+        logger.exception("Failed to get post highlights")
+        return {"success": False, "error": str(e), "post_id": post_id, "highlights": []}
+
+
+@app.get("/api/posts/item/{post_id}/reader-state")
+async def get_post_reader_state(post_id: str):
+    try:
+        logger.info(f"📚 Fetching reader state: {post_id}")
+        return api_bridge.get_post_reader_state(post_id)
+    except Exception as e:
+        logger.exception("Failed to get post reader state")
+        return {"success": False, "error": str(e), "post_id": post_id, "reader_state": None}
+
+
+@app.post("/api/posts/item/{post_id}/opened")
+async def record_post_open(post_id: str, request: PostOpenRequest | None = None):
+    try:
+        logger.info(f"👁️ Recording post open: {post_id}")
+        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
+        return api_bridge.record_post_open(post_id, metadata=payload.get("metadata"))
+    except Exception as e:
+        logger.exception("Failed to record post open")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/reading-session")
+async def record_post_reading_session(post_id: str, request: PostReaderSessionRequest):
+    try:
+        logger.info(f"⏱️ Recording reading session: {post_id}")
+        return api_bridge.record_post_reading_session(
+            post_id,
+            duration_seconds=int(request.durationSeconds or 0),
+            metadata=request.metadata,
+        )
+    except Exception as e:
+        logger.exception("Failed to record reading session")
+        return {"success": False, "error": str(e), "post_id": post_id}
+
+
+@app.post("/api/posts/item/{post_id}/favorite")
+async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
+    try:
+        logger.info(f"⭐ Toggling post favorite: {post_id}")
+        return api_bridge.toggle_post_favorite(post_id, bool(request.favorited))
+    except Exception as e:
+        logger.exception("Failed to toggle post favorite")
+        return {"success": False, "error": str(e), "post_id": post_id}
 
 
 @app.get("/api/posts/item/{post_id}/evidence")
@@ -791,7 +863,9 @@ async def generate_daily_briefing(request: BriefingRequest):
             "date": result.get("date", date) if isinstance(result, dict) else date,
             "posts_processed": result.get("posts_processed", 0) if isinstance(result, dict) else 0,
             "total_posts_fetched": result.get("total_posts_fetched", 0) if isinstance(result, dict) else 0,
-            "posts": result.get("posts", []) if isinstance(result, dict) else []
+            "posts": result.get("posts", []) if isinstance(result, dict) else [],
+            "one_sentence_takeaway": result.get("one_sentence_takeaway") if isinstance(result, dict) else None,
+            "references": result.get("references", []) if isinstance(result, dict) else [],
         }
         # If enhanced data exists, include it without token usage
         if isinstance(result, dict) and result.get("topics") is not None:
@@ -842,7 +916,9 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
             "posts": result.get("posts", {}),
             "date": result.get("date", date),
             "posts_processed": result.get("posts_processed", 0),
-            "total_posts_fetched": result.get("total_posts_fetched", 0)
+            "total_posts_fetched": result.get("total_posts_fetched", 0),
+            "one_sentence_takeaway": result.get("one_sentence_takeaway"),
+            "references": result.get("references", []),
         }
     except HTTPException:
         raise
@@ -882,6 +958,8 @@ async def generate_weekly_briefing(request: BriefingRequest):
             "topics": result.get("topics", []),
             "posts": result.get("posts", {}),
             "variant": result.get("variant", "default"),
+            "one_sentence_takeaway": result.get("one_sentence_takeaway"),
+            "references": result.get("references", []),
         }
     except HTTPException:
         raise
@@ -906,7 +984,7 @@ async def get_source_vertical_briefing(
         raise
     except Exception as e:
         logger.exception("Failed to get source vertical briefing")
-        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}}
+        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}, "references": []}
 
 
 @app.post("/api/briefings/vertical/source/{source_id}/refresh")
@@ -925,7 +1003,7 @@ async def refresh_source_vertical_briefing(
         raise
     except Exception as e:
         logger.exception("Failed to refresh source vertical briefing")
-        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}}
+        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}, "references": []}
 
 @app.get("/health")
 async def health_check():

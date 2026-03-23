@@ -15,6 +15,7 @@ from insight_core.services.analyst_actions_service import AnalystActionsService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.stories_service import StoriesService
 from insight_core.services.youtube_service import YouTubeService
 
@@ -40,6 +41,7 @@ class InsightApiBridge:
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
         self.post_detail_service = PostDetailService(self.db)
+        self.explainability_service = ExplainabilityService(self.db)
         self.stories_service = StoriesService(self.db)
         self.inbox_service = InboxService(
             self.db,
@@ -995,9 +997,56 @@ class InsightApiBridge:
             if not post:
                 return {"success": False, "error": f"Post {post_id} not found", "post": None}
             notes = self.post_detail_service.get_notes(post_id)
-            return {"success": True, "post": post, "notes": notes}
+            summary = self.post_detail_service.get_cached_summary(post_id)
+            summary_references = self.post_detail_service.get_post_summary_references(post_id)
+            highlights = self.post_detail_service.get_post_highlights(post_id)
+            reader_state = self.post_detail_service.get_post_reader_state(post_id)
+            return {
+                "success": True,
+                "post": post,
+                "notes": notes,
+                "summary": summary,
+                "summary_references": summary_references,
+                "highlights": highlights,
+                "reader_state": reader_state,
+            }
         except Exception as e:
-            return {"success": False, "error": str(e), "post": None}
+            return {"success": False, "error": str(e), "post": None, "summary": None, "summary_references": [], "highlights": [], "reader_state": None}
+
+    def get_post_highlights(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
+        try:
+            result = self.post_detail_service.get_or_generate_highlights(post_id, refresh=refresh)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id, "highlights": []}
+
+    def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
+        try:
+            state = self.post_detail_service.get_post_reader_state(post_id)
+            return {"success": True, "post_id": post_id, "reader_state": state}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id, "reader_state": None}
+
+    def record_post_open(self, post_id: str, metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        try:
+            stored = self.post_detail_service.record_post_open(post_id, metadata=metadata)
+            return {"success": True, "event": stored}
+        except Exception as e:
+            return {"success": False, "error": str(e), "event": None}
+
+    def record_post_reading_session(self, post_id: str, duration_seconds: int, metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        try:
+            stored = self.post_detail_service.record_reading_session(post_id, duration_seconds=duration_seconds, metadata=metadata)
+            return {"success": True, "event": stored}
+        except Exception as e:
+            return {"success": False, "error": str(e), "event": None}
+
+    def toggle_post_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
+        try:
+            result = self.post_detail_service.toggle_favorite(post_id, favorited)
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id}
 
     def get_post_evidence(self, post_id: str) -> Dict[str, Any]:
         try:

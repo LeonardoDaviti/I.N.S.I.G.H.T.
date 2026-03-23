@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+import re
 from typing import Any, Dict, List
 
 import psycopg
@@ -14,6 +15,7 @@ from insight_core.db.repo_memory import MemoryRepository
 from insight_core.db.repo_stories import StoriesRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
@@ -35,8 +37,146 @@ class BriefingService:
         self.evidence_repo = EvidenceRepository(db_url)
         self.store_service = BriefingsStoreService(db_url)
         self.topics_service = TopicsService(db_url)
+        self.explainability_service = ExplainabilityService(db_url)
         self.processor = GeminiProcessor()
         self.logger = get_component_logger("briefing_service")
+
+    def _briefing_artifact_type(self, subject_type: str, variant: str) -> str:
+        if subject_type == "daily_briefing" and variant == "topics":
+            return "topic_briefing"
+        if subject_type == "weekly_briefing" and variant == "topics":
+            return "weekly_topic_briefing"
+        if subject_type == "vertical_briefing":
+            return "vertical_briefing"
+        return subject_type
+
+    def _briefing_takeaway(self, briefing: str) -> str | None:
+        text = str(briefing or "")
+        if not text.strip():
+            return None
+
+        cleaned_lines: List[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            if stripped.startswith(("-", "•", "*")):
+                stripped = stripped.lstrip("-•* ").strip()
+            if stripped:
+                cleaned_lines.append(stripped)
+
+        candidate = " ".join(cleaned_lines) or text
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        if not candidate:
+            return None
+
+        match = re.search(r"(.+?[.!?])(?:\s|$)", candidate)
+        sentence = (match.group(1) if match else candidate[:220]).strip()
+        return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+
+    def _pick_reference_highlight(self, post_id: str) -> Dict[str, Any] | None:
+        try:
+            highlights = self.explainability_service.get_post_highlights(post_id)
+        except Exception as exc:
+            self.logger.warning("Failed to load highlights for reference %s: %s", post_id, exc)
+            return None
+
+        if not highlights:
+            return None
+        return max(
+            highlights,
+            key=lambda item: float(item.get("importance_score") or 0.0),
+        )
+
+    def _build_artifact_references(
+        self,
+        *,
+        artifact_type: str,
+        artifact_id: str,
+        posts: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        references: List[Dict[str, Any]] = []
+        seen_posts: set[str] = set()
+        for index, post in enumerate(posts):
+            post_id = str(post.get("id") or "").strip()
+            if not post_id or post_id in seen_posts:
+                continue
+            seen_posts.add(post_id)
+            highlight = self._pick_reference_highlight(post_id)
+            label = (
+                str(post.get("title") or post.get("source_display_name") or post.get("source") or f"Post {index + 1}").strip()
+            )
+            payload: Dict[str, Any] = {
+                "artifact_type": artifact_type,
+                "artifact_id": artifact_id,
+                "post_id": post_id,
+                "reference_role": "primary" if index == 0 else "supporting",
+                "display_label": label[:220] or None,
+                "order_index": index,
+            }
+            if highlight:
+                payload["highlight_id"] = highlight.get("id")
+            references.append(payload)
+        return references
+
+    def _save_artifact_references(
+        self,
+        *,
+        artifact_type: str,
+        artifact_id: str,
+        posts: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not posts:
+            return []
+        try:
+            self.explainability_service.save_artifact_references(
+                artifact_type,
+                artifact_id,
+                self._build_artifact_references(
+                    artifact_type=artifact_type,
+                    artifact_id=artifact_id,
+                    posts=posts,
+                ),
+            )
+            return self._hydrate_artifact_references(artifact_type, artifact_id)
+        except Exception as exc:
+            self.logger.warning("Failed to save artifact references for %s/%s: %s", artifact_type, artifact_id, exc)
+            return []
+
+    def _hydrate_artifact_references(self, artifact_type: str, artifact_id: str) -> List[Dict[str, Any]]:
+        try:
+            references = self.explainability_service.get_artifact_references(artifact_type, artifact_id)
+        except Exception as exc:
+            self.logger.warning("Failed to load artifact references for %s/%s: %s", artifact_type, artifact_id, exc)
+            return []
+
+        if not references:
+            return []
+
+        post_ids = [reference.get("post_id") for reference in references if reference.get("post_id")]
+        posts_by_id = {
+            str(post["id"]): post
+            for post in self.posts_service.get_posts_by_ids([str(post_id) for post_id in post_ids])
+            if post.get("id")
+        }
+
+        hydrated: List[Dict[str, Any]] = []
+        for reference in references:
+            post = posts_by_id.get(str(reference.get("post_id") or ""))
+            hydrated.append(
+                {
+                    **reference,
+                    "post": post,
+                    "display_label": reference.get("display_label")
+                    or (post.get("title") if post else None)
+                    or (post.get("source_display_name") if post else None)
+                    or (post.get("source") if post else None)
+                    or "Referenced post",
+                }
+            )
+        return hydrated
 
     async def generate_daily_briefing(self, date_str: str) -> Dict[str, Any]:
         """Generate a markdown daily briefing for a single day."""
@@ -82,7 +222,13 @@ class BriefingService:
                 "posts_processed": len(posts),
                 "source": "database",
                 "estimated_tokens": estimated_tokens,
+                "one_sentence_takeaway": self._briefing_takeaway(briefing),
             },
+        )
+        references = self._save_artifact_references(
+            artifact_type=self._briefing_artifact_type("daily_briefing", "default"),
+            artifact_id=saved["id"],
+            posts=posts,
         )
 
         return {
@@ -95,6 +241,8 @@ class BriefingService:
             "posts_processed": len(posts),
             "total_posts_fetched": len(posts),
             "estimated_tokens": estimated_tokens,
+            "one_sentence_takeaway": self._briefing_takeaway(briefing),
+            "references": references,
         }
 
     async def generate_daily_briefing_with_topics(
@@ -169,7 +317,13 @@ class BriefingService:
                 "posts_processed": len(posts),
                 "source": "database",
                 "estimated_tokens": self._count_tokens(topic_result.get("daily_briefing", "")),
+                "one_sentence_takeaway": self._briefing_takeaway(topic_result.get("daily_briefing", "")),
             },
+        )
+        references = self._save_artifact_references(
+            artifact_type=self._briefing_artifact_type("daily_briefing", "topics"),
+            artifact_id=saved["id"],
+            posts=posts,
         )
 
         return {
@@ -186,6 +340,8 @@ class BriefingService:
             "total_posts_fetched": len(posts),
             "cached": False,
             "estimated_tokens": self._count_tokens(topic_result.get("daily_briefing", "")),
+            "one_sentence_takeaway": self._briefing_takeaway(topic_result.get("daily_briefing", "")),
+            "references": references,
         }
 
     async def generate_weekly_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
@@ -200,6 +356,21 @@ class BriefingService:
             cached = self.store_service.get_briefing("weekly_briefing", subject_key, "default")
             if cached:
                 payload = cached.get("payload") or {}
+                references = self._hydrate_artifact_references("weekly_briefing", cached.get("id"))
+                if not references:
+                    weekly_posts: List[Dict[str, Any]] = []
+                    try:
+                        for offset in range(7):
+                            current_date = week_start + timedelta(days=offset)
+                            weekly_posts.extend(self.posts_service.get_posts_by_date(current_date))
+                    except Exception as exc:
+                        self.logger.warning("Failed to backfill weekly briefing references: %s", exc)
+                    if weekly_posts:
+                        references = self._save_artifact_references(
+                            artifact_type="weekly_briefing",
+                            artifact_id=cached.get("id"),
+                            posts=weekly_posts,
+                        )
                 return {
                     "success": True,
                     "briefing": cached.get("content", ""),
@@ -213,14 +384,28 @@ class BriefingService:
                     "daily_briefings_used": payload.get("daily_briefings_used", 0),
                     "days_covered": payload.get("days_covered", []),
                     "estimated_tokens": payload.get("estimated_tokens", self._count_tokens(cached.get("content", ""))),
+                    "one_sentence_takeaway": payload.get("one_sentence_takeaway") or self._briefing_takeaway(cached.get("content", "")),
+                    "references": references,
                 }
 
         daily_briefings: List[Dict[str, Any]] = []
+        weekly_posts: List[Dict[str, Any]] = []
+        seen_post_ids: set[str] = set()
+
+        def add_weekly_posts(candidate_posts: List[Dict[str, Any]]) -> None:
+            for post in candidate_posts:
+                post_id = str(post.get("id") or "").strip()
+                if not post_id or post_id in seen_post_ids:
+                    continue
+                seen_post_ids.add(post_id)
+                weekly_posts.append(post)
+
         for offset in range(7):
             current_date = week_start + timedelta(days=offset)
             current_key = current_date.isoformat()
             cached_daily = self.store_service.get_briefing("daily_briefing", current_key, "default")
             if cached_daily:
+                add_weekly_posts(self.posts_service.get_posts_by_date(current_date))
                 daily_briefings.append(
                     {
                         "date": current_key,
@@ -232,6 +417,7 @@ class BriefingService:
 
             generated = await self.generate_daily_briefing(current_key)
             if generated.get("success"):
+                add_weekly_posts(generated.get("posts") or [])
                 daily_briefings.append(
                     {
                         "date": current_key,
@@ -272,6 +458,7 @@ class BriefingService:
             "days_covered": [item["date"] for item in daily_briefings],
             "daily_briefings_used": len(daily_briefings),
             "estimated_tokens": estimated_tokens,
+            "one_sentence_takeaway": self._briefing_takeaway(briefing),
         }
         saved = self.store_service.save_briefing(
             subject_type="weekly_briefing",
@@ -281,6 +468,11 @@ class BriefingService:
             title=f"Weekly Briefing {week_label}",
             content=briefing,
             payload=payload,
+        )
+        references = self._save_artifact_references(
+            artifact_type="weekly_briefing",
+            artifact_id=saved["id"],
+            posts=weekly_posts,
         )
 
         return {
@@ -296,6 +488,8 @@ class BriefingService:
             "daily_briefings_used": len(daily_briefings),
             "days_covered": payload["days_covered"],
             "estimated_tokens": estimated_tokens,
+            "one_sentence_takeaway": self._briefing_takeaway(briefing),
+            "references": references,
         }
 
     async def generate_weekly_topic_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
@@ -375,6 +569,7 @@ class BriefingService:
             "daily_briefings_used": len(daily_topic_briefings),
             "estimated_tokens": estimated_tokens,
             "topics": normalized_topics,
+            "one_sentence_takeaway": self._briefing_takeaway(topic_result.get("weekly_briefing", "")),
         }
         saved = self.store_service.save_briefing(
             subject_type="weekly_briefing",
@@ -384,6 +579,11 @@ class BriefingService:
             title=f"Weekly Topic Briefing {week_label}",
             content=topic_result.get("weekly_briefing", ""),
             payload=payload,
+        )
+        references = self._save_artifact_references(
+            artifact_type=self._briefing_artifact_type("weekly_briefing", "topics"),
+            artifact_id=saved["id"],
+            posts=list(combined_posts.values()),
         )
 
         return {
@@ -402,6 +602,8 @@ class BriefingService:
             "topics": normalized_topics,
             "posts": combined_posts,
             "variant": "topics",
+            "one_sentence_takeaway": self._briefing_takeaway(topic_result.get("weekly_briefing", "")),
+            "references": references,
         }
 
     async def generate_source_vertical_briefing(
@@ -522,6 +724,7 @@ class BriefingService:
             "estimated_tokens": estimated_tokens,
             "tracks": tracks,
             "signal_sources": ["stories", "entities", "evidence"],
+            "one_sentence_takeaway": self._briefing_takeaway(vertical_briefing),
         }
         saved = self.store_service.save_briefing(
             subject_type="vertical_briefing",
@@ -531,6 +734,11 @@ class BriefingService:
             title=f"Vertical Briefing {source_label} {start_date} to {end_date}",
             content=vertical_briefing,
             payload=payload,
+        )
+        references = self._save_artifact_references(
+            artifact_type="vertical_briefing",
+            artifact_id=saved["id"],
+            posts=posts,
         )
 
         return {
@@ -553,6 +761,8 @@ class BriefingService:
             "tracks": tracks,
             "posts": posts_map,
             "variant": "source",
+            "one_sentence_takeaway": self._briefing_takeaway(vertical_briefing),
+            "references": references,
         }
 
     def _build_cached_topic_response(
@@ -563,6 +773,7 @@ class BriefingService:
         cached_briefing: Dict[str, Any],
         include_unreferenced: bool,
     ) -> Dict[str, Any]:
+        artifact_type = self._briefing_artifact_type("daily_briefing", "topics")
         normalized = self._normalize_topic_result(
             posts=posts,
             topic_result={
@@ -585,6 +796,17 @@ class BriefingService:
         else:
             normalized["topics"] = self._load_stored_topics(target_date)
 
+        references = self._hydrate_artifact_references(artifact_type, cached_briefing.get("id"))
+        if not references:
+            references = self._save_artifact_references(
+                artifact_type=artifact_type,
+                artifact_id=cached_briefing.get("id"),
+                posts=posts,
+            )
+        takeaway = (cached_briefing.get("payload") or {}).get("one_sentence_takeaway") or self._briefing_takeaway(
+            cached_briefing.get("content", "")
+        )
+
         return {
             "success": True,
             "enhanced": True,
@@ -599,6 +821,8 @@ class BriefingService:
             "total_posts_fetched": len(posts),
             "cached": True,
             "estimated_tokens": (cached_briefing.get("payload") or {}).get("estimated_tokens", self._count_tokens(cached_briefing.get("content", ""))),
+            "one_sentence_takeaway": takeaway,
+            "references": references,
         }
 
     def _build_cached_vertical_briefing_response(
@@ -609,9 +833,10 @@ class BriefingService:
         end_date: str,
         subject_key: str,
         cached_briefing: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        ) -> Dict[str, Any]:
         payload = cached_briefing.get("payload") or {}
         tracks = payload.get("tracks") or []
+        references = self._hydrate_artifact_references("vertical_briefing", cached_briefing.get("id"))
         post_ids: List[str] = []
         for track in tracks:
             if not isinstance(track, dict):
@@ -656,6 +881,8 @@ class BriefingService:
             "tracks": tracks,
             "posts": posts,
             "variant": "source",
+            "one_sentence_takeaway": payload.get("one_sentence_takeaway") or self._briefing_takeaway(cached_briefing.get("content", "")),
+            "references": references,
         }
 
     def _normalize_vertical_briefing_result(
@@ -1113,6 +1340,7 @@ class BriefingService:
     ) -> Dict[str, Any]:
         payload = cached_briefing.get("payload") or {}
         normalized_topics = payload.get("topics") or []
+        references = self._hydrate_artifact_references("weekly_topic_briefing", cached_briefing.get("id"))
         post_ids: List[str] = []
         for topic in normalized_topics:
             for post_id in topic.get("post_ids") or []:
@@ -1144,6 +1372,8 @@ class BriefingService:
             "topics": normalized_topics,
             "posts": posts,
             "variant": "topics",
+            "one_sentence_takeaway": payload.get("one_sentence_takeaway") or self._briefing_takeaway(cached_briefing.get("content", "")),
+            "references": references,
         }
 
     def _normalize_weekly_topic_result(

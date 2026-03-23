@@ -456,6 +456,88 @@ Content:
         except Exception as exc:
             return {"success": False, "error": f"Analysis failed: {exc}"}
 
+    def extract_post_highlights(self, post: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract evidence highlights and a one-sentence takeaway from a single post."""
+        if not self.is_setup:
+            return {"success": False, "error": "Processor not setup. Call setup_processor() first"}
+
+        post_body = self._single_post_body(post, max_chars=self.single_post_context_chars)
+        prompt = f"""
+Return ONLY valid JSON with this exact structure:
+{{
+  "highlights": [
+    {{
+      "text": "exact snippet or close paraphrase from the post",
+      "kind": "evidence",
+      "importance_score": 0.0,
+      "commentary": "short factual note explaining why it matters",
+      "start_char": null,
+      "end_char": null
+    }}
+  ],
+  "one_sentence_takeaway": "one sentence that captures the main point"
+}}
+
+Rules:
+- Produce 3 to 7 highlights.
+- Use only the supplied post content.
+- Prefer exact snippets when possible.
+- Keep commentary short and factual.
+- Focus on what an analyst should remember later.
+- Do not expose internal reasoning.
+- Do not mention missing data or your process.
+
+Source: {post.get("source", "unknown")}
+Platform: {post.get("platform", "unknown")}
+URL: {post.get("url", "")}
+Published at: {post.get("published_at", "")}
+Title: {post.get("title", "")}
+Categories: {", ".join(post.get("categories") or []) or "none"}
+Content:
+{post_body}
+"""
+        try:
+            result = self._extract_json_from_response(self._generate_text_sync(prompt))
+            highlights = result.get("highlights", [])
+            if not isinstance(highlights, list):
+                highlights = []
+            normalized: List[Dict[str, Any]] = []
+            for highlight in highlights[:7]:
+                if not isinstance(highlight, dict):
+                    continue
+                text = str(highlight.get("text") or "").strip()
+                if not text:
+                    continue
+                normalized.append(
+                    {
+                        "highlight_text": text[:1200],
+                        "highlight_kind": str(highlight.get("kind") or "evidence").strip()[:64] or "evidence",
+                        "start_char": highlight.get("start_char"),
+                        "end_char": highlight.get("end_char"),
+                        "importance_score": float(highlight.get("importance_score") or 0.0),
+                        "commentary": str(highlight.get("commentary") or "").strip()[:500] or None,
+                    }
+                )
+            takeaway = str(result.get("one_sentence_takeaway") or "").strip()
+            if not takeaway:
+                takeaway = self._fallback_post_takeaway(post)
+            return {
+                "success": True,
+                "highlights": normalized or self._fallback_post_highlights(post),
+                "one_sentence_takeaway": takeaway,
+                "model": self.model_name,
+                "estimated_tokens": self.count_tokens(prompt) + self.count_tokens(takeaway),
+            }
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic post highlights: %s", exc)
+            return {
+                "success": True,
+                "highlights": self._fallback_post_highlights(post),
+                "one_sentence_takeaway": self._fallback_post_takeaway(post),
+                "model": "fallback",
+                "estimated_tokens": self.count_tokens(post_body),
+            }
+
     def ask_single_post(self, post: Dict[str, Any], question: str) -> Dict[str, Any]:
         """Answer a question about a single post."""
         if not self.is_setup:
@@ -674,6 +756,48 @@ POSTS:
             return ""
         match = re.search(r"(.+?[.!?])(?:\s|$)", text)
         return (match.group(1) if match else text[:220]).strip()
+
+    def _fallback_post_takeaway(self, post: Dict[str, Any]) -> str:
+        title = (post.get("title") or "Untitled post").strip()
+        content = " ".join((post.get("content") or "").split())
+        if not content:
+            return f"{title} contains too little stored text for a deeper takeaway."
+        sentence = self._first_sentence(content)
+        if not sentence:
+            sentence = content[:180]
+        return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+
+    def _fallback_post_highlights(self, post: Dict[str, Any]) -> List[Dict[str, Any]]:
+        content = " ".join((post.get("content") or "").split())
+        if not content:
+            return [
+                {
+                    "highlight_text": "No stored text was available for this post.",
+                    "highlight_kind": "context",
+                    "start_char": None,
+                    "end_char": None,
+                    "importance_score": 0.1,
+                    "commentary": "Fallback highlight generated from missing content.",
+                }
+            ]
+
+        sentences = re.split(r"(?<=[.!?])\s+", content)
+        ranked = [sentence.strip() for sentence in sentences if sentence.strip()]
+        if not ranked:
+            ranked = [content[:220]]
+        highlights: List[Dict[str, Any]] = []
+        for index, sentence in enumerate(ranked[:5], start=1):
+            highlights.append(
+                {
+                    "highlight_text": sentence[:600],
+                    "highlight_kind": "evidence" if index == 1 else "context",
+                    "start_char": None,
+                    "end_char": None,
+                    "importance_score": max(0.1, 1.0 - (index - 1) * 0.15),
+                    "commentary": "Fallback highlight derived from the stored post content.",
+                }
+            )
+        return highlights
 
     def _fallback_daily_briefing(self, posts: List[Dict[str, Any]]) -> str:
         ordered_posts = sorted(posts, key=self._post_sort_key, reverse=True)

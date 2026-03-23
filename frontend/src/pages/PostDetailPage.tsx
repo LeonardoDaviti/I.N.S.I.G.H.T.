@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, Component } from 'react';
+import { useEffect, useMemo, useRef, useState, Component } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -12,13 +12,14 @@ import {
   RefreshCw,
   Save,
   Sparkles,
+  Star,
   Tags,
   MessagesSquare,
 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import PostIntelligenceInspector from '../components/PostIntelligenceInspector';
 import { apiService } from '../services/api';
-import type { Post, RedditComment } from '../services/api';
+import type { BriefingReference, Post, PostHighlight, ReaderState, RedditComment } from '../services/api';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -84,6 +85,10 @@ export default function PostDetailPage() {
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryModel, setSummaryModel] = useState<string | null>(null);
   const [summaryEstimatedTokens, setSummaryEstimatedTokens] = useState<number | null>(null);
+  const [summaryTakeaway, setSummaryTakeaway] = useState<string | null>(null);
+  const [highlights, setHighlights] = useState<PostHighlight[]>([]);
+  const [summaryReferences, setSummaryReferences] = useState<BriefingReference[]>([]);
+  const [readerState, setReaderState] = useState<ReaderState | null>(null);
   const [comments, setComments] = useState<RedditComment[]>([]);
   const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
   const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
@@ -94,12 +99,16 @@ export default function PostDetailPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [loadingHighlights, setLoadingHighlights] = useState(false);
   const [loadingComments, setLoadingComments] = useState(false);
   const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
+  const [togglingFavorite, setTogglingFavorite] = useState(false);
   const [chatting, setChatting] = useState(false);
   const [chatContext, setChatContext] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const sessionStartRef = useRef<number | null>(null);
+  const openRecordedRef = useRef(false);
 
   const sourceLabel = useMemo(
     () => post?.source_display_name || post?.source || 'Unknown source',
@@ -119,10 +128,28 @@ export default function PostDetailPage() {
     setSummary(response.summary_markdown || null);
     setSummaryModel(response.model || null);
     setSummaryEstimatedTokens(response.estimated_tokens ?? null);
+    setSummaryTakeaway(response.one_sentence_takeaway || null);
+    setSummaryReferences(Array.isArray(response.references) ? response.references : []);
+    setHighlights(response.highlights || []);
     if (response.categories?.length) {
       setPost((current) => current ? { ...current, categories: response.categories } : current);
     }
     setLoadingSummary(false);
+  };
+
+  const loadHighlights = async (refresh = false) => {
+    if (!postId) return;
+    setLoadingHighlights(true);
+    setError(null);
+    const response = await apiService.getPostHighlights(postId, refresh);
+    if (!response.success) {
+      setError(response.error || 'Failed to generate highlights');
+      setLoadingHighlights(false);
+      return;
+    }
+    setHighlights(response.highlights || []);
+    setSummaryTakeaway(response.one_sentence_takeaway || null);
+    setLoadingHighlights(false);
   };
 
   useEffect(() => {
@@ -155,6 +182,13 @@ export default function PostDetailPage() {
 
       setPost(response.post);
       setNotes(response.notes?.notes_markdown || defaultNotesTemplate(response.post));
+      setSummary(response.summary?.summary_markdown || null);
+      setSummaryModel(response.summary?.model || null);
+      setSummaryEstimatedTokens(response.summary?.estimated_tokens ?? null);
+      setSummaryTakeaway(response.summary?.one_sentence_takeaway || null);
+      setSummaryReferences(Array.isArray(response.summary_references) ? response.summary_references : []);
+      setHighlights(Array.isArray(response.highlights) ? response.highlights : []);
+      setReaderState(response.reader_state || null);
       const metadata = response.post.metadata && typeof response.post.metadata === 'object' && !Array.isArray(response.post.metadata)
         ? response.post.metadata as Record<string, unknown>
         : null;
@@ -169,9 +203,6 @@ export default function PostDetailPage() {
       setCommentsBriefing(typeof briefing?.summary_markdown === 'string' ? briefing.summary_markdown : null);
       setCommentsBriefingModel(typeof briefing?.model === 'string' ? briefing.model : null);
       setCommentsBriefingEstimatedTokens(typeof briefing?.estimated_tokens === 'number' ? briefing.estimated_tokens : null);
-      setSummary(null);
-      setSummaryModel(null);
-      setSummaryEstimatedTokens(null);
       setLoading(false);
     };
 
@@ -180,6 +211,62 @@ export default function PostDetailPage() {
       active = false;
     };
   }, [postId]);
+
+  useEffect(() => {
+    sessionStartRef.current = Date.now();
+    openRecordedRef.current = false;
+  }, [postId]);
+
+  useEffect(() => {
+    if (!postId || !post) {
+      return undefined;
+    }
+
+    if (!openRecordedRef.current) {
+      openRecordedRef.current = true;
+      void apiService.recordPostOpen(postId, {
+        title: post.title,
+        source: post.source,
+        platform: post.platform,
+      }).then((response) => {
+        if (!response.success) {
+          return;
+        }
+        const recordedAt = response.event?.created_at || new Date().toISOString();
+        setReaderState((current) => {
+          if (!current) {
+            return {
+              post_id: postId,
+              is_favorited: false,
+              open_count: 1,
+              first_opened_at: recordedAt,
+              last_opened_at: recordedAt,
+              total_read_seconds: 0,
+            };
+          }
+          return {
+            ...current,
+            open_count: (current.open_count || 0) + 1,
+            first_opened_at: current.first_opened_at || recordedAt,
+            last_opened_at: recordedAt,
+          };
+        });
+      });
+    }
+
+    return () => {
+      const startedAt = sessionStartRef.current;
+      if (!startedAt) {
+        return;
+      }
+      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      void apiService.recordPostReadingSession(postId, durationSeconds, {
+        title: post.title,
+        source: post.source,
+        platform: post.platform,
+      });
+    };
+  }, [postId, post?.id]);
 
   const fetchComments = async (refresh = false) => {
     if (!postId) return;
@@ -253,6 +340,24 @@ export default function PostDetailPage() {
     setChatting(false);
   };
 
+  const handleToggleFavorite = async () => {
+    if (!postId) return;
+    setTogglingFavorite(true);
+    const nextFavorited = !(readerState?.is_favorited ?? false);
+    const response = await apiService.togglePostFavorite(postId, nextFavorited);
+    if (!response.success) {
+      setError(response.error || 'Failed to update favorite state');
+      setTogglingFavorite(false);
+      return;
+    }
+    if (response.reader_state) {
+      setReaderState(response.reader_state);
+    } else {
+      setReaderState((current) => current ? { ...current, is_favorited: response.favorited } : current);
+    }
+    setTogglingFavorite(false);
+  };
+
   const categories = Array.isArray(post?.categories) ? post.categories : [];
   const topics = Array.isArray(post?.topics) ? post.topics : [];
   const platformLabel = typeof post?.platform === 'string' ? post.platform.toUpperCase() : '';
@@ -261,6 +366,16 @@ export default function PostDetailPage() {
     : typeof post?.content === 'string'
       ? post.content
       : '';
+  const topHighlights = highlights.slice(0, 3);
+  const summaryReferenceHighlightIds = useMemo(
+    () => new Set(
+      summaryReferences
+        .map((reference) => reference.highlight_id)
+        .filter((highlightId): highlightId is string => Boolean(highlightId)),
+    ),
+    [summaryReferences],
+  );
+  const isFavorited = Boolean(readerState?.is_favorited);
   const safeCommentPreview = (comment: RedditComment) => {
     const body = typeof comment.body === 'string' ? comment.body : '';
     return body.slice(0, 24);
@@ -301,6 +416,10 @@ export default function PostDetailPage() {
                   navigate(returnTo);
                   return;
                 }
+                if (window.history.length > 1) {
+                  navigate(-1);
+                  return;
+                }
                 navigate('/briefing');
               }}
               className="mb-3 inline-flex items-center gap-2 text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text-normal)]"
@@ -334,6 +453,23 @@ export default function PostDetailPage() {
             >
               {loadingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {summary ? 'Refresh Summary' : 'Generate Summary'}
+            </button>
+            <button
+              type="button"
+              onClick={() => loadHighlights(true)}
+              className="app-inline-button"
+            >
+              {loadingHighlights ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {highlights.length ? 'Refresh Highlights' : 'Generate Highlights'}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleFavorite}
+              className={`app-inline-button ${isFavorited ? 'app-inline-button--primary' : ''}`}
+              disabled={togglingFavorite}
+            >
+              {togglingFavorite ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className={`h-4 w-4 ${isFavorited ? 'fill-current' : ''}`} />}
+              {isFavorited ? 'Unfavorite' : 'Favorite'}
             </button>
             {isRedditPost && (
               <>
@@ -393,8 +529,86 @@ export default function PostDetailPage() {
                 <div className="mt-3 flex flex-wrap gap-3 text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">
                   <span>Model: {summaryModel}</span>
                   {summaryEstimatedTokens ? <span>Estimated tokens: {summaryEstimatedTokens}</span> : null}
+                  {summaryReferences.length ? <span>References: {summaryReferences.length}</span> : null}
                 </div>
               )}
+            </section>
+
+            <section className="app-panel p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-[var(--accent-strong)]" />
+                  <h2 className="text-lg font-semibold text-[var(--text-normal)]">Explainability</h2>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                  {readerState?.open_count !== undefined && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Opened {readerState.open_count}x
+                    </span>
+                  )}
+                  {readerState?.total_read_seconds !== undefined && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Read {readerState.total_read_seconds}s
+                    </span>
+                  )}
+                  {readerState?.first_opened_at && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      First {new Date(readerState.first_opened_at).toLocaleString()}
+                    </span>
+                  )}
+                  {readerState?.last_opened_at && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Last {new Date(readerState.last_opened_at).toLocaleString()}
+                    </span>
+                  )}
+                  <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                    {isFavorited ? 'Favorited' : 'Not favorited'}
+                  </span>
+                </div>
+              </div>
+
+              {(summaryTakeaway || topHighlights.length > 0) && (
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Takeaway</div>
+                  <div className="mt-2 text-sm leading-7 text-[var(--text-normal)]">
+                    {summaryTakeaway || topHighlights[0]?.commentary || topHighlights[0]?.highlight_text || 'No takeaway available yet.'}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 space-y-3">
+                {topHighlights.length ? (
+                  topHighlights.map((highlight) => (
+                    <div key={highlight.id || `${highlight.post_id}-${highlight.highlight_text}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                      <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                        <span>{highlight.highlight_kind || 'evidence'}</span>
+                        {typeof highlight.importance_score === 'number' && (
+                          <span>Score {highlight.importance_score.toFixed(2)}</span>
+                        )}
+                      </div>
+                      <div className="mt-2 text-sm leading-7 text-[var(--text-normal)]">
+                        {highlight.highlight_text}
+                      </div>
+                      {highlight.id && summaryReferenceHighlightIds.has(highlight.id) && (
+                        <div className="mt-2">
+                          <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                            Used in summary
+                          </span>
+                        </div>
+                      )}
+                      {highlight.commentary && (
+                        <div className="mt-2 text-sm leading-7 text-[var(--text-muted)]">
+                          {highlight.commentary}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm text-[var(--text-muted)]">
+                    No highlights have been generated yet. Use the button above to generate them on demand.
+                  </div>
+                )}
+              </div>
             </section>
 
             <section className="app-panel p-6">
