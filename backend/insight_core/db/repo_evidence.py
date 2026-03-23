@@ -205,7 +205,7 @@ class EvidenceRepository:
             FROM posts p
             JOIN sources s ON s.id = p.source_id
             WHERE p.normalized_url = %s
-              AND (%s IS NULL OR p.id <> %s)
+                            AND (%s::uuid IS NULL OR p.id <> %s::uuid)
             ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
             LIMIT %s
         """
@@ -244,7 +244,7 @@ class EvidenceRepository:
             JOIN posts p ON p.id = pa.post_id
             JOIN sources s ON s.id = p.source_id
             WHERE pa.artifact_id = %s
-              AND (%s IS NULL OR p.id <> %s)
+                            AND (%s::uuid IS NULL OR p.id <> %s::uuid)
             ORDER BY pa.is_primary DESC, COALESCE(p.published_at, p.fetched_at) DESC
             LIMIT %s
         """
@@ -282,7 +282,7 @@ class EvidenceRepository:
             JOIN sources s ON s.id = p.source_id
             WHERE p.url_host = %s
               AND COALESCE(p.published_at, p.fetched_at) >= %s
-              AND (%s IS NULL OR p.id <> %s)
+                            AND (%s::uuid IS NULL OR p.id <> %s::uuid)
             ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
             LIMIT %s
         """
