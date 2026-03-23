@@ -9,6 +9,7 @@ interface Template {
   color: string;
   platform: string;
   variableName: string;
+  defaultVariableValue?: string;
   variableLabel?: string;
   placeholder?: string;
   helperText?: string;
@@ -55,6 +56,42 @@ const TEMPLATES: Template[] = [
       fetch_delay_seconds: 5,
       priority: 999,
       max_posts_per_fetch: 50,
+    },
+  },
+  {
+    id: 'lesswrong',
+    name: 'LessWrong',
+    color: '#2563EB',
+    platform: 'rss',
+    variableName: 'site',
+    defaultVariableValue: 'lesswrong',
+    variableLabel: 'Archive Scope',
+    placeholder: 'Main LessWrong archive',
+    helperText: 'Uses the custom LessWrong adapter for live fetch plus deep archive through GraphQL.',
+    buildHandle: () => 'https://www.lesswrong.com/feed.xml',
+    buildDisplayName: () => 'LessWrong',
+    defaultSettings: {
+      fetch_delay_seconds: 1,
+      priority: 999,
+      max_posts_per_fetch: 20,
+    },
+  },
+  {
+    id: 'gwern',
+    name: 'Gwern',
+    color: '#111827',
+    platform: 'rss',
+    variableName: 'site',
+    defaultVariableValue: 'gwern',
+    variableLabel: 'Archive Scope',
+    placeholder: 'Main Gwern archive',
+    helperText: 'Uses the custom Gwern adapter for sitemap-backed archive depth and newest-page live fetch.',
+    buildHandle: () => 'https://gwern.net',
+    buildDisplayName: () => 'Gwern',
+    defaultSettings: {
+      fetch_delay_seconds: 1,
+      priority: 999,
+      max_posts_per_fetch: 20,
     },
   },
   {
@@ -175,9 +212,10 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     setPriority(template.defaultSettings.priority);
     setMaxPosts(template.defaultSettings.max_posts_per_fetch);
     // Clear previous values
-    setTemplateVariable('');
-    setHandleOrUrl('');
-    setDisplayName('');
+    const initialValue = template.defaultVariableValue || '';
+    setTemplateVariable(initialValue);
+    setHandleOrUrl(initialValue ? template.buildHandle(initialValue) : '');
+    setDisplayName(initialValue ? (template.buildDisplayName?.(initialValue) || initialValue) : '');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
     setIsResolvingChannel(false);
     setResolvedChannelName(null);
