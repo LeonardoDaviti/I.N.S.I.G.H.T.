@@ -612,14 +612,77 @@ class BriefingService:
             "references": references,
         }
 
+    def _normalize_vertical_boundary(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        text = str(value).strip()
+        if not text:
+            return None
+        if "T" in text:
+            return text.split("T", 1)[0]
+        return text[:10]
+
+    def _resolve_vertical_briefing_range(
+        self,
+        source_id: str,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> tuple[str | None, str | None]:
+        if start_date and end_date:
+            return start_date, end_date
+
+        stats = self.posts_service.get_source_post_stats(source_id)
+        post_count = int(stats.get("post_count") or 0)
+        if post_count <= 0:
+            return start_date, end_date
+
+        latest_iso = self._normalize_vertical_boundary(stats.get("latest_published_at") or stats.get("latest_fetched_at"))
+        oldest_iso = self._normalize_vertical_boundary(stats.get("oldest_published_at"))
+
+        if not latest_iso:
+            newest_posts = self.posts_service.get_posts_by_source(source_id, limit=1, offset=0)
+            if newest_posts:
+                latest_iso = self._normalize_vertical_boundary(
+                    newest_posts[0].get("published_at") or newest_posts[0].get("fetched_at") or newest_posts[0].get("date")
+                )
+
+        if not oldest_iso:
+            oldest_posts = self.posts_service.get_posts_by_source(source_id, limit=1, offset=max(0, post_count - 1))
+            if oldest_posts:
+                oldest_iso = self._normalize_vertical_boundary(
+                    oldest_posts[0].get("published_at") or oldest_posts[0].get("fetched_at") or oldest_posts[0].get("date")
+                )
+
+        resolved_start = start_date or oldest_iso or latest_iso
+        resolved_end = end_date or latest_iso or oldest_iso
+        return resolved_start, resolved_end
+
     async def generate_source_vertical_briefing(
         self,
         source_id: str,
-        start_date: str,
-        end_date: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
         refresh: bool = False,
     ) -> Dict[str, Any]:
         """Generate a source-scoped vertical briefing across a date range."""
+        start_date, end_date = self._resolve_vertical_briefing_range(source_id, start_date, end_date)
+        if not start_date or not end_date:
+            return {
+                "success": False,
+                "error": f"No stored posts found for source {source_id}",
+                "vertical_briefing": "",
+                "tracks": [],
+                "posts": {},
+                "source_id": source_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "subject_key": self._vertical_subject_key(source_id, start_date or "none", end_date or "none"),
+            }
+
         start = self._parse_date_str(start_date)
         end = self._parse_date_str(end_date)
         if end < start:

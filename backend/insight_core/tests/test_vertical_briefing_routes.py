@@ -23,7 +23,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
             def __init__(self, calls):
                 self.calls = calls
 
-            async def generate_source_vertical_briefing(self, source_id, start_date, end_date, refresh=False):
+            async def generate_source_vertical_briefing(self, source_id, start_date=None, end_date=None, refresh=False):
                 self.calls.append((source_id, start_date, end_date, refresh))
                 return {
                     "success": True,
@@ -56,6 +56,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
         result = asyncio.run(
             main.get_source_vertical_briefing(
                 source_id="source-123",
+                background_tasks=main.BackgroundTasks(),
                 start="2026-03-01",
                 end="2026-03-31",
             )
@@ -71,6 +72,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
         result = asyncio.run(
             main.refresh_source_vertical_briefing(
                 source_id="source-123",
+                background_tasks=main.BackgroundTasks(),
                 start="2026-03-01",
                 end="2026-03-31",
             )
@@ -79,6 +81,17 @@ class VerticalBriefingRouteTests(unittest.TestCase):
         self.assertEqual(self.calls[0], ("source-123", "2026-03-01", "2026-03-31", True))
         self.assertEqual(result["source_id"], "source-123")
         self.assertTrue(result["cached"])
+
+    def test_get_source_vertical_briefing_allows_implicit_full_range(self):
+        result = asyncio.run(
+            main.get_source_vertical_briefing(
+                source_id="source-123",
+                background_tasks=main.BackgroundTasks(),
+            )
+        )
+
+        self.assertEqual(self.calls[0], ("source-123", None, None, False))
+        self.assertEqual(result["source_id"], "source-123")
 
 
 if __name__ == "__main__":

@@ -721,8 +721,8 @@ class InsightApiBridge:
     async def generate_source_vertical_briefing(
         self,
         source_id: str,
-        start_date: str,
-        end_date: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
         refresh: bool = False,
         *,
         job_id: str | None = None,
@@ -742,7 +742,11 @@ class InsightApiBridge:
         try:
             self._append_job_event_safe(
                 job_id,
-                message=f"Starting source vertical briefing for {source_id} ({start_date} to {end_date})",
+                message=(
+                    f"Starting source vertical briefing for {source_id} ({start_date} to {end_date})"
+                    if start_date and end_date
+                    else f"Starting source vertical briefing for {source_id} across the full stored source range"
+                ),
                 level="info",
             )
             result = await self.briefing_service.generate_source_vertical_briefing(

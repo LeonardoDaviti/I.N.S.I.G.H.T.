@@ -1255,8 +1255,6 @@ async def get_source_vertical_briefing(
     """Generate or fetch a cached source-scoped vertical briefing."""
     try:
         logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
-        if not start or not end:
-            raise HTTPException(status_code=400, detail="Start and end parameters required")
         if asyncMode:
             job_id = api_bridge._start_job_safe(
                 "vertical_briefing_source",
@@ -1300,8 +1298,6 @@ async def refresh_source_vertical_briefing(
     """Force regeneration of a source-scoped vertical briefing."""
     try:
         logger.info(f"🔄 Refreshing vertical briefing for source {source_id}")
-        if not start or not end:
-            raise HTTPException(status_code=400, detail="Start and end parameters required")
         if asyncMode:
             job_id = api_bridge._start_job_safe(
                 "vertical_briefing_source",

@@ -1,26 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  CalendarDays,
-  ChevronRight,
-  Loader2,
-  RefreshCw,
-  Sparkles,
-  WandSparkles,
-} from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronRight, Loader2, RefreshCw, Sparkles, WandSparkles } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import { apiService } from '../services/api';
 import type { SourceWithSettings, VerticalBriefingResponse, VerticalBriefingTrack } from '../services/api';
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function monthStartIso() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1)).toISOString().slice(0, 10);
-}
 
 function formatDate(value?: string | null) {
   if (!value) return 'Unknown';
@@ -80,8 +63,8 @@ export default function VerticalBriefingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const initialSourceId = sourceIdParam || searchParams.get('sourceId') || '';
-  const initialStart = searchParams.get('start') || monthStartIso();
-  const initialEnd = searchParams.get('end') || todayIso();
+  const initialStart = searchParams.get('start') || '';
+  const initialEnd = searchParams.get('end') || '';
 
   const [sources, setSources] = useState<SourceWithSettings[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId);
@@ -127,7 +110,7 @@ export default function VerticalBriefingPage() {
     setSources(nextSources);
     if (!selectedSourceId && nextSources[0]) {
       setSelectedSourceId(nextSources[0].id);
-      syncSearchParams({ sourceId: nextSources[0].id, start: startDate, end: endDate });
+      syncSearchParams({ sourceId: nextSources[0].id, start: initialStart || null, end: initialEnd || null });
     }
     setLoadingSources(false);
   };
@@ -147,15 +130,17 @@ export default function VerticalBriefingPage() {
     }
 
     const response = refresh
-      ? await apiService.refreshVerticalBriefing(sourceId, startDate, endDate)
-      : await apiService.getVerticalBriefing(sourceId, startDate, endDate);
+      ? await apiService.refreshVerticalBriefing(sourceId, startDate || undefined, endDate || undefined)
+      : await apiService.getVerticalBriefing(sourceId, startDate || undefined, endDate || undefined);
 
     if (!response.success) {
       setError(response.error || 'Failed to load vertical briefing');
       setBriefing(null);
     } else {
       setBriefing(response);
-      syncSearchParams({ sourceId, start: startDate, end: endDate });
+      setStartDate(response.start_date || '');
+      setEndDate(response.end_date || '');
+      syncSearchParams({ sourceId, start: response.start_date || null, end: response.end_date || null });
     }
 
     setLoadingBriefing(false);
@@ -173,11 +158,14 @@ export default function VerticalBriefingPage() {
     }
     void loadBriefing(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources.length, selectedSourceId, startDate, endDate]);
+  }, [sources.length, selectedSourceId]);
 
   const handleSourceChange = (value: string) => {
     setSelectedSourceId(value);
-    syncSearchParams({ sourceId: value });
+    setBriefing(null);
+    setStartDate('');
+    setEndDate('');
+    syncSearchParams({ sourceId: value, start: null, end: null });
   };
 
   return (
@@ -238,10 +226,10 @@ export default function VerticalBriefingPage() {
                 <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4">
                   <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-faint)]">Briefing range</div>
                   <div className="mt-2 text-lg font-semibold text-[var(--text-normal)]">
-                    {startDate} to {endDate}
+                    {startDate && endDate ? `${startDate} to ${endDate}` : 'Full stored source history'}
                   </div>
                   <div className="mt-1 text-sm text-[var(--text-muted)]">
-                    {briefing?.cached ? 'Cached briefing' : 'Live briefing'}
+                    {briefing?.cached ? 'Cached briefing over the full stored range' : 'Auto-derived from every stored post for this source'}
                   </div>
                 </div>
               </div>
@@ -257,7 +245,7 @@ export default function VerticalBriefingPage() {
 
         <section className="app-panel p-5">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
               <label className="space-y-2 text-sm">
                 <span className="text-[var(--text-muted)]">Source</span>
                 <select
@@ -274,34 +262,22 @@ export default function VerticalBriefingPage() {
                   ))}
                 </select>
               </label>
-              <label className="space-y-2 text-sm">
-                <span className="text-[var(--text-muted)]">Start</span>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => {
-                    setStartDate(e.target.value);
-                    syncSearchParams({ start: e.target.value });
-                  }}
-                  className="workspace-editor py-3 font-sans"
-                />
-              </label>
-              <label className="space-y-2 text-sm">
-                <span className="text-[var(--text-muted)]">End</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => {
-                    setEndDate(e.target.value);
-                    syncSearchParams({ end: e.target.value });
-                  }}
-                  className="workspace-editor py-3 font-sans"
-                />
-              </label>
+              <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">Coverage window</div>
+                <div className="mt-2 text-sm font-semibold text-[var(--text-normal)]">
+                  {startDate && endDate ? `${formatDate(startDate)} to ${formatDate(endDate)}` : 'Automatically using every stored post'}
+                </div>
+                <div className="mt-1 text-xs text-[var(--text-muted)]">
+                  Vertical briefing now uses the full source archive by default.
+                </div>
+              </div>
             </div>
 
             <div className="flex items-end justify-between gap-3">
               <div className="flex flex-wrap gap-2">
+                <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
+                  full source range
+                </span>
                 <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
                   {tracks.length} tracks
                 </span>
@@ -346,7 +322,7 @@ export default function VerticalBriefingPage() {
               </div>
             ) : (
               <div className="text-sm text-[var(--text-muted)]">
-                Select a source and date range to generate the vertical briefing.
+                Select a source to generate the vertical briefing across its full stored history.
               </div>
             )}
             <div className="mt-5 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">

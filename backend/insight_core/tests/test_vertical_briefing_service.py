@@ -232,6 +232,20 @@ class VerticalBriefingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached["saved_briefing_id"], result["saved_briefing_id"])
         self.assertEqual(cached["subject_key"], self.subject_key)
 
+    async def test_generate_source_vertical_briefing_without_dates_uses_full_stored_range(self):
+        result = await self.service.generate_source_vertical_briefing(
+            self.source_id,
+            None,
+            None,
+            refresh=True,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["start_date"], "2026-03-03")
+        self.assertEqual(result["end_date"], "2026-04-02")
+        self.assertEqual(result["posts_processed"], 6)
+        self.assertIn(self.outlier_title, [post.get("title") for post in result["posts"].values()])
+
 
 if __name__ == "__main__":
     unittest.main()

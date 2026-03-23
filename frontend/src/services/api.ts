@@ -1983,9 +1983,11 @@ class ApiService {
     }
   }
 
-  async getVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
+  async getVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
     try {
-      const params = new URLSearchParams({ start, end, asyncMode: 'true' });
+      const params = new URLSearchParams({ asyncMode: 'true' });
+      if (start) params.set('start', start);
+      if (end) params.set('end', end);
       return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`, {
         method: 'GET',
       });
@@ -1995,9 +1997,11 @@ class ApiService {
     }
   }
 
-  async refreshVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
+  async refreshVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
     try {
-      const params = new URLSearchParams({ start, end, asyncMode: 'true' });
+      const params = new URLSearchParams({ asyncMode: 'true' });
+      if (start) params.set('start', start);
+      if (end) params.set('end', end);
       return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
         method: 'POST',
       });
