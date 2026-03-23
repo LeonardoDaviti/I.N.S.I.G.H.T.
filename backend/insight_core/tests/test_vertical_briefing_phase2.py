@@ -163,6 +163,124 @@ class VerticalBriefingPhase2Tests(unittest.TestCase):
         self.assertEqual(len(all_post_ids), 6)
         self.assertTrue(any(track["track_kind"] == "one_off_update" for track in result["tracks"]))
 
+    def test_normalize_vertical_briefing_result_backfills_uncovered_posts(self):
+        service = BriefingService("postgresql://unused")
+        posts = [
+            {
+                "id": "p-1",
+                "title": "Agent tools update",
+                "content": "Agent tooling keeps improving.",
+                "published_at": datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+                "vertical_story_titles": [],
+                "vertical_primary_story_title": "",
+                "vertical_event_titles": [],
+                "vertical_shared_event_titles": [],
+                "vertical_entity_names": ["OpenClaw"],
+                "vertical_shared_entity_names": ["OpenClaw"],
+                "vertical_category_names": ["tooling"],
+                "vertical_shared_category_names": ["tooling"],
+                "vertical_entity_overlap_count": 1,
+                "vertical_evidence_cluster_key": "cluster-1",
+                "vertical_evidence_cluster_size": 1,
+                "vertical_track_hint": "OpenClaw",
+            },
+            {
+                "id": "p-2",
+                "title": "Policy note",
+                "content": "A government policy update lands.",
+                "published_at": datetime(2026, 3, 2, 12, 0, tzinfo=timezone.utc),
+                "vertical_story_titles": [],
+                "vertical_primary_story_title": "",
+                "vertical_event_titles": ["Policy Regulation Update"],
+                "vertical_shared_event_titles": ["Policy Regulation Update"],
+                "vertical_entity_names": ["Shenzhen"],
+                "vertical_shared_entity_names": [],
+                "vertical_category_names": ["policy"],
+                "vertical_shared_category_names": ["policy"],
+                "vertical_entity_overlap_count": 0,
+                "vertical_evidence_cluster_key": "cluster-2",
+                "vertical_evidence_cluster_size": 1,
+                "vertical_track_hint": "Policy Regulation Update",
+            },
+            {
+                "id": "p-3",
+                "title": "Research note",
+                "content": "A research update arrives.",
+                "published_at": datetime(2026, 3, 3, 12, 0, tzinfo=timezone.utc),
+                "vertical_story_titles": [],
+                "vertical_primary_story_title": "",
+                "vertical_event_titles": [],
+                "vertical_shared_event_titles": [],
+                "vertical_entity_names": ["Mouse Cortex"],
+                "vertical_shared_entity_names": [],
+                "vertical_category_names": ["research"],
+                "vertical_shared_category_names": ["research"],
+                "vertical_entity_overlap_count": 0,
+                "vertical_evidence_cluster_key": "cluster-3",
+                "vertical_evidence_cluster_size": 1,
+                "vertical_track_hint": "Mouse Cortex",
+            },
+        ]
+
+        result = service._normalize_vertical_briefing_result(
+            posts=posts,
+            briefing_result={
+                "tracks": [
+                    {
+                        "title": "Agent tools",
+                        "summary": "Tooling thread",
+                        "track_kind": "project_thread",
+                        "post_ids": ["p-1"],
+                        "timeline": [{"date": "2026-03-01", "summary": "Tooling moved", "post_ids": ["p-1"]}],
+                    }
+                ]
+            },
+            scope_label="Synthetic Source",
+            start_date="2026-03-01",
+            end_date="2026-03-03",
+        )
+
+        coverage = result["coverage"]
+        self.assertTrue(coverage["residual_backfill_used"])
+        self.assertEqual(coverage["covered_posts"], 3)
+        self.assertEqual(coverage["coverage_ratio"], 1.0)
+        all_post_ids = {
+            post_id
+            for track in result["tracks"]
+            for post_id in track["post_ids"]
+        }
+        self.assertEqual(all_post_ids, {"p-1", "p-2", "p-3"})
+
+    def test_build_vertical_source_profile_prefers_memory_signals(self):
+        service = BriefingService("postgresql://unused")
+        profile = service._build_vertical_source_profile(
+            [
+                {
+                    "vertical_story_titles": ["Claude Memory Transfer"],
+                    "vertical_shared_entity_names": ["Claude", "ChatGPT"],
+                    "vertical_shared_event_titles": ["Release Launch"],
+                    "vertical_shared_category_names": ["workflow", "agents"],
+                    "vertical_track_hint": "Claude / ChatGPT",
+                },
+                {
+                    "vertical_story_titles": ["Claude Memory Transfer"],
+                    "vertical_shared_entity_names": ["Claude"],
+                    "vertical_shared_event_titles": ["Release Launch"],
+                    "vertical_shared_category_names": ["workflow"],
+                    "vertical_track_hint": "Claude / ChatGPT",
+                },
+            ]
+        )
+
+        self.assertEqual(profile["posts_total"], 2)
+        self.assertEqual(profile["story_linked_posts"], 2)
+        self.assertEqual(profile["entity_overlap_posts"], 2)
+        self.assertEqual(profile["event_overlap_posts"], 2)
+        self.assertIn("Claude Memory Transfer", profile["dominant_story_titles"])
+        self.assertIn("Claude", profile["dominant_entities"])
+        self.assertIn("Release Launch", profile["dominant_events"])
+        self.assertIn("workflow", profile["dominant_categories"])
+
 
 if __name__ == "__main__":
     unittest.main()

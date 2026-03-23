@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 import psycopg
 
 from insight_core.db.repo_evidence import EvidenceRepository
+from insight_core.db.repo_event_memory import EventMemoryRepository
 from insight_core.db.repo_memory import MemoryRepository
 from insight_core.db.repo_stories import StoriesRepository
 from insight_core.logs.core.logger_config import get_component_logger
@@ -28,7 +29,7 @@ from insight_core.utils.entity_memory import is_meaningful_entity_name, normaliz
 class BriefingService:
     """Generate daily briefings from posts already stored in the database."""
 
-    VERTICAL_BRIEFING_VERSION = 3
+    VERTICAL_BRIEFING_VERSION = 4
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -36,6 +37,7 @@ class BriefingService:
         self.sources_service = SourcesService(db_url)
         self.stories_repo = StoriesRepository(db_url)
         self.memory_repo = MemoryRepository(db_url)
+        self.event_repo = EventMemoryRepository(db_url)
         self.evidence_repo = EvidenceRepository(db_url)
         self.entity_memory_service = EntityMemoryService(db_url)
         self.event_memory_service = EventMemoryService(db_url)
@@ -669,6 +671,7 @@ class BriefingService:
 
         self._ensure_vertical_supporting_memory(posts)
         posts = self._build_vertical_briefing_context(posts)
+        source_profile = self._build_vertical_source_profile(posts)
 
         setup_ok = self.processor.setup_processor()
         try:
@@ -680,6 +683,7 @@ class BriefingService:
                 source_label,
                 start_date,
                 end_date,
+                source_profile=source_profile,
             )
         except Exception as exc:
             self.logger.warning(
@@ -699,10 +703,25 @@ class BriefingService:
             except Exception:
                 pass
 
-        normalized = self._normalize_vertical_briefing_result(posts=posts, briefing_result=vertical_result)
+        normalized = self._normalize_vertical_briefing_result(
+            posts=posts,
+            briefing_result=vertical_result,
+            scope_label=source_label,
+            start_date=start_date,
+            end_date=end_date,
+        )
         vertical_briefing = vertical_result.get("vertical_briefing", "")
         tracks = normalized["tracks"]
         posts_map = normalized["posts"]
+        coverage = normalized["coverage"]
+        if coverage.get("residual_backfill_used") or not str(vertical_briefing or "").strip():
+            vertical_briefing = self.processor._build_vertical_briefing_markdown(
+                scope_label=source_label,
+                start_date=start_date,
+                end_date=end_date,
+                posts=posts,
+                tracks=tracks,
+            )
         estimated_tokens = self._count_tokens(vertical_briefing)
         unique_evidence_clusters = len(
             {
@@ -713,6 +732,7 @@ class BriefingService:
         )
         story_linked_posts = sum(1 for post in posts if post.get("vertical_story_titles"))
         entity_overlap_posts = sum(1 for post in posts if post.get("vertical_shared_entity_names"))
+        event_overlap_posts = sum(1 for post in posts if post.get("vertical_shared_event_titles"))
         payload = {
             "briefing_version": self.VERTICAL_BRIEFING_VERSION,
             "scope_type": "source",
@@ -725,10 +745,13 @@ class BriefingService:
             "unique_evidence_clusters": unique_evidence_clusters,
             "story_linked_posts": story_linked_posts,
             "entity_overlap_posts": entity_overlap_posts,
+            "event_overlap_posts": event_overlap_posts,
             "track_count": len(tracks),
             "estimated_tokens": estimated_tokens,
             "tracks": tracks,
-            "signal_sources": ["stories", "entities", "evidence"],
+            "coverage": coverage,
+            "source_profile": source_profile,
+            "signal_sources": ["stories", "entities", "events", "evidence"],
             "one_sentence_takeaway": self._briefing_takeaway(vertical_briefing),
         }
         saved = self.store_service.save_briefing(
@@ -766,6 +789,8 @@ class BriefingService:
             "tracks": tracks,
             "posts": posts_map,
             "variant": "source",
+            "coverage": coverage,
+            "source_profile": source_profile,
             "one_sentence_takeaway": self._briefing_takeaway(vertical_briefing),
             "references": references,
         }
@@ -886,6 +911,8 @@ class BriefingService:
             "tracks": tracks,
             "posts": posts,
             "variant": "source",
+            "coverage": payload.get("coverage") or {},
+            "source_profile": payload.get("source_profile") or {},
             "one_sentence_takeaway": payload.get("one_sentence_takeaway") or self._briefing_takeaway(cached_briefing.get("content", "")),
             "references": references,
         }
@@ -895,6 +922,9 @@ class BriefingService:
         *,
         posts: List[Dict[str, Any]],
         briefing_result: Dict[str, Any],
+        scope_label: str,
+        start_date: str,
+        end_date: str,
     ) -> Dict[str, Any]:
         posts_map = {
             str(post["id"]): {
@@ -905,8 +935,69 @@ class BriefingService:
             if post.get("id")
         }
 
+        normalized_tracks = self._normalize_vertical_tracks(
+            posts_map=posts_map,
+            raw_tracks=briefing_result.get("tracks") or [],
+            start_index=1,
+            existing_titles=None,
+        )
+
+        coverage = self._vertical_track_coverage(posts_map, normalized_tracks)
+        residual_backfill_used = False
+        if coverage["uncovered_post_ids"]:
+            uncovered_posts = [
+                posts_map[post_id]
+                for post_id in coverage["uncovered_post_ids"]
+                if post_id in posts_map
+            ]
+            residual_result = self.processor._fallback_source_vertical_briefing(
+                scope_label,
+                start_date,
+                end_date,
+                uncovered_posts,
+            )
+            residual_tracks = self._normalize_vertical_tracks(
+                posts_map=posts_map,
+                raw_tracks=residual_result.get("tracks") or [],
+                start_index=len(normalized_tracks) + 1,
+                existing_titles={str(track.get("title") or "").strip().lower() for track in normalized_tracks},
+            )
+            if residual_tracks:
+                normalized_tracks.extend(residual_tracks)
+                residual_backfill_used = True
+                coverage = self._vertical_track_coverage(posts_map, normalized_tracks)
+
+        if coverage["uncovered_post_ids"]:
+            singleton_tracks = self._build_vertical_singleton_tracks(
+                posts_map=posts_map,
+                post_ids=coverage["uncovered_post_ids"],
+                start_index=len(normalized_tracks) + 1,
+            )
+            if singleton_tracks:
+                normalized_tracks.extend(singleton_tracks)
+                residual_backfill_used = True
+                coverage = self._vertical_track_coverage(posts_map, normalized_tracks)
+
+        coverage["residual_backfill_used"] = residual_backfill_used
+
+        return {
+            "tracks": normalized_tracks,
+            "posts": posts_map,
+            "coverage": coverage,
+        }
+
+    def _normalize_vertical_tracks(
+        self,
+        *,
+        posts_map: Dict[str, Dict[str, Any]],
+        raw_tracks: List[Dict[str, Any]],
+        start_index: int,
+        existing_titles: set[str] | None,
+    ) -> List[Dict[str, Any]]:
         normalized_tracks: List[Dict[str, Any]] = []
-        for index, track in enumerate(briefing_result.get("tracks") or [], start=1):
+        seen_titles = set(existing_titles or set())
+
+        for index, track in enumerate(raw_tracks, start=start_index):
             if not isinstance(track, dict):
                 continue
             raw_post_ids = [str(post_id) for post_id in (track.get("post_ids") or [])]
@@ -954,11 +1045,18 @@ class BriefingService:
             evidence_cluster_count = int(track.get("evidence_cluster_count") or len(timeline_entries) or 1)
             raw_post_count = int(track.get("raw_post_count") or len(track_post_ids))
             unique_post_count = int(track.get("unique_post_count") or len(track_post_ids))
+            title = track.get("title") or f"Track {index}"
+            title_text = str(title).strip() or f"Track {index}"
+            normalized_title = title_text.lower()
+            if normalized_title in seen_titles:
+                title_text = f"Additional: {title_text}"[:120]
+                normalized_title = title_text.lower()
+            seen_titles.add(normalized_title)
 
             normalized_tracks.append(
                 {
                     "id": str(track.get("id") or f"track-{index}"),
-                    "title": track.get("title") or f"Track {index}",
+                    "title": title_text,
                     "summary": track.get("summary") or "",
                     "track_kind": track_kind,
                     "post_ids": track_post_ids,
@@ -971,10 +1069,68 @@ class BriefingService:
                 }
             )
 
+        return normalized_tracks
+
+    def _vertical_track_coverage(
+        self,
+        posts_map: Dict[str, Dict[str, Any]],
+        tracks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        covered_post_ids: List[str] = []
+        for track in tracks:
+            for post_id in track.get("post_ids") or []:
+                post_key = str(post_id)
+                if post_key in posts_map and post_key not in covered_post_ids:
+                    covered_post_ids.append(post_key)
+
+        uncovered_post_ids = [post_id for post_id in posts_map.keys() if post_id not in covered_post_ids]
+        total_posts = len(posts_map)
+        covered_posts = len(covered_post_ids)
+        coverage_ratio = (covered_posts / total_posts) if total_posts else 1.0
         return {
-            "tracks": normalized_tracks,
-            "posts": posts_map,
+            "total_posts": total_posts,
+            "covered_posts": covered_posts,
+            "coverage_ratio": round(coverage_ratio, 4),
+            "covered_post_ids": covered_post_ids,
+            "uncovered_post_ids": uncovered_post_ids,
         }
+
+    def _build_vertical_singleton_tracks(
+        self,
+        *,
+        posts_map: Dict[str, Dict[str, Any]],
+        post_ids: List[str],
+        start_index: int,
+    ) -> List[Dict[str, Any]]:
+        tracks: List[Dict[str, Any]] = []
+        for offset, post_id in enumerate(post_ids):
+            post = posts_map.get(post_id)
+            if not post:
+                continue
+            title = self._vertical_fallback_track_hint(post) or post.get("title") or f"Track {start_index + offset}"
+            summary = self.processor._post_brief(post)
+            tracks.append(
+                {
+                    "id": f"track-{start_index + offset}",
+                    "title": str(title)[:120],
+                    "summary": summary,
+                    "track_kind": "one_off_update",
+                    "post_ids": [post_id],
+                    "timeline": [
+                        {
+                            "date": self.processor._vertical_post_date(post),
+                            "summary": summary,
+                            "post_ids": [post_id],
+                        }
+                    ],
+                    "story_titles": list(post.get("vertical_story_titles") or [])[:4],
+                    "entity_hints": list(post.get("vertical_shared_entity_names") or post.get("vertical_entity_names") or [])[:4],
+                    "evidence_cluster_count": 1,
+                    "raw_post_count": 1,
+                    "unique_post_count": 1,
+                }
+            )
+        return tracks
 
     def _vertical_subject_key(self, source_id: str, start_date: str, end_date: str) -> str:
         return f"source:{source_id}:{start_date}:{end_date}"
@@ -990,9 +1146,12 @@ class BriefingService:
         try:
             story_links_by_post: Dict[str, List[Dict[str, Any]]] = {}
             entity_links_by_post: Dict[str, List[Dict[str, Any]]] = {}
+            event_links_by_post: Dict[str, List[Dict[str, Any]]] = {}
             evidence_by_post: Dict[str, Dict[str, Any]] = {}
             entity_counts: Counter[str] = Counter()
             entity_display_by_key: Dict[str, str] = {}
+            event_counts: Counter[str] = Counter()
+            event_display_by_key: Dict[str, str] = {}
             category_counts: Counter[str] = Counter()
             category_display_by_key: Dict[str, str] = {}
 
@@ -1005,6 +1164,8 @@ class BriefingService:
 
                         entity_links = self.memory_repo.get_post_entities(cur, post_id)
                         entity_links_by_post[post_id] = entity_links
+                        event_links = self.event_repo.get_post_event_evidence(cur, post_id)
+                        event_links_by_post[post_id] = event_links
 
                         evidence_by_post[post_id] = self.evidence_repo.get_post_evidence_debug(cur, post_id)
 
@@ -1016,6 +1177,14 @@ class BriefingService:
                             seen_entity_keys.add(entity_key)
                             entity_counts[entity_key] += 1
                             entity_display_by_key.setdefault(entity_key, entity_display)
+
+                        seen_event_keys: set[str] = set()
+                        for event_key, event_display in self._vertical_event_pairs(event_links):
+                            if event_key in seen_event_keys:
+                                continue
+                            seen_event_keys.add(event_key)
+                            event_counts[event_key] += 1
+                            event_display_by_key.setdefault(event_key, event_display)
 
                         seen_category_keys: set[str] = set()
                         for category_key, category_display in self._vertical_category_pairs(post):
@@ -1031,12 +1200,15 @@ class BriefingService:
                 post_id = str(post["id"])
                 story_links = story_links_by_post.get(post_id, [])
                 entity_links = entity_links_by_post.get(post_id, [])
+                event_links = event_links_by_post.get(post_id, [])
                 evidence = evidence_by_post.get(post_id) or {}
                 cluster_info = cluster_map.get(post_id) or {"key": post_id, "size": 1, "members": [post_id]}
 
                 story_titles = self._vertical_story_titles(story_links)
                 entity_pairs = self._vertical_entity_pairs(entity_links)
                 entity_pairs.sort(key=lambda item: (-entity_counts.get(item[0], 0), item[1].lower()))
+                event_pairs = self._vertical_event_pairs(event_links)
+                event_pairs.sort(key=lambda item: (-event_counts.get(item[0], 0), item[1].lower()))
                 category_pairs = self._vertical_category_pairs(post)
                 category_pairs.sort(key=lambda item: (-category_counts.get(item[0], 0), item[1].lower()))
 
@@ -1045,6 +1217,12 @@ class BriefingService:
                     entity_display_by_key[key]
                     for key, display in entity_pairs
                     if entity_counts.get(key, 0) > 1
+                ][:4]
+                event_names = [display for _, display in event_pairs[:5]]
+                shared_event_titles = [
+                    event_display_by_key[key]
+                    for key, display in event_pairs
+                    if event_counts.get(key, 0) > 1
                 ][:4]
                 category_names = [display for _, display in category_pairs[:5]]
                 shared_category_names = [
@@ -1055,8 +1233,10 @@ class BriefingService:
                 primary_story_title = story_titles[0] if story_titles else ""
                 track_hint = (
                     primary_story_title
+                    or " / ".join(shared_event_titles[:2])
                     or " / ".join(shared_entity_names[:2])
                     or " / ".join(shared_category_names[:2])
+                    or " / ".join(event_names[:2])
                     or " / ".join(entity_names[:2])
                     or " / ".join(category_names[:2])
                     or self._vertical_fallback_track_hint(post)
@@ -1068,6 +1248,8 @@ class BriefingService:
                         "vertical_story_links": story_links,
                         "vertical_story_titles": story_titles,
                         "vertical_primary_story_title": primary_story_title,
+                        "vertical_event_titles": event_names,
+                        "vertical_shared_event_titles": shared_event_titles,
                         "vertical_entity_names": entity_names,
                         "vertical_shared_entity_names": shared_entity_names,
                         "vertical_category_names": category_names,
@@ -1222,6 +1404,72 @@ class BriefingService:
             seen.add(normalized)
             pairs.append((normalized, display))
         return pairs
+
+    def _vertical_event_pairs(self, event_links: List[Dict[str, Any]]) -> List[tuple[str, str]]:
+        pairs: List[tuple[str, str]] = []
+        seen: set[str] = set()
+        for event_link in event_links:
+            event = event_link.get("event") or {}
+            title = str(event.get("title") or "").strip()
+            event_type = str(event.get("event_type") or "").strip()
+            display = title or event_type.replace("_", " ").title()
+            normalized = re.sub(r"\s+", " ", display.lower()).strip()
+            if not normalized or normalized in seen:
+                continue
+            if len(normalized) < 4:
+                continue
+            seen.add(normalized)
+            pairs.append((normalized, display[:120]))
+        return pairs
+
+    def _build_vertical_source_profile(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        profile: Dict[str, Any] = {
+            "posts_total": len(posts),
+            "story_linked_posts": 0,
+            "entity_overlap_posts": 0,
+            "event_overlap_posts": 0,
+            "dominant_story_titles": [],
+            "dominant_entities": [],
+            "dominant_events": [],
+            "dominant_categories": [],
+            "dominant_track_hints": [],
+        }
+        if not posts:
+            return profile
+
+        story_counts: Counter[str] = Counter()
+        entity_counts: Counter[str] = Counter()
+        event_counts: Counter[str] = Counter()
+        category_counts: Counter[str] = Counter()
+        track_hint_counts: Counter[str] = Counter()
+
+        for post in posts:
+            if post.get("vertical_story_titles"):
+                profile["story_linked_posts"] += 1
+            if post.get("vertical_shared_entity_names"):
+                profile["entity_overlap_posts"] += 1
+            if post.get("vertical_shared_event_titles"):
+                profile["event_overlap_posts"] += 1
+
+            for title in post.get("vertical_story_titles") or []:
+                story_counts[str(title).strip()] += 1
+            for entity in post.get("vertical_shared_entity_names") or post.get("vertical_entity_names") or []:
+                entity_counts[str(entity).strip()] += 1
+            for event_title in post.get("vertical_shared_event_titles") or post.get("vertical_event_titles") or []:
+                event_counts[str(event_title).strip()] += 1
+            for category in post.get("vertical_shared_category_names") or post.get("vertical_category_names") or []:
+                category_counts[str(category).strip()] += 1
+
+            track_hint = str(post.get("vertical_track_hint") or "").strip()
+            if track_hint:
+                track_hint_counts[track_hint] += 1
+
+        profile["dominant_story_titles"] = [name for name, _ in story_counts.most_common(6)]
+        profile["dominant_entities"] = [name for name, _ in entity_counts.most_common(8)]
+        profile["dominant_events"] = [name for name, _ in event_counts.most_common(6)]
+        profile["dominant_categories"] = [name for name, _ in category_counts.most_common(8)]
+        profile["dominant_track_hints"] = [name for name, _ in track_hint_counts.most_common(8)]
+        return profile
 
     def _ensure_vertical_supporting_memory(self, posts: List[Dict[str, Any]]) -> None:
         if not posts:

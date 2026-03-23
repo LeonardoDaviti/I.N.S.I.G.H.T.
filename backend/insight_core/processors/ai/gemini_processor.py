@@ -355,6 +355,8 @@ DAILY TOPIC BRIEFINGS:
         scope_label: str,
         start_date: str,
         end_date: str,
+        *,
+        source_profile: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Generate a source-scoped vertical briefing across a date range."""
         prompt = f"""
@@ -366,6 +368,8 @@ Return ONLY valid JSON with this exact structure:
       "title": "track title",
       "summary": "2-5 sentence summary",
       "track_kind": "project_thread",
+      "story_titles": ["story title"],
+      "entity_hints": ["entity or recurring actor"],
       "post_ids": ["post-uuid-1", "post-uuid-2"],
       "timeline": [
         {{
@@ -380,18 +384,28 @@ Return ONLY valid JSON with this exact structure:
 
 Rules:
 - Use only the supplied posts and post IDs.
+- Every supplied post UUID must appear in exactly one track. Do not leave orphan posts out of the output.
 - Optimize for recurring threads inside one source, not for generic topic buckets.
-- Prefer fewer, stronger tracks. Aim for 2-6 tracks when possible.
+- For ranges with more than 20 posts, usually produce 4-8 tracks. Do not collapse distinct threads into only 2-3 generic buckets.
 - Keep related posts together only when they clearly belong to the same recurring thread.
-- Prefer story links and entity overlap when those signals are present.
+- Prefer story links, shared event titles, entity overlap, and recurring category hints when those signals are present.
 - Treat posts in the same evidence cluster as one underlying signal when judging prominence.
 - Use track_kind values from this set: project_thread, recurring_theme, one_off_update.
 - Put a post into one_off_update only if it is a material isolated update.
+- Separate different narrative axes when the evidence supports it. Typical axes include:
+  - product/tooling releases and workflow changes
+  - institutional or policy shifts
+  - operational failures, security incidents, or reliability warnings
+  - research or science developments
+  - cultural/media usage and adoption signals
+- Preserve the source's actual obsessions and worldview. This is a live thread for one source, not a generic AI-news summary.
 - Preserve exact post IDs and timeline evidence.
 - Do not output any text outside the JSON.
 
 SOURCE: {scope_label}
 DATE RANGE: {start_date} to {end_date}
+SOURCE PROFILE:
+{self._format_vertical_source_profile(source_profile or {})}
 POSTS:
 {self._format_posts(posts, truncate_to=1200, include_uuid=True, include_dates=True)}
 """
@@ -1129,12 +1143,21 @@ POSTS:
             story_titles = self._vertical_story_titles(post)
             if story_titles:
                 lines.append(f"Story links: {', '.join(story_titles)}")
+            event_titles = [str(item).strip() for item in (post.get("vertical_shared_event_titles") or post.get("vertical_event_titles") or []) if str(item).strip()]
+            if event_titles:
+                lines.append(f"Event hints: {', '.join(event_titles[:4])}")
             entity_names = self._vertical_entity_names(post)
             if entity_names:
                 lines.append(f"Entities: {', '.join(entity_names)}")
+            category_names = [str(item).strip() for item in (post.get("vertical_shared_category_names") or post.get("vertical_category_names") or []) if str(item).strip()]
+            if category_names:
+                lines.append(f"Categories: {', '.join(category_names[:4])}")
             track_hint = str(post.get("vertical_track_hint") or "").strip()
             if track_hint:
                 lines.append(f"Track hint: {track_hint}")
+            overlap_count = int(post.get("vertical_entity_overlap_count") or 0)
+            if overlap_count > 0:
+                lines.append(f"Entity overlap count: {overlap_count}")
             cluster_size = int(post.get("vertical_evidence_cluster_size") or 0)
             if cluster_size > 1:
                 lines.append(f"Evidence cluster: {cluster_size} post(s) collapsed")
@@ -1142,6 +1165,28 @@ POSTS:
             lines.append(f"Content: {content}")
             lines.append("")
 
+        return "\n".join(lines)
+
+    def _format_vertical_source_profile(self, profile: Dict[str, Any]) -> str:
+        if not profile:
+            return "- no source profile available"
+
+        lines = [
+            f"- total posts: {int(profile.get('posts_total') or 0)}",
+            f"- story-linked posts: {int(profile.get('story_linked_posts') or 0)}",
+            f"- entity-overlap posts: {int(profile.get('entity_overlap_posts') or 0)}",
+            f"- event-overlap posts: {int(profile.get('event_overlap_posts') or 0)}",
+        ]
+        for label, key, limit in (
+            ("dominant story titles", "dominant_story_titles", 6),
+            ("dominant entities", "dominant_entities", 8),
+            ("dominant events", "dominant_events", 6),
+            ("dominant categories", "dominant_categories", 8),
+            ("dominant track hints", "dominant_track_hints", 8),
+        ):
+            values = [str(item).strip() for item in (profile.get(key) or []) if str(item).strip()]
+            if values:
+                lines.append(f"- {label}: {', '.join(values[:limit])}")
         return "\n".join(lines)
 
     def _source_name(self, post: Dict[str, Any]) -> str:
