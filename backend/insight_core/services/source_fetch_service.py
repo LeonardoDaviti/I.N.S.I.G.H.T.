@@ -54,6 +54,10 @@ class SourceFetchService:
     YOUTUBE_PAGE_DELAY_SECONDS = 2
     LESSWRONG_PAGE_DELAY_SECONDS = 1
     GWERN_PAGE_DELAY_SECONDS = 1
+    DARIO_PAGE_DELAY_SECONDS = 1
+    DEEPLEARNING_BATCH_PAGE_DELAY_SECONDS = 1
+    PHILSCHMID_PAGE_DELAY_SECONDS = 1
+    ZEROTOMASTERY_PAGE_DELAY_SECONDS = 1
 
     TELEGRAM_HOSTS = {"telegram.local", "tg.i-c-a.su", "127.0.0.1"}
     NITTER_HOSTS = {"nitter.local", "nitter.net"}
@@ -1215,7 +1219,14 @@ class SourceFetchService:
         if source_type == "youtube_channel":
             return estimated_pages + max(0, estimated_pages - 1) * self.YOUTUBE_PAGE_DELAY_SECONDS
 
-        if source_type in {"lesswrong_graphql", "gwern_site"}:
+        if source_type in {
+            "lesswrong_graphql",
+            "gwern_site",
+            "dario_site",
+            "deeplearning_batch_site",
+            "philschmid_cloud_attention",
+            "zerotomastery_ml_monthly",
+        }:
             page_delay = int((rate_limit or {}).get("page_delay_seconds", 1))
             return estimated_pages + max(0, estimated_pages - 1) * page_delay
 
@@ -1347,6 +1358,22 @@ class SourceFetchService:
             defaults = {
                 "page_delay_seconds": self.GWERN_PAGE_DELAY_SECONDS,
             }
+        elif source_type == "dario_site":
+            defaults = {
+                "page_delay_seconds": self.DARIO_PAGE_DELAY_SECONDS,
+            }
+        elif source_type == "deeplearning_batch_site":
+            defaults = {
+                "page_delay_seconds": self.DEEPLEARNING_BATCH_PAGE_DELAY_SECONDS,
+            }
+        elif source_type == "philschmid_cloud_attention":
+            defaults = {
+                "page_delay_seconds": self.PHILSCHMID_PAGE_DELAY_SECONDS,
+            }
+        elif source_type == "zerotomastery_ml_monthly":
+            defaults = {
+                "page_delay_seconds": self.ZEROTOMASTERY_PAGE_DELAY_SECONDS,
+            }
         else:
             defaults = {
                 "page_delay_seconds": 0,
@@ -1374,6 +1401,8 @@ class SourceFetchService:
         if checkpoint.get("mode") == "lesswrong_offset":
             return checkpoint.get("next_offset") is not None
         if checkpoint.get("mode") == "gwern_index":
+            return checkpoint.get("next_index") is not None
+        if checkpoint.get("mode") == "site_index":
             return checkpoint.get("next_index") is not None
         return False
 
