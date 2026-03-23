@@ -17,6 +17,10 @@ export interface PostsBySourceResponse {
   posts: Post[];
   source_id: string;
   total: number;
+  returned?: number;
+  offset?: number;
+  limit?: number | null;
+  has_more?: boolean;
   error?: string;
 }
 
@@ -1191,9 +1195,18 @@ class ApiService {
     }
   }
 
-  async getPostsBySource(sourceId: string): Promise<PostsBySourceResponse> {
+  async getPostsBySource(
+    sourceId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<PostsBySourceResponse> {
     try {
-      const response = await this.makeRequest<PostsBySourceResponse>(`/api/posts/source/${sourceId}`);
+      const params = new URLSearchParams();
+      if (options?.limit != null) params.set('limit', String(options.limit));
+      if (options?.offset != null) params.set('offset', String(options.offset));
+      const query = params.toString();
+      const response = await this.makeRequest<PostsBySourceResponse>(
+        `/api/posts/source/${sourceId}${query ? `?${query}` : ''}`,
+      );
       return response;
     } catch (error) {
       console.error('Failed to get posts by source:', error);
@@ -1202,6 +1215,10 @@ class ApiService {
         posts: [],
         source_id: sourceId,
         total: 0,
+        returned: 0,
+        offset: options?.offset || 0,
+        limit: options?.limit ?? null,
+        has_more: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }

@@ -281,18 +281,27 @@ class PostsRepository:
 
         
 
-    def get_posts_by_source(self, cur: Cursor, source_id: str) -> List[Dict[str, Any]]:
+    def get_posts_by_source(
+        self,
+        cur: Cursor,
+        source_id: str,
+        *,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
         """
-        Retrieve all posts for a specific source, sorted by date descending.
+        Retrieve posts for a specific source, sorted by date descending.
         
         Args:
             cur: Database cursor
             source_id: UUID of the source
+            limit: Optional page size
+            offset: Optional page offset
             
         Returns:
             List of post dicts with all fields populated
         """
-        
+
         query = """
             SELECT
                 p.id,
@@ -330,7 +339,12 @@ class PostsRepository:
             WHERE p.source_id = %s
             ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
         """
-        cur.execute(query, (source_id,))
+        params: List[Any] = [source_id]
+        if limit is not None:
+            query += "\n LIMIT %s OFFSET %s"
+            params.extend([max(1, int(limit)), max(0, int(offset))])
+
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         
         if not rows:

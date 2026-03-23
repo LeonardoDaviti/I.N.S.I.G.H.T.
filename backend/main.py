@@ -303,16 +303,26 @@ async def get_posts(date: str):
         return {"success": False, "error": str(e)}
 
 @app.get("/api/posts/source/{source_id}")
-async def get_posts_by_source(source_id: str):
-    """Get all posts for a specific source."""
+async def get_posts_by_source(
+    source_id: str,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Get posts for a specific source."""
     try:
         logger.info(f"📋 Fetching posts for source: {source_id}")
 
-        result = api_bridge.get_posts_by_source(source_id)
+        result = api_bridge.get_posts_by_source(source_id, limit=limit, offset=offset)
         
         # Log success
         if result.get("success"):
-            logger.info(f"✅ Retrieved {result.get('total', 0)} posts")
+            logger.info(
+                "✅ Retrieved %s posts for source %s (offset=%s total=%s)",
+                result.get("returned", len(result.get("posts") or [])),
+                source_id,
+                result.get("offset", offset),
+                result.get("total", 0),
+            )
         
         return result
 

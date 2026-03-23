@@ -148,6 +148,7 @@ export default function DailyBriefing() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initializedFromUrlRef = useRef(false);
+  const SOURCE_POSTS_PAGE_SIZE = 20;
   // Focus mode
   const [focusMode, setFocusMode] = useState(false);
   
@@ -205,8 +206,16 @@ export default function DailyBriefing() {
   // Posts display state
   const [displayedPosts, setDisplayedPosts] = useState<Post[]>([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+  const [isLoadingMoreSourcePosts, setIsLoadingMoreSourcePosts] = useState(false);
   const [postsExpanded, setPostsExpanded] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<Record<string, boolean>>({});
+  const [sourcePostsMeta, setSourcePostsMeta] = useState<{
+    total: number;
+    hasMore: boolean;
+  }>({
+    total: 0,
+    hasMore: false,
+  });
   
   // Posts fetched by date state
   const [databasePosts, setDatabasePosts] = useState<Post[]>([]);
@@ -254,6 +263,9 @@ export default function DailyBriefing() {
     byDate: {},
     allPosts: null
   });
+  const [sourcePostsCache, setSourcePostsCache] = useState<
+    Record<string, { posts: Post[]; total: number; hasMore: boolean }>
+  >({});
 
   // Load sources with counts on mount
   useEffect(() => {
@@ -566,6 +578,7 @@ export default function DailyBriefing() {
   const handleLoadAllPosts = async () => {
     setActiveView('all-posts');
     setSelectedSourceId(null);
+    setSourcePostsMeta({ total: 0, hasMore: false });
     updateRouteState({
       date: selectedDate,
       view: 'all-posts',
@@ -651,51 +664,83 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleLoadSourcePosts = async (sourceId: string) => {
+  const handleLoadSourcePosts = async (
+    sourceId: string,
+    options?: { append?: boolean; force?: boolean },
+  ) => {
+    const append = Boolean(options?.append);
+    const force = Boolean(options?.force);
     setActiveView('source');
     setSelectedSourceId(sourceId);
-    updateRouteState({
-      date: selectedDate,
-      view: 'source',
-      mode: 'source-posts',
-      source: sourceId,
-      topic: null,
-    });
-    
-    // 🔍 STEP 1: Check cache first (the magic happens here!)
-    if (postsCache.bySource[sourceId]) {
-      console.log(`⚡ Using cached posts for source: ${sourceId}`);
-      setDisplayedPosts(postsCache.bySource[sourceId]);
+    if (!append) {
+      updateRouteState({
+        date: selectedDate,
+        view: 'source',
+        mode: 'source-posts',
+        source: sourceId,
+        topic: null,
+      });
+    }
+
+    const cachedSourcePosts = sourcePostsCache[sourceId];
+
+    if (!append && cachedSourcePosts && !force) {
+      console.log(`⚡ Using cached paged posts for source: ${sourceId}`);
+      setDisplayedPosts(cachedSourcePosts.posts);
+      setSourcePostsMeta({
+        total: cachedSourcePosts.total,
+        hasMore: cachedSourcePosts.hasMore,
+      });
       setDatabasePosts([]);
       setDatabasePostsStats(null);
       setError(null);
-      return; // ✨ Done! No API call needed!
+      return;
     }
-    
-    // 📞 STEP 2: If not in cache, fetch from API
-    setIsLoadingPosts(true);
+
+    if (append) {
+      setIsLoadingMoreSourcePosts(true);
+    } else {
+      setIsLoadingPosts(true);
+      setDisplayedPosts([]);
+      setSourcePostsMeta({ total: 0, hasMore: false });
+    }
+
     setError(null);
-    setDisplayedPosts([]);
     setDatabasePosts([]);
     setDatabasePostsStats(null);
     
     try {
-      console.log(`📖 Loading posts for source: ${sourceId}`);
-      const response = await apiService.getPostsBySource(sourceId);
+      const currentPosts = append
+        ? (cachedSourcePosts?.posts || (selectedSourceId === sourceId ? displayedPosts : []))
+        : [];
+      const offset = append ? currentPosts.length : 0;
+
+      console.log(`📖 Loading posts for source: ${sourceId} offset=${offset} limit=${SOURCE_POSTS_PAGE_SIZE}`);
+      const response = await apiService.getPostsBySource(sourceId, {
+        limit: SOURCE_POSTS_PAGE_SIZE,
+        offset,
+      });
       
       if (response.success) {
-        console.log(`✅ Loaded ${response.total} posts`);
-        
-        // 💾 STEP 3: Save to cache for next time
-        setPostsCache(prev => ({
+        const mergedPosts = append ? [...currentPosts, ...response.posts] : response.posts;
+        const hasMore = Boolean(response.has_more ?? (mergedPosts.length < response.total));
+
+        console.log(`✅ Loaded ${response.returned ?? response.posts.length} posts (${mergedPosts.length}/${response.total})`);
+
+        setSourcePostsCache(prev => ({
           ...prev,
-          bySource: {
-            ...prev.bySource,
-            [sourceId]: response.posts
-          }
+          [sourceId]: {
+            posts: mergedPosts,
+            total: response.total,
+            hasMore,
+          },
         }));
-        
-        setDisplayedPosts(response.posts);
+
+        setDisplayedPosts(mergedPosts);
+        setSourcePostsMeta({
+          total: response.total,
+          hasMore,
+        });
       } else {
         console.error('❌ Failed to load posts:', response.error);
         setError(response.error || 'Failed to load posts');
@@ -704,7 +749,11 @@ export default function DailyBriefing() {
       console.error('❌ API call failed:', error);
       setError(error instanceof Error ? error.message : 'Network error');
     } finally {
-      setIsLoadingPosts(false);
+      if (append) {
+        setIsLoadingMoreSourcePosts(false);
+      } else {
+        setIsLoadingPosts(false);
+      }
     }
   };
 
@@ -1917,7 +1966,14 @@ export default function DailyBriefing() {
                 {activeView === 'all-posts' ? 'All Posts' : 'Source Posts'}
               </h1>
 
-              {isLoadingPosts ? (
+              {activeView === 'source' && selectedSourceId && displayedPosts.length > 0 && (
+                <div className="rounded-2xl border border-gray-200 bg-white/80 px-4 py-3 text-sm text-gray-600">
+                  Showing <span className="font-semibold text-gray-900">{displayedPosts.length}</span> of{" "}
+                  <span className="font-semibold text-gray-900">{sourcePostsMeta.total}</span> posts for this source.
+                </div>
+              )}
+
+              {isLoadingPosts && displayedPosts.length === 0 ? (
                 <div className="text-center py-6">
                   <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2 text-gray-400" />
                   <p className="text-sm text-gray-600">Loading posts...</p>
@@ -2008,6 +2064,24 @@ export default function DailyBriefing() {
                       </div>
                     );
                   })}
+
+                  {activeView === 'source' && sourcePostsMeta.hasMore && (
+                    <div className="flex justify-center pt-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => selectedSourceId && handleLoadSourcePosts(selectedSourceId, { append: true })}
+                        disabled={isLoadingMoreSourcePosts}
+                      >
+                        {isLoadingMoreSourcePosts ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                        {isLoadingMoreSourcePosts ? 'Loading more...' : `Load ${SOURCE_POSTS_PAGE_SIZE} more`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-6 text-sm text-gray-500">

@@ -780,25 +780,39 @@ class InsightApiBridge:
 
     # ============= POSTS RETRIEVAL =============
 
-    def get_posts_by_source(self, source_id: str) -> Dict[str, Any]:
+    def get_posts_by_source(
+        self,
+        source_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
         """
-        Get all posts for a specific source from database.
+        Get posts for a specific source from database.
 
         Args:
             source_id: UUID of the source
+            limit: Optional page size
+            offset: Page offset
             
         Returns:
             Dict with success, posts, source_id, total
         """
         try:
-            # Get posts from service
-            posts = self.posts_service.get_posts_by_source(source_id)
+            posts = self.posts_service.get_posts_by_source(source_id, limit=limit, offset=offset)
+            total = self.posts_service.get_source_post_stats(source_id).get("post_count", 0)
+            current_offset = max(0, int(offset or 0))
+            has_more = current_offset + len(posts) < int(total)
             
             return {
                 "success": True,
                 "posts": posts,
                 "source_id": source_id,
-                "total": len(posts)
+                "total": int(total),
+                "returned": len(posts),
+                "offset": current_offset,
+                "limit": limit,
+                "has_more": has_more,
             }
             
         except Exception as e:
@@ -808,7 +822,11 @@ class InsightApiBridge:
                 "error": str(e),
                 "posts": [],
                 "total": 0,
-                "source_id": source_id
+                "returned": 0,
+                "offset": max(0, int(offset or 0)),
+                "limit": limit,
+                "has_more": False,
+                "source_id": source_id,
             }
 
     def get_posts_by_date(self, date_str: str) -> Dict[str, Any]:

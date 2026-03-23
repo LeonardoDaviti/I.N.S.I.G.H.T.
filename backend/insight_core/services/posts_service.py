@@ -29,11 +29,17 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_date(cur, date)
     
-    def get_posts_by_source(self, source_id: str) -> List[Dict[str, Any]]:
-        """Get all posts for a specific source, sorted by date descending."""
+    def get_posts_by_source(
+        self,
+        source_id: str,
+        *,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get posts for a specific source, sorted by date descending."""
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                return self.repo.get_posts_by_source(cur, source_id)
+                return self.repo.get_posts_by_source(cur, source_id, limit=limit, offset=offset)
 
     def get_posts_by_source_and_range(self, source_id: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
         """Get posts for a specific source within an inclusive date range."""
