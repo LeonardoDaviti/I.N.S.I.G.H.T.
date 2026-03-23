@@ -174,6 +174,7 @@ export default function IngestionControl() {
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [manualTimerAnchorMs, setManualTimerAnchorMs] = useState<number | null>(null);
 
   useEffect(() => {
     const tickId = window.setInterval(() => {
@@ -352,13 +353,16 @@ export default function IngestionControl() {
     });
 
     const baselineAt = latestSchedulerJob.finished_at || latestSchedulerJob.started_at;
-    if (!baselineAt) return null;
+    const baselineMsFromJobs = baselineAt ? new Date(baselineAt).getTime() : NaN;
+    const safeBaselineFromJobs = Number.isNaN(baselineMsFromJobs) ? null : baselineMsFromJobs;
+    const effectiveBaselineMs = Math.max(
+      safeBaselineFromJobs || 0,
+      manualTimerAnchorMs || 0,
+    );
+    if (!effectiveBaselineMs) return null;
 
-    const baselineMs = new Date(baselineAt).getTime();
-    if (Number.isNaN(baselineMs)) return null;
-
-    return baselineMs + (Number(schedulerConfig.interval_hours) * 60 * 60 * 1000);
-  }, [operationsOverview?.jobs, schedulerConfig?.interval_hours]);
+    return effectiveBaselineMs + (Number(schedulerConfig.interval_hours) * 60 * 60 * 1000);
+  }, [manualTimerAnchorMs, operationsOverview?.jobs, schedulerConfig?.interval_hours]);
 
   const schedulerCountdown = useMemo(() => {
     if (!schedulerNextRunAt) return null;
@@ -483,10 +487,27 @@ export default function IngestionControl() {
             <div className="mt-1 text-xs text-slate-500">
               {schedulerConfig
                 ? schedulerNextRunAt
-                  ? `Next ingestion in ${schedulerCountdown} (${new Date(schedulerNextRunAt).toLocaleString()})`
+                  ? `Next ingestion in ${schedulerCountdown}`
                   : 'Next ingestion countdown will appear after the first scheduler cycle is recorded.'
                 : 'Reading scheduler status...'}
             </div>
+            <button
+              type="button"
+              onClick={() => runAction(
+                'ingest-now',
+                'Manual full ingestion started',
+                () => apiService.ingestPosts(),
+                (result) => {
+                  setIngestResult(result);
+                  setManualTimerAnchorMs(Date.now());
+                },
+              )}
+              disabled={runningAction !== null}
+              className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {runningAction === 'ingest-now' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Ingest Now
+            </button>
           </div>
         </div>
 
