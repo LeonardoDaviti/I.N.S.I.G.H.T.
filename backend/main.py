@@ -130,6 +130,10 @@ class PostOpenRequest(BaseModel):
     metadata: Dict[str, Any] | None = None
 
 
+class PostTimelineRequest(BaseModel):
+    refresh: bool | None = False
+
+
 class PostCommentsRequest(BaseModel):
     limit: int | None = 80
     refresh: bool | None = False
@@ -434,6 +438,51 @@ async def get_post_story(post_id: str):
     except Exception as e:
         logger.exception("Failed to get post story")
         return {"success": False, "error": str(e), "stories": []}
+
+
+@app.get("/api/posts/item/{post_id}/timeline")
+async def get_post_timeline(post_id: str):
+    """Get the post-centric story timeline view."""
+    try:
+        logger.info(f"🕰️ Fetching post timeline: {post_id}")
+        return api_bridge.get_post_timeline(post_id, refresh=False)
+    except Exception as e:
+        logger.exception("Failed to get post timeline")
+        return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
+
+
+@app.post("/api/posts/item/{post_id}/timeline/refresh")
+async def refresh_post_timeline(post_id: str, request: PostTimelineRequest | None = None):
+    """Refresh the candidate links and timeline for a single post."""
+    try:
+        logger.info(f"🕰️ Refreshing post timeline: {post_id}")
+        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
+        return api_bridge.get_post_timeline(post_id, refresh=bool(payload.get("refresh", True) or True))
+    except Exception as e:
+        logger.exception("Failed to refresh post timeline")
+        return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
+
+
+@app.post("/api/story-candidates/{candidate_id}/accept")
+async def accept_story_candidate(candidate_id: str):
+    """Accept one story candidate into the target story timeline."""
+    try:
+        logger.info(f"🕰️ Accepting story candidate: {candidate_id}")
+        return api_bridge.accept_story_candidate(candidate_id)
+    except Exception as e:
+        logger.exception("Failed to accept story candidate")
+        return {"success": False, "error": str(e), "candidate": None}
+
+
+@app.post("/api/story-candidates/{candidate_id}/reject")
+async def reject_story_candidate(candidate_id: str):
+    """Reject one story candidate from the timeline."""
+    try:
+        logger.info(f"🕰️ Rejecting story candidate: {candidate_id}")
+        return api_bridge.reject_story_candidate(candidate_id)
+    except Exception as e:
+        logger.exception("Failed to reject story candidate")
+        return {"success": False, "error": str(e), "candidate": None}
 
 
 @app.post("/api/events/rebuild-for-post")

@@ -17,6 +17,7 @@ from insight_core.services.operations_service import OperationsService
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.stories_service import StoriesService
+from insight_core.services.story_timeline_service import StoryTimelineService
 from insight_core.services.youtube_service import YouTubeService
 
 from insight_core.scripts.ingest import ingest_posts
@@ -43,6 +44,7 @@ class InsightApiBridge:
         self.post_detail_service = PostDetailService(self.db)
         self.explainability_service = ExplainabilityService(self.db)
         self.stories_service = StoriesService(self.db)
+        self.story_timeline_service = StoryTimelineService(self.db)
         self.inbox_service = InboxService(
             self.db,
             operations_service=self.operations_service,
@@ -1131,6 +1133,26 @@ class InsightApiBridge:
             return {"success": True, **self.stories_service.get_post_story(post_id)}
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "stories": []}
+
+    def get_post_timeline(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
+        try:
+            if refresh:
+                return self.story_timeline_service.refresh_post_timeline(post_id)
+            return self.story_timeline_service.get_post_timeline(post_id, refresh=False)
+        except Exception as e:
+            return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
+
+    def accept_story_candidate(self, candidate_id: str) -> Dict[str, Any]:
+        try:
+            return self.story_timeline_service.accept_candidate(candidate_id)
+        except Exception as e:
+            return {"success": False, "error": str(e), "candidate": None}
+
+    def reject_story_candidate(self, candidate_id: str) -> Dict[str, Any]:
+        try:
+            return self.story_timeline_service.reject_candidate(candidate_id)
+        except Exception as e:
+            return {"success": False, "error": str(e), "candidate": None}
 
     # ============= INBOX =============
 

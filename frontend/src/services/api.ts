@@ -717,6 +717,43 @@ export interface StoryTimelineResponse {
   timeline?: StoryUpdateEntry[];
 }
 
+export interface StoryCandidateLink {
+  id: string;
+  source_post_id: string;
+  candidate_post_id: string;
+  candidate_story_id?: string | null;
+  retrieval_method: string;
+  retrieval_score: number;
+  decision_status: string;
+  decision_reason?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string | null;
+  updated_at?: string | null;
+  candidate_post?: Post | null;
+  candidate_story?: Pick<StoryCard, 'id' | 'canonical_title' | 'story_kind' | 'status'> | null;
+}
+
+export interface PostTimelineView {
+  grouped_dates?: string[];
+  current_update?: StoryUpdateEntry | null;
+  earlier_updates?: StoryUpdateEntry[];
+  later_updates?: StoryUpdateEntry[];
+  total_updates?: number;
+}
+
+export interface PostTimelineResponse {
+  success?: boolean;
+  error?: string;
+  post_id?: string;
+  post?: Post | null;
+  has_story?: boolean;
+  primary_story?: StoryCard | null;
+  story?: StoryDetail | null;
+  timeline?: PostTimelineView | null;
+  related_candidates?: StoryCandidateLink[];
+  refreshed?: boolean;
+}
+
 export interface InboxBatch {
   id: string;
   scope_type: string;
@@ -1719,6 +1756,49 @@ class ApiService {
     } catch (error) {
       console.error('Failed to get story timeline:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story_id: storyId, timeline: [] };
+    }
+  }
+
+  async getPostTimeline(postId: string, refresh = false): Promise<PostTimelineResponse> {
+    try {
+      if (refresh) {
+        return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline/refresh`, {
+          method: 'POST',
+          body: JSON.stringify({ refresh: true }),
+        });
+      }
+      return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline`);
+    } catch (error) {
+      console.error('Failed to get post timeline:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        post_id: postId,
+        timeline: null,
+        related_candidates: [],
+      };
+    }
+  }
+
+  async acceptStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/accept`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to accept story candidate:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
+    }
+  }
+
+  async rejectStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
+    try {
+      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/reject`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to reject story candidate:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
     }
   }
 

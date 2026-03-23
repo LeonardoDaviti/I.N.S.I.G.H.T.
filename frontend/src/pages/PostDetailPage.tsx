@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  BookOpen,
+  Check,
   Download,
   ExternalLink,
   FileText,
@@ -11,15 +13,28 @@ import {
   NotebookPen,
   RefreshCw,
   Save,
+  Split,
   Sparkles,
   Star,
   Tags,
+  X,
   MessagesSquare,
 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import PostIntelligenceInspector from '../components/PostIntelligenceInspector';
 import { apiService } from '../services/api';
-import type { BriefingReference, Post, PostHighlight, ReaderState, RedditComment } from '../services/api';
+import type {
+  BriefingReference,
+  Post,
+  PostHighlight,
+  PostTimelineResponse,
+  ReaderState,
+  RedditComment,
+  StoryCandidateLink,
+  StoryCard,
+  StoryDetail,
+  StoryUpdateEntry,
+} from '../services/api';
 
 type ChatMessage = {
   role: 'user' | 'assistant';
@@ -89,6 +104,10 @@ export default function PostDetailPage() {
   const [highlights, setHighlights] = useState<PostHighlight[]>([]);
   const [summaryReferences, setSummaryReferences] = useState<BriefingReference[]>([]);
   const [readerState, setReaderState] = useState<ReaderState | null>(null);
+  const [storyPrimary, setStoryPrimary] = useState<StoryCard | null>(null);
+  const [storyDetail, setStoryDetail] = useState<StoryDetail | null>(null);
+  const [storyTimeline, setStoryTimeline] = useState<PostTimelineResponse['timeline'] | null>(null);
+  const [storyCandidates, setStoryCandidates] = useState<StoryCandidateLink[]>([]);
   const [comments, setComments] = useState<RedditComment[]>([]);
   const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
   const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
@@ -100,10 +119,12 @@ export default function PostDetailPage() {
   const [loading, setLoading] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingHighlights, setLoadingHighlights] = useState(false);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [loadingComments, setLoadingComments] = useState(false);
   const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [togglingFavorite, setTogglingFavorite] = useState(false);
+  const [actingCandidateId, setActingCandidateId] = useState<string | null>(null);
   const [chatting, setChatting] = useState(false);
   const [chatContext, setChatContext] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +171,23 @@ export default function PostDetailPage() {
     setHighlights(response.highlights || []);
     setSummaryTakeaway(response.one_sentence_takeaway || null);
     setLoadingHighlights(false);
+  };
+
+  const loadTimeline = async (refresh = false) => {
+    if (!postId) return;
+    setLoadingTimeline(true);
+    setError(null);
+    const response = await apiService.getPostTimeline(postId, refresh);
+    if (!response.success) {
+      setError(response.error || 'Failed to load story timeline');
+      setLoadingTimeline(false);
+      return;
+    }
+    setStoryPrimary(response.primary_story || null);
+    setStoryDetail(response.story || null);
+    setStoryTimeline(response.timeline || null);
+    setStoryCandidates(Array.isArray(response.related_candidates) ? response.related_candidates : []);
+    setLoadingTimeline(false);
   };
 
   useEffect(() => {
@@ -210,6 +248,10 @@ export default function PostDetailPage() {
     return () => {
       active = false;
     };
+  }, [postId]);
+
+  useEffect(() => {
+    void loadTimeline(false);
   }, [postId]);
 
   useEffect(() => {
@@ -358,6 +400,42 @@ export default function PostDetailPage() {
     setTogglingFavorite(false);
   };
 
+  const handleCandidateDecision = async (candidateId: string, decision: 'accept' | 'reject') => {
+    setActingCandidateId(candidateId);
+    setError(null);
+    const response = decision === 'accept'
+      ? await apiService.acceptStoryCandidate(candidateId)
+      : await apiService.rejectStoryCandidate(candidateId);
+    if (!response.success) {
+      setError(response.error || `Failed to ${decision} story candidate`);
+      setActingCandidateId(null);
+      return;
+    }
+    if (response.timeline?.success) {
+      setStoryPrimary(response.timeline.primary_story || null);
+      setStoryDetail(response.timeline.story || null);
+      setStoryTimeline(response.timeline.timeline || null);
+      setStoryCandidates(Array.isArray(response.timeline.related_candidates) ? response.timeline.related_candidates : []);
+    } else {
+      await loadTimeline(false);
+    }
+    setActingCandidateId(null);
+  };
+
+  const openRelatedPost = (targetPostId?: string | null) => {
+    if (!targetPostId || targetPostId === postId) return;
+    navigate(`/posts/${encodeURIComponent(targetPostId)}`, {
+      state: { returnTo: `${location.pathname}${location.search}` },
+    });
+  };
+
+  const formatTimelineDate = (value?: string | null) => {
+    if (!value) return 'Unknown date';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString();
+  };
+
   const categories = Array.isArray(post?.categories) ? post.categories : [];
   const topics = Array.isArray(post?.topics) ? post.topics : [];
   const platformLabel = typeof post?.platform === 'string' ? post.platform.toUpperCase() : '';
@@ -380,6 +458,36 @@ export default function PostDetailPage() {
     const body = typeof comment.body === 'string' ? comment.body : '';
     return body.slice(0, 24);
   };
+  const renderTimelineUpdate = (update: StoryUpdateEntry, relationLabel: string) => (
+    <div key={update.id} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+      <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+        <span>{relationLabel}</span>
+        <span>{formatTimelineDate(update.update_date)}</span>
+        {typeof update.importance_score === 'number' ? <span>Importance {update.importance_score.toFixed(2)}</span> : null}
+        {update.post_count ? <span>{update.post_count} posts</span> : null}
+      </div>
+      <div className="mt-2 text-base font-semibold text-[var(--text-normal)]">{update.title}</div>
+      <div className="mt-2 text-sm leading-7 text-[var(--text-muted)]">{update.summary}</div>
+      {update.posts?.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {update.posts.map((entry) => (
+            <button
+              key={`${update.id}-${entry.post_id}`}
+              type="button"
+              onClick={() => openRelatedPost(entry.post_id)}
+              className={`rounded-full border px-3 py-1 text-xs transition ${
+                entry.post_id === postId
+                  ? 'border-[var(--accent-strong)] bg-[var(--text-highlight-bg)] text-[var(--text-normal)]'
+                  : 'border-[var(--background-modifier-border)] bg-[var(--background-primary)] text-[var(--text-muted)] hover:border-[var(--accent-strong)] hover:text-[var(--text-normal)]'
+              }`}
+            >
+              {entry.post?.title || entry.post_id}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -615,6 +723,128 @@ export default function PostDetailPage() {
               <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
               <div className="prose max-w-none">
                 <MarkdownRenderer content={renderContent} />
+              </div>
+            </section>
+
+            <section className="app-panel p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-5 w-5 text-[var(--accent-strong)]" />
+                  <h2 className="text-lg font-semibold text-[var(--text-normal)]">Story Timeline</h2>
+                </div>
+                <button type="button" onClick={() => loadTimeline(true)} className="app-inline-button">
+                  {loadingTimeline ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Refresh Timeline
+                </button>
+              </div>
+
+              {storyPrimary ? (
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-semibold text-[var(--text-normal)]">{storyPrimary.canonical_title}</span>
+                    {storyPrimary.story_kind ? (
+                      <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1 text-xs text-[var(--text-muted)]">
+                        {storyPrimary.story_kind}
+                      </span>
+                    ) : null}
+                    {storyPrimary.status ? (
+                      <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1 text-xs text-[var(--text-muted)]">
+                        {storyPrimary.status}
+                      </span>
+                    ) : null}
+                  </div>
+                  {storyDetail?.canonical_summary && (
+                    <div className="mt-3 text-sm leading-7 text-[var(--text-muted)]">{storyDetail.canonical_summary}</div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm text-[var(--text-muted)]">
+                  This post is not attached to a durable story yet. Candidate related posts are shown below.
+                </div>
+              )}
+
+              {storyTimeline?.current_update ? (
+                <div className="mt-4 space-y-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Current Story Slice</div>
+                  {renderTimelineUpdate(storyTimeline.current_update, 'Current')}
+                </div>
+              ) : null}
+
+              {storyTimeline?.earlier_updates?.length ? (
+                <div className="mt-4 space-y-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Earlier Updates</div>
+                  {storyTimeline.earlier_updates.map((update) => renderTimelineUpdate(update, 'Earlier'))}
+                </div>
+              ) : null}
+
+              {storyTimeline?.later_updates?.length ? (
+                <div className="mt-4 space-y-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Later Updates</div>
+                  {storyTimeline.later_updates.map((update) => renderTimelineUpdate(update, 'Later'))}
+                </div>
+              ) : null}
+
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                  <Split className="h-4 w-4" />
+                  Candidate Narrative Links
+                </div>
+                {storyCandidates.length ? storyCandidates.map((candidate) => (
+                  <div key={candidate.id} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => openRelatedPost(candidate.candidate_post_id)}
+                          className="text-left"
+                        >
+                          <div className="text-sm font-semibold text-[var(--text-normal)]">
+                            {candidate.candidate_post?.title || candidate.candidate_post_id}
+                          </div>
+                        </button>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-[var(--text-faint)]">
+                          <span>{candidate.candidate_post?.source_display_name || candidate.candidate_post?.source || 'Unknown source'}</span>
+                          <span>{candidate.candidate_post?.platform || 'unknown'}</span>
+                          <span>{formatTimelineDate(candidate.candidate_post?.published_at || candidate.candidate_post?.fetched_at || null)}</span>
+                          <span>{candidate.retrieval_method}</span>
+                          <span>Score {candidate.retrieval_score.toFixed(2)}</span>
+                          <span>{candidate.decision_status}</span>
+                        </div>
+                        {candidate.decision_reason ? (
+                          <div className="mt-2 text-sm leading-7 text-[var(--text-muted)]">{candidate.decision_reason}</div>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.decision_status !== 'accepted' && (
+                          <button
+                            type="button"
+                            onClick={() => void handleCandidateDecision(candidate.id, 'accept')}
+                            disabled={actingCandidateId === candidate.id}
+                            className="app-inline-button"
+                          >
+                            {actingCandidateId === candidate.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                            Accept
+                          </button>
+                        )}
+                        {candidate.decision_status !== 'rejected' && (
+                          <button
+                            type="button"
+                            onClick={() => void handleCandidateDecision(candidate.id, 'reject')}
+                            disabled={actingCandidateId === candidate.id}
+                            className="app-inline-button"
+                          >
+                            {actingCandidateId === candidate.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                            Reject
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm text-[var(--text-muted)]">
+                    No related post candidates were found for this timeline window.
+                  </div>
+                )}
               </div>
             </section>
 
