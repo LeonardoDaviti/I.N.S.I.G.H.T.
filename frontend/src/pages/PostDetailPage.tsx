@@ -91,6 +91,132 @@ function defaultNotesTemplate(post?: Post | null) {
 **Tip:** Select text from the post and bring it into your notes deliberately.`;
 }
 
+type ResolvedHighlightRange = {
+  start: number;
+  end: number;
+  usedInSummary: boolean;
+};
+
+function buildResolvedHighlightRanges(
+  content: string,
+  highlights: PostHighlight[],
+  summaryReferenceHighlightIds: Set<string>,
+): ResolvedHighlightRange[] {
+  if (!content || !highlights.length) {
+    return [];
+  }
+
+  const resolved: ResolvedHighlightRange[] = [];
+  const lowerContent = content.toLowerCase();
+
+  highlights.forEach((highlight) => {
+    const startChar = Number(highlight.start_char);
+    const endChar = Number(highlight.end_char);
+    const hasRange = Number.isFinite(startChar) && Number.isFinite(endChar) && endChar > startChar;
+
+    if (hasRange) {
+      const start = Math.max(0, Math.min(content.length, startChar));
+      const end = Math.max(start, Math.min(content.length, endChar));
+      if (end > start) {
+        resolved.push({
+          start,
+          end,
+          usedInSummary: Boolean(highlight.id && summaryReferenceHighlightIds.has(highlight.id)),
+        });
+        return;
+      }
+    }
+
+    const needle = String(highlight.highlight_text || '').trim();
+    if (!needle) {
+      return;
+    }
+
+    let start = content.indexOf(needle);
+    if (start < 0) {
+      start = lowerContent.indexOf(needle.toLowerCase());
+    }
+    if (start < 0) {
+      return;
+    }
+
+    resolved.push({
+      start,
+      end: start + needle.length,
+      usedInSummary: Boolean(highlight.id && summaryReferenceHighlightIds.has(highlight.id)),
+    });
+  });
+
+  if (!resolved.length) {
+    return [];
+  }
+
+  resolved.sort((left, right) => {
+    if (left.start !== right.start) return left.start - right.start;
+    return right.end - left.end;
+  });
+
+  const merged: ResolvedHighlightRange[] = [];
+  resolved.forEach((range) => {
+    const previous = merged[merged.length - 1];
+    if (!previous || range.start > previous.end) {
+      merged.push({ ...range });
+      return;
+    }
+    previous.end = Math.max(previous.end, range.end);
+    previous.usedInSummary = previous.usedInSummary || range.usedInSummary;
+  });
+
+  return merged;
+}
+
+function renderHighlightedContent(content: string, ranges: ResolvedHighlightRange[]) {
+  if (!ranges.length) {
+    return (
+      <div className="whitespace-pre-wrap leading-8 text-[var(--text-normal)]">
+        {content}
+      </div>
+    );
+  }
+
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+
+  ranges.forEach((range, index) => {
+    if (range.start > cursor) {
+      nodes.push(
+        <span key={`plain-${index}-${cursor}`}>
+          {content.slice(cursor, range.start)}
+        </span>,
+      );
+    }
+
+    nodes.push(
+      <mark
+        key={`mark-${index}-${range.start}`}
+        className={`rounded px-1 py-0.5 text-[var(--text-normal)] ${
+          range.usedInSummary
+            ? 'bg-yellow-300/85 shadow-[inset_0_-0.45em_0_rgba(253,224,71,0.45)]'
+            : 'bg-yellow-200/80 shadow-[inset_0_-0.45em_0_rgba(253,230,138,0.4)]'
+        }`}
+      >
+        {content.slice(range.start, range.end)}
+      </mark>,
+    );
+    cursor = range.end;
+  });
+
+  if (cursor < content.length) {
+    nodes.push(<span key={`plain-tail-${cursor}`}>{content.slice(cursor)}</span>);
+  }
+
+  return (
+    <div className="whitespace-pre-wrap leading-8 text-[var(--text-normal)]">
+      {nodes}
+    </div>
+  );
+}
+
 export default function PostDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -444,7 +570,6 @@ export default function PostDetailPage() {
     : typeof post?.content === 'string'
       ? post.content
       : '';
-  const topHighlights = highlights.slice(0, 3);
   const summaryReferenceHighlightIds = useMemo(
     () => new Set(
       summaryReferences
@@ -453,6 +578,15 @@ export default function PostDetailPage() {
     ),
     [summaryReferences],
   );
+  const contentHighlightRanges = useMemo(
+    () => buildResolvedHighlightRanges(post?.content || '', highlights, summaryReferenceHighlightIds),
+    [highlights, post?.content, summaryReferenceHighlightIds],
+  );
+  const highlightedContentBlock = useMemo(
+    () => renderHighlightedContent(post?.content || '', contentHighlightRanges),
+    [contentHighlightRanges, post?.content],
+  );
+  const mappedHighlightCount = contentHighlightRanges.length;
   const isFavorited = Boolean(readerState?.is_favorited);
   const safeCommentPreview = (comment: RedditComment) => {
     const body = typeof comment.body === 'string' ? comment.body : '';
@@ -643,87 +777,35 @@ export default function PostDetailPage() {
             </section>
 
             <section className="app-panel p-6">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-[var(--accent-strong)]" />
-                  <h2 className="text-lg font-semibold text-[var(--text-normal)]">Explainability</h2>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
-                  {readerState?.open_count !== undefined && (
+              <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
+              {highlights.length ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
                     <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                      Opened {readerState.open_count}x
+                      {highlights.length} stored highlights
                     </span>
-                  )}
-                  {readerState?.total_read_seconds !== undefined && (
                     <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                      Read {readerState.total_read_seconds}s
+                      {mappedHighlightCount} applied in reader view
                     </span>
-                  )}
-                  {readerState?.first_opened_at && (
-                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                      First {new Date(readerState.first_opened_at).toLocaleString()}
-                    </span>
-                  )}
-                  {readerState?.last_opened_at && (
-                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                      Last {new Date(readerState.last_opened_at).toLocaleString()}
-                    </span>
-                  )}
-                  <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
-                    {isFavorited ? 'Favorited' : 'Not favorited'}
-                  </span>
-                </div>
-              </div>
-
-              {(summaryTakeaway || topHighlights.length > 0) && (
-                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Takeaway</div>
-                  <div className="mt-2 text-sm leading-7 text-[var(--text-normal)]">
-                    {summaryTakeaway || topHighlights[0]?.commentary || topHighlights[0]?.highlight_text || 'No takeaway available yet.'}
+                    {summaryReferenceHighlightIds.size > 0 ? (
+                      <span className="rounded-full border border-[var(--background-modifier-border)] bg-[rgba(253,224,71,0.18)] px-3 py-1">
+                        Darker yellow marks were used in the summary
+                      </span>
+                    ) : null}
                   </div>
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-5">
+                    {post?.content ? highlightedContentBlock : (
+                      <div className="prose max-w-none">
+                        <MarkdownRenderer content={renderContent} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="prose max-w-none">
+                  <MarkdownRenderer content={renderContent} />
                 </div>
               )}
-
-              <div className="mt-4 space-y-3">
-                {topHighlights.length ? (
-                  topHighlights.map((highlight) => (
-                    <div key={highlight.id || `${highlight.post_id}-${highlight.highlight_text}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                      <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
-                        <span>{highlight.highlight_kind || 'evidence'}</span>
-                        {typeof highlight.importance_score === 'number' && (
-                          <span>Score {highlight.importance_score.toFixed(2)}</span>
-                        )}
-                      </div>
-                      <div className="mt-2 text-sm leading-7 text-[var(--text-normal)]">
-                        {highlight.highlight_text}
-                      </div>
-                      {highlight.id && summaryReferenceHighlightIds.has(highlight.id) && (
-                        <div className="mt-2">
-                          <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-faint)]">
-                            Used in summary
-                          </span>
-                        </div>
-                      )}
-                      {highlight.commentary && (
-                        <div className="mt-2 text-sm leading-7 text-[var(--text-muted)]">
-                          {highlight.commentary}
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm text-[var(--text-muted)]">
-                    No highlights have been generated yet. Use the button above to generate them on demand.
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="app-panel p-6">
-              <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
-              <div className="prose max-w-none">
-                <MarkdownRenderer content={renderContent} />
-              </div>
             </section>
 
             <section className="app-panel p-6">
@@ -967,6 +1049,60 @@ export default function PostDetailPage() {
                 <PostIntelligenceInspector postId={postId} post={post} />
               </PostDetailPageErrorBoundary>
             )}
+
+            <section className="app-panel p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-[var(--accent-strong)]" />
+                  <h2 className="text-lg font-semibold text-[var(--text-normal)]">Explainability</h2>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                  {readerState?.open_count !== undefined && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Opened {readerState.open_count}x
+                    </span>
+                  )}
+                  {readerState?.total_read_seconds !== undefined && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Read {readerState.total_read_seconds}s
+                    </span>
+                  )}
+                  {readerState?.first_opened_at && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      First {new Date(readerState.first_opened_at).toLocaleString()}
+                    </span>
+                  )}
+                  {readerState?.last_opened_at && (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      Last {new Date(readerState.last_opened_at).toLocaleString()}
+                    </span>
+                  )}
+                  <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                    {isFavorited ? 'Favorited' : 'Not favorited'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Takeaway</div>
+                  <div className="mt-2 text-sm leading-7 text-[var(--text-normal)]">
+                    {summaryTakeaway || 'No takeaway available yet. Generate summary or highlights when you need a compressed read.'}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Evidence Trace</div>
+                  <div className="mt-2 space-y-2 text-sm text-[var(--text-normal)]">
+                    <div>{highlights.length} stored highlights</div>
+                    <div>{mappedHighlightCount} mapped into the reader view</div>
+                    <div>{summaryReferenceHighlightIds.size} highlight references used by the summary</div>
+                  </div>
+                  <div className="mt-3 text-xs leading-6 text-[var(--text-muted)]">
+                    The original content above is now the main explainability surface. Yellow marks show the exact passages the system considered important.
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
 
           <aside className="space-y-6">
