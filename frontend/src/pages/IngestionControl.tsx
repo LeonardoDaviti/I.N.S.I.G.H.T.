@@ -13,6 +13,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings,
+  X,
   Zap,
 } from 'lucide-react';
 import { apiService } from '../services/api';
@@ -173,6 +174,7 @@ export default function IngestionControl() {
   const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [manualTimerAnchorMs, setManualTimerAnchorMs] = useState<number | null>(null);
 
@@ -185,6 +187,11 @@ export default function IngestionControl() {
       window.clearInterval(tickId);
     };
   }, []);
+
+  useEffect(() => {
+    const activeAlertIds = new Set((operationsOverview?.alerts || []).map((alert) => alert.id));
+    setDismissedAlertIds((prev) => prev.filter((id) => activeAlertIds.has(id)));
+  }, [operationsOverview?.alerts]);
 
   const appendLog = (level: LogLevel, message: string) => {
     setLogs((prev) => [
@@ -332,6 +339,11 @@ export default function IngestionControl() {
   );
 
   const availableLogs = logTail?.available_logs?.length ? logTail.available_logs : DEFAULT_LOG_OPTIONS;
+
+  const visibleMissionAlerts = useMemo(
+    () => (operationsOverview?.alerts || []).filter((alert) => !dismissedAlertIds.includes(alert.id)).slice(0, 3),
+    [dismissedAlertIds, operationsOverview?.alerts],
+  );
 
   const selectedArchiveEntry = useMemo(
     () => archiveCatalog.find((entry) => entry.source_id === selectedSourceId) || null,
@@ -512,9 +524,19 @@ export default function IngestionControl() {
         </div>
 
         {error && (
-          <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-            <AlertCircle className="mt-0.5 h-5 w-5" />
-            <div>{error}</div>
+          <div className="flex items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="min-w-0 break-words">{error}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-white/70 text-rose-600 transition hover:bg-white hover:text-rose-800"
+              aria-label="Dismiss error"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
@@ -1117,19 +1139,43 @@ export default function IngestionControl() {
                 {loadingOverview && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
               </div>
 
-              {(operationsOverview?.alerts?.length || 0) > 0 && (
-                <div className="mb-4 space-y-2">
-                  {operationsOverview?.alerts?.slice(0, 3).map((alert) => (
-                    <div key={alert.id} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                      <div className="font-semibold">{alert.title}</div>
-                      <div className="mt-1">{alert.message}</div>
+              {visibleMissionAlerts.length > 0 && (
+                <div className="mb-4 grid gap-3 xl:grid-cols-2">
+                  {visibleMissionAlerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="flex items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-semibold">{alert.title}</div>
+                        <div className="mt-1 break-words">{alert.message}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDismissedAlertIds((prev) => [...prev, alert.id])}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-white/70 text-rose-600 transition hover:bg-white hover:text-rose-800"
+                        aria-label={`Dismiss ${alert.title}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-                <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-1">
+              <div className="grid gap-4 2xl:grid-cols-[minmax(20rem,0.92fr)_minmax(0,1.08fr)]">
+                <div className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/80 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3 px-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent Missions</div>
+                      <div className="mt-1 text-sm text-slate-500">Select a job to inspect progress, payload, and event traces.</div>
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      {(operationsOverview?.jobs || []).length} tracked
+                    </div>
+                  </div>
+
+                  <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-1">
                   {(operationsOverview?.jobs || []).map((job) => {
                     const estimatedTokens = extractEstimatedTokens(job.payload);
                     const isSelected = selectedJobId === job.id;
@@ -1140,8 +1186,8 @@ export default function IngestionControl() {
                         onClick={() => setSelectedJobId(job.id)}
                         className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
                           isSelected
-                            ? 'border-indigo-300 bg-indigo-50 shadow-sm'
-                            : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                            ? 'border-indigo-300 bg-indigo-50 shadow-sm ring-1 ring-indigo-100'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -1177,9 +1223,15 @@ export default function IngestionControl() {
                       </button>
                     );
                   })}
+                  {(operationsOverview?.jobs || []).length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                      No missions recorded yet. Run an ingest, fetch, or briefing to populate the feed.
+                    </div>
+                  ) : null}
+                  </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Mission Detail</div>
