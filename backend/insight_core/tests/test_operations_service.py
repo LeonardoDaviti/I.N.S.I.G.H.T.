@@ -69,6 +69,23 @@ class OperationsServiceTests(unittest.TestCase):
         self.assertEqual(len(result["alerts"]), 1)
         self.assertEqual(result["alerts"][0]["title"], "fetch_source_now")
 
+    def test_prepare_payload_preserves_full_result_payloads(self):
+        payload = {
+            "briefing": "x" * 900,
+            "posts": {
+                "post-1": {"title": "Anchor"},
+                "post-2": {"title": "Commentary"},
+            },
+        }
+
+        stored = self.service._prepare_payload(payload, compact=False)
+        preview = self.service._prepare_payload(payload, compact=True)
+
+        self.assertEqual(stored["briefing"], "x" * 900)
+        self.assertIn("post-1", stored["posts"])
+        self.assertEqual(preview["posts"]["count"], 2)
+        self.assertEqual(preview["posts"]["sample_ids"], ["post-1", "post-2"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -92,7 +92,7 @@ class OperationsService:
                     VALUES (%s, 'running', %s, %s, %s, %s::jsonb)
                     RETURNING id
                     """,
-                    (job_type, trigger, source_id, message, json.dumps(self._prepare_payload(payload or {}))),
+                    (job_type, trigger, source_id, message, json.dumps(self._prepare_payload(payload or {}, compact=False))),
                 )
                 job_id = str(cur.fetchone()[0])
             conn.commit()
@@ -124,7 +124,7 @@ class OperationsService:
                     )
                 next_payload = {
                     **(current_payload or {}),
-                    **self._prepare_payload(payload or {}),
+                    **self._prepare_payload(payload or {}, compact=False),
                 }
                 if events:
                     next_payload["events"] = events[-200:]
@@ -140,7 +140,7 @@ class OperationsService:
                     (
                         status,
                         message,
-                        json.dumps(self._prepare_payload(next_payload)),
+                        json.dumps(self._prepare_payload(next_payload, compact=False)),
                         now_iso,
                         job_id,
                     ),
@@ -173,7 +173,7 @@ class OperationsService:
                 if progress is not None:
                     event["progress"] = round(float(progress), 2)
                 if payload:
-                    event["data"] = self._prepare_payload(payload)
+                    event["data"] = self._prepare_payload(payload, compact=False)
                 events.append(event)
                 next_payload = {
                     **current_payload,
@@ -183,7 +183,7 @@ class OperationsService:
                     next_payload["progress"] = round(float(progress), 2)
                 cur.execute(
                     "UPDATE job_runs SET payload = %s::jsonb WHERE id = %s",
-                    (json.dumps(self._prepare_payload(next_payload)), job_id),
+                    (json.dumps(self._prepare_payload(next_payload, compact=False)), job_id),
                 )
             conn.commit()
 
@@ -216,6 +216,8 @@ class OperationsService:
 
         jobs: List[Dict[str, Any]] = []
         for row in rows:
+            payload = row[8] or {}
+            preview_payload = self._compact_payload(payload)
             jobs.append(
                 {
                     "id": str(row[0]),
@@ -226,9 +228,9 @@ class OperationsService:
                     "source_display_name": row[5],
                     "source_platform": row[6],
                     "message": row[7],
-                    "payload": row[8] or {},
-                    "progress": float((row[8] or {}).get("progress", 0) or 0),
-                    "event_count": len((row[8] or {}).get("events", []) or []),
+                    "payload": preview_payload,
+                    "progress": float(payload.get("progress", 0) or 0),
+                    "event_count": len(payload.get("events", []) or []),
                     "started_at": row[9].isoformat() if row[9] else None,
                     "finished_at": row[10].isoformat() if row[10] else None,
                 }
@@ -420,8 +422,11 @@ class OperationsService:
                 return str(value)
         return value
 
-    def _prepare_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._json_safe(self._compact_payload(payload))
+    def _prepare_payload(self, payload: Dict[str, Any], *, compact: bool = False) -> Dict[str, Any]:
+        prepared = self._json_safe(payload)
+        if compact:
+            return self._compact_payload(prepared)
+        return prepared
 
     def _compact_payload(self, value: Any, *, parent_key: str | None = None) -> Any:
         if isinstance(value, dict):

@@ -362,6 +362,15 @@ export interface OperationJobResponse {
   job?: JobRun | null;
 }
 
+interface AcceptedJobResponse {
+  success?: boolean;
+  accepted?: boolean;
+  job_id?: string;
+  job_type?: string;
+  status?: string;
+  message?: string;
+}
+
 export interface PostNotesPayload {
   post_id: string;
   notes_markdown: string;
@@ -988,11 +997,75 @@ class ApiService {
     return response.json();
   }
 
+  private isAcceptedJobResponse(value: unknown): value is AcceptedJobResponse {
+    return Boolean(
+      value
+      && typeof value === 'object'
+      && (value as AcceptedJobResponse).accepted
+      && typeof (value as AcceptedJobResponse).job_id === 'string',
+    );
+  }
+
+  private async pollOperationPayload<T extends { success?: boolean; error?: string }>(
+    jobId: string,
+    opts?: { timeoutMs?: number; intervalMs?: number },
+  ): Promise<T> {
+    const timeoutMs = Math.max(10_000, opts?.timeoutMs ?? 600_000);
+    const intervalMs = Math.max(500, opts?.intervalMs ?? 1_500);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const jobResponse = await this.getOperationJob(jobId);
+      if (!jobResponse.success || !jobResponse.job) {
+        return {
+          success: false,
+          error: jobResponse.error || `Operation job ${jobId} not found`,
+        } as T;
+      }
+
+      const job = jobResponse.job;
+      if (job.status === 'success') {
+        return {
+          success: true,
+          ...(job.payload || {}),
+        } as T;
+      }
+
+      if (job.status === 'failed') {
+        const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
+        return {
+          success: false,
+          error: payloadError || job.message || `Operation ${job.job_type} failed`,
+          ...(job.payload || {}),
+        } as T;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    }
+
+    return {
+      success: false,
+      error: `Operation timed out while waiting for job ${jobId}`,
+    } as T;
+  }
+
+  private async makeTrackedRequest<T extends { success?: boolean; error?: string }>(
+    url: string,
+    options: RequestInit,
+    opts?: { timeoutMs?: number; intervalMs?: number },
+  ): Promise<T> {
+    const response = await this.makeRequest<T | AcceptedJobResponse>(url, options);
+    if (!this.isAcceptedJobResponse(response)) {
+      return response as T;
+    }
+    return this.pollOperationPayload<T>(response.job_id!, opts);
+  }
+
   async generateBriefing(date: string): Promise<BriefingResponse> {
     try {
-      const response = await this.makeRequest<BriefingResponse>('/api/daily', {
+      const response = await this.makeTrackedRequest<BriefingResponse>('/api/daily', {
         method: 'POST',
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ date, asyncMode: true }),
       });
       
       return response;
@@ -1007,9 +1080,9 @@ class ApiService {
 
   async generateWeeklyBriefing(date: string, refresh = false, includeTopics = false): Promise<WeeklyBriefingResponse> {
     try {
-      return await this.makeRequest<WeeklyBriefingResponse>('/api/weekly', {
+      return await this.makeTrackedRequest<WeeklyBriefingResponse>('/api/weekly', {
         method: 'POST',
-        body: JSON.stringify({ date, refresh, includeTopics }),
+        body: JSON.stringify({ date, refresh, includeTopics, asyncMode: true }),
       });
     } catch (error) {
       console.error('Failed to generate weekly briefing:', error);
@@ -1026,12 +1099,13 @@ class ApiService {
   ): Promise<BriefingTopicsResponse> {
     try {
       const endpoint = `/api/daily/topics`;
-      const response = await this.makeRequest<BriefingTopicsResponse>(endpoint, {
+      const response = await this.makeTrackedRequest<BriefingTopicsResponse>(endpoint, {
         method: 'POST',
         body: JSON.stringify({
           date,
           includeUnreferenced: opts?.includeUnreferenced ?? true,
           refresh: opts?.refresh ?? false,
+          asyncMode: true,
         })
       });
       return response;
@@ -1262,9 +1336,9 @@ class ApiService {
 
   async getPostSummary(postId: string, refresh = false): Promise<PostSummaryResponse> {
     try {
-      return await this.makeRequest<PostSummaryResponse>(`/api/posts/item/${postId}/summary`, {
+      return await this.makeTrackedRequest<PostSummaryResponse>(`/api/posts/item/${postId}/summary`, {
         method: 'POST',
-        body: JSON.stringify({ refresh }),
+        body: JSON.stringify({ refresh, asyncMode: true }),
       });
     } catch (error) {
       console.error('Failed to get post summary:', error);
@@ -1278,9 +1352,9 @@ class ApiService {
 
   async chatAboutPost(postId: string, question: string): Promise<PostChatResponse> {
     try {
-      return await this.makeRequest<PostChatResponse>(`/api/posts/item/${postId}/chat`, {
+      return await this.makeTrackedRequest<PostChatResponse>(`/api/posts/item/${postId}/chat`, {
         method: 'POST',
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, asyncMode: true }),
       });
     } catch (error) {
       console.error('Failed to chat about post:', error);
@@ -1294,11 +1368,12 @@ class ApiService {
 
   async fetchRedditComments(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsResponse> {
     try {
-      return await this.makeRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
+      return await this.makeTrackedRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
         method: 'POST',
         body: JSON.stringify({
           limit: opts?.limit ?? 80,
           refresh: opts?.refresh ?? false,
+          asyncMode: true,
         }),
       });
     } catch (error) {
@@ -1314,11 +1389,12 @@ class ApiService {
 
   async generateRedditCommentsBriefing(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsBriefingResponse> {
     try {
-      return await this.makeRequest<RedditCommentsBriefingResponse>(`/api/posts/item/${postId}/reddit-comments/briefing`, {
+      return await this.makeTrackedRequest<RedditCommentsBriefingResponse>(`/api/posts/item/${postId}/reddit-comments/briefing`, {
         method: 'POST',
         body: JSON.stringify({
           limit: opts?.limit ?? 80,
           refresh: opts?.refresh ?? false,
+          asyncMode: true,
         }),
       });
     } catch (error) {
@@ -1512,9 +1588,9 @@ class ApiService {
 
   async fetchSourceNow(sourceId: string, limit?: number): Promise<LiveFetchResponse> {
     try {
-      return await this.makeRequest<LiveFetchResponse>(`/api/sources/${sourceId}/fetch-now`, {
+      return await this.makeTrackedRequest<LiveFetchResponse>(`/api/sources/${sourceId}/fetch-now`, {
         method: 'POST',
-        body: JSON.stringify({ limit }),
+        body: JSON.stringify({ limit, asyncMode: true }),
       });
     } catch (error) {
       console.error('Failed to fetch source now:', error);
@@ -1892,8 +1968,10 @@ class ApiService {
 
   async getVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
     try {
-      const params = new URLSearchParams({ start, end });
-      return await this.makeRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`);
+      const params = new URLSearchParams({ start, end, asyncMode: 'true' });
+      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`, {
+        method: 'GET',
+      });
     } catch (error) {
       console.error('Failed to get vertical briefing:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
@@ -1902,8 +1980,8 @@ class ApiService {
 
   async refreshVerticalBriefing(sourceId: string, start: string, end: string): Promise<VerticalBriefingResponse> {
     try {
-      const params = new URLSearchParams({ start, end });
-      return await this.makeRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
+      const params = new URLSearchParams({ start, end, asyncMode: 'true' });
+      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
         method: 'POST',
       });
     } catch (error) {

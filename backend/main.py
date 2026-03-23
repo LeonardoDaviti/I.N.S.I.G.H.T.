@@ -1,8 +1,9 @@
 import logging
 import os
+import asyncio
 from typing import List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -54,6 +55,7 @@ class BriefingRequest(BaseModel):
     includeTopics: bool | None = None
     includeUnreferenced: bool | None = True
     refresh: bool | None = False
+    asyncMode: bool | None = False
 
 
 class ArchiveRequest(BaseModel):
@@ -92,6 +94,7 @@ class YouTubeProgressRequest(BaseModel):
 
 class LiveFetchRequest(BaseModel):
     limit: int | None = None
+    asyncMode: bool | None = False
 
 
 class SchedulerConfigRequest(BaseModel):
@@ -107,6 +110,7 @@ class PostNotesRequest(BaseModel):
 
 class PostSummaryRequest(BaseModel):
     refresh: bool | None = False
+    asyncMode: bool | None = False
 
 
 class PostHighlightsRequest(BaseModel):
@@ -115,6 +119,7 @@ class PostHighlightsRequest(BaseModel):
 
 class PostChatRequest(BaseModel):
     question: str
+    asyncMode: bool | None = False
 
 
 class PostReaderSessionRequest(BaseModel):
@@ -137,6 +142,7 @@ class PostTimelineRequest(BaseModel):
 class PostCommentsRequest(BaseModel):
     limit: int | None = 80
     refresh: bool | None = False
+    asyncMode: bool | None = False
 
 
 class EvidenceRebuildPostRequest(BaseModel):
@@ -178,6 +184,31 @@ class InboxActionRequest(BaseModel):
     actionType: str
     actorId: str | None = None
     payload: Dict[str, Any] | None = None
+
+
+async def _run_async_job_background(task_name: str, fn, *args, **kwargs):
+    try:
+        await fn(*args, **kwargs)
+    except Exception:
+        logger.exception("Background async job failed: %s", task_name)
+
+
+async def _run_sync_job_background(task_name: str, fn, *args, **kwargs):
+    try:
+        await asyncio.to_thread(fn, *args, **kwargs)
+    except Exception:
+        logger.exception("Background sync job failed: %s", task_name)
+
+
+def _accepted_job_response(job_id: str, job_type: str, *, message: str | None = None) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "accepted": True,
+        "job_id": job_id,
+        "job_type": job_type,
+        "status": "running",
+        "message": message or f"{job_type} started",
+    }
 
 @app.get("/")
 async def root():
@@ -690,9 +721,26 @@ async def save_post_notes(post_id: str, request: PostNotesRequest):
 
 
 @app.post("/api/posts/item/{post_id}/summary")
-async def get_post_summary(post_id: str, request: PostSummaryRequest):
+async def get_post_summary(post_id: str, request: PostSummaryRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"🧠 Generating summary for post: {post_id}")
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "post_analysis",
+                trigger="manual",
+                message=f"Generate summary for post {post_id}",
+                payload={"post_id": post_id, "refresh": bool(request.refresh)},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_sync_job_background,
+                    "post_analysis",
+                    api_bridge.get_post_summary,
+                    post_id,
+                    refresh=bool(request.refresh),
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "post_analysis", message="Post summary generation started")
         return api_bridge.get_post_summary(post_id, refresh=bool(request.refresh))
     except Exception as e:
         logger.exception("Failed to get post summary")
@@ -700,9 +748,26 @@ async def get_post_summary(post_id: str, request: PostSummaryRequest):
 
 
 @app.post("/api/posts/item/{post_id}/chat")
-async def chat_about_post(post_id: str, request: PostChatRequest):
+async def chat_about_post(post_id: str, request: PostChatRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"💬 Chat about post: {post_id}")
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "post_chat_message",
+                trigger="manual",
+                message=f"Chat about post {post_id}",
+                payload={"post_id": post_id, "question_chars": len(request.question or "")},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_sync_job_background,
+                    "post_chat_message",
+                    api_bridge.chat_about_post,
+                    post_id,
+                    request.question,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "post_chat_message", message="Post chat request started")
         return api_bridge.chat_about_post(post_id, request.question)
     except Exception as e:
         logger.exception("Failed to chat about post")
@@ -710,9 +775,27 @@ async def chat_about_post(post_id: str, request: PostChatRequest):
 
 
 @app.post("/api/posts/item/{post_id}/reddit-comments")
-async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest):
+async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"💬 Fetching Reddit comments for post: {post_id}")
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "reddit_comments_fetch",
+                trigger="manual",
+                message=f"Fetch Reddit comments for {post_id}",
+                payload={"post_id": post_id, "limit": int(request.limit or 80), "refresh": bool(request.refresh)},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "reddit_comments_fetch",
+                    api_bridge.fetch_reddit_comments,
+                    post_id,
+                    limit=int(request.limit or 80),
+                    refresh=bool(request.refresh),
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "reddit_comments_fetch", message="Reddit comment fetch started")
         return await api_bridge.fetch_reddit_comments(
             post_id,
             limit=int(request.limit or 80),
@@ -724,9 +807,27 @@ async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest):
 
 
 @app.post("/api/posts/item/{post_id}/reddit-comments/briefing")
-async def get_reddit_comments_briefing(post_id: str, request: PostCommentsRequest):
+async def get_reddit_comments_briefing(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"🧠 Generating Reddit comments briefing for post: {post_id}")
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "reddit_comments_briefing",
+                trigger="manual",
+                message=f"Generate Reddit comments briefing for {post_id}",
+                payload={"post_id": post_id, "limit": int(request.limit or 80), "refresh": bool(request.refresh)},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "reddit_comments_briefing",
+                    api_bridge.get_reddit_comments_briefing,
+                    post_id,
+                    limit=int(request.limit or 80),
+                    refresh=bool(request.refresh),
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "reddit_comments_briefing", message="Reddit comments briefing started")
         return await api_bridge.get_reddit_comments_briefing(
             post_id,
             limit=int(request.limit or 80),
@@ -868,10 +969,27 @@ async def run_archive(source_id: str, request: ArchiveRequest):
 
 
 @app.post("/api/sources/{source_id}/fetch-now")
-async def fetch_source_now(source_id: str, request: LiveFetchRequest):
+async def fetch_source_now(source_id: str, request: LiveFetchRequest, background_tasks: BackgroundTasks):
     """Fetch the latest posts for a single source immediately."""
     try:
         logger.info(f"⚡ Fetching source immediately: {source_id}")
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "fetch_source_now",
+                trigger="manual",
+                source_id=source_id,
+                payload={"limit": request.limit},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "fetch_source_now",
+                    api_bridge.fetch_source_now,
+                    source_id,
+                    request.limit,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "fetch_source_now", message="Source fetch started")
         return await api_bridge.fetch_source_now(source_id, request.limit)
     except Exception as e:
         logger.exception(f"Failed to fetch source immediately: {source_id}")
@@ -882,7 +1000,7 @@ async def fetch_source_now(source_id: str, request: LiveFetchRequest):
 
 
 @app.post("/api/daily")
-async def generate_daily_briefing(request: BriefingRequest):
+async def generate_daily_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
         logger.info(f"🚀 Generating daily briefing for date: {date}")
@@ -890,6 +1008,46 @@ async def generate_daily_briefing(request: BriefingRequest):
         if not date:
             raise HTTPException(status_code=400, detail="Date parameter required")
         
+        if request.asyncMode:
+            if request.includeTopics:
+                job_id = api_bridge._start_job_safe(
+                    "topic_briefing",
+                    trigger="manual",
+                    message=f"Generate topic briefing for {date}",
+                    payload={
+                        "date": date,
+                        "include_unreferenced": True if request.includeUnreferenced is None else request.includeUnreferenced,
+                        "refresh": bool(request.refresh),
+                    },
+                )
+                if job_id:
+                    background_tasks.add_task(
+                        _run_async_job_background,
+                        "topic_briefing",
+                        api_bridge.generate_daily_briefing_with_topics,
+                        date,
+                        include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
+                        refresh=bool(request.refresh),
+                        job_id=job_id,
+                    )
+                    return _accepted_job_response(job_id, "topic_briefing", message="Topic briefing generation started")
+            else:
+                job_id = api_bridge._start_job_safe(
+                    "daily_briefing",
+                    trigger="manual",
+                    message=f"Generate daily briefing for {date}",
+                    payload={"date": date},
+                )
+                if job_id:
+                    background_tasks.add_task(
+                        _run_async_job_background,
+                        "daily_briefing",
+                        api_bridge.generate_daily_briefing,
+                        date,
+                        job_id=job_id,
+                    )
+                    return _accepted_job_response(job_id, "daily_briefing", message="Daily briefing generation started")
+
         if request.includeTopics:
             result = await api_bridge.generate_daily_briefing_with_topics(
                 date,
@@ -934,12 +1092,35 @@ async def generate_daily_briefing(request: BriefingRequest):
         return {"success": False, "error": str(e)}
 
 @app.post("/api/daily/topics")
-async def generate_daily_briefing_with_topics(request: BriefingRequest):
+async def generate_daily_briefing_with_topics(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
         logger.info(f"🚀 Generating topic-based daily briefing for date: {date}")
         if not date:
             raise HTTPException(status_code=400, detail="Date parameter required")
+
+        if request.asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "topic_briefing",
+                trigger="manual",
+                message=f"Generate topic briefing for {date}",
+                payload={
+                    "date": date,
+                    "include_unreferenced": True if request.includeUnreferenced is None else request.includeUnreferenced,
+                    "refresh": bool(request.refresh),
+                },
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "topic_briefing",
+                    api_bridge.generate_daily_briefing_with_topics,
+                    date,
+                    include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
+                    refresh=bool(request.refresh),
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "topic_briefing", message="Topic briefing generation started")
 
         include_unreferenced = True if request.includeUnreferenced is None else request.includeUnreferenced
         result = await api_bridge.generate_daily_briefing_with_topics(
@@ -976,12 +1157,48 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest):
         return {"success": False, "error": str(e)}
 
 @app.post("/api/weekly")
-async def generate_weekly_briefing(request: BriefingRequest):
+async def generate_weekly_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
         logger.info(f"🚀 Generating weekly briefing anchored at date: {date}")
         if not date:
             raise HTTPException(status_code=400, detail="Date parameter required")
+
+        if request.asyncMode:
+            if request.includeTopics:
+                job_id = api_bridge._start_job_safe(
+                    "weekly_topic_briefing",
+                    trigger="manual",
+                    message=f"Generate weekly topic briefing for {date}",
+                    payload={"date": date, "refresh": bool(request.refresh)},
+                )
+                if job_id:
+                    background_tasks.add_task(
+                        _run_async_job_background,
+                        "weekly_topic_briefing",
+                        api_bridge.generate_weekly_topic_briefing,
+                        date,
+                        refresh=bool(request.refresh),
+                        job_id=job_id,
+                    )
+                    return _accepted_job_response(job_id, "weekly_topic_briefing", message="Weekly topic briefing generation started")
+            else:
+                job_id = api_bridge._start_job_safe(
+                    "weekly_briefing",
+                    trigger="manual",
+                    message=f"Generate weekly briefing for {date}",
+                    payload={"date": date, "refresh": bool(request.refresh)},
+                )
+                if job_id:
+                    background_tasks.add_task(
+                        _run_async_job_background,
+                        "weekly_briefing",
+                        api_bridge.generate_weekly_briefing,
+                        date,
+                        refresh=bool(request.refresh),
+                        job_id=job_id,
+                    )
+                    return _accepted_job_response(job_id, "weekly_briefing", message="Weekly briefing generation started")
 
         if request.includeTopics:
             result = await api_bridge.generate_weekly_topic_briefing(date, refresh=bool(request.refresh))
@@ -1020,14 +1237,40 @@ async def generate_weekly_briefing(request: BriefingRequest):
 @app.get("/api/briefings/vertical/source/{source_id}")
 async def get_source_vertical_briefing(
     source_id: str,
+    background_tasks: BackgroundTasks,
     start: str | None = None,
     end: str | None = None,
+    asyncMode: bool = Query(False),
 ):
     """Generate or fetch a cached source-scoped vertical briefing."""
     try:
         logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
         if not start or not end:
             raise HTTPException(status_code=400, detail="Start and end parameters required")
+        if asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "vertical_briefing_source",
+                trigger="manual",
+                message=f"Generate vertical briefing for {source_id}",
+                payload={
+                    "source_id": source_id,
+                    "start_date": start,
+                    "end_date": end,
+                    "refresh": False,
+                },
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "vertical_briefing_source",
+                    api_bridge.generate_source_vertical_briefing,
+                    source_id,
+                    start,
+                    end,
+                    refresh=False,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "vertical_briefing_source", message="Vertical briefing generation started")
         return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=False)
     except HTTPException:
         raise
@@ -1039,14 +1282,40 @@ async def get_source_vertical_briefing(
 @app.post("/api/briefings/vertical/source/{source_id}/refresh")
 async def refresh_source_vertical_briefing(
     source_id: str,
+    background_tasks: BackgroundTasks,
     start: str | None = None,
     end: str | None = None,
+    asyncMode: bool = Query(False),
 ):
     """Force regeneration of a source-scoped vertical briefing."""
     try:
         logger.info(f"🔄 Refreshing vertical briefing for source {source_id}")
         if not start or not end:
             raise HTTPException(status_code=400, detail="Start and end parameters required")
+        if asyncMode:
+            job_id = api_bridge._start_job_safe(
+                "vertical_briefing_source",
+                trigger="manual",
+                message=f"Generate vertical briefing for {source_id}",
+                payload={
+                    "source_id": source_id,
+                    "start_date": start,
+                    "end_date": end,
+                    "refresh": True,
+                },
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "vertical_briefing_source",
+                    api_bridge.generate_source_vertical_briefing,
+                    source_id,
+                    start,
+                    end,
+                    refresh=True,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "vertical_briefing_source", message="Vertical briefing refresh started")
         return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=True)
     except HTTPException:
         raise

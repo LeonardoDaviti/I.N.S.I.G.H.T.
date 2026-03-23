@@ -538,9 +538,9 @@ class InsightApiBridge:
                 "source_id": source_id,
             }
 
-    async def fetch_source_now(self, source_id: str, limit: int | None = None) -> Dict[str, Any]:
+    async def fetch_source_now(self, source_id: str, limit: int | None = None, *, job_id: str | None = None) -> Dict[str, Any]:
         """Fetch the latest posts for a single source immediately."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "fetch_source_now",
             trigger="manual",
             source_id=source_id,
@@ -595,9 +595,9 @@ class InsightApiBridge:
 
     # ============= BRIEFINGS =============
 
-    async def generate_daily_briefing(self, date_str: str) -> Dict[str, Any]:
+    async def generate_daily_briefing(self, date_str: str, *, job_id: str | None = None) -> Dict[str, Any]:
         """Generate a DB-backed daily briefing."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "daily_briefing",
             trigger="manual",
             message=f"Generate daily briefing for {date_str}",
@@ -628,9 +628,11 @@ class InsightApiBridge:
         date_str: str,
         include_unreferenced: bool = True,
         refresh: bool = False,
+        *,
+        job_id: str | None = None,
     ) -> Dict[str, Any]:
         """Generate a DB-backed topic briefing."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "topic_briefing",
             trigger="manual",
             message=f"Generate topic briefing for {date_str}",
@@ -660,9 +662,9 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
-    async def generate_weekly_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+    async def generate_weekly_briefing(self, date_str: str, refresh: bool = False, *, job_id: str | None = None) -> Dict[str, Any]:
         """Generate a DB-backed weekly briefing."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "weekly_briefing",
             trigger="manual",
             message=f"Generate weekly briefing for {date_str}",
@@ -688,9 +690,9 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
-    async def generate_weekly_topic_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+    async def generate_weekly_topic_briefing(self, date_str: str, refresh: bool = False, *, job_id: str | None = None) -> Dict[str, Any]:
         """Generate a DB-backed weekly topic briefing."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "weekly_topic_briefing",
             trigger="manual",
             message=f"Generate weekly topic briefing for {date_str}",
@@ -722,9 +724,11 @@ class InsightApiBridge:
         start_date: str,
         end_date: str,
         refresh: bool = False,
+        *,
+        job_id: str | None = None,
     ) -> Dict[str, Any]:
         """Generate a DB-backed source vertical briefing."""
-        job_id = self._start_job_safe(
+        job_id = job_id or self._start_job_safe(
             "vertical_briefing_source",
             trigger="manual",
             message=f"Generate vertical briefing for {source_id}",
@@ -1433,8 +1437,8 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id}
 
-    def get_post_summary(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
-        job_id = self._start_job_safe(
+    def get_post_summary(self, post_id: str, refresh: bool = False, *, job_id: str | None = None) -> Dict[str, Any]:
+        job_id = job_id or self._start_job_safe(
             "post_analysis",
             trigger="manual",
             message=f"Generate summary for post {post_id}",
@@ -1454,8 +1458,8 @@ class InsightApiBridge:
             self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
-    def chat_about_post(self, post_id: str, question: str) -> Dict[str, Any]:
-        job_id = self._start_job_safe(
+    def chat_about_post(self, post_id: str, question: str, *, job_id: str | None = None) -> Dict[str, Any]:
+        job_id = job_id or self._start_job_safe(
             "post_chat_message",
             trigger="manual",
             message=f"Chat about post {post_id}",
@@ -1475,8 +1479,8 @@ class InsightApiBridge:
             self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
-    async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
-        job_id = self._start_job_safe(
+    async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False, job_id: str | None = None) -> Dict[str, Any]:
+        job_id = job_id or self._start_job_safe(
             "reddit_comments_fetch",
             trigger="manual",
             message=f"Fetch Reddit comments for {post_id}",
@@ -1496,8 +1500,8 @@ class InsightApiBridge:
             self._finish_job_safe(job_id, status="failed", message=str(e), payload={"post_id": post_id})
             return {"success": False, "error": str(e), "post_id": post_id}
 
-    async def get_reddit_comments_briefing(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
-        job_id = self._start_job_safe(
+    async def get_reddit_comments_briefing(self, post_id: str, *, limit: int = 80, refresh: bool = False, job_id: str | None = None) -> Dict[str, Any]:
+        job_id = job_id or self._start_job_safe(
             "reddit_comments_briefing",
             trigger="manual",
             message=f"Generate Reddit comments briefing for {post_id}",

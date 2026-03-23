@@ -30,10 +30,52 @@ COMMON_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from", "has", "have",
     "he", "her", "his", "i", "if", "in", "into", "is", "it", "its", "just", "more", "most",
     "new", "not", "of", "on", "or", "our", "out", "over", "she", "so", "than", "that",
-    "the", "their", "them", "there", "these", "this", "those", "to", "too", "under", "up",
+    "the", "their", "them", "there", "these", "this", "those", "they", "to", "too", "under", "up",
     "very", "was", "we", "were", "what", "when", "where", "which", "who", "with", "you",
     "your", "today", "tomorrow", "yesterday", "first", "last", "big", "small", "great",
     "good", "bad", "latest", "only", "more", "less", "very", "much", "many",
+}
+
+NON_ENTITY_TERMS = {
+    "answer",
+    "answers",
+    "article",
+    "articles",
+    "beat",
+    "beats",
+    "blog",
+    "blogs",
+    "comment",
+    "comments",
+    "discussion",
+    "discussions",
+    "example",
+    "examples",
+    "feed",
+    "feeds",
+    "headline",
+    "headlines",
+    "here",
+    "note",
+    "notes",
+    "page",
+    "pages",
+    "post",
+    "posts",
+    "question",
+    "questions",
+    "section",
+    "sections",
+    "signal",
+    "signals",
+    "story",
+    "stories",
+    "tag",
+    "tags",
+    "thread",
+    "threads",
+    "update",
+    "updates",
 }
 
 TECH_ACRONYM_BLOCKLIST = {
@@ -134,6 +176,28 @@ def normalize_entity_name(value: str | None) -> str:
     return text.strip().casefold()
 
 
+def is_meaningful_entity_name(value: str | None) -> bool:
+    """Return whether a candidate mention looks like a real entity label."""
+    normalized = normalize_entity_name(value)
+    if not normalized:
+        return False
+
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return False
+
+    if normalized in COMMON_STOPWORDS or normalized in NON_ENTITY_TERMS:
+        return False
+
+    if normalized in TECH_ACRONYM_BLOCKLIST and normalized != "ai":
+        return False
+
+    if all(token in COMMON_STOPWORDS or token in NON_ENTITY_TERMS for token in tokens):
+        return False
+
+    return True
+
+
 def guess_entity_type(mention_text: str, *, role: str | None = None) -> str:
     """Conservatively guess the entity type for a mention."""
     normalized = normalize_entity_name(mention_text)
@@ -161,6 +225,10 @@ def guess_entity_type(mention_text: str, *, role: str | None = None) -> str:
     token = tokens[0]
     if _looks_like_organization_token(mention_text, token):
         return "organization"
+
+    if len(token) >= 5 and is_meaningful_entity_name(mention_text):
+        if role == "title" or mention_text[:1].isupper():
+            return "organization"
 
     if role == "title" and len(token) >= 4 and token not in COMMON_STOPWORDS:
         return "organization"
@@ -246,6 +314,8 @@ def _extract_from_text(text: str, role: str, language_code: str, source_hint: st
         mention_text = match.group(0).strip()
         if _should_skip_mention(mention_text):
             continue
+        if _should_skip_single_entity_match(mention_text, role=role, text=text):
+            continue
         candidates.append(_build_candidate(
             mention_text,
             role,
@@ -328,16 +398,33 @@ def _should_skip_mention(mention_text: str) -> bool:
     if not normalized:
         return True
 
-    if normalized in COMMON_STOPWORDS:
+    if not is_meaningful_entity_name(mention_text):
         return True
 
     if len(normalized) < 4 and normalized not in {"ai"}:
         return True
 
-    if normalized in TECH_ACRONYM_BLOCKLIST:
+    return False
+
+
+def _should_skip_single_entity_match(mention_text: str, *, role: str, text: str) -> bool:
+    normalized = normalize_entity_name(mention_text)
+    if not normalized:
         return True
 
-    return False
+    if role == "title":
+        return False
+
+    if _has_internal_capitalization(mention_text):
+        return False
+
+    if mention_text.isascii() and mention_text.isupper() and len(mention_text) >= 4:
+        return False
+
+    if _count_entity_occurrences(text, normalized) >= 2:
+        return False
+
+    return True
 
 
 def _looks_like_name_token(token: str) -> bool:
@@ -386,3 +473,11 @@ def _derive_summary_source(content: str, content_html: str) -> str:
 
 def _string_value(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _count_entity_occurrences(text: str, normalized: str) -> int:
+    normalized_text = normalize_entity_name(text)
+    if not normalized_text or not normalized:
+        return 0
+    pattern = re.compile(rf"(?<!\w){re.escape(normalized)}(?!\w)")
+    return len(pattern.findall(normalized_text))

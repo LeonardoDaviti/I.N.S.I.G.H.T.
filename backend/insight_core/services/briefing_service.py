@@ -17,16 +17,18 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.briefings_store_service import BriefingsStoreService
+from insight_core.services.entity_memory_service import EntityMemoryService
+from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.topics_service import TopicsService
-from insight_core.utils.entity_memory import normalize_entity_name
+from insight_core.utils.entity_memory import is_meaningful_entity_name, normalize_entity_name
 
 
 class BriefingService:
     """Generate daily briefings from posts already stored in the database."""
 
-    VERTICAL_BRIEFING_VERSION = 2
+    VERTICAL_BRIEFING_VERSION = 3
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -35,6 +37,8 @@ class BriefingService:
         self.stories_repo = StoriesRepository(db_url)
         self.memory_repo = MemoryRepository(db_url)
         self.evidence_repo = EvidenceRepository(db_url)
+        self.entity_memory_service = EntityMemoryService(db_url)
+        self.event_memory_service = EventMemoryService(db_url)
         self.store_service = BriefingsStoreService(db_url)
         self.topics_service = TopicsService(db_url)
         self.explainability_service = ExplainabilityService(db_url)
@@ -663,6 +667,7 @@ class BriefingService:
                 "subject_key": subject_key,
             }
 
+        self._ensure_vertical_supporting_memory(posts)
         posts = self._build_vertical_briefing_context(posts)
 
         setup_ok = self.processor.setup_processor()
@@ -988,6 +993,8 @@ class BriefingService:
             evidence_by_post: Dict[str, Dict[str, Any]] = {}
             entity_counts: Counter[str] = Counter()
             entity_display_by_key: Dict[str, str] = {}
+            category_counts: Counter[str] = Counter()
+            category_display_by_key: Dict[str, str] = {}
 
             with psycopg.connect(self.db_url) as conn:
                 with conn.cursor() as cur:
@@ -1010,6 +1017,14 @@ class BriefingService:
                             entity_counts[entity_key] += 1
                             entity_display_by_key.setdefault(entity_key, entity_display)
 
+                        seen_category_keys: set[str] = set()
+                        for category_key, category_display in self._vertical_category_pairs(post):
+                            if category_key in seen_category_keys:
+                                continue
+                            seen_category_keys.add(category_key)
+                            category_counts[category_key] += 1
+                            category_display_by_key.setdefault(category_key, category_display)
+
             cluster_map = self._vertical_evidence_clusters(posts, evidence_by_post)
             enriched_posts: List[Dict[str, Any]] = []
             for post in posts:
@@ -1022,6 +1037,8 @@ class BriefingService:
                 story_titles = self._vertical_story_titles(story_links)
                 entity_pairs = self._vertical_entity_pairs(entity_links)
                 entity_pairs.sort(key=lambda item: (-entity_counts.get(item[0], 0), item[1].lower()))
+                category_pairs = self._vertical_category_pairs(post)
+                category_pairs.sort(key=lambda item: (-category_counts.get(item[0], 0), item[1].lower()))
 
                 entity_names = [display for _, display in entity_pairs[:5]]
                 shared_entity_names = [
@@ -1029,11 +1046,19 @@ class BriefingService:
                     for key, display in entity_pairs
                     if entity_counts.get(key, 0) > 1
                 ][:4]
+                category_names = [display for _, display in category_pairs[:5]]
+                shared_category_names = [
+                    category_display_by_key[key]
+                    for key, display in category_pairs
+                    if category_counts.get(key, 0) > 1
+                ][:4]
                 primary_story_title = story_titles[0] if story_titles else ""
                 track_hint = (
                     primary_story_title
                     or " / ".join(shared_entity_names[:2])
+                    or " / ".join(shared_category_names[:2])
                     or " / ".join(entity_names[:2])
+                    or " / ".join(category_names[:2])
                     or self._vertical_fallback_track_hint(post)
                 )
 
@@ -1045,6 +1070,8 @@ class BriefingService:
                         "vertical_primary_story_title": primary_story_title,
                         "vertical_entity_names": entity_names,
                         "vertical_shared_entity_names": shared_entity_names,
+                        "vertical_category_names": category_names,
+                        "vertical_shared_category_names": shared_category_names,
                         "vertical_entity_overlap_count": len(shared_entity_names),
                         "vertical_evidence_cluster_key": cluster_info["key"],
                         "vertical_evidence_cluster_size": cluster_info["size"],
@@ -1160,6 +1187,9 @@ class BriefingService:
         return " ".join(content.split()[:8]).strip()
 
     def _vertical_entity_signature(self, entity_link: Dict[str, Any]) -> tuple[str, str]:
+        confidence = float(entity_link.get("confidence") or 0.0)
+        if confidence and confidence < 0.72:
+            return "", ""
         entity = entity_link.get("entity") or {}
         mention = entity_link.get("mention") or {}
         display = (
@@ -1170,8 +1200,58 @@ class BriefingService:
             or ""
         )
         display_text = str(display).strip()
+        if not is_meaningful_entity_name(display_text):
+            return "", ""
         normalized = normalize_entity_name(display_text) or display_text.lower()
         return normalized, display_text
+
+    def _vertical_category_pairs(self, post: Dict[str, Any]) -> List[tuple[str, str]]:
+        pairs: List[tuple[str, str]] = []
+        seen: set[str] = set()
+        for raw_category in post.get("categories") or []:
+            display = str(raw_category or "").strip()
+            if not display:
+                continue
+            normalized = normalize_entity_name(display)
+            if not normalized or normalized in seen:
+                continue
+            if normalized in {"rss", "reddit", "telegram", "youtube"}:
+                continue
+            if len(normalized) < 3:
+                continue
+            seen.add(normalized)
+            pairs.append((normalized, display))
+        return pairs
+
+    def _ensure_vertical_supporting_memory(self, posts: List[Dict[str, Any]]) -> None:
+        if not posts:
+            return
+
+        post_ids = [str(post.get("id") or "").strip() for post in posts if post.get("id")]
+        if not post_ids:
+            return
+
+        total_posts = len(post_ids)
+        try:
+            with psycopg.connect(self.db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT post_id) FROM post_entities WHERE post_id = ANY(%s)",
+                        (post_ids,),
+                    )
+                    entity_coverage = int(cur.fetchone()[0] or 0)
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT post_id) FROM event_evidence WHERE post_id = ANY(%s)",
+                        (post_ids,),
+                    )
+                    event_coverage = int(cur.fetchone()[0] or 0)
+
+            if entity_coverage < max(1, int(total_posts * 0.7)):
+                self.entity_memory_service.process_posts(posts)
+            if event_coverage < max(1, int(total_posts * 0.4)):
+                self.event_memory_service.process_posts(posts)
+        except Exception as exc:
+            self.logger.warning("Vertical memory backfill check failed: %s", exc)
 
     def _vertical_entity_pairs(self, entity_links: List[Dict[str, Any]]) -> List[tuple[str, str]]:
         pairs: List[tuple[str, str]] = []

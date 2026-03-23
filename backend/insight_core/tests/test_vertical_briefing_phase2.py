@@ -7,9 +7,34 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.services.briefing_service import BriefingService
 
 
 class VerticalBriefingPhase2Tests(unittest.TestCase):
+    def test_vertical_entity_signature_filters_noise_and_keeps_meaningful_names(self):
+        service = BriefingService("postgresql://unused")
+
+        self.assertEqual(
+            service._vertical_entity_signature(
+                {
+                    "confidence": 0.92,
+                    "entity": {"canonical_name": "They"},
+                    "mention": {"mention_text": "They"},
+                }
+            ),
+            ("", ""),
+        )
+        self.assertEqual(
+            service._vertical_entity_signature(
+                {
+                    "confidence": 0.92,
+                    "entity": {"canonical_name": "Anthropic"},
+                    "mention": {"mention_text": "Anthropic"},
+                }
+            ),
+            ("anthropic", "Anthropic"),
+        )
+
     def test_fallback_collapses_duplicate_clusters_and_uses_story_and_entity_hints(self):
         processor = GeminiProcessor()
         posts = [

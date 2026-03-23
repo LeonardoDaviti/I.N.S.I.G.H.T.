@@ -42,6 +42,24 @@ class EntityMemoryUtilityTests(unittest.TestCase):
         self.assertNotIn("the", normalized)
         self.assertNotIn("ide", normalized)
 
+    def test_extract_entity_mentions_skips_pronouns_and_structural_words(self):
+        mentions = extract_entity_mentions(
+            {
+                "title": "Beats now have notes",
+                "content": "They were looking thin. Here are the tags for this update.",
+                "content_html": "<p>They were looking thin. Here are the tags for this update.</p>",
+                "language_code": "en",
+                "source": "https://example.com/feed",
+            }
+        )
+
+        normalized = {item["normalized_mention"] for item in mentions}
+        self.assertNotIn("beats", normalized)
+        self.assertNotIn("they", normalized)
+        self.assertNotIn("here", normalized)
+        self.assertNotIn("tags", normalized)
+        self.assertNotIn("update", normalized)
+
 
 if __name__ == "__main__":
     unittest.main()
