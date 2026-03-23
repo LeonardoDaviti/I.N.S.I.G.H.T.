@@ -24,6 +24,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import psycopg
 
+from insight_core.adapters import create_source_adapter
 from insight_core.connectors import create_connector
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.logs.core.logger_config import get_component_logger
@@ -51,6 +52,8 @@ class SourceFetchService:
     NITTER_BATCH_COOLDOWN_SECONDS = 30
     REDDIT_PAGE_DELAY_SECONDS = 2
     YOUTUBE_PAGE_DELAY_SECONDS = 2
+    LESSWRONG_PAGE_DELAY_SECONDS = 1
+    GWERN_PAGE_DELAY_SECONDS = 1
 
     TELEGRAM_HOSTS = {"telegram.local", "tg.i-c-a.su", "127.0.0.1"}
     NITTER_HOSTS = {"nitter.local", "nitter.net"}
@@ -154,6 +157,7 @@ class SourceFetchService:
             rate_limit_overrides=rate_limit_overrides,
         )
         source_type = plan["source_type"]
+        source_adapter = create_source_adapter(self, source)
         target_posts = plan["desired_posts"]
         rate_limit = plan.get("rate_limit") or {}
         checkpoint = plan.get("checkpoint") or {}
@@ -264,6 +268,17 @@ class SourceFetchService:
                 "pages_fetched": 1,
                 "collected_posts": len(posts),
             }
+        elif source_adapter is not None:
+            posts, pages_fetched, checkpoint = await source_adapter.archive_posts(
+                source,
+                target_posts,
+                progress_callback=progress_callback,
+                checkpoint=checkpoint if plan.get("resume") else None,
+                initial_collected=resume_collected_posts,
+                initial_pages_fetched=total_pages_fetched,
+                page_callback=persist_archive_page,
+                rate_limit=rate_limit,
+            )
         else:
             raise ValueError(f"Archive is not supported for source type {source_type}")
 
@@ -355,6 +370,7 @@ class SourceFetchService:
     async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         """Fetch latest posts for an RSS-style source."""
         source_type = self.classify_source(source)
+        source_adapter = create_source_adapter(self, source)
 
         if source_type == "telegram_rss":
             posts, _, _ = await self._collect_telegram_posts(source["handle_or_url"], limit, apply_rate_limits=False)
@@ -370,6 +386,9 @@ class SourceFetchService:
         if source_type == "reddit_subreddit":
             return await self._fetch_reddit_live_posts(source["handle_or_url"], limit)
 
+        if source_adapter is not None:
+            return await source_adapter.fetch_live_posts(source, limit)
+
         feed_text, _ = await self._fetch_text(source["handle_or_url"])
         posts = self._parse_feed_posts(feed_text, source["handle_or_url"])[:limit]
         return await self._maybe_enrich_generic_rss_posts(source, posts)
@@ -379,6 +398,7 @@ class SourceFetchService:
         source_type = self.classify_source(source)
         source_url = source["handle_or_url"]
         source_settings = source.get("settings") or {}
+        source_adapter = create_source_adapter(self, source)
 
         if source_type == "telegram_rss":
             inspection = await self._inspect_telegram_source(source_url)
@@ -390,6 +410,8 @@ class SourceFetchService:
             inspection = self._inspect_reddit_source(source_url)
         elif source_type == "generic_rss":
             inspection = await self._inspect_generic_rss_source(source_url)
+        elif source_adapter is not None:
+            inspection = await source_adapter.inspect_source(source)
         else:
             raise ValueError(f"Archive planning is not supported for source type {source_type}")
 
@@ -414,6 +436,10 @@ class SourceFetchService:
         """Classify a source into a specific live/archive strategy."""
         platform = source.get("platform")
         handle_or_url = source.get("handle_or_url", "")
+
+        source_adapter = create_source_adapter(self, source)
+        if source_adapter is not None:
+            return source_adapter.adapter_type
 
         if platform == "reddit":
             return "reddit_subreddit"
@@ -912,6 +938,16 @@ class SourceFetchService:
     async def _fetch_text(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
         return await asyncio.to_thread(self._fetch_text_sync, url, user_agent)
 
+    async def _post_json(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        *,
+        user_agent: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._post_json_sync, url, payload, user_agent, extra_headers)
+
     async def _emit_progress(
         self,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]],
@@ -959,6 +995,36 @@ class SourceFetchService:
             raise ValueError(f"HTTP {exc.code} while fetching {url}: {body[:200]}") from exc
         except urllib.error.URLError as exc:
             raise ValueError(f"Failed to fetch {url}: {exc.reason}") from exc
+
+    def _post_json_sync(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        user_agent: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "User-Agent": user_agent or self.user_agent,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        headers.update(extra_headers or {})
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        parsed = urllib.parse.urlparse(url)
+        context = None
+        if parsed.scheme == "https" and self._should_skip_tls_verify(parsed.hostname):
+            context = ssl._create_unverified_context()
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:
+                response_body = response.read().decode("utf-8", errors="replace")
+                return json.loads(response_body)
+        except urllib.error.HTTPError as exc:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            raise ValueError(f"HTTP {exc.code} while posting to {url}: {body_text[:200]}") from exc
+        except urllib.error.URLError as exc:
+            raise ValueError(f"Failed to post to {url}: {exc.reason}") from exc
 
     def _parse_feed_posts(self, feed_text: str, source_url: str) -> List[Dict[str, Any]]:
         root = ET.fromstring(feed_text)
@@ -1149,6 +1215,10 @@ class SourceFetchService:
         if source_type == "youtube_channel":
             return estimated_pages + max(0, estimated_pages - 1) * self.YOUTUBE_PAGE_DELAY_SECONDS
 
+        if source_type in {"lesswrong_graphql", "gwern_site"}:
+            page_delay = int((rate_limit or {}).get("page_delay_seconds", 1))
+            return estimated_pages + max(0, estimated_pages - 1) * page_delay
+
         return estimated_pages
 
     def _persist_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -1269,6 +1339,14 @@ class SourceFetchService:
             defaults = {
                 "page_delay_seconds": self.REDDIT_PAGE_DELAY_SECONDS,
             }
+        elif source_type == "lesswrong_graphql":
+            defaults = {
+                "page_delay_seconds": self.LESSWRONG_PAGE_DELAY_SECONDS,
+            }
+        elif source_type == "gwern_site":
+            defaults = {
+                "page_delay_seconds": self.GWERN_PAGE_DELAY_SECONDS,
+            }
         else:
             defaults = {
                 "page_delay_seconds": 0,
@@ -1293,6 +1371,10 @@ class SourceFetchService:
             return checkpoint.get("cursor") is not None
         if checkpoint.get("mode") == "reddit_after":
             return checkpoint.get("after") is not None
+        if checkpoint.get("mode") == "lesswrong_offset":
+            return checkpoint.get("next_offset") is not None
+        if checkpoint.get("mode") == "gwern_index":
+            return checkpoint.get("next_index") is not None
         return False
 
     def _prepare_checkpoint(self, current_archive: Dict[str, Any], data: Dict[str, Any], mode: str) -> Optional[Dict[str, Any]]:
@@ -1349,11 +1431,22 @@ class SourceFetchService:
         text = re.sub(r"<[^>]+>", " ", html_text or "")
         return re.sub(r"\s+", " ", text).strip()
 
+    def _extract_html_image_urls(self, html_text: str) -> List[str]:
+        media_urls: List[str] = []
+        seen = set()
+        for image_url in self.IMG_SRC_RE.findall(html_text or ""):
+            normalized = self._normalize_feed_urls(image_url)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                media_urls.append(normalized)
+        return media_urls
+
     def _extract_article_html(self, html_text: str) -> str:
         cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg).*?</\1>", "", html_text or "")
         candidate_patterns = [
             r"(?is)<article\b[^>]*>(.*?)</article>",
             r"(?is)<main\b[^>]*>(.*?)</main>",
+            r'(?is)<div\b[^>]+id="markdownBody"[^>]*>(.*?)</div>\s*(?:</main>|<footer\b|</body>|$)',
             r'(?is)<div\b[^>]+class="[^"]*(?:entry-content|post-content|article-content|content-body|prose|single-post-content)[^"]*"[^>]*>(.*?)</div>',
         ]
 
