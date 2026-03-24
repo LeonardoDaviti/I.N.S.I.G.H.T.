@@ -123,6 +123,17 @@ class YouTubeService:
         if not post:
             raise ValueError(f"Unable to load video metadata for {video_ref}")
 
+        from insight_core.services.briefings_store_service import BriefingsStoreService
+
+        store = BriefingsStoreService(self.db_url)
+        cached = store.get_briefing("youtube_video", post["external_id"], "tldr")
+        if cached:
+            payload = dict(cached.get("payload") or {})
+            if cached.get("content") and not payload.get("summary_markdown"):
+                payload["summary_markdown"] = cached.get("content", "")
+            if payload:
+                return payload
+
         fallback = self._fallback_video_evaluation(post)
         if not self.processor.setup_processor():
             self._persist_video_tldr(post, fallback)

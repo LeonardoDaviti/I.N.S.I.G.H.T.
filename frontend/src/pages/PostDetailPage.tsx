@@ -34,6 +34,8 @@ import type {
   StoryCard,
   StoryDetail,
   StoryUpdateEntry,
+  YouTubeVideoEvaluationResponse,
+  YouTubeWatchProgress,
 } from '../services/api';
 
 type ChatMessage = {
@@ -95,6 +97,32 @@ type ResolvedHighlightRange = {
   start: number;
   end: number;
   usedInSummary: boolean;
+};
+
+type YouTubeMetadata = {
+  kind?: string;
+  description?: string;
+  channel_id?: string | null;
+  channel_title?: string | null;
+  duration_seconds?: number | null;
+  view_count?: number | null;
+  like_count?: number | null;
+  chapters?: Array<{
+    title?: string;
+    start_seconds?: number;
+    end_seconds?: number;
+  }>;
+  thumbnails?: string[];
+  transcript_source?: string | null;
+  tags?: string[];
+};
+
+type YouTubeTranscriptBlock = {
+  id: string;
+  title: string;
+  startSeconds: number;
+  text: string;
+  charOffset: number;
 };
 
 function buildResolvedHighlightRanges(
@@ -170,8 +198,17 @@ function buildResolvedHighlightRanges(
   return merged;
 }
 
-function renderHighlightedContent(content: string, ranges: ResolvedHighlightRange[]) {
-  if (!ranges.length) {
+function renderHighlightedContent(content: string, ranges: ResolvedHighlightRange[], offset = 0) {
+  const visibleRanges = ranges
+    .filter((range) => range.end > offset && range.start < offset + content.length)
+    .map((range) => ({
+      start: Math.max(0, range.start - offset),
+      end: Math.min(content.length, range.end - offset),
+      usedInSummary: range.usedInSummary,
+    }))
+    .filter((range) => range.end > range.start);
+
+  if (!visibleRanges.length) {
     return (
       <div className="whitespace-pre-wrap leading-8 text-[var(--text-normal)]">
         {content}
@@ -182,7 +219,7 @@ function renderHighlightedContent(content: string, ranges: ResolvedHighlightRang
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
-  ranges.forEach((range, index) => {
+  visibleRanges.forEach((range, index) => {
     if (range.start > cursor) {
       nodes.push(
         <span key={`plain-${index}-${cursor}`}>
@@ -217,6 +254,139 @@ function renderHighlightedContent(content: string, ranges: ResolvedHighlightRang
   );
 }
 
+function extractYouTubeVideoId(post?: Post | null): string | null {
+  const candidate = String(post?.external_id || '').trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(candidate)) {
+    return candidate;
+  }
+
+  const url = String(post?.url || '').trim();
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'youtu.be') {
+      return parsed.pathname.replace(/^\/+/, '') || null;
+    }
+    if (parsed.hostname.includes('youtube.com')) {
+      if (parsed.pathname === '/watch') {
+        return parsed.searchParams.get('v');
+      }
+      if (parsed.pathname.startsWith('/shorts/')) {
+        return parsed.pathname.split('/')[2] || null;
+      }
+      if (parsed.pathname.startsWith('/embed/')) {
+        return parsed.pathname.split('/')[2] || null;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function formatDurationLabel(seconds?: number | null) {
+  const total = Math.max(0, Math.round(Number(seconds || 0)));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remaining = total % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(remaining).padStart(2, '0')}`;
+}
+
+function formatCompactCount(value?: number | null) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(numeric);
+}
+
+function buildYouTubeTimestampUrl(url: string | undefined, seconds: number) {
+  if (!url) {
+    return '#';
+  }
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('t', `${Math.max(0, Math.floor(seconds))}s`);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function buildYouTubeTranscriptBlocks(
+  transcript: string,
+  durationSeconds?: number | null,
+  chapters?: Array<{ title?: string; start_seconds?: number; end_seconds?: number }>,
+): YouTubeTranscriptBlock[] {
+  const cleaned = String(transcript || '').trim();
+  if (!cleaned) {
+    return [];
+  }
+
+  let chunks = cleaned
+    .split(/\n\s*\n+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (chunks.length <= 1) {
+    const sentences = cleaned
+      .split(/(?<=[.!?])\s+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    chunks = [];
+    let current = '';
+    sentences.forEach((sentence) => {
+      if (!current) {
+        current = sentence;
+        return;
+      }
+      if ((current + ' ' + sentence).length > 750) {
+        chunks.push(current);
+        current = sentence;
+      } else {
+        current += ` ${sentence}`;
+      }
+    });
+    if (current) {
+      chunks.push(current);
+    }
+  }
+
+  const totalChars = Math.max(1, chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  const duration = Math.max(0, Math.round(Number(durationSeconds || 0)));
+  let consumedChars = 0;
+
+  return chunks.map((chunk, index) => {
+    const currentOffset = consumedChars;
+    const ratio = duration > 0 ? currentOffset / totalChars : 0;
+    const startSeconds = duration > 0 ? Math.round(ratio * duration) : 0;
+    consumedChars += chunk.length;
+
+    const chapter = (chapters || []).find((entry, chapterIndex, source) => {
+      const start = Number(entry.start_seconds || 0);
+      const nextStart = Number(source[chapterIndex + 1]?.start_seconds ?? Number.POSITIVE_INFINITY);
+      const end = Number(entry.end_seconds || nextStart);
+      return startSeconds >= start && startSeconds < end;
+    });
+
+    return {
+      id: `yt-block-${index}`,
+      title: chapter?.title || `Transcript ${index + 1}`,
+      startSeconds,
+      text: chunk,
+      charOffset: currentOffset,
+    };
+  });
+}
+
 export default function PostDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -234,6 +404,9 @@ export default function PostDetailPage() {
   const [storyDetail, setStoryDetail] = useState<StoryDetail | null>(null);
   const [storyTimeline, setStoryTimeline] = useState<PostTimelineResponse['timeline'] | null>(null);
   const [storyCandidates, setStoryCandidates] = useState<StoryCandidateLink[]>([]);
+  const [youtubeEvaluation, setYouTubeEvaluation] = useState<YouTubeVideoEvaluationResponse | null>(null);
+  const [youtubeProgress, setYouTubeProgress] = useState<YouTubeWatchProgress | null>(null);
+  const [youtubeProgressDraft, setYouTubeProgressDraft] = useState(0);
   const [comments, setComments] = useState<RedditComment[]>([]);
   const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
   const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
@@ -246,9 +419,12 @@ export default function PostDetailPage() {
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingHighlights, setLoadingHighlights] = useState(false);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [loadingYouTubeEvaluation, setLoadingYouTubeEvaluation] = useState(false);
+  const [loadingYouTubeProgress, setLoadingYouTubeProgress] = useState(false);
   const [loadingComments, setLoadingComments] = useState(false);
   const [loadingCommentsBriefing, setLoadingCommentsBriefing] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
+  const [savingYouTubeProgress, setSavingYouTubeProgress] = useState(false);
   const [togglingFavorite, setTogglingFavorite] = useState(false);
   const [actingCandidateId, setActingCandidateId] = useState<string | null>(null);
   const [chatting, setChatting] = useState(false);
@@ -316,6 +492,60 @@ export default function PostDetailPage() {
     setLoadingTimeline(false);
   };
 
+  const loadYouTubeEvaluation = async () => {
+    if (!post || post.platform !== 'youtube') return;
+    const videoRef = post.external_id || post.url;
+    if (!videoRef) return;
+    setLoadingYouTubeEvaluation(true);
+    setError(null);
+    const response = await apiService.evaluateYouTubeVideo(post.source, videoRef);
+    if (!response.success) {
+      setError(response.error || 'Failed to generate YouTube watch guide');
+      setLoadingYouTubeEvaluation(false);
+      return;
+    }
+    setYouTubeEvaluation(response);
+    setLoadingYouTubeEvaluation(false);
+  };
+
+  const loadYouTubeWatchProgress = async (videoId: string) => {
+    setLoadingYouTubeProgress(true);
+    const response = await apiService.getYouTubeWatchProgress(videoId);
+    if (response.success && response.progress) {
+      setYouTubeProgress(response.progress);
+      setYouTubeProgressDraft(Number(response.progress.progress_seconds || 0));
+    } else {
+      setYouTubeProgress(null);
+      setYouTubeProgressDraft(0);
+    }
+    setLoadingYouTubeProgress(false);
+  };
+
+  const saveCurrentYouTubeProgress = async (progressSeconds: number, completed = false) => {
+    if (!post || post.platform !== 'youtube') return;
+    const videoId = extractYouTubeVideoId(post);
+    if (!videoId) return;
+    setSavingYouTubeProgress(true);
+    setError(null);
+    const response = await apiService.saveYouTubeWatchProgress(videoId, {
+      videoUrl: post.url || `https://www.youtube.com/watch?v=${videoId}`,
+      title: post.title || videoId,
+      durationSeconds: Number((post.metadata as Record<string, unknown> | null)?.duration_seconds || 0) || null,
+      progressSeconds,
+      sourceId: post.source_id || null,
+      notesMarkdown: notes || null,
+      completed,
+    });
+    if (!response.success) {
+      setError(response.error || 'Failed to save YouTube watch progress');
+      setSavingYouTubeProgress(false);
+      return;
+    }
+    setYouTubeProgress(response.progress || null);
+    setYouTubeProgressDraft(Number(response.progress?.progress_seconds || progressSeconds || 0));
+    setSavingYouTubeProgress(false);
+  };
+
   useEffect(() => {
     let active = true;
 
@@ -378,6 +608,20 @@ export default function PostDetailPage() {
 
   useEffect(() => {
     void loadTimeline(false);
+  }, [postId]);
+
+  useEffect(() => {
+    const videoId = extractYouTubeVideoId(post);
+    if (post?.platform !== 'youtube' || !videoId) {
+      setYouTubeProgress(null);
+      setYouTubeProgressDraft(0);
+      return;
+    }
+    void loadYouTubeWatchProgress(videoId);
+  }, [post?.platform, post?.external_id, post?.url]);
+
+  useEffect(() => {
+    setYouTubeEvaluation(null);
   }, [postId]);
 
   useEffect(() => {
@@ -565,6 +809,33 @@ export default function PostDetailPage() {
   const categories = Array.isArray(post?.categories) ? post.categories : [];
   const topics = Array.isArray(post?.topics) ? post.topics : [];
   const platformLabel = typeof post?.platform === 'string' ? post.platform.toUpperCase() : '';
+  const isYouTubePost = post?.platform === 'youtube';
+  const youtubeMetadata = useMemo(() => {
+    const metadata = post?.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return null;
+    }
+    return metadata as YouTubeMetadata;
+  }, [post?.metadata]);
+  const youtubeVideoId = useMemo(() => extractYouTubeVideoId(post), [post]);
+  const youtubeVideoUrl = post?.url || (youtubeVideoId ? `https://www.youtube.com/watch?v=${youtubeVideoId}` : undefined);
+  const youtubeDurationSeconds = Number(youtubeMetadata?.duration_seconds || 0) || null;
+  const youtubeChapters = useMemo(
+    () => (youtubeEvaluation?.chapters?.length ? youtubeEvaluation.chapters : (youtubeMetadata?.chapters || [])),
+    [youtubeEvaluation?.chapters, youtubeMetadata?.chapters],
+  );
+  const youtubeTranscriptBlocks = useMemo(
+    () => buildYouTubeTranscriptBlocks(post?.content || '', youtubeDurationSeconds, youtubeChapters),
+    [post?.content, youtubeDurationSeconds, youtubeChapters],
+  );
+  const youtubeThumbnail = (youtubeMetadata?.thumbnails || [])[0]
+    || (youtubeVideoId ? `https://i.ytimg.com/vi/${youtubeVideoId}/hqdefault.jpg` : null);
+  const youtubeProgressPercent = Number(
+    youtubeProgress?.progress_percent
+      ?? (youtubeDurationSeconds ? ((youtubeProgressDraft || 0) / youtubeDurationSeconds) * 100 : 0),
+  ) || 0;
+  const youtubeViewCount = formatCompactCount(youtubeMetadata?.view_count);
+  const youtubeLikeCount = formatCompactCount(youtubeMetadata?.like_count);
   const renderContent = typeof post?.content_html === 'string'
     ? post.content_html
     : typeof post?.content === 'string'
@@ -748,6 +1019,204 @@ export default function PostDetailPage() {
           </div>
         )}
 
+        {isYouTubePost && youtubeVideoId && (
+          <section className="app-panel overflow-hidden">
+            <div className="grid gap-0 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className="relative min-h-[22rem] bg-slate-950">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}`}
+                  title={post.title || youtubeVideoId}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full"
+                />
+              </div>
+
+              <div className="space-y-5 border-t border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-6 xl:border-l xl:border-t-0">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-faint)]">YouTube Watch Mode</div>
+                  <div className="mt-2 text-2xl font-semibold text-[var(--text-normal)]">
+                    Read the transcript like a chaptered video dossier.
+                  </div>
+                  <p className="mt-2 text-sm leading-7 text-[var(--text-muted)]">
+                    This view turns the stored transcript, chapters, and watch progress into a reading-first surface inspired by youtube2webpage.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                  {youtubeMetadata?.channel_title ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1">
+                      {youtubeMetadata.channel_title}
+                    </span>
+                  ) : null}
+                  {youtubeDurationSeconds ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1">
+                      {formatDurationLabel(youtubeDurationSeconds)}
+                    </span>
+                  ) : null}
+                  {youtubeViewCount ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1">
+                      {youtubeViewCount} views
+                    </span>
+                  ) : null}
+                  {youtubeLikeCount ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1">
+                      {youtubeLikeCount} likes
+                    </span>
+                  ) : null}
+                  {youtubeMetadata?.transcript_source ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 py-1">
+                      Transcript {youtubeMetadata.transcript_source}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Watch progress</div>
+                      <div className="mt-1 text-sm text-[var(--text-muted)]">
+                        {loadingYouTubeProgress
+                          ? 'Loading saved progress...'
+                          : `${formatDurationLabel(youtubeProgressDraft)} / ${formatDurationLabel(youtubeDurationSeconds)}`}
+                      </div>
+                    </div>
+                    <div className="text-right text-xs text-[var(--text-faint)]">
+                      {youtubeProgress?.watch_sessions ? <div>{youtubeProgress.watch_sessions} watch session(s)</div> : null}
+                      {youtubeProgress?.last_watched_at ? <div>Last {new Date(youtubeProgress.last_watched_at).toLocaleString()}</div> : null}
+                    </div>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-[var(--background-secondary)]">
+                    <div className="h-full rounded-full bg-[var(--accent-strong)]" style={{ width: `${Math.min(100, youtubeProgressPercent)}%` }} />
+                  </div>
+                  {youtubeDurationSeconds ? (
+                    <input
+                      type="range"
+                      min={0}
+                      max={youtubeDurationSeconds}
+                      value={Math.min(youtubeDurationSeconds, Math.max(0, youtubeProgressDraft))}
+                      onChange={(e) => setYouTubeProgressDraft(Number(e.target.value) || 0)}
+                      className="mt-4 w-full accent-[var(--accent-strong)]"
+                    />
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void saveCurrentYouTubeProgress(youtubeProgressDraft, false)}
+                      disabled={savingYouTubeProgress}
+                      className="app-inline-button"
+                    >
+                      {savingYouTubeProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save Progress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const completedAt = youtubeDurationSeconds || youtubeProgressDraft;
+                        void saveCurrentYouTubeProgress(completedAt, true);
+                      }}
+                      disabled={savingYouTubeProgress}
+                      className="app-inline-button"
+                    >
+                      <Check className="h-4 w-4" />
+                      Mark Complete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void loadYouTubeEvaluation()}
+                      disabled={loadingYouTubeEvaluation}
+                      className="app-inline-button app-inline-button--primary"
+                    >
+                      {loadingYouTubeEvaluation ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+                      {youtubeEvaluation?.summary_markdown ? 'Refresh Watch Guide' : 'Generate Watch Guide'}
+                    </button>
+                    {youtubeVideoUrl && (
+                      <a href={youtubeVideoUrl} target="_blank" rel="noopener noreferrer" className="app-inline-button">
+                        <ExternalLink className="h-4 w-4" />
+                        Open on YouTube
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4">
+                  <div className="mb-3 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Watch guide</div>
+                  {youtubeEvaluation?.summary_markdown ? (
+                    <div className="space-y-3">
+                      <div className="prose max-w-none">
+                        <MarkdownRenderer content={youtubeEvaluation.summary_markdown} />
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                        {youtubeEvaluation.depth ? (
+                          <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                            Depth {youtubeEvaluation.depth}
+                          </span>
+                        ) : null}
+                        {youtubeEvaluation.novelty ? (
+                          <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                            Novelty {youtubeEvaluation.novelty}
+                          </span>
+                        ) : null}
+                        {youtubeEvaluation.worth_watching ? (
+                          <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                            {youtubeEvaluation.worth_watching}
+                          </span>
+                        ) : null}
+                      </div>
+                      {youtubeEvaluation.reasoning ? (
+                        <div className="text-sm leading-7 text-[var(--text-muted)]">
+                          {youtubeEvaluation.reasoning}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="text-sm leading-7 text-[var(--text-muted)]">
+                      Generate a watch guide to get a TL;DR, recommended viewing depth, and a cleaner chapter map for this video.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] p-6">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">Chapter Map</div>
+                  <div className="mt-1 text-sm text-[var(--text-muted)]">
+                    Jump into the video timeline or use these as anchors while reading the transcript below.
+                  </div>
+                </div>
+                {youtubeThumbnail ? (
+                  <img src={youtubeThumbnail} alt={post.title || 'YouTube thumbnail'} className="hidden h-20 w-36 rounded-2xl object-cover xl:block" />
+                ) : null}
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {youtubeChapters.length ? youtubeChapters.map((chapter, index) => (
+                  <a
+                    key={`${chapter.title || 'chapter'}-${index}`}
+                    href={buildYouTubeTimestampUrl(youtubeVideoUrl, Number(chapter.start_seconds || 0))}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setYouTubeProgressDraft(Number(chapter.start_seconds || 0))}
+                    className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4 transition hover:border-[var(--accent-strong)] hover:bg-[var(--background-secondary)]"
+                  >
+                    <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                      {formatDurationLabel(Number(chapter.start_seconds || 0))}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-[var(--text-normal)]">
+                      {chapter.title || `Chapter ${index + 1}`}
+                    </div>
+                  </a>
+                )) : (
+                  <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4 text-sm text-[var(--text-muted)]">
+                    No structured chapters were extracted for this video yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
           <div className="space-y-6">
             <section className="app-panel p-6">
@@ -777,22 +1246,107 @@ export default function PostDetailPage() {
             </section>
 
             <section className="app-panel p-6">
-              <div className="mb-4 text-lg font-semibold text-[var(--text-normal)]">Original Content</div>
-              {highlights.length ? (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-lg font-semibold text-[var(--text-normal)]">
+                    {isYouTubePost ? 'Video Transcript' : 'Original Content'}
+                  </div>
+                  {isYouTubePost ? (
+                    <div className="mt-1 text-sm text-[var(--text-muted)]">
+                      Read the saved transcript as timestamped sections instead of a single wall of text.
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+                  {highlights.length ? (
                     <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
                       {highlights.length} stored highlights
                     </span>
+                  ) : null}
+                  {mappedHighlightCount > 0 ? (
                     <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
                       {mappedHighlightCount} applied in reader view
                     </span>
-                    {summaryReferenceHighlightIds.size > 0 ? (
-                      <span className="rounded-full border border-[var(--background-modifier-border)] bg-[rgba(253,224,71,0.18)] px-3 py-1">
-                        Darker yellow marks were used in the summary
-                      </span>
-                    ) : null}
-                  </div>
+                  ) : null}
+                  {summaryReferenceHighlightIds.size > 0 ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[rgba(253,224,71,0.18)] px-3 py-1">
+                      Darker yellow marks were used in the summary
+                    </span>
+                  ) : null}
+                  {isYouTubePost && youtubeTranscriptBlocks.length ? (
+                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1">
+                      {youtubeTranscriptBlocks.length} transcript sections
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {isYouTubePost ? (
+                <div className="space-y-4">
+                  {youtubeMetadata?.description ? (
+                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
+                      <div className="mb-2 text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Video Description</div>
+                      <div className="whitespace-pre-wrap text-sm leading-7 text-[var(--text-muted)]">
+                        {youtubeMetadata.description}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {youtubeTranscriptBlocks.length ? (
+                    <div className="space-y-4">
+                      {youtubeTranscriptBlocks.map((block, index) => (
+                        <article
+                          key={block.id}
+                          className="rounded-3xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-5 shadow-[0_10px_35px_-28px_rgba(15,23,42,0.35)]"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                                {formatDurationLabel(block.startSeconds)}
+                              </div>
+                              <div className="mt-1 text-base font-semibold text-[var(--text-normal)]">
+                                {block.title || `Transcript ${index + 1}`}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setYouTubeProgressDraft(block.startSeconds)}
+                                className="app-inline-button"
+                              >
+                                Set Progress Here
+                              </button>
+                              {youtubeVideoUrl ? (
+                                <a
+                                  href={buildYouTubeTimestampUrl(youtubeVideoUrl, block.startSeconds)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="app-inline-button"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                  Open at Timestamp
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="mt-4 rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-4 py-4">
+                            {renderHighlightedContent(block.text, contentHighlightRanges, block.charOffset)}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : post?.content ? (
+                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-5">
+                      {renderHighlightedContent(post.content, contentHighlightRanges)}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-5 text-sm text-[var(--text-muted)]">
+                      No transcript was stored for this video yet.
+                    </div>
+                  )}
+                </div>
+              ) : highlights.length ? (
+                <div className="space-y-4">
                   <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-5">
                     {post?.content ? highlightedContentBlock : (
                       <div className="prose max-w-none">

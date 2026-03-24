@@ -198,6 +198,8 @@ export interface TopicsResponse {
 
 export interface Post {
   id?: string;
+  source_id?: string;
+  external_id?: string | null;
   title?: string;
   content: string;
   // When available (e.g., RSS), original HTML content of the post
@@ -945,6 +947,45 @@ export interface YouTubeChannelVideosResponse {
   channel?: Record<string, any>;
   total_videos?: number;
   videos?: YouTubeVideoPreview[];
+}
+
+export interface YouTubeVideoChapter {
+  title: string;
+  start_seconds: number;
+  end_seconds?: number;
+}
+
+export interface YouTubeVideoEvaluationResponse {
+  success?: boolean;
+  error?: string;
+  summary_markdown?: string;
+  chapters?: YouTubeVideoChapter[];
+  depth?: string;
+  novelty?: string;
+  worth_watching?: string;
+  reasoning?: string;
+}
+
+export interface YouTubeWatchProgress {
+  video_id?: string;
+  source_id?: string | null;
+  video_url?: string;
+  title?: string;
+  duration_seconds?: number | null;
+  progress_seconds?: number | null;
+  progress_percent?: number | null;
+  notes_markdown?: string | null;
+  watch_sessions?: number | null;
+  completed?: boolean;
+  last_watched_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface YouTubeWatchProgressResponse {
+  success?: boolean;
+  error?: string;
+  progress?: YouTubeWatchProgress | null;
 }
 
 function normalizeErrorText(text: string, contentType: string): string | null {
@@ -1707,6 +1748,61 @@ class ApiService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async evaluateYouTubeVideo(source: string, video: string): Promise<YouTubeVideoEvaluationResponse> {
+    try {
+      return await this.makeRequest<YouTubeVideoEvaluationResponse>('/api/youtube/video/evaluate', {
+        method: 'POST',
+        body: JSON.stringify({ source, video }),
+      });
+    } catch (error) {
+      console.error('Failed to evaluate YouTube video:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async getYouTubeWatchProgress(videoId: string): Promise<YouTubeWatchProgressResponse> {
+    try {
+      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`);
+    } catch (error) {
+      console.error('Failed to get YouTube watch progress:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        progress: null,
+      };
+    }
+  }
+
+  async saveYouTubeWatchProgress(
+    videoId: string,
+    payload: {
+      videoUrl: string;
+      title: string;
+      durationSeconds?: number | null;
+      progressSeconds: number;
+      sourceId?: string | null;
+      notesMarkdown?: string | null;
+      completed?: boolean;
+    },
+  ): Promise<YouTubeWatchProgressResponse> {
+    try {
+      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error('Failed to save YouTube watch progress:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        progress: null,
       };
     }
   }
