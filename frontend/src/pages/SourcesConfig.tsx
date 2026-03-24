@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiService } from '../services/api';
 import type { SourceConfig, SourceItem, SourceState } from '../types';
 import { Loader2, Save, Plus, Trash2, ChevronLeft, Rss, Youtube, Send, MessageSquare, FileText, Settings, GripVertical } from 'lucide-react';
@@ -133,12 +133,14 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
   const [config, setConfig] = useState<SourceConfig | null>(null);
   const [dirty, setDirty] = useState(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [pulsing] = useState<Record<string, boolean>>({});
   const [bulkEdit, setBulkEdit] = useState<{ platform: string; text: string } | null>(null);
   const [dbSources, setDbSources] = useState<SourceWithSettings[]>([]);
   const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
   const [addingSourcePlatform, setAddingSourcePlatform] = useState<PlatformKey | null>(null);
+  const autoOpenedSourceIdRef = useRef<string | null>(null);
 
   const EXPANDED_KEY = 'insight.sources.expanded';
 
@@ -216,6 +218,35 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       setExpanded(init);
     }
   }, [platforms.length]);
+
+  useEffect(() => {
+    const requestedSourceId = searchParams.get('sourceId');
+    if (!requestedSourceId || !dbSources.length || autoOpenedSourceIdRef.current === requestedSourceId) {
+      return;
+    }
+
+    const targetSource = dbSources.find((source) => source.id === requestedSourceId);
+    if (!targetSource) {
+      return;
+    }
+
+    autoOpenedSourceIdRef.current = requestedSourceId;
+    setEditingSource(targetSource);
+    setExpanded((prev) => {
+      const next = { ...prev, [targetSource.platform]: true };
+      saveExpanded(next);
+      return next;
+    });
+
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        document.getElementById(`platform-${targetSource.platform}`)?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      });
+    }
+  }, [dbSources, searchParams]);
 
   const platformIcon: Record<string, ReactNode> = {
     rss: <Rss className="w-5 h-5" />,
@@ -410,6 +441,18 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       setDbSources(res.sources);
       toast.success('Settings updated successfully');
     }
+  }
+
+  function closeSettingsEditor() {
+    setEditingSource(null);
+    autoOpenedSourceIdRef.current = null;
+    if (!searchParams.get('sourceId')) {
+      return;
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('sourceId');
+    setSearchParams(next, { replace: true });
   }
 
   // Get sources with priorities for a platform
@@ -886,7 +929,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       {editingSource && (
         <SourceSettingsEditor
           source={editingSource}
-          onClose={() => setEditingSource(null)}
+          onClose={closeSettingsEditor}
           onSave={handleSettingsSaved}
         />
       )}

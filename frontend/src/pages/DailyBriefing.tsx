@@ -1,11 +1,13 @@
 import React from 'react';
-import { useState, useEffect, useRef } from 'react';
-import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText, Layers3, Search } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
-import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, PlatformData } from '../services/api';
+import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
+import SourceAvatar from '../components/SourceAvatar';
+import { filterSourceGroups, getPlatformLabel, getSourceDisplayName } from '../lib/sourcePresentation';
 
 function getRenderablePostContent(post: Post): string {
   const raw = (post.content_html || post.content || '').trim();
@@ -198,6 +200,7 @@ export default function DailyBriefing() {
   const [sourcesData, setSourcesData] = useState<SourcesWithCountsResponse | null>(null);
   const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
+  const [sourceQuery, setSourceQuery] = useState('');
   
   // Selected source/view
   const [activeView, setActiveView] = useState<'briefing' | 'all-posts' | 'source' | 'configure'>('briefing');
@@ -266,6 +269,35 @@ export default function DailyBriefing() {
   const [sourcePostsCache, setSourcePostsCache] = useState<
     Record<string, { posts: Post[]; total: number; hasMore: boolean }>
   >({});
+
+  const sourceGroups = useMemo(
+    () => (
+      sourcesData
+        ? Object.entries(sourcesData.platforms)
+          .filter(([, platformData]) => platformData.total_count > 0)
+          .map(([platform, platformData]) => ({
+            platform,
+            totalCount: platformData.total_count,
+            sources: platformData.sources
+              .filter((source) => source.post_count > 0)
+              .map((source) => ({ ...source, platform })),
+          }))
+        : []
+    ),
+    [sourcesData],
+  );
+
+  const filteredSourceGroups = useMemo(
+    () => filterSourceGroups(sourceGroups, sourceQuery),
+    [sourceGroups, sourceQuery],
+  );
+
+  const selectedSource = useMemo(
+    () => sourceGroups.flatMap((group) => group.sources).find((source) => source.id === selectedSourceId) || null,
+    [selectedSourceId, sourceGroups],
+  );
+
+  const selectedSourceName = selectedSource ? getSourceDisplayName(selectedSource) : 'Source';
 
   // Load sources with counts on mount
   useEffect(() => {
@@ -1394,19 +1426,42 @@ export default function DailyBriefing() {
 
         {/* Sources Navigation */}
         <div>
-          <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Sources</h3>
-          <nav className="space-y-1">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold text-gray-900">Sources</h3>
+            {sourceQuery.trim() && (
+              <span className="text-[11px] font-medium text-gray-500">filtered</span>
+            )}
+          </div>
+          <div className="relative mb-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              type="search"
+              value={sourceQuery}
+              onChange={(e) => setSourceQuery(e.target.value)}
+              placeholder="Search source"
+              className="h-9 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-xs text-gray-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+            />
+          </div>
+          <nav className="space-y-2">
             {/* All Posts */}
             <button
               onClick={handleLoadAllPosts}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
+              className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-2 text-xs transition-colors ${
                 activeView === 'all-posts'
-                  ? 'bg-indigo-50 text-indigo-900 border border-indigo-200'
-                  : 'text-gray-700 hover:bg-gray-100'
+                  ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
+                  : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
               }`}
             >
-              <span>All Posts</span>
-              <span className="text-xs text-gray-500">{sourcesData?.total_posts || 0}</span>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <SourceAvatar
+                  source={{ id: 'all-posts', platform: 'all', display_name: 'All Posts' }}
+                  mode="platform"
+                />
+                <span className="truncate font-medium">All Posts</span>
+              </span>
+              <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
+                {sourcesData?.total_posts || 0}
+              </span>
             </button>
 
             {/* Grouped by Platform */}
@@ -1415,51 +1470,61 @@ export default function DailyBriefing() {
                 <RefreshCw className="w-3.5 h-3.5 animate-spin mx-auto mb-2" />
                 Loading...
               </div>
-            ) : sourcesData && Object.keys(sourcesData.platforms)
-                .filter(platform => {
-                  const platformData = sourcesData.platforms[platform];
-                  return platformData.total_count > 0;
-                })
-                .map((platform) => {
-              const platformData = sourcesData.platforms[platform];
-              const isExpanded = expandedPlatforms[platform];
+            ) : filteredSourceGroups.length > 0 ? filteredSourceGroups.map((group) => {
+              const isExpanded = sourceQuery.trim() ? true : Boolean(expandedPlatforms[group.platform]);
+              const visibleTotal = group.sources.reduce((sum, source) => sum + source.post_count, 0);
 
               return (
-                <div key={platform} className="space-y-1">
+                <div key={group.platform} className="space-y-1.5">
                   <button
-                    onClick={() => setExpandedPlatforms(prev => ({...prev, [platform]: !isExpanded}))}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
+                    onClick={() => setExpandedPlatforms(prev => ({...prev, [group.platform]: !isExpanded}))}
+                    className="w-full flex items-center justify-between rounded-xl border border-transparent px-2.5 py-2 text-xs text-gray-700 transition-colors hover:border-gray-200 hover:bg-white"
                   >
-                    <span className="flex items-center gap-2">
-                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                      <span className="font-medium capitalize">{platform}</span>
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <SourceAvatar
+                        source={{ id: `platform:${group.platform}`, platform: group.platform, display_name: getPlatformLabel(group.platform) }}
+                        mode="platform"
+                      />
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
+                        <span className="truncate font-medium">{getPlatformLabel(group.platform)}</span>
+                      </span>
                     </span>
-                    <span className="text-xs text-gray-500">{platformData.total_count}</span>
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
+                      {sourceQuery.trim() ? visibleTotal : group.totalCount}
+                    </span>
                   </button>
 
                   {isExpanded && (
-                    <div className="ml-3.5 space-y-1">
-                      {platformData.sources
-                        .filter(source => source.post_count > 0)
-                        .map((source) => (
+                    <div className="ml-4 border-l border-gray-200 pl-3 space-y-1">
+                      {group.sources.map((source) => (
                         <button
                           key={source.id}
                           onClick={() => handleLoadSourcePosts(source.id)}
-                          className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
+                          className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-2 text-xs transition-colors ${
                             activeView === 'source' && selectedSourceId === source.id
-                              ? 'bg-indigo-50 text-indigo-900 border border-indigo-200'
-                              : 'text-gray-700 hover:bg-gray-100'
+                              ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
+                              : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
                           }`}
                         >
-                          <span className="truncate">{source.display_name || source.handle_or_url}</span>
-                          <span className="text-xs text-gray-500 ml-2">{source.post_count}</span>
+                          <span className="flex min-w-0 items-center gap-2.5">
+                            <SourceAvatar source={source} />
+                            <span className="truncate">{getSourceDisplayName(source)}</span>
+                          </span>
+                          <span className="ml-2 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
+                            {source.post_count}
+                          </span>
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
               );
-            })}
+            }) : (
+              <div className="rounded-xl border border-dashed border-gray-200 bg-white/70 px-3 py-4 text-center text-xs text-gray-500">
+                No matching sources
+              </div>
+            )}
           </nav>
         </div>
       </div>
@@ -1962,16 +2027,49 @@ export default function DailyBriefing() {
           {/* Posts View (All Posts or Source Posts) */}
           {(activeView === 'all-posts' || activeView === 'source') && (
             <div className="space-y-6">
-              <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">
-                {activeView === 'all-posts' ? 'All Posts' : 'Source Posts'}
-              </h1>
-
-              {activeView === 'source' && selectedSourceId && displayedPosts.length > 0 && (
-                <div className="rounded-2xl border border-gray-200 bg-white/80 px-4 py-3 text-sm text-gray-600">
-                  Showing <span className="font-semibold text-gray-900">{displayedPosts.length}</span> of{" "}
-                  <span className="font-semibold text-gray-900">{sourcePostsMeta.total}</span> posts for this source.
+              <div className="flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white/80 px-4 py-4 pr-24 shadow-sm sm:flex-row sm:items-start sm:justify-between md:pr-32 lg:pr-40">
+                <div className="flex min-w-0 items-start gap-3">
+                  {activeView === 'source' && selectedSource ? (
+                    <SourceAvatar source={selectedSource} size="md" className="mt-0.5" />
+                  ) : null}
+                  <div className="min-w-0">
+                    <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
+                      {activeView === 'all-posts' ? 'All Posts' : `${selectedSourceName} posts`}
+                    </h1>
+                    {activeView === 'source' && selectedSource && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                        <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 font-medium text-gray-700">
+                          {getPlatformLabel(selectedSource.platform)}
+                        </span>
+                        <span className="max-w-[36rem] truncate rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
+                          {selectedSource.handle_or_url || selectedSource.id}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
+
+                {activeView === 'source' && selectedSourceId && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/briefing/vertical/source/${selectedSourceId}`)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                    >
+                      <Layers3 className="h-4 w-4" />
+                      Briefing
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/settings/sources?sourceId=${selectedSourceId}`)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                      <Settings className="h-4 w-4" />
+                      Settings
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {isLoadingPosts && displayedPosts.length === 0 ? (
                 <div className="text-center py-6">
