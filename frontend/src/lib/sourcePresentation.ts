@@ -33,6 +33,41 @@ function cleanText(value?: string | null): string {
   return (value || '').trim();
 }
 
+function looksLikeUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function shortenMiddle(value: string, maxLength = 42): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const headLength = Math.max(14, Math.floor((maxLength - 1) * 0.65));
+  const tailLength = Math.max(8, maxLength - headLength - 1);
+  return `${value.slice(0, headLength)}…${value.slice(-tailLength)}`;
+}
+
+function compactUrlLabel(value: string): string {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.host.replace(/^www\./i, '');
+    const path = parsed.pathname.replace(/\/+$/g, '');
+    const query = parsed.search || '';
+    const compact = `${host}${path}${query}` || host;
+    return shortenMiddle(compact, 44);
+  } catch {
+    return value.replace(/^https?:\/\//i, '').replace(/\/+$/g, '');
+  }
+}
+
+function presentSourceText(value?: string | null): string {
+  const text = cleanText(value);
+  if (!text) {
+    return '';
+  }
+  return looksLikeUrl(text) ? compactUrlLabel(text) : text;
+}
+
 export function getPlatformLabel(platform?: string | null): string {
   const key = cleanText(platform).toLowerCase();
   return PLATFORM_LABELS[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Source');
@@ -40,12 +75,16 @@ export function getPlatformLabel(platform?: string | null): string {
 
 export function getSourceDisplayName(source: SourcePresentationItem): string {
   return (
-    cleanText(source.display_name)
-    || cleanText(source.settings?.display_name)
-    || cleanText(source.handle_or_url)
-    || cleanText(source.id)
+    presentSourceText(source.display_name)
+    || presentSourceText(source.settings?.display_name)
+    || presentSourceText(source.handle_or_url)
+    || presentSourceText(source.id)
     || 'Unknown source'
   );
+}
+
+export function getSourceHandleLabel(source: SourcePresentationItem): string {
+  return presentSourceText(source.handle_or_url) || presentSourceText(source.id) || 'Unknown source';
 }
 
 function sourceSearchText(source: SourcePresentationItem): string {

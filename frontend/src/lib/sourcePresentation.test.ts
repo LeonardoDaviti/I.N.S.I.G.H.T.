@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   filterSourceGroups,
   getSourceAvatarModel,
+  getSourceDisplayName,
 } from './sourcePresentation.ts';
 
 test('getSourceAvatarModel uses a favicon service for RSS URLs', () => {
@@ -79,4 +80,15 @@ test('filterSourceGroups keeps a whole platform visible when the query matches t
 
   assert.equal(result.length, 1);
   assert.equal(result[0].sources.length, 2);
+});
+
+test('getSourceDisplayName compacts raw URL labels for UI display', () => {
+  const displayName = getSourceDisplayName({
+    id: 'seangoedecke-feed',
+    platform: 'rss',
+    handle_or_url: 'https://www.seangoedecke.com/rss.xml',
+    display_name: 'https://www.seangoedecke.com/rss.xml',
+  });
+
+  assert.equal(displayName, 'seangoedecke.com/rss.xml');
 });

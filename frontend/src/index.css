@@ -29,6 +29,8 @@
     --accent-soft: #DCEAFE;
     --accent-main: #4C8DFF;
     --accent-strong: #1D4ED8;
+    --app-glow-cyan: rgba(76, 141, 255, 0.14);
+    --app-glow-warm: rgba(29, 78, 216, 0.08);
 
     --interactive-accent: var(--accent-main);
     --interactive-accent-hover: #78A9FF;
@@ -60,57 +62,59 @@
 
   :root.theme-dark {
     color-scheme: dark;
-    --background-primary: #000000;
-    --background-secondary: #05070A;
-    --background-primary-alt: #02050A;
-    --background-secondary-alt: #0D131C;
-    --background-modifier-border: #182130;
-    --background-modifier-form-field: #090E14;
-    --background-modifier-form-field-highlighted: #111824;
-    --background-modifier-box-shadow: rgba(0, 0, 0, 0.5);
-    --background-modifier-success: #11243B;
+    --background-primary: #020405;
+    --background-secondary: #05090D;
+    --background-primary-alt: #000000;
+    --background-secondary-alt: #071017;
+    --background-modifier-border: #12323D;
+    --background-modifier-form-field: #030A0F;
+    --background-modifier-form-field-highlighted: #08151D;
+    --background-modifier-box-shadow: rgba(0, 0, 0, 0.72);
+    --background-modifier-success: #072630;
     --background-modifier-error: #5C0000;
     --background-modifier-error-hover: #7A0000;
-    --background-modifier-cover: rgba(0, 0, 0, 0.8);
+    --background-modifier-cover: rgba(0, 0, 0, 0.86);
 
-    --text-normal: #E0E0E0;
-    --text-muted: #8B98AA;
-    --text-faint: #566273;
-    --text-on-accent: #08111F;
+    --text-normal: #F2FBFF;
+    --text-muted: #95AEB9;
+    --text-faint: #5E7580;
+    --text-on-accent: #031218;
     --text-error: #FF6B6B;
     --text-error-hover: #FF8A8A;
     --text-accent: #FFFFFF;
-    --text-accent-hover: #E0E0E0;
+    --text-accent-hover: #DDFBFF;
 
-    --accent-soft: #142746;
-    --accent-main: #79A9FF;
-    --accent-strong: #A9C9FF;
+    --accent-soft: #062530;
+    --accent-main: #19D8FF;
+    --accent-strong: #92F7FF;
+    --app-glow-cyan: rgba(25, 216, 255, 0.18);
+    --app-glow-warm: rgba(255, 113, 18, 0.12);
 
     --interactive-accent: var(--accent-main);
-    --interactive-accent-hover: #A9C9FF;
+    --interactive-accent-hover: #71ECFF;
     --text-selection: rgba(255, 255, 255, 0.15);
-    --text-highlight-bg: rgba(121, 169, 255, 0.22);
-    --text-highlight-bg-active: rgba(121, 169, 255, 0.34);
+    --text-highlight-bg: rgba(25, 216, 255, 0.22);
+    --text-highlight-bg-active: rgba(25, 216, 255, 0.36);
 
     --background: 0 0% 0%;
-    --foreground: 0 0% 88%;
+    --foreground: 191 100% 97%;
     --card: 0 0% 0%;
-    --card-foreground: 0 0% 88%;
+    --card-foreground: 191 100% 97%;
     --popover: 0 0% 0%;
-    --popover-foreground: 0 0% 88%;
-    --primary: 217 100% 73%;
-    --primary-foreground: 217 45% 10%;
-    --secondary: 216 33% 8%;
-    --secondary-foreground: 0 0% 88%;
-    --muted: 216 33% 8%;
-    --muted-foreground: 0 0% 53%;
-    --accent: 218 46% 14%;
+    --popover-foreground: 191 100% 97%;
+    --primary: 188 100% 55%;
+    --primary-foreground: 189 71% 8%;
+    --secondary: 198 42% 6%;
+    --secondary-foreground: 191 100% 97%;
+    --muted: 198 42% 6%;
+    --muted-foreground: 194 15% 62%;
+    --accent: 193 76% 10%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 100% 18%;
     --destructive-foreground: 0 0% 100%;
-    --border: 216 33% 14%;
-    --input: 216 33% 14%;
-    --ring: 217 100% 73%;
+    --border: 192 45% 15%;
+    --input: 192 45% 15%;
+    --ring: 188 100% 55%;
   }
 
   html, body, #root {
@@ -119,11 +123,12 @@
 
   body {
     background:
-      radial-gradient(circle at top right, rgba(76, 141, 255, 0.14), transparent 28%),
-      radial-gradient(circle at bottom left, rgba(29, 78, 216, 0.08), transparent 22%),
+      radial-gradient(circle at top right, var(--app-glow-cyan), transparent 26%),
+      radial-gradient(circle at bottom left, var(--app-glow-warm), transparent 20%),
       var(--background-primary-alt);
     color: var(--text-normal);
     font-family: "IBM Plex Sans", "Aptos", "Segoe UI", sans-serif;
+    font-size: 15px;
     transition: background-color 0.25s ease, color 0.25s ease;
   }
 
@@ -139,17 +144,19 @@
 @layer components {
   .app-shell {
     background:
-      radial-gradient(circle at top right, rgba(76, 141, 255, 0.10), transparent 24%),
-      radial-gradient(circle at bottom left, rgba(29, 78, 216, 0.10), transparent 18%),
+      radial-gradient(circle at top right, var(--app-glow-cyan), transparent 22%),
+      radial-gradient(circle at bottom left, var(--app-glow-warm), transparent 18%),
       var(--background-primary-alt);
     color: var(--text-normal);
   }
 
   .app-panel {
-    background: var(--background-primary);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 26%),
+      var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 1.5rem;
-    box-shadow: 0 18px 40px var(--background-modifier-box-shadow);
+    border-radius: 1.25rem;
+    box-shadow: 0 14px 34px var(--background-modifier-box-shadow);
     color: var(--text-normal);
   }
 
@@ -157,10 +164,10 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    border-radius: 0.95rem;
+    border-radius: 0.9rem;
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 0.9rem;
     color: var(--text-normal);
     transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
   }
@@ -245,13 +252,14 @@
     border-radius: 999px;
     border: 1px solid var(--background-modifier-border);
     background: rgba(255, 255, 255, 0.72);
-    padding: 0.35rem;
+    padding: 0.3rem;
     backdrop-filter: blur(12px);
     box-shadow: 0 12px 30px var(--background-modifier-box-shadow);
   }
 
   .theme-dark .theme-toggle {
-    background: rgba(10, 10, 10, 0.82);
+    background: rgba(2, 7, 10, 0.88);
+    border-color: rgba(25, 216, 255, 0.2);
   }
 
   .theme-toggle__option {
@@ -259,7 +267,7 @@
     align-items: center;
     gap: 0.35rem;
     border-radius: 999px;
-    padding: 0.55rem 0.9rem;
+    padding: 0.45rem 0.75rem;
     color: var(--text-muted);
     font-size: 0.85rem;
     font-weight: 600;
@@ -290,7 +298,7 @@
   }
 
   .theme-dark .bg-slate-950 {
-    background-color: #050505 !important;
+    background-color: #010507 !important;
   }
 
   .theme-light .text-gray-900,
@@ -339,15 +347,15 @@
   .theme-dark .text-indigo-600,
   .theme-light .hover\:text-indigo-800:hover,
   .theme-dark .hover\:text-indigo-800:hover {
-    color: var(--accent-strong) !important;
+    color: var(--accent-main) !important;
   }
 
   .theme-light .border-indigo-200,
   .theme-dark .border-indigo-200,
   .theme-light .bg-indigo-50,
   .theme-dark .bg-indigo-50 {
-    border-color: rgba(29, 78, 216, 0.28) !important;
-    background-color: rgba(76, 141, 255, 0.12) !important;
+    border-color: rgba(25, 216, 255, 0.24) !important;
+    background-color: rgba(25, 216, 255, 0.1) !important;
   }
 
   .theme-light .bg-purple-600,

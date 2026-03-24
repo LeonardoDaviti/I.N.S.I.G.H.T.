@@ -1,18 +1,19 @@
+import { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import Index from './pages/Index';
-import DailyBriefing from './pages/DailyBriefing';
-import StoriesExplorerPage from './pages/StoriesExplorerPage';
-import VerticalBriefingPage from './pages/VerticalBriefingPage';
-import AnalystInboxPage from './pages/AnalystInboxPage';
-import IngestionControl from './pages/IngestionControl';
-import PostDetailPage from './pages/PostDetailPage';
-import SourcesConfig from './pages/SourcesConfig';
 import ThemeToggle from './components/ThemeToggle';
 import { ThemeProvider } from './components/ThemeProvider';
 
 const queryClient = new QueryClient();
+const Index = lazy(() => import('./pages/Index'));
+const DailyBriefing = lazy(() => import('./pages/DailyBriefing'));
+const StoriesExplorerPage = lazy(() => import('./pages/StoriesExplorerPage'));
+const VerticalBriefingPage = lazy(() => import('./pages/VerticalBriefingPage'));
+const AnalystInboxPage = lazy(() => import('./pages/AnalystInboxPage'));
+const IngestionControl = lazy(() => import('./pages/IngestionControl'));
+const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
+const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 
 function App() {
   return (
@@ -20,21 +21,24 @@ function App() {
       <ThemeProvider>
         <Router>
           <div className="min-h-screen bg-background text-foreground">
-            <div className="fixed right-4 top-4 z-50">
+            <div className="fixed bottom-4 right-4 z-50">
               <ThemeToggle />
             </div>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/briefing" element={<DailyBriefing />} />
-              <Route path="/briefing/vertical" element={<VerticalBriefingPage />} />
-              <Route path="/briefing/vertical/source/:sourceId" element={<VerticalBriefingPage />} />
-              <Route path="/ingestion" element={<IngestionControl />} />
-              <Route path="/briefing/topics" element={<DailyBriefing />} />
-              <Route path="/stories" element={<StoriesExplorerPage />} />
-              <Route path="/inbox" element={<AnalystInboxPage />} />
-              <Route path="/posts/:postId" element={<PostDetailPage />} />
-              <Route path="/settings/sources" element={<SourcesConfig />} />
-            </Routes>
+            <Suspense fallback={<div className="min-h-screen bg-background" />}>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/briefing" element={<DailyBriefing />} />
+                <Route path="/briefing/vertical" element={<VerticalBriefingPage />} />
+                <Route path="/briefing/vertical/source/:sourceId" element={<VerticalBriefingPage />} />
+                <Route path="/ingestion" element={<IngestionControl />} />
+                <Route path="/ingestion/:tab" element={<IngestionControl />} />
+                <Route path="/briefing/topics" element={<DailyBriefing />} />
+                <Route path="/stories" element={<StoriesExplorerPage />} />
+                <Route path="/inbox" element={<AnalystInboxPage />} />
+                <Route path="/posts/:postId" element={<PostDetailPage />} />
+                <Route path="/settings/sources" element={<SourcesConfig />} />
+              </Routes>
+            </Suspense>
             <Toaster />
           </div>
         </Router>

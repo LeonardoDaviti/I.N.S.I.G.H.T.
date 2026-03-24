@@ -4,10 +4,14 @@ import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCir
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
-import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse } from '../services/api';
+import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import SourceAvatar from '../components/SourceAvatar';
-import { filterSourceGroups, getPlatformLabel, getSourceDisplayName } from '../lib/sourcePresentation';
+import SourceSettingsEditor from '../components/SourceSettingsEditor';
+import { filterSourceGroups, getPlatformLabel, getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
+
+const SIDEBAR_WIDTH_STEPS = [280, 340, 400];
+const SIDEBAR_WIDTH_STORAGE_KEY = 'insight.briefing.sidebar-width';
 
 function getRenderablePostContent(post: Post): string {
   const raw = (post.content_html || post.content || '').trim();
@@ -201,6 +205,16 @@ export default function DailyBriefing() {
   const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
   const [sourceQuery, setSourceQuery] = useState('');
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') {
+      return SIDEBAR_WIDTH_STEPS[1];
+    }
+
+    const stored = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    return SIDEBAR_WIDTH_STEPS.includes(stored) ? stored : SIDEBAR_WIDTH_STEPS[1];
+  });
+  const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
+  const [loadingSourceEditorId, setLoadingSourceEditorId] = useState<string | null>(null);
   
   // Selected source/view
   const [activeView, setActiveView] = useState<'briefing' | 'all-posts' | 'source' | 'configure'>('briefing');
@@ -298,11 +312,19 @@ export default function DailyBriefing() {
   );
 
   const selectedSourceName = selectedSource ? getSourceDisplayName(selectedSource) : 'Source';
+  const selectedSourceHandle = selectedSource ? getSourceHandleLabel(selectedSource) : '';
 
   // Load sources with counts on mount
   useEffect(() => {
     loadSourcesWithCounts();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
 
   const toggleTopic = (topicId: string) => {
     setOpenTopics((prev) => {
@@ -374,6 +396,47 @@ export default function DailyBriefing() {
       setError(error instanceof Error ? error.message : 'Network error');
     } finally {
       setIsLoadingSources(false);
+    }
+  };
+
+  const openSourceSettings = async (sourceId: string) => {
+    setLoadingSourceEditorId(sourceId);
+    setError(null);
+
+    try {
+      const response = await apiService.getSourceSettings(sourceId);
+      if (!response.success) {
+        setError(response.error || 'Failed to load source settings');
+        return;
+      }
+
+      const baseSource = sourceGroups
+        .flatMap((group) => group.sources)
+        .find((source) => source.id === sourceId);
+
+      const source = response.source || (baseSource ? {
+        id: baseSource.id,
+        platform: baseSource.platform,
+        handle_or_url: baseSource.handle_or_url,
+        enabled: baseSource.enabled,
+        post_count: baseSource.post_count,
+        settings: {
+          ...response.settings,
+          display_name: response.settings.display_name ?? baseSource.display_name,
+          priority: response.settings.priority ?? baseSource.priority,
+        },
+      } as SourceWithSettings : null);
+
+      if (!source) {
+        setError('Source settings could not be matched to a source');
+        return;
+      }
+
+      setEditingSource(source);
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : 'Failed to load source settings');
+    } finally {
+      setLoadingSourceEditorId(null);
     }
   };
 
@@ -1147,7 +1210,7 @@ export default function DailyBriefing() {
   return (
     <div className="app-shell flex h-screen">
       {/* Floating Focus toggle */}
-      <div className="fixed right-4 md:right-6 top-6 md:top-8 z-50">
+      <div className="fixed bottom-20 right-4 md:right-6 z-50">
         <button
           type="button"
           onClick={() => setFocusMode(v => !v)}
@@ -1160,14 +1223,50 @@ export default function DailyBriefing() {
 
       {/* Sidebar */}
       <div
-        className={`${focusMode ? 'w-0 p-0 opacity-0 pointer-events-none border-0' : 'w-64 pt-3.5 pr-4 pb-4 pl-4 opacity-100 border-r'} bg-white border-gray-200 overflow-y-auto relative transition-all duration-300 ease-in-out`}
+        className={`${focusMode ? 'w-0 p-0 opacity-0 pointer-events-none border-0' : 'shrink-0 border-r px-4 pb-4 pt-3.5 opacity-100'} overflow-y-auto relative transition-[width,padding,opacity] duration-300 ease-in-out`}
+        style={focusMode ? undefined : { width: `${sidebarWidth}px` }}
         aria-hidden={focusMode}
       >
         <div className={`${focusMode ? 'hidden' : 'block'} mb-6`}>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">I.N.S.I.G.H.T.</h1>
-          <p className="text-xs text-gray-600">
-            Intelligence Network
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-lg font-bold text-gray-900">I.N.S.I.G.H.T.</h1>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">
+                Intelligence Network
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/80 p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setSidebarWidth((current) => {
+                  const currentIndex = SIDEBAR_WIDTH_STEPS.indexOf(current);
+                  return SIDEBAR_WIDTH_STEPS[Math.max(0, currentIndex - 1)];
+                })}
+                disabled={sidebarWidth === SIDEBAR_WIDTH_STEPS[0]}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-35"
+                aria-label="Make sidebar narrower"
+                title="Make sidebar narrower"
+              >
+                -
+              </button>
+              <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                Rail
+              </span>
+              <button
+                type="button"
+                onClick={() => setSidebarWidth((current) => {
+                  const currentIndex = SIDEBAR_WIDTH_STEPS.indexOf(current);
+                  return SIDEBAR_WIDTH_STEPS[Math.min(SIDEBAR_WIDTH_STEPS.length - 1, currentIndex + 1)];
+                })}
+                disabled={sidebarWidth === SIDEBAR_WIDTH_STEPS[SIDEBAR_WIDTH_STEPS.length - 1]}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-35"
+                aria-label="Make sidebar wider"
+                title="Make sidebar wider"
+              >
+                +
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Date Selection - for briefing generation only */}
@@ -1439,14 +1538,14 @@ export default function DailyBriefing() {
               value={sourceQuery}
               onChange={(e) => setSourceQuery(e.target.value)}
               placeholder="Search source"
-              className="h-9 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-xs text-gray-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+              className="h-8 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-xs text-gray-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
             />
           </div>
           <nav className="space-y-2">
             {/* All Posts */}
             <button
               onClick={handleLoadAllPosts}
-              className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-2 text-xs transition-colors ${
+              className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-1.5 text-xs transition-colors ${
                 activeView === 'all-posts'
                   ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
                   : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
@@ -1478,7 +1577,7 @@ export default function DailyBriefing() {
                 <div key={group.platform} className="space-y-1.5">
                   <button
                     onClick={() => setExpandedPlatforms(prev => ({...prev, [group.platform]: !isExpanded}))}
-                    className="w-full flex items-center justify-between rounded-xl border border-transparent px-2.5 py-2 text-xs text-gray-700 transition-colors hover:border-gray-200 hover:bg-white"
+                    className="w-full flex items-center justify-between rounded-xl border border-transparent px-2.5 py-1.5 text-xs text-gray-700 transition-colors hover:border-gray-200 hover:bg-white"
                   >
                     <span className="flex min-w-0 items-center gap-2.5">
                       <SourceAvatar
@@ -1490,7 +1589,7 @@ export default function DailyBriefing() {
                         <span className="truncate font-medium">{getPlatformLabel(group.platform)}</span>
                       </span>
                     </span>
-                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-500">
                       {sourceQuery.trim() ? visibleTotal : group.totalCount}
                     </span>
                   </button>
@@ -1501,7 +1600,7 @@ export default function DailyBriefing() {
                         <button
                           key={source.id}
                           onClick={() => handleLoadSourcePosts(source.id)}
-                          className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-2 text-xs transition-colors ${
+                          className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-1.5 text-xs transition-colors ${
                             activeView === 'source' && selectedSourceId === source.id
                               ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
                               : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
@@ -1511,7 +1610,7 @@ export default function DailyBriefing() {
                             <SourceAvatar source={source} />
                             <span className="truncate">{getSourceDisplayName(source)}</span>
                           </span>
-                          <span className="ml-2 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
+                          <span className="ml-2 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-500">
                             {source.post_count}
                           </span>
                         </button>
@@ -1531,7 +1630,7 @@ export default function DailyBriefing() {
 
       {/* Main Content */}
       <div className={`flex-1 overflow-y-auto ${focusMode ? 'flex items-start justify-center' : ''} transition-all duration-300 ease-in-out`}>
-        <div className={`p-6 ${focusMode ? 'w-full max-w-4xl mx-auto' : 'max-w-4xl mx-auto'} transition-all duration-300 ease-in-out`}>
+        <div className={`px-4 py-4 lg:px-5 lg:py-5 ${focusMode ? 'w-full max-w-5xl mx-auto' : 'max-w-5xl mx-auto'} transition-all duration-300 ease-in-out`}>
           
           {/* Briefing View */}
           {activeView === 'briefing' && (
@@ -2027,22 +2126,22 @@ export default function DailyBriefing() {
           {/* Posts View (All Posts or Source Posts) */}
           {(activeView === 'all-posts' || activeView === 'source') && (
             <div className="space-y-6">
-              <div className="flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white/80 px-4 py-4 pr-24 shadow-sm sm:flex-row sm:items-start sm:justify-between md:pr-32 lg:pr-40">
+              <div className="grid gap-4 rounded-3xl border border-gray-200 bg-white/85 px-4 py-4 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                 <div className="flex min-w-0 items-start gap-3">
                   {activeView === 'source' && selectedSource ? (
                     <SourceAvatar source={selectedSource} size="md" className="mt-0.5" />
                   ) : null}
                   <div className="min-w-0">
-                    <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
+                    <h1 className="text-[1.85rem] font-extrabold leading-[1.05] tracking-tight text-gray-900">
                       {activeView === 'all-posts' ? 'All Posts' : `${selectedSourceName} posts`}
                     </h1>
                     {activeView === 'source' && selectedSource && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
                         <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 font-medium text-gray-700">
                           {getPlatformLabel(selectedSource.platform)}
                         </span>
-                        <span className="max-w-[36rem] truncate rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
-                          {selectedSource.handle_or_url || selectedSource.id}
+                        <span className="max-w-[32rem] truncate rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
+                          {selectedSourceHandle}
                         </span>
                       </div>
                     )}
@@ -2050,7 +2149,7 @@ export default function DailyBriefing() {
                 </div>
 
                 {activeView === 'source' && selectedSourceId && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex shrink-0 flex-wrap items-start gap-2 lg:flex-nowrap lg:justify-end">
                     <button
                       type="button"
                       onClick={() => navigate(`/briefing/vertical/source/${selectedSourceId}`)}
@@ -2061,11 +2160,12 @@ export default function DailyBriefing() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => navigate(`/settings/sources?sourceId=${selectedSourceId}`)}
+                      onClick={() => void openSourceSettings(selectedSourceId)}
                       className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                      disabled={loadingSourceEditorId === selectedSourceId}
                     >
                       <Settings className="h-4 w-4" />
-                      Settings
+                      {loadingSourceEditorId === selectedSourceId ? 'Opening…' : 'Settings'}
                     </button>
                   </div>
                 )}
@@ -2197,6 +2297,16 @@ export default function DailyBriefing() {
           )}
         </div>
       </div>
+
+      {editingSource && (
+        <SourceSettingsEditor
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          onSave={() => {
+            void loadSourcesWithCounts();
+          }}
+        />
+      )}
     </div>
   );
 }
