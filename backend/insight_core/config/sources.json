@@ -5,56 +5,12 @@
         "version": "1.0.0"
     },
     "platforms": {
-        "telegram": {
+        "reddit": {
             "enabled": true,
             "sources": [
                 {
-                    "id": "ai_newz",
-                    "state": "disabled"
-                },
-                {
-                    "id": "llm_under_hood",
-                    "state": "disabled"
-                },
-                {
-                    "id": "epsiloncorrect",
-                    "state": "disabled"
-                },
-                {
-                    "id": "adel_and_ml",
-                    "state": "disabled"
-                },
-                {
-                    "id": "bminaiev_blog",
-                    "state": "disabled"
-                },
-                {
-                    "id": "gonzo_ML",
-                    "state": "disabled"
-                },
-                {
-                    "id": "optozorax_dev",
-                    "state": "disabled"
-                },
-                {
-                    "id": "turboproject",
-                    "state": "disabled"
-                },
-                {
-                    "id": "staniverse",
-                    "state": "disabled"
-                },
-                {
-                    "id": "neuraldeep",
-                    "state": "disabled"
-                },
-                {
-                    "id": "toshoseti",
-                    "state": "disabled"
-                },
-                {
-                    "id": "netstalkers",
-                    "state": "disabled"
+                    "id": "r/LocalLLaMA",
+                    "state": "enabled"
                 }
             ]
         },
@@ -62,31 +18,15 @@
             "enabled": true,
             "sources": [
                 {
-                    "id": "https://simonwillison.net/atom/everything/",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.oneusefulthing.org/feed",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://tg.i-c-a.su/rss/denissexy?limit=50",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://tg.i-c-a.su/rss/seeallochnaya?limit=50",
-                    "state": "enabled"
-                },
-                {
                     "id": "https://karpathy.bearblog.dev/feed/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.seangoedecke.com/rss.xml",
+                    "id": "https://lexfridman.com/feed/podcast/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://lexfridman.com/feed/podcast/",
+                    "id": "https://rss.arxiv.org/rss/cs.AI",
                     "state": "enabled"
                 },
                 {
@@ -98,25 +38,85 @@
                     "state": "enabled"
                 },
                 {
-                    "id": "https://rss.arxiv.org/rss/cs.AI",
+                    "id": "https://simonwillison.net/atom/everything/",
                     "state": "enabled"
+                },
+                {
+                    "id": "https://tg.i-c-a.su/rss/denissexy?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://tg.i-c-a.su/rss/seeallochnaya?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.oneusefulthing.org/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.seangoedecke.com/rss.xml",
+                    "state": "enabled"
+                }
+            ]
+        },
+        "telegram": {
+            "enabled": false,
+            "sources": [
+                {
+                    "id": "adel_and_ml",
+                    "state": "disabled"
+                },
+                {
+                    "id": "ai_newz",
+                    "state": "disabled"
+                },
+                {
+                    "id": "bminaiev_blog",
+                    "state": "disabled"
+                },
+                {
+                    "id": "epsiloncorrect",
+                    "state": "disabled"
+                },
+                {
+                    "id": "gonzo_ML",
+                    "state": "disabled"
+                },
+                {
+                    "id": "llm_under_hood",
+                    "state": "disabled"
+                },
+                {
+                    "id": "netstalkers",
+                    "state": "disabled"
+                },
+                {
+                    "id": "neuraldeep",
+                    "state": "disabled"
+                },
+                {
+                    "id": "optozorax_dev",
+                    "state": "disabled"
+                },
+                {
+                    "id": "staniverse",
+                    "state": "disabled"
+                },
+                {
+                    "id": "toshoseti",
+                    "state": "disabled"
+                },
+                {
+                    "id": "turboproject",
+                    "state": "disabled"
                 }
             ]
         },
         "youtube": {
-            "enabled": false,
+            "enabled": true,
             "sources": [
                 {
                     "id": "UCoryWpk4QVYKFCJul9KBdyw",
-                    "state": "enabled"
-                }
-            ]
-        },
-        "reddit": {
-            "enabled": false,
-            "sources": [
-                {
-                    "id": "r/LocalLLaMA",
                     "state": "enabled"
                 }
             ]

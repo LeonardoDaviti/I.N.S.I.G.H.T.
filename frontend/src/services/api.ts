@@ -2228,6 +2228,21 @@ class ApiService {
     try { return await this.makeRequest(`/api/experts/${expertId}/briefing`); }
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
   }
+
+  async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
+    try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async setSourceEnabled(sourceId: string, enabled: boolean): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/sources/${sourceId}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async deleteSource(sourceId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/sources/${sourceId}`, { method: 'DELETE' }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
 }
 
 export interface Folder {

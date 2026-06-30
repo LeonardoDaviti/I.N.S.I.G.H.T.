@@ -241,6 +241,40 @@ class InsightApiBridge:
             self._export_sources_json()
         return deleted
 
+    def add_source_with_settings(
+        self, platform: str, handle: str, settings: Dict[str, Any] | None, enabled: bool
+    ) -> Dict[str, Any]:
+        """Add a single source (non-destructive), apply settings, and set enabled state."""
+        try:
+            added = self.sources_service.add_source(platform, handle)
+            source_id = added["source_id"]
+            if settings:
+                self.sources_service.update_source_settings(source_id, settings)
+            self.sources_service.update_source_status(source_id, enabled)
+            self._export_sources_json()
+            return {"success": True, "source_id": source_id, "platform": platform, "handle_or_url": handle}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def set_source_enabled(self, source_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable/disable a single source (durable to sources.json)."""
+        try:
+            self.sources_service.update_source_status(source_id, enabled)
+            self._export_sources_json()
+            return {"success": True, "source_id": source_id, "enabled": enabled}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_source_api(self, source_id: str) -> Dict[str, Any]:
+        """Delete a single source, returning an API envelope."""
+        try:
+            deleted = self.delete_source(source_id)
+            if not deleted:
+                return {"success": False, "error": f"Source {source_id} not found"}
+            return {"success": True, "deleted": True, "source_id": source_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ============= FOLDERS =============
 
     def get_folders(self) -> Dict[str, Any]:

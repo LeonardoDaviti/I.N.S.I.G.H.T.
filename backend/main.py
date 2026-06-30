@@ -1113,6 +1113,48 @@ async def get_expert_briefing(expert_id: str):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/sources/add")
+async def add_single_source(body: dict):
+    """Add one source (non-destructive). Body: {platform, handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state?}"""
+    try:
+        platform = str(body.get("platform") or "rss").strip()
+        handle = str(body.get("handle_or_url") or "").strip()
+        if not handle:
+            return {"success": False, "error": "handle_or_url is required"}
+        settings = {
+            k: body[k]
+            for k in ("display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch")
+            if body.get(k) is not None
+        }
+        enabled = str(body.get("state") or "enabled") == "enabled"
+        logger.info(f"➕ Adding source {platform}/{handle}")
+        return api_bridge.add_source_with_settings(platform, handle, settings or None, enabled)
+    except Exception as e:
+        logger.exception("Failed to add source")
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/api/sources/{source_id}/enabled")
+async def set_source_enabled(source_id: str, body: dict):
+    """Enable/disable a source. Body: {enabled: bool}"""
+    try:
+        return api_bridge.set_source_enabled(source_id, bool(body.get("enabled")))
+    except Exception as e:
+        logger.exception("Failed to set source enabled")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/sources/{source_id}")
+async def delete_single_source(source_id: str):
+    """Delete a single source (and its posts)."""
+    try:
+        logger.info(f"🗑️ Deleting source {source_id}")
+        return api_bridge.delete_source_api(source_id)
+    except Exception as e:
+        logger.exception("Failed to delete source")
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/sources/{source_id}/folders")
 async def get_source_folders(source_id: str):
     """List the folder ids a source belongs to."""

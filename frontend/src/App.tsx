@@ -14,6 +14,7 @@ const AnalystInboxPage = lazy(() => import('./pages/AnalystInboxPage'));
 const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
+const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
 
 function App() {
   return (
@@ -37,6 +38,7 @@ function App() {
                 <Route path="/inbox" element={<AnalystInboxPage />} />
                 <Route path="/posts/:postId" element={<PostDetailPage />} />
                 <Route path="/settings/sources" element={<SourcesConfig />} />
+                <Route path="/experts" element={<ExpertsPage />} />
               </Routes>
             </Suspense>
             <Toaster />
