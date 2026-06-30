@@ -13,6 +13,8 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from insight_core.observability.langfuse_tracer import record_generation
+
 
 DEFAULT_MODEL = "gemini-3.0-flash"
 DEFAULT_FALLBACK_MODELS = [
@@ -1048,6 +1050,7 @@ POSTS:
             for model in list(models):
                 if model in self._disabled_models:
                     continue
+                attempt_started = time.time()
                 try:
                     response = client.models.generate_content(
                         model=model,
@@ -1058,8 +1061,28 @@ POSTS:
                     if not text:
                         raise RuntimeError(f"Gemini returned empty response for model {model}")
                     self.model_name = model
-                    return self._clean_markdown_response(text)
+                    cleaned = self._clean_markdown_response(text)
+                    record_generation(
+                        model=model,
+                        prompt=prompt,
+                        output=cleaned,
+                        latency_ms=int((time.time() - attempt_started) * 1000),
+                        input_tokens=self.count_tokens(prompt),
+                        output_tokens=self.count_tokens(cleaned),
+                        status="success",
+                    )
+                    return cleaned
                 except Exception as exc:  # noqa: BLE001
+                    record_generation(
+                        model=model,
+                        prompt=prompt,
+                        output="",
+                        latency_ms=int((time.time() - attempt_started) * 1000),
+                        input_tokens=self.count_tokens(prompt),
+                        output_tokens=0,
+                        status="error",
+                        error=str(exc)[:500],
+                    )
                     if _looks_like_missing_model(exc):
                         self.logger.warning("Disabling unavailable Gemini model %s: %s", model, exc)
                         self._disabled_models.add(model)

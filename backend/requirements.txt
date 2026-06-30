@@ -12,3 +12,4 @@ google-genai
 fastapi
 uvicorn
 psycopg[binary]
+langfuse>=4,<5

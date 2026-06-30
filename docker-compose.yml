@@ -40,6 +40,12 @@ services:
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
       INSIGHT_LOG_DIR: /app/logs
+    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
+    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
+    env_file:
+      - .env
+    extra_hosts:
+      - "langfuse.local:${LANGFUSE_HOST_IP:-192.168.0.25}"
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs
@@ -77,6 +83,12 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
       INSIGHT_LOG_DIR: /app/logs
+    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
+    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
+    env_file:
+      - .env
+    extra_hosts:
+      - "langfuse.local:${LANGFUSE_HOST_IP:-192.168.0.25}"
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs
