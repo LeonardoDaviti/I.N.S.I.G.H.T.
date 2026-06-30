@@ -88,6 +88,18 @@
                 {
                     "id": "https://lexfridman.com/feed/podcast/",
                     "state": "enabled"
+                },
+                {
+                    "id": "https://rss.arxiv.org/rss/cs.CL",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://rss.arxiv.org/rss/cs.LG",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://rss.arxiv.org/rss/cs.AI",
+                    "state": "enabled"
                 }
             ]
         },

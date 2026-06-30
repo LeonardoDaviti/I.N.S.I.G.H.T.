@@ -74,7 +74,7 @@ class ExpertsService:
     # ---- Briefing generation ----
 
     async def generate_expert_briefing(
-        self, expert_id: str, as_of_date: str | None = None
+        self, expert_id: str, as_of_date: str | None = None, refresh: bool = False
     ) -> Dict[str, Any]:
         """Generate a folder-scoped topic briefing in the expert's persona."""
         expert = self.get_expert(expert_id)
@@ -92,6 +92,18 @@ class ExpertsService:
         )
         lookback = int(expert.get("lookback_days") or 7)
         start_date = end_date - timedelta(days=lookback)
+        variant = expert.get("output_variant") or "topics"
+
+        # Cache: skip the LLM call when a briefing already exists for this exact window.
+        if not refresh:
+            cached = self.store_service.get_briefing("expert_briefing", expert_id, variant)
+            if cached:
+                payload = cached.get("payload") or {}
+                if (
+                    payload.get("start_date") == start_date.isoformat()
+                    and payload.get("end_date") == end_date.isoformat()
+                ):
+                    return self._cached_response(expert, cached)
 
         posts = self.posts_service.get_posts_by_sources_and_range(source_ids, start_date, end_date)
         if not posts:
@@ -129,7 +141,7 @@ class ExpertsService:
         saved = self.store_service.save_briefing(
             subject_type="expert_briefing",
             subject_key=expert_id,
-            variant=expert.get("output_variant") or "topics",
+            variant=variant,
             render_format="markdown",
             title=f"{expert['name']} — {start_date} to {end_date}",
             content=summary,
@@ -146,6 +158,7 @@ class ExpertsService:
 
         return {
             "success": True,
+            "cached": False,
             "expert": expert,
             "briefing": summary,
             "format": "markdown",
@@ -155,6 +168,30 @@ class ExpertsService:
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "posts_processed": len(posts),
+        }
+
+    def _cached_response(self, expert: Dict[str, Any], cached: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a run response from an already-stored briefing (no LLM call)."""
+        payload = cached.get("payload") or {}
+        topics = payload.get("topics") or []
+        post_ids = list({pid for topic in topics for pid in (topic.get("post_ids") or [])})
+        posts_map = {
+            str(post["id"]): post
+            for post in self.posts_service.get_posts_by_ids(post_ids)
+            if post.get("id")
+        }
+        return {
+            "success": True,
+            "cached": True,
+            "expert": expert,
+            "briefing": cached.get("content", ""),
+            "format": cached.get("render_format", "markdown"),
+            "saved_briefing_id": cached.get("id"),
+            "topics": topics,
+            "posts": posts_map,
+            "start_date": payload.get("start_date"),
+            "end_date": payload.get("end_date"),
+            "posts_processed": payload.get("posts_processed", 0),
         }
 
     def get_latest_briefing(self, expert_id: str) -> Dict[str, Any]:

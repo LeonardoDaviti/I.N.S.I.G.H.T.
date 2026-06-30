@@ -152,7 +152,7 @@ class GeminiProcessor:
         self.temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0.1"))
         self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
         self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
-        self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "10"))
+        self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "3"))
         self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
         self.single_post_context_chars = int(os.environ.get("GEMINI_SINGLE_POST_CONTEXT_CHARS", "120000"))
         self.single_post_notes_chars = int(os.environ.get("GEMINI_SINGLE_POST_NOTES_CHARS", "10000"))

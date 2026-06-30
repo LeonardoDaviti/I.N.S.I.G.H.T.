@@ -305,6 +305,14 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "sources": []}
 
+    def get_source_folders(self, source_id: str) -> Dict[str, Any]:
+        """List the folder ids a source belongs to."""
+        try:
+            folder_ids = self.folders_service.list_folders_for_source(source_id)
+            return {"success": True, "folder_ids": folder_ids}
+        except Exception as e:
+            return {"success": False, "error": str(e), "folder_ids": []}
+
     def add_source_to_folder(self, folder_id: str, source_id: str) -> Dict[str, Any]:
         """Attach a source to a folder."""
         try:
@@ -372,9 +380,35 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def run_expert(self, expert_id: str, as_of_date: str | None = None) -> Dict[str, Any]:
-        """Generate an expert's folder-scoped briefing."""
-        return await self.experts_service.generate_expert_briefing(expert_id, as_of_date=as_of_date)
+    async def run_expert(
+        self,
+        expert_id: str,
+        as_of_date: str | None = None,
+        refresh: bool = False,
+        *,
+        job_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Generate an expert's folder-scoped briefing (job-tracked)."""
+        job_id = job_id or self._start_job_safe(
+            "expert_briefing",
+            trigger="manual",
+            message=f"Run expert {expert_id}",
+            payload={"expert_id": expert_id},
+        )
+        try:
+            result = await self.experts_service.generate_expert_briefing(
+                expert_id, as_of_date=as_of_date, refresh=refresh
+            )
+            self._finish_job_safe(
+                job_id,
+                status="success" if result.get("success") else "failed",
+                message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
+                payload=result,
+            )
+            return result
+        except Exception as e:
+            self._finish_job_safe(job_id, status="failed", message=str(e), payload={"expert_id": expert_id})
+            return {"success": False, "error": str(e), "expert_id": expert_id}
 
     def get_expert_latest_briefing(self, expert_id: str) -> Dict[str, Any]:
         """Fetch the most recent stored briefing for an expert."""

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import { apiService } from '../services/api';
-import type { SourceSettings, SourceWithSettings } from '../services/api';
+import type { SourceSettings, SourceWithSettings, Folder } from '../services/api';
 
 interface SourceSettingsEditorProps {
   source: SourceWithSettings;
@@ -20,6 +20,45 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [memberFolderIds, setMemberFolderIds] = useState<Set<string>>(new Set());
+  const [foldersLoading, setFoldersLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [allRes, mineRes] = await Promise.all([
+        apiService.getFolders(),
+        apiService.getSourceFolders(source.id),
+      ]);
+      if (!mounted) return;
+      if (allRes.success) setFolders(allRes.folders);
+      if (mineRes.success) setMemberFolderIds(new Set(mineRes.folder_ids));
+      setFoldersLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [source.id]);
+
+  const toggleFolder = async (folderId: string) => {
+    const isMember = memberFolderIds.has(folderId);
+    setMemberFolderIds((prev) => {
+      const next = new Set(prev);
+      if (isMember) next.delete(folderId); else next.add(folderId);
+      return next;
+    });
+    const res = isMember
+      ? await apiService.removeSourceFromFolder(folderId, source.id)
+      : await apiService.addSourceToFolder(folderId, source.id);
+    if (!res.success) {
+      setMemberFolderIds((prev) => {
+        const next = new Set(prev);
+        if (isMember) next.add(folderId); else next.delete(folderId);
+        return next;
+      });
+      setError(res.error || 'Failed to update folders');
+    }
+  };
 
   // Handle click outside to close
   useEffect(() => {
@@ -83,6 +122,37 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Source</div>
             <div className="text-sm font-medium text-gray-900">{source.handle_or_url}</div>
             <div className="text-xs text-gray-500 mt-1">{source.platform.toUpperCase()}</div>
+          </div>
+
+          {/* Folders */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Folders</label>
+            {foldersLoading ? (
+              <div className="text-xs text-gray-400">Loading folders…</div>
+            ) : folders.length === 0 ? (
+              <div className="text-xs text-gray-400">No folders yet. Create one on the Sources page.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {folders.map((f) => {
+                  const active = memberFolderIds.has(f.id);
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => toggleFolder(f.id)}
+                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                        active
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                      }`}
+                    >
+                      {active ? '✓ ' : '+ '}{f.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-1">Click a folder to add/remove this source. Saves instantly.</p>
           </div>
 
           {/* Display Name */}

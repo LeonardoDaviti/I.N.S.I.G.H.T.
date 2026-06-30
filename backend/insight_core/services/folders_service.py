@@ -91,3 +91,9 @@ class FoldersService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.list_source_ids_in_folder(cur, folder_id)
+
+    def list_folders_for_source(self, source_id: str) -> List[str]:
+        """Return the folder UUIDs a source belongs to."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.list_folder_ids_for_source(cur, source_id)

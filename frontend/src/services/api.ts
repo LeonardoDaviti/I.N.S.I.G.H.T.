@@ -2171,8 +2171,104 @@ class ApiService {
       };
     }
   }
+
+  // ===== Folders & Experts =====
+
+  async getFolders(): Promise<{ success: boolean; folders: Folder[]; error?: string }> {
+    try { return await this.makeRequest('/api/folders'); }
+    catch (e) { return { success: false, folders: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async createFolder(payload: { name: string; description?: string; sort_order?: number }): Promise<{ success: boolean; folder?: Folder; error?: string }> {
+    try { return await this.makeRequest('/api/folders', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async deleteFolder(folderId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/folders/${folderId}`, { method: 'DELETE' }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async getSourceFolders(sourceId: string): Promise<{ success: boolean; folder_ids: string[]; error?: string }> {
+    try { return await this.makeRequest(`/api/sources/${sourceId}/folders`); }
+    catch (e) { return { success: false, folder_ids: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async addSourceToFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/folders/${folderId}/sources`, { method: 'POST', body: JSON.stringify({ source_id: sourceId }) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async removeSourceFromFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/folders/${folderId}/sources/${sourceId}`, { method: 'DELETE' }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async getExperts(): Promise<{ success: boolean; experts: Expert[]; error?: string }> {
+    try { return await this.makeRequest('/api/experts'); }
+    catch (e) { return { success: false, experts: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async createExpert(payload: Partial<Expert>): Promise<{ success: boolean; expert?: Expert; error?: string }> {
+    try { return await this.makeRequest('/api/experts', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async deleteExpert(expertId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/experts/${expertId}`, { method: 'DELETE' }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async runExpert(expertId: string, opts: { refresh?: boolean } = {}): Promise<ExpertRunResult> {
+    try { return await this.makeRequest(`/api/experts/${expertId}/run`, { method: 'POST', body: JSON.stringify(opts) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async getExpertBriefing(expertId: string): Promise<ExpertRunResult> {
+    try { return await this.makeRequest(`/api/experts/${expertId}/briefing`); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  description?: string | null;
+  system_prompt_default?: string | null;
+  sort_order: number;
+  source_count?: number;
+  post_count?: number;
+}
+
+export interface Expert {
+  id: string;
+  name: string;
+  folder_id: string;
+  system_prompt: string;
+  focus_instructions?: string | null;
+  output_variant: string;
+  lookback_days: number;
+  schedule?: string | null;
+  enabled: boolean;
+}
+
+export interface ExpertTopic {
+  title: string;
+  summary: string;
+  post_ids: string[];
+}
+
+export interface ExpertRunResult {
+  success: boolean;
+  cached?: boolean;
+  briefing?: string;
+  topics?: ExpertTopic[];
+  posts_processed?: number;
+  start_date?: string;
+  end_date?: string;
+  error?: string;
 }
 
 // Export singleton instance
 export const apiService = new ApiService();
-export default apiService; 
+export default apiService;

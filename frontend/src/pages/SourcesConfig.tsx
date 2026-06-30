@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import FoldersExpertsPanel from '../components/FoldersExpertsPanel';
 import type { ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiService } from '../services/api';
@@ -708,6 +709,9 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
             </button>
           </div>
         </div>
+
+        {/* Folders & Experts */}
+        <FoldersExpertsPanel />
 
         {/* Global Actions and Counters */}
         <div className="flex items-center justify-between mb-4">

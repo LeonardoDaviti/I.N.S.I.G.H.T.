@@ -1070,12 +1070,33 @@ async def delete_expert(expert_id: str):
 
 
 @app.post("/api/experts/{expert_id}/run")
-async def run_expert(expert_id: str, body: dict | None = None):
-    """Generate an expert's folder-scoped briefing. Optional body: {as_of_date: 'YYYY-MM-DD'}"""
+async def run_expert(expert_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
+    """Generate an expert's folder-scoped briefing.
+    Optional body: {as_of_date: 'YYYY-MM-DD', refresh: bool, asyncMode: bool}"""
     try:
         logger.info(f"🧑‍🔬 Running expert: {expert_id}")
-        as_of_date = (body or {}).get("as_of_date")
-        return await api_bridge.run_expert(expert_id, as_of_date=as_of_date)
+        body = body or {}
+        as_of_date = body.get("as_of_date")
+        refresh = bool(body.get("refresh"))
+        if body.get("asyncMode"):
+            job_id = api_bridge._start_job_safe(
+                "expert_briefing",
+                trigger="manual",
+                message=f"Run expert {expert_id}",
+                payload={"expert_id": expert_id, "refresh": refresh},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "expert_briefing",
+                    api_bridge.run_expert,
+                    expert_id,
+                    as_of_date=as_of_date,
+                    refresh=refresh,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "expert_briefing", message="Expert briefing started")
+        return await api_bridge.run_expert(expert_id, as_of_date=as_of_date, refresh=refresh)
     except Exception as e:
         logger.exception("Failed to run expert")
         return {"success": False, "error": str(e), "expert_id": expert_id}
@@ -1090,6 +1111,16 @@ async def get_expert_briefing(expert_id: str):
     except Exception as e:
         logger.exception("Failed to get expert briefing")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/sources/{source_id}/folders")
+async def get_source_folders(source_id: str):
+    """List the folder ids a source belongs to."""
+    try:
+        return api_bridge.get_source_folders(source_id)
+    except Exception as e:
+        logger.exception("Failed to get source folders")
+        return {"success": False, "error": str(e), "folder_ids": []}
 
 
 @app.get("/api/archive/{source_id}/status")
