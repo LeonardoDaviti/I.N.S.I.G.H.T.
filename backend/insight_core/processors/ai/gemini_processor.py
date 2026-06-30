@@ -273,6 +273,49 @@ POSTS:
         """Compatibility alias for older scripts."""
         return await self.topic_briefing_with_numeric_ids(posts)
 
+    async def expert_topic_briefing(
+        self,
+        posts: List[Dict[str, Any]],
+        system_prompt: str,
+        focus_instructions: str = "",
+    ) -> Dict[str, Any]:
+        """Topic briefing written in a specific expert persona, citing posts by numeric ID."""
+        numbered_posts = self._format_posts(posts, truncate_to=1400, numeric_ids=True)
+        focus_block = f"\nANALYST FOCUS (prioritize this above all):\n{focus_instructions}\n" if focus_instructions.strip() else ""
+        prompt = f"""{system_prompt}
+
+You are preparing a focused intelligence briefing from the source posts below, in the voice and priorities described above.
+{focus_block}
+Return ONLY valid JSON with this exact structure:
+{{
+  "summary": "markdown executive briefing in your expert voice",
+  "topics": [
+    {{
+      "title": "topic title",
+      "summary": "2-4 sentence markdown summary",
+      "post_ids": ["1", "2"]
+    }}
+  ]
+}}
+
+Rules:
+- Use only post IDs that exist in the input.
+- Group related developments into topics, even across different sources.
+- Surface concrete recent developments and trends, not generic recap.
+- Stay in the voice and priorities described above.
+- Do not invent post IDs.
+
+POSTS:
+{numbered_posts}
+"""
+        try:
+            response_text = await self._generate_text(prompt)
+            return self._extract_json_from_response(response_text)
+        except Exception as exc:
+            self.logger.warning("Falling back to deterministic expert briefing: %s", exc)
+            fallback = self._fallback_topic_briefing(posts)
+            return {"summary": fallback.get("daily_briefing", ""), "topics": fallback.get("topics", [])}
+
     async def weekly_briefing(self, week_label: str, daily_briefings: List[Dict[str, Any]]) -> str:
         """Generate a weekly briefing from already-generated daily briefings."""
         prompt = f"""

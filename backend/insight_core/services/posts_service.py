@@ -47,6 +47,20 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source_and_range(cur, source_id, start_date, end_date)
 
+    def get_posts_by_sources_and_range(
+        self, source_ids: List[str], start_date: date, end_date: date
+    ) -> List[Dict[str, Any]]:
+        """Get posts for several sources within an inclusive date range, oldest first."""
+        if not source_ids:
+            return []
+        posts: List[Dict[str, Any]] = []
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                for source_id in source_ids:
+                    posts.extend(self.repo.get_posts_by_source_and_range(cur, source_id, start_date, end_date))
+        posts.sort(key=lambda p: str(p.get("published_at") or p.get("fetched_at") or ""))
+        return posts
+
     def get_posts_by_ids(self, post_ids: List[str]) -> List[Dict[str, Any]]:
         """Get multiple posts by UUID."""
         with psycopg.connect(self.db_url) as conn:

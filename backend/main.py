@@ -917,6 +917,181 @@ async def get_sources_with_settings():
         return {"success": False, "error": str(e)}
 
 
+# ============= FOLDERS ENDPOINTS =============
+
+
+@app.get("/api/folders")
+async def get_folders():
+    """List folders with source and post counts."""
+    try:
+        logger.info("📁 Fetching folders")
+        return api_bridge.get_folders()
+    except Exception as e:
+        logger.exception("Failed to get folders")
+        return {"success": False, "error": str(e), "folders": []}
+
+
+@app.post("/api/folders")
+async def create_folder(config: dict):
+    """Create a folder. Body: {name, description?, system_prompt_default?, sort_order?}"""
+    try:
+        logger.info("📁 Creating folder")
+        return api_bridge.create_folder(config)
+    except Exception as e:
+        logger.exception("Failed to create folder")
+        return {"success": False, "error": str(e), "folder": None}
+
+
+@app.get("/api/folders/{folder_id}")
+async def get_folder(folder_id: str):
+    """Get a single folder with its attached sources."""
+    try:
+        logger.info(f"📁 Fetching folder: {folder_id}")
+        return api_bridge.get_folder(folder_id)
+    except Exception as e:
+        logger.exception("Failed to get folder")
+        return {"success": False, "error": str(e), "folder": None}
+
+
+@app.put("/api/folders/{folder_id}")
+async def update_folder(folder_id: str, fields: dict):
+    """Update folder fields. Body: any of {name, description, system_prompt_default, sort_order}"""
+    try:
+        logger.info(f"📁 Updating folder: {folder_id}")
+        return api_bridge.update_folder(folder_id, fields)
+    except Exception as e:
+        logger.exception("Failed to update folder")
+        return {"success": False, "error": str(e), "folder": None}
+
+
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder(folder_id: str):
+    """Delete a folder."""
+    try:
+        logger.info(f"📁 Deleting folder: {folder_id}")
+        return api_bridge.delete_folder(folder_id)
+    except Exception as e:
+        logger.exception("Failed to delete folder")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/folders/{folder_id}/sources")
+async def get_folder_sources(folder_id: str):
+    """List the sources attached to a folder."""
+    try:
+        logger.info(f"📁 Fetching sources for folder: {folder_id}")
+        return api_bridge.get_folder_sources(folder_id)
+    except Exception as e:
+        logger.exception("Failed to get folder sources")
+        return {"success": False, "error": str(e), "sources": []}
+
+
+@app.post("/api/folders/{folder_id}/sources")
+async def add_folder_source(folder_id: str, body: dict):
+    """Attach a source to a folder. Body: {source_id}"""
+    try:
+        source_id = str(body.get("source_id") or "").strip()
+        if not source_id:
+            return {"success": False, "error": "source_id is required"}
+        logger.info(f"📁 Adding source {source_id} to folder {folder_id}")
+        return api_bridge.add_source_to_folder(folder_id, source_id)
+    except Exception as e:
+        logger.exception("Failed to add source to folder")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/folders/{folder_id}/sources/{source_id}")
+async def remove_folder_source(folder_id: str, source_id: str):
+    """Detach a source from a folder."""
+    try:
+        logger.info(f"📁 Removing source {source_id} from folder {folder_id}")
+        return api_bridge.remove_source_from_folder(folder_id, source_id)
+    except Exception as e:
+        logger.exception("Failed to remove source from folder")
+        return {"success": False, "error": str(e)}
+
+
+# ============= EXPERTS ENDPOINTS =============
+
+
+@app.get("/api/experts")
+async def get_experts():
+    """List all experts."""
+    try:
+        logger.info("🧑‍🔬 Fetching experts")
+        return api_bridge.get_experts()
+    except Exception as e:
+        logger.exception("Failed to get experts")
+        return {"success": False, "error": str(e), "experts": []}
+
+
+@app.post("/api/experts")
+async def create_expert(config: dict):
+    """Create an expert. Body: {name, folder_id, system_prompt, focus_instructions?, output_variant?, lookback_days?, schedule?, enabled?}"""
+    try:
+        logger.info("🧑‍🔬 Creating expert")
+        return api_bridge.create_expert(config)
+    except Exception as e:
+        logger.exception("Failed to create expert")
+        return {"success": False, "error": str(e), "expert": None}
+
+
+@app.get("/api/experts/{expert_id}")
+async def get_expert(expert_id: str):
+    """Get a single expert."""
+    try:
+        logger.info(f"🧑‍🔬 Fetching expert: {expert_id}")
+        return api_bridge.get_expert(expert_id)
+    except Exception as e:
+        logger.exception("Failed to get expert")
+        return {"success": False, "error": str(e), "expert": None}
+
+
+@app.put("/api/experts/{expert_id}")
+async def update_expert(expert_id: str, fields: dict):
+    """Update expert fields."""
+    try:
+        logger.info(f"🧑‍🔬 Updating expert: {expert_id}")
+        return api_bridge.update_expert(expert_id, fields)
+    except Exception as e:
+        logger.exception("Failed to update expert")
+        return {"success": False, "error": str(e), "expert": None}
+
+
+@app.delete("/api/experts/{expert_id}")
+async def delete_expert(expert_id: str):
+    """Delete an expert."""
+    try:
+        logger.info(f"🧑‍🔬 Deleting expert: {expert_id}")
+        return api_bridge.delete_expert(expert_id)
+    except Exception as e:
+        logger.exception("Failed to delete expert")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/experts/{expert_id}/run")
+async def run_expert(expert_id: str, body: dict | None = None):
+    """Generate an expert's folder-scoped briefing. Optional body: {as_of_date: 'YYYY-MM-DD'}"""
+    try:
+        logger.info(f"🧑‍🔬 Running expert: {expert_id}")
+        as_of_date = (body or {}).get("as_of_date")
+        return await api_bridge.run_expert(expert_id, as_of_date=as_of_date)
+    except Exception as e:
+        logger.exception("Failed to run expert")
+        return {"success": False, "error": str(e), "expert_id": expert_id}
+
+
+@app.get("/api/experts/{expert_id}/briefing")
+async def get_expert_briefing(expert_id: str):
+    """Fetch the most recent stored briefing for an expert."""
+    try:
+        logger.info(f"🧑‍🔬 Fetching latest briefing for expert: {expert_id}")
+        return api_bridge.get_expert_latest_briefing(expert_id)
+    except Exception as e:
+        logger.exception("Failed to get expert briefing")
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/archive/{source_id}/status")
 async def get_archive_status(source_id: str):
     """Get persisted archive status for a source."""

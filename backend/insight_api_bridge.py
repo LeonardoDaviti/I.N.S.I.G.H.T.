@@ -2,6 +2,8 @@
 from insight_core.db.ensure_db import ensure_database
 
 from insight_core.services.sources_service import SourcesService
+from insight_core.services.folders_service import FoldersService
+from insight_core.services.experts_service import ExpertsService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
@@ -31,6 +33,8 @@ class InsightApiBridge:
     def __init__(self):
         self.db = ensure_database()
         self.sources_service = SourcesService(self.db)
+        self.folders_service = FoldersService(self.db)
+        self.experts_service = ExpertsService(self.db)
         self.posts_service = PostsService(self.db)
         self.topics_service = TopicsService(self.db)
         self.briefing_service = BriefingService(self.db)
@@ -236,7 +240,150 @@ class InsightApiBridge:
         if deleted:
             self._export_sources_json()
         return deleted
-    
+
+    # ============= FOLDERS =============
+
+    def get_folders(self) -> Dict[str, Any]:
+        """List folders with source and post counts."""
+        try:
+            folders = self.folders_service.list_folders()
+            return {"success": True, "folders": folders, "total": len(folders)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "folders": []}
+
+    def get_folder(self, folder_id: str) -> Dict[str, Any]:
+        """Get a single folder with its attached sources."""
+        try:
+            folder = self.folders_service.get_folder(folder_id)
+            if folder is None:
+                return {"success": False, "error": f"Folder {folder_id} not found", "folder": None}
+            return {"success": True, "folder": folder}
+        except Exception as e:
+            return {"success": False, "error": str(e), "folder": None}
+
+    def create_folder(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a folder from a config dict."""
+        try:
+            name = str(config.get("name") or "").strip()
+            if not name:
+                return {"success": False, "error": "Folder name is required", "folder": None}
+            folder = self.folders_service.create_folder(
+                name=name,
+                description=config.get("description"),
+                system_prompt_default=config.get("system_prompt_default"),
+                sort_order=int(config.get("sort_order", 999)),
+            )
+            return {"success": True, "folder": folder}
+        except Exception as e:
+            return {"success": False, "error": str(e), "folder": None}
+
+    def update_folder(self, folder_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Update folder fields."""
+        try:
+            folder = self.folders_service.update_folder(folder_id, fields)
+            return {"success": True, "folder": folder}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "folder": None}
+        except Exception as e:
+            return {"success": False, "error": str(e), "folder": None}
+
+    def delete_folder(self, folder_id: str) -> Dict[str, Any]:
+        """Delete a folder."""
+        try:
+            deleted = self.folders_service.delete_folder(folder_id)
+            if not deleted:
+                return {"success": False, "error": f"Folder {folder_id} not found"}
+            return {"success": True, "deleted": True, "folder_id": folder_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_folder_sources(self, folder_id: str) -> Dict[str, Any]:
+        """List the sources attached to a folder."""
+        try:
+            sources = self.folders_service.list_sources(folder_id)
+            return {"success": True, "sources": sources, "total": len(sources)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "sources": []}
+
+    def add_source_to_folder(self, folder_id: str, source_id: str) -> Dict[str, Any]:
+        """Attach a source to a folder."""
+        try:
+            added = self.folders_service.add_source(folder_id, source_id)
+            return {"success": True, "added": added, "folder_id": folder_id, "source_id": source_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def remove_source_from_folder(self, folder_id: str, source_id: str) -> Dict[str, Any]:
+        """Detach a source from a folder."""
+        try:
+            removed = self.folders_service.remove_source(folder_id, source_id)
+            return {"success": True, "removed": removed, "folder_id": folder_id, "source_id": source_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ============= EXPERTS =============
+
+    def get_experts(self) -> Dict[str, Any]:
+        """List all experts."""
+        try:
+            experts = self.experts_service.list_experts()
+            return {"success": True, "experts": experts, "total": len(experts)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "experts": []}
+
+    def get_expert(self, expert_id: str) -> Dict[str, Any]:
+        """Get a single expert."""
+        try:
+            expert = self.experts_service.get_expert(expert_id)
+            if expert is None:
+                return {"success": False, "error": f"Expert {expert_id} not found", "expert": None}
+            return {"success": True, "expert": expert}
+        except Exception as e:
+            return {"success": False, "error": str(e), "expert": None}
+
+    def create_expert(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an expert. Requires name, folder_id, system_prompt."""
+        try:
+            for required in ("name", "folder_id", "system_prompt"):
+                if not str(config.get(required) or "").strip():
+                    return {"success": False, "error": f"{required} is required", "expert": None}
+            expert = self.experts_service.create_expert(config)
+            return {"success": True, "expert": expert}
+        except Exception as e:
+            return {"success": False, "error": str(e), "expert": None}
+
+    def update_expert(self, expert_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Update expert fields."""
+        try:
+            expert = self.experts_service.update_expert(expert_id, fields)
+            return {"success": True, "expert": expert}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "expert": None}
+        except Exception as e:
+            return {"success": False, "error": str(e), "expert": None}
+
+    def delete_expert(self, expert_id: str) -> Dict[str, Any]:
+        """Delete an expert."""
+        try:
+            deleted = self.experts_service.delete_expert(expert_id)
+            if not deleted:
+                return {"success": False, "error": f"Expert {expert_id} not found"}
+            return {"success": True, "deleted": True, "expert_id": expert_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def run_expert(self, expert_id: str, as_of_date: str | None = None) -> Dict[str, Any]:
+        """Generate an expert's folder-scoped briefing."""
+        return await self.experts_service.generate_expert_briefing(expert_id, as_of_date=as_of_date)
+
+    def get_expert_latest_briefing(self, expert_id: str) -> Dict[str, Any]:
+        """Fetch the most recent stored briefing for an expert."""
+        try:
+            return self.experts_service.get_latest_briefing(expert_id)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
     def get_source_settings(self, source_id: str) -> Dict[str, Any]:
         """
         Get settings for a specific source.

@@ -18,6 +18,7 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.logs.core.logger_config import get_component_logger, setup_logging
 from insight_core.scripts.safe_ingest import safe_ingest_posts
 from insight_core.services.briefing_service import BriefingService
+from insight_core.services.experts_service import ExpertsService
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
 
@@ -45,6 +46,27 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
         payload=ingest_result,
     )
     logger.info("safe_ingest result: %s", ingest_result)
+
+    # Scheduled experts: each enabled expert with a non-empty schedule runs every cycle.
+    experts_service = ExpertsService(db_url)
+    for expert in experts_service.list_scheduled_experts():
+        expert_job_id = operations_service.start_job(
+            "expert_briefing",
+            trigger="scheduler",
+            payload={"expert_id": expert["id"], "expert_name": expert["name"]},
+        )
+        try:
+            expert_result = await experts_service.generate_expert_briefing(expert["id"])
+            operations_service.finish_job(
+                expert_job_id,
+                status="success" if expert_result.get("success") else "failed",
+                message=expert_result.get("error") or f"Processed {expert_result.get('posts_processed', 0)} posts",
+                payload=expert_result,
+            )
+            logger.info("expert briefing '%s' result: success=%s", expert["name"], expert_result.get("success"))
+        except Exception as exc:
+            operations_service.finish_job(expert_job_id, status="failed", message=str(exc))
+            logger.exception("expert briefing '%s' failed", expert["name"])
 
     if not scheduler_config.get("generate_daily_briefing", True):
         return
