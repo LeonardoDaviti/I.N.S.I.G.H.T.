@@ -358,6 +358,32 @@ class OperationsService:
             "enabled_sources": int(row[3] or 0),
         }
 
+    def get_corpus_freshness(self) -> Dict[str, Any]:
+        """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      MAX(COALESCE(published_at, fetched_at)) AS latest,
+                      MIN(COALESCE(published_at, fetched_at)) AS oldest,
+                      MAX(fetched_at) AS latest_fetch,
+                      COUNT(*) FILTER (WHERE fetched_at >= now() - interval '24 hours') AS last_24h
+                    FROM posts
+                    """
+                )
+                row = cur.fetchone()
+
+        def iso(value: Any) -> Optional[str]:
+            return value.isoformat() if value else None
+
+        return {
+            "latest_post_at": iso(row[0]),
+            "oldest_post_at": iso(row[1]),
+            "latest_fetch_at": iso(row[2]),
+            "posts_last_24h": int(row[3] or 0),
+        }
+
     def get_source_health(self) -> List[Dict[str, Any]]:
         sources = self.sources_service.get_all_sources_with_settings()
         health_rows: List[Dict[str, Any]] = []

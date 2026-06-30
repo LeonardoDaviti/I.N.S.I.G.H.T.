@@ -451,6 +451,68 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    # ============= SYSTEM STATUS =============
+
+    def get_status(self) -> Dict[str, Any]:
+        """Unified machine-readable system state for agents and observability."""
+        import os
+
+        counts = self.operations_service.get_database_counts()
+        freshness = self.operations_service.get_corpus_freshness()
+        scheduler = self.operations_service.get_scheduler_config()
+        jobs = self.operations_service.list_recent_jobs(20)
+        source_health = self.operations_service.get_source_health()
+        all_sources = self.sources_service.get_all_sources()
+        folders = self.folders_service.list_folders()
+
+        experts: List[Dict[str, Any]] = []
+        for expert in self.experts_service.list_experts():
+            experts.append(
+                {
+                    "id": expert["id"],
+                    "name": expert["name"],
+                    "folder_id": expert["folder_id"],
+                    "schedule": expert.get("schedule"),
+                    "lookback_days": expert.get("lookback_days", 7),
+                    "enabled": expert.get("enabled", True),
+                    "last_briefing_at": self.experts_service.last_briefing_at(expert),
+                }
+            )
+
+        return {
+            "success": True,
+            "healthy": True,
+            "gemini_configured": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
+            "generated_at": datetime.now().isoformat(),
+            "corpus": {**counts, "total_sources": len(all_sources), **freshness},
+            "scheduler": scheduler,
+            "folders": [
+                {
+                    "id": f["id"],
+                    "name": f["name"],
+                    "source_count": f.get("source_count", 0),
+                    "post_count": f.get("post_count", 0),
+                }
+                for f in folders
+            ],
+            "experts": experts,
+            "recent_jobs": [
+                {
+                    "id": j["id"],
+                    "job_type": j.get("job_type", ""),
+                    "status": j.get("status", ""),
+                    "started_at": j.get("started_at"),
+                    "finished_at": j.get("finished_at"),
+                    "message": j.get("message"),
+                }
+                for j in jobs
+            ],
+            "source_health_summary": {
+                "monitored": len(source_health),
+                "errors": len([s for s in source_health if s.get("status") == "error"]),
+            },
+        }
+
 
     def get_source_settings(self, source_id: str) -> Dict[str, Any]:
         """

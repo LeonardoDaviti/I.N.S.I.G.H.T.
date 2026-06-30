@@ -50,6 +50,57 @@ app.add_middleware(
 api_bridge = InsightApiBridge()
 
 # Request models
+class CorpusStatus(BaseModel):
+    total_posts: int = 0
+    total_topics: int = 0
+    total_briefings: int = 0
+    enabled_sources: int = 0
+    total_sources: int = 0
+    latest_post_at: str | None = None
+    oldest_post_at: str | None = None
+    latest_fetch_at: str | None = None
+    posts_last_24h: int = 0
+
+
+class FolderStatus(BaseModel):
+    id: str
+    name: str
+    source_count: int = 0
+    post_count: int = 0
+
+
+class ExpertStatus(BaseModel):
+    id: str
+    name: str
+    folder_id: str
+    schedule: str | None = None
+    lookback_days: int = 7
+    enabled: bool = True
+    last_briefing_at: str | None = None
+
+
+class JobStatus(BaseModel):
+    id: str
+    job_type: str
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    message: str | None = None
+
+
+class SystemStatus(BaseModel):
+    success: bool = True
+    healthy: bool = True
+    gemini_configured: bool = False
+    generated_at: str
+    corpus: CorpusStatus
+    scheduler: Dict[str, Any] = {}
+    folders: List[FolderStatus] = []
+    experts: List[ExpertStatus] = []
+    recent_jobs: List[JobStatus] = []
+    source_health_summary: Dict[str, int] = {}
+
+
 class BriefingRequest(BaseModel):
     date: str  # Format: "YYYY-MM-DD"
     includeTopics: bool | None = None
@@ -1586,6 +1637,18 @@ async def health_check():
         "engine": "DB-backed Archive Engine",
         "timestamp": str(time.time())
     }
+
+
+@app.get("/api/status", response_model=SystemStatus)
+async def get_status():
+    """Unified machine-readable system state: corpus freshness, sources, folders,
+    experts (with last-briefing time), scheduler config, and recent jobs.
+    Designed as the single read an agent makes to understand the whole system."""
+    try:
+        return api_bridge.get_status()
+    except Exception as e:
+        logger.exception("Failed to build system status")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============= INGESTION ENDPOINTS =============
