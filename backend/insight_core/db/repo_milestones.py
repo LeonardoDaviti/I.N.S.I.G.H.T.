@@ -68,7 +68,13 @@ class MilestonesRepository:
 
     def list_lanes(self, cur: Cursor, folder_id: Optional[str],
                    enabled_only: bool = False) -> List[Dict[str, Any]]:
-        """Global lanes plus this folder's lanes, in render order."""
+        """This folder's lanes, plus the global vocabulary unless the folder opts out.
+
+        A curated track usually wants only its own lanes: the global AI-model lanes match
+        real posts in any tech corpus, which fills a smart-glasses rail with GPT and Claude
+        releases. folders.use_global_milestone_lanes (0018) controls that per folder and
+        defaults TRUE, so unscoped and existing folders behave exactly as before.
+        """
         query = """
             SELECT l.id            AS lane_id,
                    l.folder_id     AS lane_folder_id,
@@ -78,11 +84,21 @@ class MilestonesRepository:
                    l.lane_order    AS lane_lane_order,
                    l.enabled       AS lane_enabled
             FROM milestone_lanes l
-            WHERE (l.folder_id IS NULL OR l.folder_id::text = %s)
+            WHERE (
+                    l.folder_id::text = %s
+                    OR (
+                      l.folder_id IS NULL
+                      AND COALESCE(
+                            (SELECT f.use_global_milestone_lanes FROM folders f
+                              WHERE f.id::text = %s),
+                            TRUE)
+                    )
+                  )
               AND (%s = false OR l.enabled)
             ORDER BY l.lane_order, l.name
         """
-        cur.execute(query, (folder_id or "", bool(enabled_only)))
+        scope = folder_id or ""
+        cur.execute(query, (scope, scope, bool(enabled_only)))
         return [self._lane_from_row(r) for r in cur.fetchall()]
 
     def get_lane(self, cur: Cursor, lane_id: str) -> Optional[Dict[str, Any]]:
