@@ -23,11 +23,11 @@ class PostsService:
         self.repo = PostsRepository(db_url)
         self.logger = get_component_logger("posts_service")
 
-    def get_posts_by_date(self, date: date) -> List[Dict[str, Any]]:
+    def get_posts_by_date(self, date: date, main_digest_only: bool = False) -> List[Dict[str, Any]]:
         """Get posts for a specific date."""
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                return self.repo.get_posts_by_date(cur, date)
+                return self.repo.get_posts_by_date(cur, date, main_digest_only=main_digest_only)
     
     def get_posts_by_source(
         self,

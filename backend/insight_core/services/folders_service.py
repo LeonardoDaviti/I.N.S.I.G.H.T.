@@ -36,13 +36,20 @@ class FoldersService:
         self,
         name: str,
         description: Optional[str] = None,
-        system_prompt_default: Optional[str] = None,
         sort_order: int = 999,
+        kind: str = "folder",
+        exclude_from_main_digest: bool = False,
+        match_keywords: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Create a new folder."""
+        """Create a folder, or a track (kind="track")."""
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                folder = self.repo.create_folder(cur, name, description, system_prompt_default, sort_order)
+                folder = self.repo.create_folder(
+                    cur, name, description, sort_order,
+                    kind=kind,
+                    exclude_from_main_digest=exclude_from_main_digest,
+                    match_keywords=match_keywords,
+                )
                 conn.commit()
                 return folder
 

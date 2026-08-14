@@ -984,7 +984,11 @@ async def get_folders():
 
 @app.post("/api/folders")
 async def create_folder(config: dict):
-    """Create a folder. Body: {name, description?, system_prompt_default?, sort_order?}"""
+    """Create a folder or track.
+
+    Body: {name, description?, sort_order?, kind?, exclude_from_main_digest?, match_keywords?}
+    kind is "folder" (default) or "track".
+    """
     try:
         logger.info("📁 Creating folder")
         return api_bridge.create_folder(config)
@@ -1006,7 +1010,10 @@ async def get_folder(folder_id: str):
 
 @app.put("/api/folders/{folder_id}")
 async def update_folder(folder_id: str, fields: dict):
-    """Update folder fields. Body: any of {name, description, system_prompt_default, sort_order}"""
+    """Update folder fields.
+
+    Body: any of {name, description, sort_order, kind, exclude_from_main_digest, match_keywords}
+    """
     try:
         logger.info(f"📁 Updating folder: {folder_id}")
         return api_bridge.update_folder(folder_id, fields)

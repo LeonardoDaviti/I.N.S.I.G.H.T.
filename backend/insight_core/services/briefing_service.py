@@ -193,7 +193,7 @@ class BriefingService:
         variant below has always done this; the daily path did not.
         """
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        posts = self.posts_service.get_posts_by_date(target_date)
+        posts = self.posts_service.get_posts_by_date(target_date, main_digest_only=True)
 
         if not posts:
             return {
@@ -294,7 +294,7 @@ class BriefingService:
     ) -> Dict[str, Any]:
         """Generate a topic-based daily briefing using DB posts."""
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        posts = self.posts_service.get_posts_by_date(target_date)
+        posts = self.posts_service.get_posts_by_date(target_date, main_digest_only=True)
 
         if not posts:
             return {
@@ -403,7 +403,7 @@ class BriefingService:
                     try:
                         for offset in range(7):
                             current_date = week_start + timedelta(days=offset)
-                            weekly_posts.extend(self.posts_service.get_posts_by_date(current_date))
+                            weekly_posts.extend(self.posts_service.get_posts_by_date(current_date, main_digest_only=True))
                     except Exception as exc:
                         self.logger.warning("Failed to backfill weekly briefing references: %s", exc)
                     if weekly_posts:
@@ -446,7 +446,7 @@ class BriefingService:
             current_key = current_date.isoformat()
             cached_daily = self.store_service.get_briefing("daily_briefing", current_key, "default")
             if cached_daily:
-                add_weekly_posts(self.posts_service.get_posts_by_date(current_date))
+                add_weekly_posts(self.posts_service.get_posts_by_date(current_date, main_digest_only=True))
                 daily_briefings.append(
                     {
                         "date": current_key,

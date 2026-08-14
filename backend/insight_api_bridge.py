@@ -304,8 +304,10 @@ class InsightApiBridge:
             folder = self.folders_service.create_folder(
                 name=name,
                 description=config.get("description"),
-                system_prompt_default=config.get("system_prompt_default"),
                 sort_order=int(config.get("sort_order", 999)),
+                kind=str(config.get("kind") or "folder"),
+                exclude_from_main_digest=bool(config.get("exclude_from_main_digest", False)),
+                match_keywords=config.get("match_keywords") or [],
             )
             return {"success": True, "folder": folder}
         except Exception as e:

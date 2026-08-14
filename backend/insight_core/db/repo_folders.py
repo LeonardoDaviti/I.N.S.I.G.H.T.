@@ -10,7 +10,8 @@ from insight_core.logs.core.logger_config import get_component_logger
 class FoldersRepository:
     """Database access layer for folders and source_folders tables."""
 
-    UPDATABLE_FIELDS = {"name", "description", "system_prompt_default", "sort_order"}
+    UPDATABLE_FIELDS = {"name", "description", "sort_order", "kind",
+                        "exclude_from_main_digest", "match_keywords"}
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -21,10 +22,12 @@ class FoldersRepository:
             "id": str(row[0]),
             "name": row[1],
             "description": row[2],
-            "system_prompt_default": row[3],
-            "sort_order": row[4],
-            "created_at": row[5],
-            "updated_at": row[6],
+            "kind": row[3],
+            "exclude_from_main_digest": bool(row[4]),
+            "match_keywords": list(row[5] or []),
+            "sort_order": row[6],
+            "created_at": row[7],
+            "updated_at": row[8],
         }
 
     def create_folder(
@@ -32,16 +35,20 @@ class FoldersRepository:
         cur: Cursor,
         name: str,
         description: Optional[str] = None,
-        system_prompt_default: Optional[str] = None,
         sort_order: int = 999,
+        kind: str = "folder",
+        exclude_from_main_digest: bool = False,
+        match_keywords: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Insert a new folder and return it."""
+        """Insert a new folder (or track) and return it."""
         query = """
-            INSERT INTO folders (name, description, system_prompt_default, sort_order)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, name, description, system_prompt_default, sort_order, created_at, updated_at
+            INSERT INTO folders (name, description, sort_order, kind,
+                                 exclude_from_main_digest, match_keywords)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
         """
-        cur.execute(query, (name, description, system_prompt_default, sort_order))
+        cur.execute(query, (name, description, sort_order, kind,
+                            exclude_from_main_digest, list(match_keywords or [])))
         folder = self._folder_from_row(cur.fetchone())
         self.logger.info(f"Created folder: {name} → {folder['id']}")
         return folder
@@ -49,7 +56,7 @@ class FoldersRepository:
     def get_folder(self, cur: Cursor, folder_id: str) -> Optional[Dict[str, Any]]:
         """Get a single folder by UUID."""
         query = """
-            SELECT id, name, description, system_prompt_default, sort_order, created_at, updated_at
+            SELECT id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
             FROM folders
             WHERE id = %s
         """
@@ -61,23 +68,23 @@ class FoldersRepository:
         """List all folders with source and post counts."""
         query = """
             SELECT
-                f.id, f.name, f.description, f.system_prompt_default, f.sort_order,
-                f.created_at, f.updated_at,
+                f.id, f.name, f.description, f.kind, f.exclude_from_main_digest,
+                f.match_keywords, f.sort_order, f.created_at, f.updated_at,
                 COUNT(DISTINCT sf.source_id) AS source_count,
                 COUNT(p.id) AS post_count
             FROM folders f
             LEFT JOIN source_folders sf ON sf.folder_id = f.id
             LEFT JOIN posts p ON p.source_id = sf.source_id
-            GROUP BY f.id, f.name, f.description, f.system_prompt_default, f.sort_order,
-                     f.created_at, f.updated_at
+            GROUP BY f.id, f.name, f.description, f.kind, f.exclude_from_main_digest,
+                     f.match_keywords, f.sort_order, f.created_at, f.updated_at
             ORDER BY f.sort_order, f.name
         """
         cur.execute(query)
         folders = []
         for row in cur.fetchall():
             folder = self._folder_from_row(row)
-            folder["source_count"] = row[7]
-            folder["post_count"] = row[8]
+            folder["source_count"] = row[9]
+            folder["post_count"] = row[10]
             folders.append(folder)
         self.logger.debug(f"Retrieved {len(folders)} folders")
         return folders
@@ -94,7 +101,7 @@ class FoldersRepository:
             UPDATE folders
             SET {set_clause}, updated_at = now()
             WHERE id = %s
-            RETURNING id, name, description, system_prompt_default, sort_order, created_at, updated_at
+            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
         """
         cur.execute(query, values)
         row = cur.fetchone()

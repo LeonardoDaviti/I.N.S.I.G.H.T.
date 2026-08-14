@@ -183,7 +183,7 @@ class PostsRepository:
     # READ OPERATIONS
     # ===============================
 
-    def get_posts_by_date(self, cur: Cursor, date) -> List[Dict[str, Any]]:
+    def get_posts_by_date(self, cur: Cursor, date, main_digest_only: bool = False) -> List[Dict[str, Any]]:
         """
         Retrieve posts for a specific date.
         
@@ -229,8 +229,14 @@ class PostsRepository:
             FROM posts p
             JOIN sources s ON p.source_id = s.id
             WHERE DATE(COALESCE(p.published_at, p.fetched_at)) = %s
+            {digest_filter}
             ORDER BY COALESCE(p.published_at, p.fetched_at) DESC
         """
+        # Track sources are ingested normally but kept out of the main digest when the
+        # operator flips the switch. The flag lives on sources, not folders, because
+        # source_folders is many-to-many and a per-folder flag has no defined answer for a
+        # source that belongs to both an excluded track and a normal folder.
+        query = query.format(digest_filter="AND s.in_main_digest" if main_digest_only else "")
         cur.execute(query, (date,))
         rows = cur.fetchall()
         
