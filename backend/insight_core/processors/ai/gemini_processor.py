@@ -23,6 +23,45 @@ DEFAULT_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.0-flash",
 ]
+# Appended to every generative prompt. Suppresses the abstractive-summary register that
+# strips proper nouns and numbers, and bans the stock phrasing that makes output read as
+# machine-written. Positive instructions come last because prohibitions alone produce
+# stilted prose.
+BRIEFING_STYLE_BLOCK = """STYLE - applies to every sentence you write.
+
+Write like a domain expert briefing a peer in writing: declarative, specific, front-loaded.
+The first sentence of any section states its most important concrete fact - never
+context-setting, never a definition, never a preamble. Carry information in proper nouns,
+numbers, and verbs; if a sentence has none of the three, cut it or fetch the specific it is
+gesturing at. Attribute every claim to its source by name. State uncertainty only when it
+changes what the reader should do, and state it as a fact about the evidence ("Reuters and the
+company's blog post give different headcounts: 300 vs 210"), not as a hedge ("it appears that",
+"arguably", "it's worth noting"). End each section when its facts are exhausted - the last
+sentence contains information, not a restatement, a moral, or a forecast.
+
+Banned outright:
+- "It's not just X, it's Y" and every negation-pivot construction ("this isn't merely...",
+  "more than just...")
+- delve, landscape, testament, tapestry, crucial, pivotal, seamless, robust, game-changer,
+  "in the ever-evolving/fast-paced world of", "at the end of the day", "the space" as a noun
+  for an industry
+- Throat-clearing openers: "In today's briefing...", "Several notable developments...",
+  "Let's start with..."
+- Rule-of-three lists used for rhythm rather than because exactly three things exist. If there
+  are four, list four; if two, two.
+- Forced parallelism across bullets or sentence openings.
+- Em-dashes more than once per paragraph; prefer a period and a new sentence.
+- Hedges that add no information: "it seems", "perhaps unsurprisingly", "could potentially",
+  "may or may not".
+- Section-ending recaps ("In short...", "Taken together...") and vague forward-looking closers
+  ("Time will tell", "one to watch", "as the situation develops", "worth monitoring").
+- Rhetorical questions. Addressing the reader ("you'll want to note...").
+
+Instead: replace an intensifier with a number, a category word with the entity's name, a
+prediction with the concrete precondition that would confirm it ("if the promised API ships in
+September at the stated $2/M rate..."), and a recap with the one fact the section has not used
+yet - or with nothing."""
+
 VERTICAL_TRACK_KINDS = {"project_thread", "recurring_theme", "one_off_update"}
 VERTICAL_GENERIC_LEADS = {
     "a",
@@ -157,6 +196,10 @@ class GeminiProcessor:
         # thinking before emitting a visible token (measured against the live API),
         # so a 4096 cap left ~1600 for the actual briefing and truncated it mid-word.
         self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16384"))
+        # Per-post context budget for multi-post prompts. The old 1600 truncated 40% of posts,
+        # and the largest lost 94% of its body (27,697 -> 1,600 chars). Facts stripped here can
+        # never be recovered by prompting. A full day is ~20k tokens against a 1M window.
+        self.briefing_context_chars = int(os.environ.get("GEMINI_BRIEFING_CONTEXT_CHARS", "12000"))
         self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
         self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "3"))
         self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
@@ -205,24 +248,73 @@ class GeminiProcessor:
     async def daily_briefing(self, posts: List[Dict[str, Any]]) -> str:
         """Generate a markdown daily briefing from stored posts."""
         prompt = f"""
-You are preparing an intelligence daily briefing from collected source posts.
+You are the intelligence analyst for a single principal: a technical operator who reads this
+document INSTEAD of his feeds. He has already allocated the time. Your job is not to save him
+reading - it is to replace the reading he would otherwise do, at full fidelity, minus the
+redundancy. He acts on this document: he runs experiments, changes tooling, reallocates
+attention. A vague briefing is a failed briefing.
 
-Write concise markdown with these sections:
-- ## Executive Summary
-- ## Main Developments
-- ## Signals To Watch
+You will receive {len(posts)} posts collected today, each tagged with a number and source name.
 
-Requirements:
-- Use only the supplied posts
-- Merge duplicate stories across sources instead of repeating them
-- Separate original developments from downstream commentary when possible
-- Prioritize what materially changes decisions, monitoring, or allocation of attention
-- Call out source names when useful
-- Write for a principal with very limited time: high signal, high consequence, no filler
-- Do not mention missing data or your own process
+FACT CONSERVATION - the core rule
+You may compress prose. You may never compress facts. Every number, benchmark score, version
+string, model name, product name, company or lab name, person, price, funding amount, parameter
+count, date, and direct quote that appears in the posts must appear in your output, attached to
+the story it belongs to. When two posts report the same fact, state it once and credit both
+sources. When they report DIFFERENT figures or claims for the same thing, report both and name
+who says what - never average them, never pick one silently. Before finishing, reread any
+sentence of yours that contains no proper noun and no number, and check whether the source
+material had one you dropped.
 
-POSTS:
-{self._format_posts(posts, truncate_to=1600)}
+SCALE
+Output grows with input. Coverage is the floor: every post number must appear exactly once in
+this document - either inside the theme section it was merged into, or as its own line in
+Undercard. As calibration: a 40-post day should land around 2,500-4,000 words; an 80-post day
+around 5,000-7,000. If your draft covers {len(posts)} posts in 1,500 words you have summarized
+instead of synthesized - go back and restore what you cut.
+
+STRUCTURE
+Derive the structure from what the day actually contained. Do not reuse yesterday's headings.
+
+1. Open with "## The Day in One Pass": one sentence per theme, naming the single most
+   consequential fact of each. This is orientation, not summary - no sentence in it may be
+   vaguer than the section it points to.
+
+2. One "## <heading>" section per theme. The heading is the finding itself, with its key
+   specific ("## Mistral ships Ministral 3B under Apache-2.0"), never a category label
+   ("## AI Model News"). Order themes by consequence. Within each theme section:
+   - THE DEVELOPMENT first: what actually happened, from the primary source(s), with every
+     concrete fact those posts contain. If the primary event reached you only through
+     commentary, say so and reconstruct the event from what the commentary reveals.
+   - THE READ second: downstream commentary, only where it adds a distinct claim, prediction,
+     or objection - always attributed by source name. "Three accounts reposted it approvingly"
+     is one clause, not a paragraph.
+   - DISAGREEMENT called out in its own sentence whenever sources conflict: who claims what,
+     and which claim the evidence in the posts favors, if either.
+   - Cite merged posts inline by number, e.g. [12, 31, 44].
+
+3. "## Undercard": every post that did not merge into a theme, one line each - its single most
+   concrete fact, its source, its number. Dense lines, no editorializing. Nothing gets dropped;
+   small stories get small space, not zero space.
+
+4. "## Cross-Currents" (only when the material earns it): contradictions or connections BETWEEN
+   themes - e.g. one section's pricing announcement undercutting another section's cost
+   assumption. Skip the section entirely on days with none; do not manufacture connections.
+
+5. "## Bench Notes": 3-7 concrete ideas or experiments this day's material suggests, for one
+   technical person with API access, a GPU, and evenings. Each one names the specific tool,
+   model, dataset, or price point from today's posts that makes it newly possible or newly
+   cheap, and states what a first test would look like. "Explore the implications of X" is not
+   an idea; "Rerun your eval suite against X at its new $0.15/M pricing and check whether it
+   displaces Y in the extraction pipeline" is.
+
+Use only the supplied posts. Do not mention missing data, truncation, or your own process.
+Do not address the reader.
+
+{BRIEFING_STYLE_BLOCK}
+
+POSTS ({len(posts)} total):
+{self._format_posts(posts, truncate_to=self.briefing_context_chars, include_dates=True)}
 """
         try:
             return await self._generate_text(prompt)
@@ -242,7 +334,7 @@ POSTS:
 
     async def topic_briefing_with_numeric_ids(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Group posts into topics and cite them by numeric IDs."""
-        numbered_posts = self._format_posts(posts, truncate_to=1400, numeric_ids=True)
+        numbered_posts = self._format_posts(posts, truncate_to=self.briefing_context_chars, numeric_ids=True)
         prompt = f"""
 You are preparing a topic-based intelligence briefing from source posts.
 
@@ -252,7 +344,7 @@ Return ONLY valid JSON with this exact structure:
   "topics": [
     {{
       "title": "topic title",
-      "summary": "2-4 sentence markdown summary",
+      "summary": "markdown summary; length follows content - write until the topic's facts are exhausted, then stop",
       "post_ids": ["1", "2"]
     }}
   ]
@@ -266,7 +358,16 @@ Rules:
 - Prefer the original source event over downstream commentary when titles collide.
 - Treat commentary/reaction posts as part of the same story when they are clearly about the same underlying event.
 - Do not invent post IDs.
-- Keep titles concrete and specific.
+- Every post ID must appear in exactly one topic. A post that shares nothing with the others
+  becomes a single-post topic - that is correct, not a failure.
+- Titles state the finding with its key specific ("Anthropic raises API prices 25% for Opus
+  tier"), never a category label ("AI pricing news").
+
+FACT CONSERVATION: summaries are read INSTEAD of the posts. Every number, benchmark figure,
+version string, model name, company, person, price and date from a topic's posts must appear in
+that topic's summary. Compress wording, never facts. State what happened first, then what
+commentators claim about it, attributed by source name. Where sources disagree, give both
+positions and name who holds each - do not flatten disagreement into a neutral middle.
 - The daily briefing should read like an analyst memo, not a generic recap.
 
 POSTS:
@@ -291,7 +392,7 @@ POSTS:
         focus_instructions: str = "",
     ) -> Dict[str, Any]:
         """Topic briefing written in a specific expert persona, citing posts by numeric ID."""
-        numbered_posts = self._format_posts(posts, truncate_to=1400, numeric_ids=True)
+        numbered_posts = self._format_posts(posts, truncate_to=self.briefing_context_chars, numeric_ids=True)
         focus_block = f"\nANALYST FOCUS (prioritize this above all):\n{focus_instructions}\n" if focus_instructions.strip() else ""
         prompt = f"""{system_prompt}
 
@@ -303,7 +404,7 @@ Return ONLY valid JSON with this exact structure:
   "topics": [
     {{
       "title": "topic title",
-      "summary": "2-4 sentence markdown summary",
+      "summary": "markdown summary; length follows content - write until the topic's facts are exhausted, then stop",
       "post_ids": ["1", "2"]
     }}
   ]
@@ -368,7 +469,7 @@ Return ONLY valid JSON with this exact structure:
   "topics": [
     {{
       "title": "story title",
-      "summary": "2-5 sentence summary",
+      "summary": "summary; length follows content - write until the topic's facts are exhausted, then stop",
       "post_ids": ["post-uuid-1", "post-uuid-2"],
       "timeline": [
         {{
@@ -420,7 +521,7 @@ Return ONLY valid JSON with this exact structure:
   "tracks": [
     {{
       "title": "track title",
-      "summary": "2-5 sentence summary",
+      "summary": "summary; length follows content - write until the topic's facts are exhausted, then stop",
       "track_kind": "project_thread",
       "story_titles": ["story title"],
       "entity_hints": ["entity or recurring actor"],
