@@ -4,7 +4,7 @@ import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCir
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
-import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings } from '../services/api';
+import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings, SystemStatusResponse } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import SourceAvatar from '../components/SourceAvatar';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
@@ -32,6 +32,42 @@ async function copyPostText(post: Post): Promise<void> {
   container.innerHTML = getRenderablePostContent(post);
   const text = (container.textContent || container.innerText || post.content || '').trim();
   await navigator.clipboard.writeText(text);
+}
+
+const IMAGE_URL_PATTERN = /\.(?:jpe?g|png|gif|webp|avif|bmp)(?:[?#].*)?$/i;
+
+function getPostThumbnails(post: Post, limit = 3): string[] {
+  const urls = Array.isArray(post.media_urls) ? post.media_urls : [];
+  const images = urls.filter((url) => typeof url === 'string' && IMAGE_URL_PATTERN.test(url));
+
+  if (images.length === 0 && (post.platform || '').toLowerCase() === 'youtube') {
+    const videoId = urls
+      .concat(post.url ? [post.url] : [])
+      .map((url) => /(?:v=|youtu\.be\/|\/shorts\/)([A-Za-z0-9_-]{11})/.exec(url || '')?.[1])
+      .find(Boolean);
+    if (videoId) {
+      return [`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`];
+    }
+  }
+
+  return images.slice(0, limit);
+}
+
+function formatRelativeTime(value?: string | null): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) return '';
+
+  const diffMinutes = Math.round((Date.now() - parsed.getTime()) / 60000);
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return parsed.toLocaleDateString();
 }
 
 function getPlatformTone(platform?: string) {
@@ -199,6 +235,10 @@ export default function DailyBriefing() {
   
   // Error handling
   const [error, setError] = useState<string | null>(null);
+
+  // System freshness/health strip (GET /api/status)
+  const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(false);
   
   // Sources sidebar state
   const [sourcesData, setSourcesData] = useState<SourcesWithCountsResponse | null>(null);
@@ -317,6 +357,7 @@ export default function DailyBriefing() {
   // Load sources with counts on mount
   useEffect(() => {
     loadSourcesWithCounts();
+    void loadSystemStatus();
   }, []);
 
   useEffect(() => {
@@ -396,6 +437,16 @@ export default function DailyBriefing() {
       setError(error instanceof Error ? error.message : 'Network error');
     } finally {
       setIsLoadingSources(false);
+    }
+  };
+
+  const loadSystemStatus = async () => {
+    setIsLoadingStatus(true);
+    try {
+      const response = await apiService.getStatus();
+      setSystemStatus(response);
+    } finally {
+      setIsLoadingStatus(false);
     }
   };
 
@@ -817,7 +868,16 @@ export default function DailyBriefing() {
       });
       
       if (response.success) {
-        const mergedPosts = append ? [...currentPosts, ...response.posts] : response.posts;
+        // Dedupe on merge: pagination is offset-based, so a post ingested between
+        // two "load more" clicks shifts the window and can re-return a row already
+        // on screen. Since post.id is now the React key, a duplicate would collide.
+        const mergedPosts = append
+          ? Array.from(
+              new Map(
+                [...currentPosts, ...response.posts].map((p, i) => [p.id ?? p.url ?? `idx:${i}`, p])
+              ).values()
+            )
+          : response.posts;
         const hasMore = Boolean(response.has_more ?? (mergedPosts.length < response.total));
 
         console.log(`✅ Loaded ${response.returned ?? response.posts.length} posts (${mergedPosts.length}/${response.total})`);
@@ -1198,6 +1258,14 @@ export default function DailyBriefing() {
         dateOverride: requestedDate,
         topicIds: requestedTopicIds,
       });
+      return;
+    }
+
+    // No usable deep link: open today's feed instead of an empty briefing shell.
+    // Guard on requestedDate, not mode - every mode branch above needs a date, so
+    // e.g. "?mode=daily" with no date would otherwise fall through to nothing.
+    if (!requestedDate) {
+      handleLoadDatabasePosts({ dateOverride: selectedDate });
     }
   }, [searchParams]);
 
@@ -1631,6 +1699,58 @@ export default function DailyBriefing() {
       {/* Main Content */}
       <div className={`flex-1 overflow-y-auto ${focusMode ? 'flex items-start justify-center' : ''} transition-all duration-300 ease-in-out`}>
         <div className={`px-4 py-4 lg:px-5 lg:py-5 ${focusMode ? 'w-full max-w-5xl mx-auto' : 'max-w-5xl mx-auto'} transition-all duration-300 ease-in-out`}>
+          {/* System freshness / health */}
+          {systemStatus && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-[11px] text-gray-600">
+              {systemStatus.success ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-gray-700">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    System
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                    Newest post {formatRelativeTime(systemStatus.corpus?.latest_post_at) || 'unknown'}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                    Last fetch {formatRelativeTime(systemStatus.corpus?.latest_fetch_at) || 'unknown'}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                    {systemStatus.corpus?.posts_last_24h ?? 0} posts / 24h
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                    {systemStatus.corpus?.enabled_sources ?? 0}/{systemStatus.corpus?.total_sources ?? 0} sources on
+                  </span>
+                  {Boolean(systemStatus.source_health_summary?.errors) && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      {systemStatus.source_health_summary?.errors} source errors
+                    </span>
+                  )}
+                  {systemStatus.gemini_configured === false && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      Gemini key missing
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-red-700">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  Status unavailable
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => void loadSystemStatus()}
+                disabled={isLoadingStatus}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                title="Refresh system status"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLoadingStatus ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+          )}
           
           {/* Briefing View */}
           {activeView === 'briefing' && (
@@ -2179,19 +2299,24 @@ export default function DailyBriefing() {
               ) : displayedPosts.length > 0 ? (
                 <div className="space-y-3.5">
                   {displayedPosts.map((post, index) => {
-                    const key = `post:${index}`;
-                    const isExpanded = postsExpanded[key] ?? true;
+                    const key = post.id || `post:${index}`;
+                    const isExpanded = postsExpanded[key] ?? false;
                     const platformLabel = (post?.platform || 'unknown').toUpperCase();
                     const tone = getPlatformTone(post.platform);
                     const renderContent = getRenderablePostContent(post);
+                    const thumbnails = getPostThumbnails(post);
                     let dateLabel = 'Unknown date';
+                    let dateTitle = '';
                     try {
                       const d = new Date((post?.date || post?.published_at) as string);
-                      if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
+                      if (!isNaN(d.getTime())) {
+                        dateLabel = formatRelativeTime(d.toISOString()) || d.toLocaleDateString();
+                        dateTitle = d.toLocaleString();
+                      }
                     } catch (_) {}
 
                     return (
-                      <div key={index} className={`border border-gray-200 rounded-xl overflow-hidden shadow-sm relative ${tone.card}`}>
+                      <div key={key} className={`border border-gray-200 rounded-xl overflow-hidden shadow-sm relative ${tone.card}`}>
                         <button
                           type="button"
                           className={`w-full text-left px-4 py-3 flex items-start justify-between transition-colors ${isExpanded ? 'bg-gray-50' : ''} hover:bg-gray-50`}
@@ -2203,11 +2328,29 @@ export default function DailyBriefing() {
                               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${tone.badge}`}>
                                 {platformLabel}
                               </span>
-                              <span className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5">
+                              <span
+                                className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5"
+                                title={dateTitle || undefined}
+                              >
                                 {dateLabel}
                               </span>
                               <span className="truncate max-w-[26rem]">📡 {post.source}</span>
                             </div>
+                            {thumbnails.length > 0 && (
+                              <div className="mt-2.5 flex flex-wrap gap-2">
+                                {thumbnails.map((mediaUrl) => (
+                                  <img
+                                    key={mediaUrl}
+                                    src={mediaUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    referrerPolicy="no-referrer"
+                                    className="h-20 w-28 rounded-lg border border-gray-200 bg-gray-50 object-cover"
+                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                  />
+                                ))}
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2.5 ml-2.5">
                             {post.id && (

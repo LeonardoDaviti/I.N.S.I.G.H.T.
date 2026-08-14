@@ -78,6 +78,14 @@ const featureCards: FeatureCard[] = [
     accent: 'from-cyan-500/15 via-cyan-500/10 to-transparent',
     label: 'operations',
   },
+  {
+    title: 'Experts',
+    description: 'Group sources into folders and run expert briefings over them.',
+    href: '/experts',
+    icon: Workflow,
+    accent: 'from-amber-500/15 via-amber-500/10 to-transparent',
+    label: 'folders & experts',
+  },
 ];
 
 function WorkspaceCard({ card }: { card: FeatureCard }) {
@@ -168,6 +176,10 @@ export default function Index() {
                   <Link to="/inbox" className="app-inline-button">
                     <Inbox className="h-4 w-4" />
                     Open Inbox
+                  </Link>
+                  <Link to="/experts" className="app-inline-button">
+                    <Workflow className="h-4 w-4" />
+                    Open Experts
                   </Link>
                 </div>
               </div>

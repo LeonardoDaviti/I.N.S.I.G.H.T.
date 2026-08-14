@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import ThemeToggle from './components/ThemeToggle';
@@ -39,6 +39,7 @@ function App() {
                 <Route path="/posts/:postId" element={<PostDetailPage />} />
                 <Route path="/settings/sources" element={<SourcesConfig />} />
                 <Route path="/experts" element={<ExpertsPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>
             <Toaster />

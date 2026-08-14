@@ -368,6 +368,58 @@ export interface OperationJobResponse {
   job?: JobRun | null;
 }
 
+export interface SystemCorpusStatus {
+  total_posts: number;
+  total_topics: number;
+  total_briefings: number;
+  enabled_sources: number;
+  total_sources: number;
+  latest_post_at?: string | null;
+  oldest_post_at?: string | null;
+  latest_fetch_at?: string | null;
+  posts_last_24h: number;
+}
+
+export interface SystemFolderStatus {
+  id: string;
+  name: string;
+  source_count: number;
+  post_count: number;
+}
+
+export interface SystemExpertStatus {
+  id: string;
+  name: string;
+  folder_id: string;
+  schedule?: string | null;
+  lookback_days: number;
+  enabled: boolean;
+  last_briefing_at?: string | null;
+}
+
+export interface SystemJobStatus {
+  id: string;
+  job_type: string;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  message?: string | null;
+}
+
+export interface SystemStatusResponse {
+  success: boolean;
+  healthy?: boolean;
+  gemini_configured?: boolean;
+  generated_at?: string;
+  corpus?: SystemCorpusStatus;
+  scheduler?: Partial<SchedulerConfig>;
+  folders?: SystemFolderStatus[];
+  experts?: SystemExpertStatus[];
+  recent_jobs?: SystemJobStatus[];
+  source_health_summary?: { monitored?: number; errors?: number };
+  error?: string;
+}
+
 interface AcceptedJobResponse {
   success?: boolean;
   accepted?: boolean;
@@ -1701,6 +1753,18 @@ class ApiService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         job: null,
+      };
+    }
+  }
+
+  async getStatus(): Promise<SystemStatusResponse> {
+    try {
+      return await this.makeRequest<SystemStatusResponse>('/api/status');
+    } catch (error) {
+      console.error('Failed to load system status:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
   }
