@@ -1,4 +1,5 @@
 # backend/insight_api_bridge.py
+import asyncio
 from insight_core.db.ensure_db import ensure_database
 
 from insight_core.services.sources_service import SourcesService
@@ -312,6 +313,106 @@ class InsightApiBridge:
             return {"success": True, "folder": folder}
         except Exception as e:
             return {"success": False, "error": str(e), "folder": None}
+
+    async def ingest_folder_now(
+        self,
+        folder_id: str,
+        limit: int | None = None,
+        delay_seconds: float | None = None,
+        *,
+        job_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Fetch every source in a folder/track immediately, sequentially.
+
+        Sequential with a per-source pause on purpose: a track can hold dozens of feeds
+        and Reddit in particular rate-limits hard (429s even at 20-60s spacing), so
+        hammering them in parallel makes healthy sources look dead. Reports created vs
+        fetched separately - fetched counts say nothing about whether anything is new.
+        """
+        folder = self.folders_service.get_folder(folder_id)
+        if not folder:
+            return {"success": False, "error": f"Folder {folder_id} not found"}
+
+        source_ids = self.folders_service.list_source_ids(folder_id)
+        if not source_ids:
+            return {"success": False, "error": "Folder has no sources", "folder": folder}
+
+        job_id = job_id or self._start_job_safe(
+            "folder_ingest",
+            trigger="manual",
+            message=f"Ingest {len(source_ids)} sources in {folder['name']}",
+            payload={"folder_id": folder_id, "sources": len(source_ids)},
+        )
+
+        created = fetched = 0
+        results: List[Dict[str, Any]] = []
+        failures: List[Dict[str, Any]] = []
+
+        for index, source_id in enumerate(source_ids):
+            try:
+                result = await self.source_fetch_service.ingest_source_now(source_id, limit)
+                created += int(result.get("posts_inserted") or 0)
+                fetched += int(result.get("posts_fetched") or 0)
+                results.append(
+                    {
+                        "source_id": source_id,
+                        "display_name": (result.get("source") or {}).get("display_name"),
+                        "posts_fetched": result.get("posts_fetched"),
+                        "posts_inserted": result.get("posts_inserted"),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append({"source_id": source_id, "error": str(exc)[:200]})
+
+            self._append_job_event_safe(
+                job_id,
+                message=f"{index + 1}/{len(source_ids)} sources processed",
+                level="info",
+                progress=round((index + 1) / len(source_ids) * 100, 2),
+            )
+
+            if index < len(source_ids) - 1:
+                pause = delay_seconds
+                if pause is None:
+                    source = self.sources_service.get_source_with_settings(source_id) or {}
+                    settings = source.get("settings") or {}
+                    pause = float(settings.get("fetch_delay_seconds") or 2)
+                    # Reddit 429s aggressively; give it a floor regardless of source config.
+                    if "reddit.com" in str(source.get("handle_or_url") or ""):
+                        pause = max(pause, 8.0)
+                await asyncio.sleep(max(0.0, float(pause)))
+
+        summary = (
+            f"{created} new posts from {len(source_ids) - len(failures)}/{len(source_ids)} sources"
+            if not failures
+            else f"{created} new posts; {len(failures)} of {len(source_ids)} sources failed"
+        )
+        self._finish_job_safe(
+            job_id,
+            status="success" if not failures else "failed",
+            message=summary,
+            payload={
+                "folder_id": folder_id,
+                "posts_created": created,
+                "posts_fetched": fetched,
+                "sources_attempted": len(source_ids),
+                "sources_failed": len(failures),
+                "failures": failures[:20],
+            },
+            compact=True,
+        )
+        return {
+            "success": not failures,
+            "folder": folder,
+            "posts_created": created,
+            "posts_fetched": fetched,
+            "posts_duplicate": fetched - created,
+            "sources_attempted": len(source_ids),
+            "sources_failed": len(failures),
+            "failures": failures[:20],
+            "per_source": results,
+            "error": summary if failures else None,
+        }
 
     def get_folder_posts(
         self, folder_id: str, limit: int = 50, offset: int = 0, since_days: int | None = None

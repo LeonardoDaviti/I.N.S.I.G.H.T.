@@ -1058,6 +1058,44 @@ async def add_folder_source(folder_id: str, body: dict):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/folders/{folder_id}/ingest")
+async def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
+    """Fetch every source in a folder/track now.
+
+    Body: {limit?: int, delaySeconds?: number, asyncMode?: bool}
+    Sources are fetched sequentially with a pause between them, so a large track does not
+    trip per-host rate limits. Use asyncMode for tracks with many sources - a 54-source
+    track takes minutes and will exceed a normal HTTP timeout.
+    """
+    payload = body or {}
+    limit = payload.get("limit")
+    delay_seconds = payload.get("delaySeconds")
+    try:
+        if payload.get("asyncMode"):
+            job_id = api_bridge._start_job_safe(
+                "folder_ingest",
+                trigger="manual",
+                message=f"Ingest folder {folder_id}",
+                payload={"folder_id": folder_id},
+            )
+            if job_id:
+                background_tasks.add_task(
+                    _run_async_job_background,
+                    "folder_ingest",
+                    api_bridge.ingest_folder_now,
+                    folder_id,
+                    limit,
+                    delay_seconds,
+                    job_id=job_id,
+                )
+                return _accepted_job_response(job_id, "folder_ingest", message="Folder ingestion started")
+        logger.info(f"\U0001F4E5 Ingesting all sources in folder {folder_id}")
+        return await api_bridge.ingest_folder_now(folder_id, limit, delay_seconds)
+    except Exception as e:
+        logger.exception("Failed to ingest folder")
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/folders/{folder_id}/posts")
 async def get_folder_posts(
     folder_id: str,
