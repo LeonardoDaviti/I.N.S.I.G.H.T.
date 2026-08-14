@@ -51,7 +51,12 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
     operations_service.finish_job(
         ingest_job_id,
         status="success" if ingest_result.get("success") else "failed",
-        message=ingest_result.get("error") or f"Ingested {ingest_result.get('posts_ingested', 0)} posts",
+        message=ingest_result.get("error") or (
+            f"Ingested {ingest_result.get('posts_ingested', 0)} new posts "
+            f"({ingest_result.get('posts_fetched', 0)} fetched, "
+            f"{ingest_result.get('posts_duplicate', 0)} already known) "
+            f"from {ingest_result.get('sources_ingested', 0)}/{ingest_result.get('sources_attempted', 0)} sources"
+        ),
         payload=ingest_result,
         compact=True,
     )

@@ -180,6 +180,7 @@ async def safe_ingest_posts(trigger: str = "manual"):
     
     # 5. Fetch posts from each platform in priority order
     all_posts = []
+    failed_sources: list[dict] = []
     source_lookup = {source["id"]: source for source in sources_to_fetch}
     for platform, sources in by_platform.items():
         platform_start_time = time.time()
@@ -210,7 +211,10 @@ async def safe_ingest_posts(trigger: str = "manual"):
                 logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts")
                 operations_service.record_source_status(
                     source["id"],
-                    status="healthy",
+                    # A fetch that raises nothing but returns nothing is not healthy - that is
+                    # exactly how a silently dead feed looks. Report it as such so the
+                    # Operations panel can surface it.
+                    status="healthy" if posts else "empty",
                     message=f"Fetched {len(posts)} posts",
                     trigger=trigger,
                     fetched_posts=len(posts),
@@ -228,6 +232,7 @@ async def safe_ingest_posts(trigger: str = "manual"):
                     
             except Exception as e:
                 # Log error but continue with remaining sources
+                failed_sources.append({"source": source["handle_or_url"], "error": str(e)})
                 logger.error(f"❌ Failed to fetch from {source['handle_or_url']}: {e}")
                 operations_service.record_source_status(
                     source["id"],
@@ -254,13 +259,16 @@ async def safe_ingest_posts(trigger: str = "manual"):
     event_service = EventMemoryService(db_url)
     per_source_fetch_counts = {}
     persisted_posts = []
+    created_count = 0
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             for post in all_posts:
                 post_copy = dict(post)
                 source_id = post_copy.pop("_source_id")
                 per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
-                post_id, _ = repo.upsert_post(cur, post_copy, source_id)
+                post_id, was_inserted = repo.upsert_post(cur, post_copy, source_id)
+                if was_inserted:
+                    created_count += 1
                 persisted_posts.append(
                     {
                         **post_copy,
@@ -308,10 +316,25 @@ async def safe_ingest_posts(trigger: str = "manual"):
         logger.debug(f"  {'TOTAL':12s} : {total_elapsed:6.2f}s")
         logger.debug("=" * 60)
 
+    # "posts_ingested" used to be len(all_posts) - the FETCH count - so a run that fetched 349
+    # and created 43 reported 349, and the number could never fall when a feed froze. It also
+    # returned success unconditionally, which is why 83 ingest runs recorded zero failures even
+    # when every source errored.
+    attempted = len(sources_to_fetch)
+    succeeded = attempted - len(failed_sources)
     return {
-        "success": True,
-        "posts_ingested": len(all_posts),
-        "sources_ingested": len(sources_to_fetch),
+        "success": not failed_sources,
+        "posts_ingested": created_count,
+        "posts_fetched": len(all_posts),
+        "posts_duplicate": len(all_posts) - created_count,
+        "sources_ingested": succeeded,
+        "sources_attempted": attempted,
+        "sources_failed": len(failed_sources),
+        "failures": failed_sources[:20],
+        "error": (
+            f"{len(failed_sources)} of {attempted} sources failed: "
+            + "; ".join(f["source"] for f in failed_sources[:5])
+        ) if failed_sources else None,
     }
 
 if __name__ == "__main__":
