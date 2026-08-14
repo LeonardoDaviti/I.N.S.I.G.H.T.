@@ -150,10 +150,12 @@ class ExpertsService:
                     system_prompt=expert["system_prompt"],
                     focus_instructions=expert.get("focus_instructions") or "",
                 )
+            generator = getattr(self.processor, "model_name", None) or "gemini"
         except Exception as exc:
             self.logger.warning("Falling back to deterministic expert briefing for %s: %s", expert_id, exc)
             fallback = self.processor._fallback_topic_briefing(posts)
             result = {"summary": fallback.get("daily_briefing", ""), "topics": fallback.get("topics", [])}
+            generator = "fallback"
         finally:
             try:
                 await self.processor.disconnect()
@@ -177,6 +179,9 @@ class ExpertsService:
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "posts_processed": len(posts),
+                # Which generator produced this. "fallback" means the deterministic
+                # source-grouping stub, not analysis - the UI must be able to say so.
+                "generator": generator,
                 "topics": topics,
             },
         )
@@ -184,6 +189,7 @@ class ExpertsService:
         return {
             "success": True,
             "cached": False,
+            "generator": generator,
             "expert": expert,
             "briefing": summary,
             "format": "markdown",

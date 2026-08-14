@@ -223,7 +223,7 @@ class GeminiProcessor:
         # 4096 was not enough. Gemini 3.x flash spends 2200-2500 tokens on internal
         # thinking before emitting a visible token (measured against the live API),
         # so a 4096 cap left ~1600 for the actual briefing and truncated it mid-word.
-        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16384"))
+        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "48000"))
         # Per-post context budget for multi-post prompts. The old 1600 truncated 40% of posts,
         # and the largest lost 94% of its body (27,697 -> 1,600 chars). Facts stripped here can
         # never be recovered by prompting. A full day is ~20k tokens against a 1M window.
@@ -238,7 +238,10 @@ class GeminiProcessor:
         self.logger = logging.getLogger(__name__)
         self._client: Any | None = None
         self._client_lock = threading.Lock()
-        self._disabled_models: set[str] = set()
+        # model -> unix ts when it may be retried. A quota block is TEMPORARY (free-tier
+        # quotas reset daily) but the client is a process-lifetime singleton, so a plain
+        # set meant one 429 disabled the best model until the container restarted.
+        self._disabled_models: dict[str, float] = {}
         self.llm: Any | None = None
 
     def setup_processor(self) -> bool:
@@ -1189,7 +1192,7 @@ POSTS:
                 "max_output_tokens": self.max_output_tokens,
             }
 
-        models = [model for model in self._candidate_models() if model not in self._disabled_models]
+        models = [model for model in self._candidate_models() if not self._is_disabled(model)]
         if not models:
             raise RuntimeError("No enabled Gemini models available for request")
 
@@ -1201,7 +1204,7 @@ POSTS:
         for attempt in range(attempts):
             cycle_retry_delay: float | None = None
             for model in list(models):
-                if model in self._disabled_models:
+                if self._is_disabled(model):
                     continue
                 attempt_started = time.time()
                 try:
@@ -1250,7 +1253,8 @@ POSTS:
                     )
                     if _looks_like_missing_model(exc):
                         self.logger.warning("Disabling unavailable Gemini model %s: %s", model, exc)
-                        self._disabled_models.add(model)
+                        # A missing/unknown model will not reappear soon; park it for an hour.
+                        self._disable_model(model, 3600.0)
                         continue
 
                     if isinstance(exc, RuntimeError):
@@ -1262,8 +1266,11 @@ POSTS:
                     status = _status_code(exc)
                     if status in {429, 500, 502, 503, 504}:
                         if status == 429 and _looks_like_quota_exhausted(exc):
-                            self.logger.warning("Disabling quota-exhausted Gemini model %s: %s", model, exc)
-                            self._disabled_models.add(model)
+                            cooldown = _retry_delay_from_error(exc) or 900.0
+                            self.logger.warning(
+                                "Quota-exhausted Gemini model %s; retrying it in %.0fs: %s", model, cooldown, exc
+                            )
+                            self._disable_model(model, cooldown)
                             last_retryable_exc = exc
                             continue
                         last_retryable_exc = exc
@@ -1273,7 +1280,7 @@ POSTS:
                         continue
                     raise
 
-            models = [model for model in self._candidate_models() if model not in self._disabled_models]
+            models = [model for model in self._candidate_models() if not self._is_disabled(model)]
             if not models:
                 raise RuntimeError("All configured Gemini models were rejected/unavailable")
             if last_retryable_exc is None:
@@ -1293,6 +1300,20 @@ POSTS:
         if last_retryable_exc is not None:
             raise last_retryable_exc
         raise RuntimeError("Gemini request failed without retryable error details")
+
+    def _disable_model(self, model: str, cooldown_seconds: float) -> None:
+        """Park a model for a bounded window instead of forever."""
+        self._disabled_models[model] = time.time() + max(1.0, float(cooldown_seconds))
+
+    def _is_disabled(self, model: str) -> bool:
+        expiry = self._disabled_models.get(model)
+        if expiry is None:
+            return False
+        if time.time() >= expiry:
+            del self._disabled_models[model]
+            self.logger.info("Re-enabling Gemini model %s after cooldown", model)
+            return False
+        return True
 
     def _finish_reason(self, response: Any) -> str:
         """Best-effort finish_reason for the first candidate, upper-cased."""
