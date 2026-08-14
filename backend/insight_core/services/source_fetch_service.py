@@ -464,6 +464,14 @@ class SourceFetchService:
             return "youtube_channel"
 
         if host in self.REDDIT_HOSTS and "/r/" in parsed.path:
+            # A subreddit URL that is ALREADY an .rss feed must be fetched as RSS.
+            # Rewriting it to /new.json returns HTTP 403 - Reddit blocks unauthenticated
+            # JSON API reads regardless of User-Agent, while the .rss endpoint answers
+            # 200 for the same subreddit. Measured 2026-08-14:
+            #   /r/smartglasses/new.json?limit=5  -> 403
+            #   /r/smartglasses/.rss              -> 200
+            if parsed.path.endswith((".rss", ".xml")) or parsed.path.endswith("/.rss"):
+                return "generic_rss"
             return "reddit_subreddit"
 
         return "generic_rss"
