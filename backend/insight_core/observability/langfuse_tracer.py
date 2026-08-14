@@ -56,34 +56,32 @@ def _is_self_hosted(host: str) -> bool:
         return False
 
 
-def _disable_requests_tls_verification() -> None:
-    """Force verify=False for the `requests` layer (used by the OTLP exporter).
+def _ca_bundle() -> Optional[str]:
+    """Path to a CA bundle that trusts the self-hosted Langfuse certificate."""
+    return os.environ.get("LANGFUSE_CA_BUNDLE") or None
 
-    Scoped by caller to self-hosted hosts only. Idempotent.
+
+def _insecure_tls() -> bool:
+    """Opt-in, Langfuse-scoped TLS bypass. Never applied process-wide."""
+    return _truthy(os.environ.get("LANGFUSE_TLS_INSECURE"))
+
+
+def _configure_exporter_tls() -> None:
+    """Point the OTLP exporter at an operator-supplied CA bundle.
+
+    The OTLP HTTP exporter uses `requests`. Earlier revisions monkey-patched
+    requests.Session.merge_environment_settings to force verify=False, which
+    silently disabled certificate verification for *every* HTTP client in the
+    process - praw, yt-dlp, and every connector - not just Langfuse. That is a
+    process-wide downgrade to ship telemetry, so it is gone.
+
+    To trace a self-signed Langfuse, mount its CA and set LANGFUSE_CA_BUNDLE.
     """
-    try:
-        import requests
-
-        if getattr(requests.Session.merge_environment_settings, "_insight_no_verify", False):
-            return
-        _orig = requests.Session.merge_environment_settings
-
-        def _patched(self, url, proxies, stream, verify, cert):  # noqa: ANN001
-            settings = _orig(self, url, proxies, stream, verify, cert)
-            settings["verify"] = False
-            return settings
-
-        _patched._insight_no_verify = True  # type: ignore[attr-defined]
-        requests.Session.merge_environment_settings = _patched  # type: ignore[assignment]
-
-        try:
-            import urllib3
-
-            urllib3.disable_warnings()
-        except Exception:  # noqa: BLE001
-            pass
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Could not disable requests TLS verification: %s", exc)
+    bundle = _ca_bundle()
+    if not bundle:
+        return
+    os.environ.setdefault("OTEL_EXPORTER_OTLP_CERTIFICATE", bundle)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", bundle)
 
 
 def get_client() -> Optional[Any]:
@@ -105,9 +103,28 @@ def get_client() -> Optional[Any]:
         _client = None
         return None
 
-    if _is_self_hosted(host):
-        # Must run before the SDK builds its OTLP exporter.
-        _disable_requests_tls_verification()
+    # Must run before the SDK builds its OTLP exporter.
+    _configure_exporter_tls()
+
+    # verify: a CA bundle path if supplied, else False only on explicit opt-in,
+    # else normal verification. Scoped to Langfuse's own client either way.
+    if _ca_bundle():
+        verify: Any = _ca_bundle()
+    elif _insecure_tls():
+        verify = False
+        logger.warning(
+            "LANGFUSE_TLS_INSECURE is set: certificate verification is disabled for "
+            "the Langfuse client only. Prefer LANGFUSE_CA_BUNDLE."
+        )
+    else:
+        verify = True
+        if _is_self_hosted(host):
+            logger.warning(
+                "Langfuse host %s looks self-hosted. If it uses a self-signed "
+                "certificate, set LANGFUSE_CA_BUNDLE to its CA (preferred) or "
+                "LANGFUSE_TLS_INSECURE=true. Traces will fail to export until then.",
+                host,
+            )
 
     try:
         import httpx
@@ -117,9 +134,9 @@ def get_client() -> Optional[Any]:
             public_key=public_key,
             secret_key=secret_key,
             base_url=host,
-            httpx_client=httpx.Client(verify=False),
+            httpx_client=httpx.Client(verify=verify),
         )
-        logger.info("Langfuse v4 tracing enabled (host=%s, TLS verification disabled)", host)
+        logger.info("Langfuse v4 tracing enabled (host=%s, tls_verify=%s)", host, verify)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Langfuse init failed, tracing disabled: %s", exc)
         _client = None
