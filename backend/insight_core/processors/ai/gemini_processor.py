@@ -153,7 +153,10 @@ class GeminiProcessor:
         self.model_name = self.model
         self.model_fallbacks = _parse_csv_env("GEMINI_MODEL_FALLBACKS") or list(DEFAULT_FALLBACK_MODELS)
         self.temperature = float(os.environ.get("GEMINI_TEMPERATURE", "0.1"))
-        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+        # 4096 was not enough. Gemini 3.x flash spends 2200-2500 tokens on internal
+        # thinking before emitting a visible token (measured against the live API),
+        # so a 4096 cap left ~1600 for the actual briefing and truncated it mid-word.
+        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16384"))
         self.retry_max_attempts = int(os.environ.get("GEMINI_RETRY_MAX_ATTEMPTS", "6"))
         self.retry_min_backoff_s = float(os.environ.get("GEMINI_RETRY_MIN_BACKOFF_S", "3"))
         self.retry_max_backoff_s = float(os.environ.get("GEMINI_RETRY_MAX_BACKOFF_S", "120"))
@@ -1066,8 +1069,20 @@ POSTS:
                         config=config_obj,
                     )
                     text = self._response_text(response)
+                    finish_reason = self._finish_reason(response)
                     if not text:
                         raise RuntimeError(f"Gemini returned empty response for model {model}")
+                    # A MAX_TOKENS response still carries partial text, and without this
+                    # check that fragment was stored as a successful briefing. That is how
+                    # briefings ended up starting mid-word (e.g. one day's entire briefing
+                    # was the two characters "k."). Treat truncation as a hard failure so
+                    # the retry/fallback path engages instead of persisting a fragment.
+                    if "MAX_TOKENS" in finish_reason:
+                        raise RuntimeError(
+                            f"Gemini response truncated by max_output_tokens "
+                            f"({self.max_output_tokens}) for model {model}; "
+                            f"raise GEMINI_MAX_OUTPUT_TOKENS"
+                        )
                     self.model_name = model
                     cleaned = self._clean_markdown_response(text)
                     record_generation(
@@ -1136,6 +1151,19 @@ POSTS:
         if last_retryable_exc is not None:
             raise last_retryable_exc
         raise RuntimeError("Gemini request failed without retryable error details")
+
+    def _finish_reason(self, response: Any) -> str:
+        """Best-effort finish_reason for the first candidate, upper-cased."""
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            reason = getattr(candidate, "finish_reason", None)
+            if reason is None and isinstance(candidate, dict):
+                reason = candidate.get("finish_reason") or candidate.get("finishReason")
+            if reason is None:
+                continue
+            # google-genai returns an enum; str() gives e.g. "FinishReason.MAX_TOKENS"
+            return str(getattr(reason, "name", reason)).upper()
+        return ""
 
     def _response_text(self, response: Any) -> str:
         text = getattr(response, "text", None)
