@@ -23,6 +23,34 @@ DEFAULT_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.0-flash",
 ]
+# Content requirements, placed BEFORE the style bans on purpose. A model given something
+# real to say stops reaching for stock phrasing on its own; a model given only prohibitions
+# produces clean, banned-word-free, empty prose. Moves 3, 5 and 8 are the load-bearing ones:
+# each demands a commitment that could later be shown wrong, which generic text cannot fake.
+ANALYST_MOVES_BLOCK = """ANALYSIS - what separates this from a summary.
+
+A summary tells the reader what was said. Analysis tells them something true and important they
+did not already know, as unequivocally as the evidence allows. Making a claim vague is how you
+make it safely correct and useless; make claims as strong as they can be made without becoming
+false. Where you must qualify, qualify with the specific evidence ("two of the four sources give
+a lower figure"), never with atmosphere ("it appears", "arguably").
+
+For each significant development, do as many of these as the material supports:
+- Name the MECHANISM, not just the outcome. Who had which incentive, which constraint bound,
+  what the money or the compute actually did.
+- Attach the consequence to a NAMED PARTY. "Implications for the industry" is not a consequence;
+  "this raises the floor price for anyone reselling inference under $2/M" is.
+- Say who is WRONG. A read with no loser has no content. Name the position this event falsifies.
+- CONNECT it to a prior event when the posts support one ("the third recall of this component
+  since March"). Compounding is what makes a recurring briefing worth reading.
+- State what would FALSIFY the read: the concrete observation that would show you wrong.
+- Separate OBSERVATION from INFERENCE. Mark which sentences are reported fact and which are
+  your judgment. Never present a judgment in the grammar of a fact.
+- Where you infer, give one real ALTERNATIVE EXPLANATION with its own mechanism - not "some may
+  disagree".
+- When the explanation is boring and well known, say the boring thing plainly. Do not dress an
+  ordinary point in ceremony to make it feel deep."""
+
 # Appended to every generative prompt. Suppresses the abstractive-summary register that
 # strips proper nouns and numbers, and bans the stock phrasing that makes output read as
 # machine-written. Positive instructions come last because prohibitions alone produce
@@ -311,6 +339,8 @@ Derive the structure from what the day actually contained. Do not reuse yesterda
 Use only the supplied posts. Do not mention missing data, truncation, or your own process.
 Do not address the reader.
 
+{ANALYST_MOVES_BLOCK}
+
 {BRIEFING_STYLE_BLOCK}
 
 POSTS ({len(posts)} total):
@@ -411,13 +441,24 @@ Return ONLY valid JSON with this exact structure:
 }}
 
 Rules:
-- Use only post IDs that exist in the input.
+- Use only post IDs that exist in the input; never invent one.
 - Group related developments into topics, even across different sources.
-- Surface concrete recent developments and trends, not generic recap.
+- Every post ID appears in exactly one topic. A post sharing nothing with the others becomes a
+  single-post topic - that is correct, not a failure. Nothing is silently dropped.
+- Titles state the finding with its key specific, never a category label.
 - Stay in the voice and priorities described above.
-- Do not invent post IDs.
 
-POSTS:
+FACT CONSERVATION: these topics are read INSTEAD of the posts. Every number, benchmark figure,
+version string, model name, company, person, price and date in a topic's posts must appear in
+that topic's summary. Compress wording, never facts. Where sources disagree, give both positions
+and name who holds each. Output grows with input: {len(posts)} posts cannot honestly reduce to a
+few lines.
+
+{ANALYST_MOVES_BLOCK}
+
+{BRIEFING_STYLE_BLOCK}
+
+POSTS ({len(posts)} total):
 {numbered_posts}
 """
         try:
