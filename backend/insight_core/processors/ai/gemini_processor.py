@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -162,6 +163,7 @@ class GeminiProcessor:
         self.is_setup = False
         self.logger = logging.getLogger(__name__)
         self._client: Any | None = None
+        self._client_lock = threading.Lock()
         self._disabled_models: set[str] = set()
         self.llm: Any | None = None
 
@@ -188,9 +190,13 @@ class GeminiProcessor:
         self.llm = self._client_instance()
 
     async def disconnect(self) -> None:
-        """Release the cached client for compatibility with existing call sites."""
-        self._client = None
-        self.llm = None
+        """No-op (bug B1 fix).
+
+        The Gemini client is persistent and safe for concurrent use, so we do
+        NOT tear it down here. Previously this nulled the shared client, which
+        could race with an in-flight generation on another coroutine/request
+        and corrupt results. The client lives for the process lifetime.
+        """
         return None
 
     async def daily_briefing(self, posts: List[Dict[str, Any]]) -> str:
@@ -998,14 +1004,16 @@ POSTS:
         if self._client is not None:
             return self._client
 
-        from google import genai
+        # Double-checked locking so concurrent first-callers create only one client.
+        with self._client_lock:
+            if self._client is not None:
+                return self._client
+            from google import genai
 
-        if self.api_key:
-            self._client = genai.Client(api_key=self.api_key)
-        else:
-            self._client = genai.Client()
-        self.llm = self._client
-        return self._client
+            client = genai.Client(api_key=self.api_key) if self.api_key else genai.Client()
+            self.llm = client
+            self._client = client
+            return client
 
     def _candidate_models(self) -> list[str]:
         requested = [str(self.model).strip()] + [str(model).strip() for model in self.model_fallbacks]
