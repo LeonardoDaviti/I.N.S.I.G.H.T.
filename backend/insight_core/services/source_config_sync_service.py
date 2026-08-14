@@ -25,7 +25,28 @@ class SourceConfigSyncService:
         )
         self.logger = get_component_logger("source_config_sync")
 
+    # Refuse to mirror-delete more than this fraction of the registry in one sync.
+    # Override per-run with INSIGHT_ALLOW_BULK_SOURCE_DELETE=true.
+    MAX_MIRROR_DELETE_RATIO = 0.34
+
     def sync_json_to_db(self, mirror: bool = True) -> Dict[str, Any]:
+        if mirror and not self.config_path.exists():
+            # load_json() returns an empty document when the file is missing, which
+            # would make desired_keys empty and hand EVERY source to delete_source().
+            # posts_source_id_fkey is ON DELETE CASCADE, so that silently destroys the
+            # entire corpus. The config directory is a host bind mount and this runs on
+            # every container start and every scheduler cycle, so a mount that fails to
+            # attach is sufficient to trigger it. Never mirror from a file that is not there.
+            message = (
+                f"sources.json not found at {self.config_path}; refusing to mirror "
+                f"(would delete every source and cascade-delete all posts)"
+            )
+            self.logger.error(message)
+            return {
+                "success": False,
+                "stats": {"added": 0, "updated": 0, "deleted": 0, "errors": [message]},
+            }
+
         document = self.load_json()
         desired_sources = self._flatten_sources(document)
         current_sources = self.sources_service.get_all_sources()
@@ -59,12 +80,34 @@ class SourceConfigSyncService:
                     stats["errors"].append(f"update {platform}/{handle_or_url}: {exc}")
 
         if mirror:
-            for (platform, handle_or_url), current in current_lookup.items():
-                if (platform, handle_or_url) in desired_keys:
-                    continue
+            doomed = [
+                (key, current)
+                for key, current in current_lookup.items()
+                if key not in desired_keys
+            ]
+            # A parse failure, a truncated write, or an editing mistake in sources.json
+            # should not be able to wipe the registry. Deleting a source cascades to every
+            # post it ever collected, so a bulk delete must be an explicit act.
+            allow_bulk = str(os.getenv("INSIGHT_ALLOW_BULK_SOURCE_DELETE", "")).strip().lower() in {"1", "true", "yes", "on"}
+            over_threshold = (
+                current_lookup
+                and len(doomed) > max(1, int(len(current_lookup) * self.MAX_MIRROR_DELETE_RATIO))
+            )
+            if over_threshold and not allow_bulk:
+                message = (
+                    f"refusing to mirror-delete {len(doomed)} of {len(current_lookup)} sources "
+                    f"(over {self.MAX_MIRROR_DELETE_RATIO:.0%} threshold); "
+                    f"set INSIGHT_ALLOW_BULK_SOURCE_DELETE=true to override"
+                )
+                self.logger.error(message)
+                stats["errors"].append(message)
+                doomed = []
+
+            for (platform, handle_or_url), current in doomed:
                 try:
                     self.sources_service.delete_source(current["id"])
                     stats["deleted"] += 1
+                    self.logger.warning("Mirror-deleted source %s/%s and its posts", platform, handle_or_url)
                 except Exception as exc:
                     stats["errors"].append(f"delete {platform}/{handle_or_url}: {exc}")
 
