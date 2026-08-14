@@ -56,6 +56,54 @@
                 {
                     "id": "https://www.seangoedecke.com/rss.xml",
                     "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-code/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-code/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/skills/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/skills/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/docs/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-cookbooks/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/anthropic-sdk-python/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/anthropic-sdk-typescript/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/courses/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-quickstarts/commits.atom",
+                    "state": "enabled"
                 }
             ]
         },
