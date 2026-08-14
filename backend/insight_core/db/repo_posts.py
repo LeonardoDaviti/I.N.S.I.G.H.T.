@@ -13,6 +13,7 @@ from insight_core.logs.core.logger_config import setup_logging, get_component_lo
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.entity_memory import build_post_memory_fields
 from insight_core.utils.evidence import build_post_evidence_fields
+from insight_core.utils.json_safe import json_default
 
 
 class PostsRepository:
@@ -673,7 +674,6 @@ class PostsRepository:
     def _json_dumps(self, value: Any) -> str:
         return json.dumps(value, default=self._json_default)
 
-    def _json_default(self, value: Any) -> str:
-        if isinstance(value, (datetime, date)):
-            return value.isoformat()
-        raise TypeError(f"Object of type {type(value)} is not JSON serializable")
+    def _json_default(self, value: Any) -> Any:
+        """Delegates to the shared encoder so all repos stay in step."""
+        return json_default(value)

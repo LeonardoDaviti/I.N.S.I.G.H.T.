@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.insight_core.services.source_config_sync_service import SourceConfigSyncService
-from backend.insight_core.services.youtube_service import YouTubeService
+from insight_core.services.source_config_sync_service import SourceConfigSyncService
+from insight_core.services.youtube_service import YouTubeService
 
 
 class FakeSourcesService:

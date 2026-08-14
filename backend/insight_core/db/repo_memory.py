@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import psycopg
 from psycopg import Cursor
+from insight_core.utils.json_safe import json_default
 
 
 class MemoryRepository:
@@ -614,7 +615,6 @@ class MemoryRepository:
             "script": row[14],
         }
 
-    def _json_default(self, value: Any) -> str:
-        if isinstance(value, (datetime, date)):
-            return value.isoformat()
-        raise TypeError(f"Object of type {type(value)} is not JSON serializable")
+    def _json_default(self, value: Any) -> Any:
+        """Delegates to the shared encoder so all repos stay in step."""
+        return json_default(value)

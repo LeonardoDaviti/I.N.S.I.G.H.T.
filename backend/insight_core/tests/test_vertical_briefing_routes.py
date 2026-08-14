@@ -59,6 +59,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
                 background_tasks=main.BackgroundTasks(),
                 start="2026-03-01",
                 end="2026-03-31",
+                asyncMode=False,
             )
         )
 
@@ -75,6 +76,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
                 background_tasks=main.BackgroundTasks(),
                 start="2026-03-01",
                 end="2026-03-31",
+                asyncMode=False,
             )
         )
 
@@ -87,6 +89,7 @@ class VerticalBriefingRouteTests(unittest.TestCase):
             main.get_source_vertical_briefing(
                 source_id="source-123",
                 background_tasks=main.BackgroundTasks(),
+                asyncMode=False,
             )
         )
 

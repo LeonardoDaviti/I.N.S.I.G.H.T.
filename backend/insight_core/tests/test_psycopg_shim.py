@@ -2,7 +2,18 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from psycopg import _run_psql
+# _run_psql only exists in the vendored psycopg shim under backend/. The Docker image
+# deletes that shim (Dockerfile: rm -rf fastapi pydantic psycopg ...) and installs the
+# real psycopg, so this suite is host-only. Skip rather than error there.
+try:
+    from psycopg import _run_psql
+    _SHIM_AVAILABLE = True
+except ImportError:  # real psycopg installed
+    _run_psql = None
+    _SHIM_AVAILABLE = False
+
+
+@unittest.skipUnless(_SHIM_AVAILABLE, "vendored psycopg shim not present (real psycopg installed)")
 
 
 class PsycopgShimTests(unittest.TestCase):

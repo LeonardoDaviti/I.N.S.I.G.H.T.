@@ -1,10 +1,10 @@
 import unittest
 from datetime import datetime, timezone
 
-from backend.insight_core.db.repo_sources import SourcesRepository
-from backend.insight_core.processors.ai.gemini_processor import GeminiProcessor
-from backend.insight_core.services.briefing_service import BriefingService
-from backend.insight_core.services.post_detail_service import PostDetailService
+from insight_core.db.repo_sources import SourcesRepository
+from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.services.briefing_service import BriefingService
+from insight_core.services.post_detail_service import PostDetailService
 
 
 class GeminiProcessorFallbackTests(unittest.IsolatedAsyncioTestCase):

@@ -1,6 +1,6 @@
 import unittest
 
-from backend.insight_core.services.story_timeline_service import StoryTimelineService
+from insight_core.services.story_timeline_service import StoryTimelineService
 
 
 class StoryTimelineServiceTests(unittest.TestCase):
