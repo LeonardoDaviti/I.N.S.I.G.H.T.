@@ -400,6 +400,82 @@ class PostsRepository:
         
         return posts
 
+    def get_posts_for_source_ids(
+        self,
+        cur: Cursor,
+        source_ids: List[str],
+        limit: int = 50,
+        offset: int = 0,
+        since_days: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Newest-first reading feed across many sources, in ONE query.
+
+        get_posts_by_source_and_range issues a query per source; a track with 54 sources
+        meant 54 round trips and an in-Python sort. This uses source_id = ANY(%s) with a
+        server-side LIMIT so the reading view stays flat as tracks grow. Deliberately does
+        not project content_html/body_original - the list view never renders them.
+        """
+        if not source_ids:
+            return []
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        where_since = ""
+        params: List[Any] = [list(source_ids)]
+        if since_days:
+            where_since = "AND COALESCE(p.published_at, p.fetched_at) >= now() - make_interval(days => %s)"
+            params.append(int(since_days))
+        params.extend([limit, offset])
+
+        cur.execute(
+            f"""
+            SELECT
+                p.id, p.url, p.title, p.content, p.published_at, p.fetched_at,
+                p.media_urls, p.categories, p.source_id, p.language_code,
+                s.platform,
+                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
+            FROM posts p
+            JOIN sources s ON p.source_id = s.id
+            WHERE p.source_id = ANY(%s)
+            {where_since}
+            ORDER BY COALESCE(p.published_at, p.fetched_at) DESC, p.id DESC
+            LIMIT %s OFFSET %s
+            """,
+            params,
+        )
+        return [
+            {
+                "id": str(r[0]),
+                "url": r[1],
+                "title": r[2],
+                "content": r[3],
+                "published_at": r[4].isoformat() if hasattr(r[4], "isoformat") else r[4],
+                "date": r[4].isoformat() if hasattr(r[4], "isoformat") else r[4],
+                "fetched_at": r[5].isoformat() if hasattr(r[5], "isoformat") else r[5],
+                "media_urls": r[6] or [],
+                "categories": r[7] or [],
+                "source_id": str(r[8]) if r[8] else None,
+                "language_code": r[9],
+                "platform": r[10],
+                "source": r[11],
+                "source_display_name": r[11],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def count_posts_for_source_ids(self, cur: Cursor, source_ids: List[str], since_days: int | None = None) -> int:
+        """Total posts across the given sources (for pagination totals)."""
+        if not source_ids:
+            return 0
+        if since_days:
+            cur.execute(
+                "SELECT count(*) FROM posts WHERE source_id = ANY(%s) "
+                "AND COALESCE(published_at, fetched_at) >= now() - make_interval(days => %s)",
+                (list(source_ids), int(since_days)),
+            )
+        else:
+            cur.execute("SELECT count(*) FROM posts WHERE source_id = ANY(%s)", (list(source_ids),))
+        return int(cur.fetchone()[0] or 0)
+
     def get_posts_by_source_and_range(
         self,
         cur: Cursor,

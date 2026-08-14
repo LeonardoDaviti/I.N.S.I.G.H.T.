@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Play, RefreshCw, Trash2, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { apiService } from '../services/api';
 import type { Folder, Expert, ExpertRunResult } from '../services/api';
 import MarkdownRenderer from './ui/MarkdownRenderer';
 
 export default function FoldersExpertsPanel() {
+  const navigate = useNavigate();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [experts, setExperts] = useState<Expert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,7 +115,16 @@ export default function FoldersExpertsPanel() {
         <div className="flex flex-wrap items-center gap-2">
           {folders.map((f) => (
             <span key={f.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 border border-gray-200 text-sm text-gray-800">
-              {f.name}
+              <button
+                onClick={() => navigate(`/tracks/${f.id}`)}
+                className="font-medium hover:text-blue-700 hover:underline"
+                title="Open reading view"
+              >
+                {f.name}
+              </button>
+              {f.kind === 'track' && (
+                <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-medium">track</span>
+              )}
               <span className="text-xs text-gray-500">{f.source_count ?? 0}s · {f.post_count ?? 0}p</span>
               <button onClick={() => removeFolder(f.id)} className="text-gray-400 hover:text-red-600" aria-label="Delete folder">
                 <Trash2 className="w-3.5 h-3.5" />

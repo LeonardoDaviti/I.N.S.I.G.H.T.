@@ -313,6 +313,22 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "folder": None}
 
+    def get_folder_posts(
+        self, folder_id: str, limit: int = 50, offset: int = 0, since_days: int | None = None
+    ) -> Dict[str, Any]:
+        """Reading feed for one folder/track: newest posts from its sources."""
+        try:
+            folder = self.folders_service.get_folder(folder_id)
+            if not folder:
+                return {"success": False, "error": f"Folder {folder_id} not found", "posts": []}
+            source_ids = self.folders_service.list_source_ids(folder_id)
+            feed = self.posts_service.get_folder_feed(
+                source_ids, limit=limit, offset=offset, since_days=since_days
+            )
+            return {"success": True, "folder": folder, "source_count": len(source_ids), **feed}
+        except Exception as e:
+            return {"success": False, "error": str(e), "posts": []}
+
     def set_source_main_digest(self, source_id: str, in_main_digest: bool) -> Dict[str, Any]:
         """Include/exclude one source from the main digests."""
         try:

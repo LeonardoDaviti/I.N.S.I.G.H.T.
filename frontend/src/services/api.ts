@@ -2238,6 +2238,32 @@ class ApiService {
 
   // ===== Folders & Experts =====
 
+  /** Reading feed for one folder/track: newest posts from its sources. */
+  async getFolderPosts(
+    folderId: string,
+    opts?: { limit?: number; offset?: number; days?: number },
+  ): Promise<{
+    success: boolean;
+    folder?: Folder;
+    source_count?: number;
+    posts: Post[];
+    total?: number;
+    returned?: number;
+    has_more?: boolean;
+    error?: string;
+  }> {
+    try {
+      const params = new URLSearchParams();
+      if (opts?.limit != null) params.set('limit', String(opts.limit));
+      if (opts?.offset != null) params.set('offset', String(opts.offset));
+      if (opts?.days != null) params.set('days', String(opts.days));
+      const qs = params.toString();
+      return await this.makeRequest(`/api/folders/${folderId}/posts${qs ? `?${qs}` : ''}`);
+    } catch (error) {
+      return { success: false, posts: [], error: error instanceof Error ? error.message : 'Failed to load track feed' };
+    }
+  }
+
   async getFolders(): Promise<{ success: boolean; folders: Folder[]; error?: string }> {
     try { return await this.makeRequest('/api/folders'); }
     catch (e) { return { success: false, folders: [], error: e instanceof Error ? e.message : 'Unknown error' }; }

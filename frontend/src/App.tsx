@@ -15,6 +15,7 @@ const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
+const TrackPage = lazy(() => import('./pages/TrackPage'));
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
                 <Route path="/posts/:postId" element={<PostDetailPage />} />
                 <Route path="/settings/sources" element={<SourcesConfig />} />
                 <Route path="/experts" element={<ExpertsPage />} />
+                <Route path="/tracks/:trackId" element={<TrackPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>

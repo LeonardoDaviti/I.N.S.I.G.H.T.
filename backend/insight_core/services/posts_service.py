@@ -47,6 +47,26 @@ class PostsService:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source_and_range(cur, source_id, start_date, end_date)
 
+    def get_folder_feed(
+        self, folder_id_source_ids: List[str], limit: int = 50, offset: int = 0,
+        since_days: int | None = None,
+    ) -> Dict[str, Any]:
+        """Newest-first reading feed for a set of sources, with a real total."""
+        if not folder_id_source_ids:
+            return {"posts": [], "total": 0, "returned": 0, "has_more": False}
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                posts = self.repo.get_posts_for_source_ids(
+                    cur, folder_id_source_ids, limit=limit, offset=offset, since_days=since_days
+                )
+                total = self.repo.count_posts_for_source_ids(cur, folder_id_source_ids, since_days=since_days)
+        return {
+            "posts": posts,
+            "total": total,
+            "returned": len(posts),
+            "has_more": offset + len(posts) < total,
+        }
+
     def get_posts_by_sources_and_range(
         self, source_ids: List[str], start_date: date, end_date: date
     ) -> List[Dict[str, Any]]:

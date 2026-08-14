@@ -1058,6 +1058,22 @@ async def add_folder_source(folder_id: str, body: dict):
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/folders/{folder_id}/posts")
+async def get_folder_posts(
+    folder_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    days: int | None = Query(None, ge=1, le=365),
+):
+    """Reading feed for a folder/track: newest posts from its sources, newest first."""
+    try:
+        logger.info(f"\U0001F4D6 Folder feed {folder_id} limit={limit} offset={offset} days={days}")
+        return api_bridge.get_folder_posts(folder_id, limit=limit, offset=offset, since_days=days)
+    except Exception as e:
+        logger.exception("Failed to load folder feed")
+        return {"success": False, "error": str(e), "posts": []}
+
+
 @app.put("/api/sources/{source_id}/main-digest")
 async def set_source_main_digest(source_id: str, body: dict):
     """Include/exclude one source from the main digests. Body: {in_main_digest: bool}"""
