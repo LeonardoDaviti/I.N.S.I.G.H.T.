@@ -147,7 +147,7 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         service = BriefingService("postgresql:///unused")
 
         class FakePostsService:
-            def get_posts_by_date(self, target_date):
+            def get_posts_by_date(self, target_date, main_digest_only=False):
                 return [
                     {
                         "id": "1",
@@ -193,7 +193,7 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         service = BriefingService("postgresql:///unused")
 
         class FakePostsService:
-            def get_posts_by_date(self, target_date):
+            def get_posts_by_date(self, target_date, main_digest_only=False):
                 return [
                     {
                         "id": "1",
@@ -235,7 +235,7 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         service = BriefingService("postgresql:///unused")
 
         class FakePostsService:
-            def get_posts_by_date(self, target_date):
+            def get_posts_by_date(self, target_date, main_digest_only=False):
                 return [
                     {
                         "id": "post-1",
