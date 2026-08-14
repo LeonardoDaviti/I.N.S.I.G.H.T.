@@ -1058,6 +1058,34 @@ async def add_folder_source(folder_id: str, body: dict):
         return {"success": False, "error": str(e)}
 
 
+@app.put("/api/sources/{source_id}/main-digest")
+async def set_source_main_digest(source_id: str, body: dict):
+    """Include/exclude one source from the main digests. Body: {in_main_digest: bool}"""
+    try:
+        value = bool(body.get("in_main_digest", True))
+        logger.info(f"\U0001F5DE Source {source_id} -> in_main_digest={value}")
+        return api_bridge.set_source_main_digest(source_id, value)
+    except Exception as e:
+        logger.exception("Failed to set source main-digest flag")
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/api/folders/{folder_id}/main-digest")
+async def set_folder_main_digest(folder_id: str, body: dict):
+    """Apply the digest switch to every source in a folder/track.
+
+    Body: {in_main_digest: bool}. Sending false is what makes a track's sources stop
+    appearing in the daily and weekly briefings while still being ingested.
+    """
+    try:
+        value = bool(body.get("in_main_digest", True))
+        logger.info(f"\U0001F5DE Folder {folder_id} -> in_main_digest={value}")
+        return api_bridge.set_folder_main_digest(folder_id, value)
+    except Exception as e:
+        logger.exception("Failed to set folder main-digest flag")
+        return {"success": False, "error": str(e)}
+
+
 @app.delete("/api/folders/{folder_id}/sources/{source_id}")
 async def remove_folder_source(folder_id: str, source_id: str):
     """Detach a source from a folder."""

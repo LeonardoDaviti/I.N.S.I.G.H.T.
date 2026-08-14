@@ -18,11 +18,95 @@
             "enabled": true,
             "sources": [
                 {
+                    "id": "http://export.arxiv.org/api/query?search_query=abs:%22augmented+reality%22+AND+abs:waveguide&sortBy=submittedDate&sortOrder=descending&max_results=30",
+                    "state": "enabled"
+                },
+                {
+                    "id": "http://export.arxiv.org/api/query?search_query=abs:%22smart+glasses%22&sortBy=submittedDate&sortOrder=descending&max_results=30",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://9to5google.com/guides/android-xr/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://about.fb.com/news/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://blog.google/products/platforms-devices/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://displaydaily.com/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/anthropic-sdk-python/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/anthropic-sdk-typescript/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-code/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-code/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-cookbooks/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/claude-quickstarts/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/courses/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/skills/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/anthropics/skills/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/docs/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/commits.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://ir.vuzix.com/news-events/press-releases/rss",
+                    "state": "enabled"
+                },
+                {
                     "id": "https://karpathy.bearblog.dev/feed/",
                     "state": "enabled"
                 },
                 {
+                    "id": "https://kguttag.com/feed/",
+                    "state": "enabled"
+                },
+                {
                     "id": "https://lexfridman.com/feed/podcast/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://mixed-news.com/en/feed/",
                     "state": "enabled"
                 },
                 {
@@ -38,7 +122,19 @@
                     "state": "enabled"
                 },
                 {
+                    "id": "https://rss.arxiv.org/rss/physics.optics",
+                    "state": "enabled"
+                },
+                {
                     "id": "https://simonwillison.net/atom/everything/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://skarredghost.com/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://techcrunch.com/tag/smart-glasses/feed/",
                     "state": "enabled"
                 },
                 {
@@ -50,7 +146,67 @@
                     "state": "enabled"
                 },
                 {
+                    "id": "https://www.androidauthority.com/tag/smart-glasses/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.apple.com/newsroom/rss-feed.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.auganix.org/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.digilens.com/feed/",
+                    "state": "enabled"
+                },
+                {
                     "id": "https://www.oneusefulthing.org/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/EvenRealities/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/RayBanMeta/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/Spectacles/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/Vuzix/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/Xreal/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/androidxr/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/augmentedreality/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/rokid/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/smartglasses/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.reddit.com/r/viture/.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.roadtovr.com/feed/",
                     "state": "enabled"
                 },
                 {
@@ -58,51 +214,23 @@
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-code/releases.atom",
+                    "id": "https://www.solosglasses.com/blogs/news.atom",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-code/commits.atom",
+                    "id": "https://www.theverge.com/rss/ar-vr/index.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/skills/releases.atom",
+                    "id": "https://www.tomsguide.com/feeds/tag/smart-glasses",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/skills/commits.atom",
+                    "id": "https://www.uploadvr.com/rss/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/commits.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/modelcontextprotocol/docs/commits.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/anthropics/claude-cookbooks/commits.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/anthropics/anthropic-sdk-python/releases.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/anthropics/anthropic-sdk-typescript/releases.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/anthropics/courses/commits.atom",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://github.com/anthropics/claude-quickstarts/commits.atom",
+                    "id": "https://www.vuzix.com/blogs/vuzix-blog.atom",
                     "state": "enabled"
                 }
             ]
@@ -165,6 +293,94 @@
             "sources": [
                 {
                     "id": "UCoryWpk4QVYKFCJul9KBdyw",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC1xcV34QaE2icXZ21eSvSSw",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC66W1l41kXuASV-UYvC9xzA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC766vkQw0Mz3VtXX5XvXxGQ",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9oom6va1SHZvVOeQfRPP7A",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCBJycsmduvYEL83R_U4JriQ",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCE0X7OeFSH-I4nrkSrK-b1A",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCEZjO5uG9A9ZxkJihl7wTLA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCF6jzRJBunf4oOk9gu67KyQ",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCG-ooPXjxaOdLwcGyWg0iog",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHbx9IUW7eCeJsC4sBCTNBA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMh4hWRHX_1QZ98UZygR30Q",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMiJRAwDNSNzuYeN2uWa0pA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCN0FGqUt7e79xKoPAZQ8tww",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCTecoCovL-9_f59o888a1cA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCVNYx9yT_3OhCnZqwaktXXw",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCWFKCr40YwOZQx8FHU_ZqqQ",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCXIB_UAu0FBfXPvOuQ_FNHw",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCYGiWMEIKXL2EhIfPSUSmvg",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UChUEPrBybIvZIBjWN7b2xUg",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCkLHl6d-nvvIL08aeettG9g",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCoUaCoFuwmbJX4Rjq1D7R9w",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCs8BFKYBBfEE6Sfj7zh9kOA",
                     "state": "enabled"
                 }
             ]

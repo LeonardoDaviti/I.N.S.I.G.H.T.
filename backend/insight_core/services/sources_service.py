@@ -46,6 +46,26 @@ class SourcesService:
                 else:
                     raise ValueError(f"Source {source_id} not found")
     
+    def set_in_main_digest(self, source_id: str, in_main_digest: bool) -> Dict[str, Any]:
+        """Include/exclude a single source from the main digests."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                ok = self.repo.set_in_main_digest(cur, source_id, in_main_digest)
+                conn.commit()
+                if not ok:
+                    raise ValueError(f"Source {source_id} not found")
+                self.logger.info(f"Source {source_id} -> in_main_digest={in_main_digest}")
+                return {"source_id": source_id, "in_main_digest": in_main_digest}
+
+    def set_folder_in_main_digest(self, folder_id: str, in_main_digest: bool) -> Dict[str, Any]:
+        """Apply the digest switch to every source in a folder/track."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                changed = self.repo.set_in_main_digest_for_folder(cur, folder_id, in_main_digest)
+                conn.commit()
+                self.logger.info(f"Folder {folder_id} -> in_main_digest={in_main_digest} ({changed} sources)")
+                return {"folder_id": folder_id, "in_main_digest": in_main_digest, "sources_updated": changed}
+
     def add_source(self, platform: str, handle: str) -> Dict[str, Any]:
         """Add new source to database."""
         with psycopg.connect(self.db_url) as conn:

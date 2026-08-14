@@ -313,6 +313,25 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "folder": None}
 
+    def set_source_main_digest(self, source_id: str, in_main_digest: bool) -> Dict[str, Any]:
+        """Include/exclude one source from the main digests."""
+        try:
+            return {"success": True, **self.sources_service.set_in_main_digest(source_id, in_main_digest)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def set_folder_main_digest(self, folder_id: str, in_main_digest: bool) -> Dict[str, Any]:
+        """Apply the digest switch to every source in a folder/track, and record the intent."""
+        try:
+            result = self.sources_service.set_folder_in_main_digest(folder_id, in_main_digest)
+            # Keep the folder's declared intent in step with what was applied.
+            self.folders_service.update_folder(
+                folder_id, {"exclude_from_main_digest": not in_main_digest}
+            )
+            return {"success": True, **result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def update_folder(self, folder_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         """Update folder fields."""
         try:

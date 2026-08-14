@@ -250,6 +250,30 @@ class SourcesRepository:
         self.logger.info(f"Updated settings for source {source_id}")
         return json_safe_settings
 
+    def set_in_main_digest(self, cur: Cursor, source_id: str, in_main_digest: bool) -> bool:
+        """Include or exclude one source from the main daily/weekly digests."""
+        cur.execute(
+            "UPDATE sources SET in_main_digest = %s WHERE id = %s RETURNING id",
+            (in_main_digest, source_id),
+        )
+        return cur.fetchone() is not None
+
+    def set_in_main_digest_for_folder(self, cur: Cursor, folder_id: str, in_main_digest: bool) -> int:
+        """Apply the digest switch to every source in a folder. Returns rows changed.
+
+        This is the bulk action behind a track's "exclude from main digest" toggle. The
+        authority stays on sources so a source shared with a normal folder keeps exactly
+        one answer.
+        """
+        cur.execute(
+            """
+            UPDATE sources SET in_main_digest = %s
+            WHERE id IN (SELECT source_id FROM source_folders WHERE folder_id = %s)
+            """,
+            (in_main_digest, folder_id),
+        )
+        return cur.rowcount or 0
+
     def update_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> bool:
         """
         Update settings for a source.
