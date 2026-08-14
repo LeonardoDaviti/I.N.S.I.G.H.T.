@@ -33,7 +33,7 @@ from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.connectors import create_connector
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
-DEBUG_MODE = True  # Set to False for production
+DEBUG_MODE = False  # DEBUG here also puts the API at DEBUG level (bridge imports this module)
 setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
 

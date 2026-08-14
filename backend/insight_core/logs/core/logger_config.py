@@ -61,7 +61,8 @@ class LoggerConfig:
 
     def _setup_application_handler(self):
         """Set up main application log handler."""
-        app_handler = logging.FileHandler('logs/core/application.log')
+        app_handler = logging.handlers.RotatingFileHandler(
+            'logs/core/application.log', maxBytes=10_000_000, backupCount=3)
         app_handler.setLevel(self.log_level)
         app_handler.setFormatter(LogFormatters.get_file_formatter())
         
@@ -70,7 +71,8 @@ class LoggerConfig:
     
     def _setup_error_handler(self):
         """Set up error-only log handler."""
-        error_handler = logging.FileHandler('logs/core/errors.log')
+        error_handler = logging.handlers.RotatingFileHandler(
+            'logs/core/errors.log', maxBytes=10_000_000, backupCount=3)
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(LogFormatters.get_error_formatter())
         error_handler.addFilter(ErrorOnlyFilter())
@@ -83,7 +85,8 @@ class LoggerConfig:
         connectors = ['telegram', 'rss', 'youtube', 'reddit']
         
         for connector in connectors:
-            handler = logging.FileHandler(f'logs/connectors/{connector}.log')
+            handler = logging.handlers.RotatingFileHandler(
+                f'logs/connectors/{connector}.log', maxBytes=10_000_000, backupCount=3)
             handler.setLevel(self.log_level)
             handler.setFormatter(LogFormatters.get_file_formatter())
             handler.addFilter(PlatformFilter(connector))
@@ -96,7 +99,8 @@ class LoggerConfig:
         operations = ['automated', 'interactive', 'recovery']
         
         for operation in operations:
-            handler = logging.FileHandler(f'logs/operations/{operation}.log')
+            handler = logging.handlers.RotatingFileHandler(
+                f'logs/operations/{operation}.log', maxBytes=10_000_000, backupCount=3)
             handler.setLevel(self.log_level)
             handler.setFormatter(LogFormatters.get_file_formatter())
             handler.addFilter(OperationFilter(operation))

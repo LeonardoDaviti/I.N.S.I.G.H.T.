@@ -52,8 +52,22 @@ class SystemLogsService:
         if not path.exists():
             return []
 
-        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return content[-lines:]
+        # Read backwards in blocks rather than loading the whole file.
+        # read_text() materialised the entire log as one str - widened to UCS-4 by
+        # any emoji, and this codebase logs plenty - then splitlines() built a
+        # separate str per line. That cost ~4.6x the file size per call, and none
+        # of it was returned to the OS afterwards.
+        block = 8192
+        data = b""
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+            while end > 0 and data.count(b"\n") <= lines:
+                step = min(block, end)
+                end -= step
+                fh.seek(end)
+                data = fh.read(step) + data
+        return data.decode("utf-8", errors="replace").splitlines()[-lines:]
 
     def _updated_at(self, path: Path) -> float | None:
         if not path.exists():
