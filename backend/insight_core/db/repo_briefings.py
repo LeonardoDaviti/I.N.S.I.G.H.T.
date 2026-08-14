@@ -13,6 +13,30 @@ from psycopg import Cursor
 class BriefingsRepository:
     """Database access layer for the briefings table."""
 
+    def get_briefing_timestamp(
+        self,
+        cur: Cursor,
+        subject_type: str,
+        subject_key: str,
+        variant: str = "default",
+    ) -> Optional[datetime]:
+        """Just the last-updated timestamp - no content, no payload.
+
+        get_briefing() projects content and payload, so callers that only want a
+        timestamp were loading whole briefing bodies. /api/status does this once
+        per expert on every poll.
+        """
+        cur.execute(
+            """
+            SELECT COALESCE(updated_at, created_at)
+            FROM briefings
+            WHERE subject_type = %s AND subject_key = %s AND variant = %s
+            """,
+            (subject_type, subject_key, variant),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def get_briefing(
         self,
         cur: Cursor,

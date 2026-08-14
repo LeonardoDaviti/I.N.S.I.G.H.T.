@@ -208,11 +208,10 @@ class ExpertsService:
     def last_briefing_at(self, expert: Dict[str, Any]) -> Optional[str]:
         """Lightweight: when this expert's briefing was last stored (ISO), or None."""
         variant = expert.get("output_variant") or "topics"
-        cached = self.store_service.get_briefing("expert_briefing", expert["id"], variant)
-        if not cached:
+        ts = self.store_service.get_briefing_timestamp("expert_briefing", expert["id"], variant)
+        if not ts:
             return None
-        ts = cached.get("updated_at") or cached.get("created_at")
-        return ts.isoformat() if hasattr(ts, "isoformat") else (str(ts) if ts else None)
+        return ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
 
     def get_latest_briefing(self, expert_id: str) -> Dict[str, Any]:
         """Fetch the most recent stored briefing for an expert."""

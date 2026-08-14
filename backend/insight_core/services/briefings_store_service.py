@@ -27,6 +27,17 @@ class BriefingsStoreService:
             with conn.cursor() as cur:
                 return self.repo.get_briefing(cur, subject_type, subject_key, variant)
 
+    def get_briefing_timestamp(
+        self,
+        subject_type: str,
+        subject_key: str,
+        variant: str = "default",
+    ):
+        """Timestamp only - avoids pulling the briefing body just to read a date."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_briefing_timestamp(cur, subject_type, subject_key, variant)
+
     def save_briefing(
         self,
         *,
