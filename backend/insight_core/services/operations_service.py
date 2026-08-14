@@ -105,7 +105,16 @@ class OperationsService:
         status: str,
         message: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
+        compact: bool = False,
     ) -> None:
+        """Close out a job run.
+
+        Pass compact=True when the payload is a full result graph (expert/briefing
+        runs return every cited post, complete with content and content_html).
+        Those rows averaged 1.3MB each and grew job_runs without bound. Callers
+        that poll the job for its result - see pollOperationJob in the frontend -
+        must keep compact=False.
+        """
         now_iso = datetime.now(timezone.utc).isoformat()
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -124,7 +133,7 @@ class OperationsService:
                     )
                 next_payload = {
                     **(current_payload or {}),
-                    **self._prepare_payload(payload or {}, compact=False),
+                    **self._prepare_payload(payload or {}, compact=compact),
                 }
                 if events:
                     next_payload["events"] = events[-200:]
@@ -187,6 +196,23 @@ class OperationsService:
                 )
             conn.commit()
 
+    def prune_job_runs(self, retain_days: int = 30) -> int:
+        """Delete job history older than retain_days. Returns rows removed.
+
+        Without this, job_runs grows forever and every list query gets slower and
+        more memory-hungry. Called once per scheduler cycle.
+        """
+        retain_days = max(1, int(retain_days))
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM job_runs WHERE started_at < now() - make_interval(days => %s)",
+                    (retain_days,),
+                )
+                removed = cur.rowcount or 0
+            conn.commit()
+        return removed
+
     def list_recent_jobs(self, limit: int = 80) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
         with psycopg.connect(self.db_url) as conn:
@@ -202,9 +228,30 @@ class OperationsService:
                       COALESCE(s.settings->>'display_name', s.handle_or_url),
                       s.platform,
                       jr.message,
-                      jr.payload,
+                      -- Only project the handful of payload keys the list view reads.
+                      -- Selecting jr.payload wholesale decoded ~148MB of jsonb per call
+                      -- (200 rows) into Python objects; the freed pages never returned
+                      -- to the OS. Full payloads are still served by get_job().
+                      jsonb_strip_nulls(jsonb_build_object(
+                        'progress',          jr.payload->'progress',
+                        'estimated_tokens',  jr.payload->'estimated_tokens',
+                        'token_usage',       jr.payload->'token_usage',
+                        'error',             jr.payload->'error',
+                        'posts_processed',   jr.payload->'posts_processed',
+                        'saved_briefing_id', jr.payload->'saved_briefing_id'
+                      )),
                       jr.started_at,
-                      jr.finished_at
+                      jr.finished_at,
+                      CASE
+                        WHEN jsonb_typeof(jr.payload->'progress') = 'number'
+                        THEN (jr.payload->>'progress')::float
+                        ELSE 0
+                      END,
+                      CASE
+                        WHEN jsonb_typeof(jr.payload->'events') = 'array'
+                        THEN jsonb_array_length(jr.payload->'events')
+                        ELSE 0
+                      END
                     FROM job_runs jr
                     LEFT JOIN sources s ON s.id = jr.source_id
                     ORDER BY jr.started_at DESC
@@ -216,8 +263,6 @@ class OperationsService:
 
         jobs: List[Dict[str, Any]] = []
         for row in rows:
-            payload = row[8] or {}
-            preview_payload = self._compact_payload(payload)
             jobs.append(
                 {
                     "id": str(row[0]),
@@ -228,9 +273,9 @@ class OperationsService:
                     "source_display_name": row[5],
                     "source_platform": row[6],
                     "message": row[7],
-                    "payload": preview_payload,
-                    "progress": float(payload.get("progress", 0) or 0),
-                    "event_count": len(payload.get("events", []) or []),
+                    "payload": row[8] or {},
+                    "progress": float(row[11] or 0),
+                    "event_count": int(row[12] or 0),
                     "started_at": row[9].isoformat() if row[9] else None,
                     "finished_at": row[10].isoformat() if row[10] else None,
                 }
@@ -307,7 +352,10 @@ class OperationsService:
         self.sources_service.merge_source_settings(source_id, {"ops": next_ops})
 
     def get_operations_overview(self) -> Dict[str, Any]:
-        jobs = self.list_recent_jobs(200)
+        # The SQL projection above is what fixed the memory, not this limit, so keep
+        # enough history for the alerts panel to still catch a stale failure.
+        # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
+        jobs = self.list_recent_jobs(50)
         source_health = self.get_source_health()
         counts = self.get_database_counts()
         alerts = [

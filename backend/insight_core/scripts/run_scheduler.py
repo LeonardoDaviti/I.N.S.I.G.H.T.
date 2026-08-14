@@ -32,6 +32,15 @@ def _handle_stop(signum, frame):
 
 
 async def run_cycle(logger, db_url: str, operations_service: OperationsService, scheduler_config: dict) -> None:
+    try:
+        pruned = operations_service.prune_job_runs(
+            int(os.environ.get("INSIGHT_JOB_RUNS_RETAIN_DAYS", "30"))
+        )
+        if pruned:
+            logger.info("Pruned %s job_runs rows older than the retention window", pruned)
+    except Exception:  # noqa: BLE001
+        logger.exception("job_runs prune failed (continuing with the cycle)")
+
     if scheduler_config.get("sync_sources_each_cycle", True):
         sync_service = SourceConfigSyncService(db_url)
         sync_result = sync_service.sync_json_to_db(mirror=True)
@@ -44,6 +53,7 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
         status="success" if ingest_result.get("success") else "failed",
         message=ingest_result.get("error") or f"Ingested {ingest_result.get('posts_ingested', 0)} posts",
         payload=ingest_result,
+        compact=True,
     )
     logger.info("safe_ingest result: %s", ingest_result)
 
@@ -62,6 +72,7 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
                 status="success" if expert_result.get("success") else "failed",
                 message=expert_result.get("error") or f"Processed {expert_result.get('posts_processed', 0)} posts",
                 payload=expert_result,
+                compact=True,
             )
             logger.info("expert briefing '%s' result: success=%s", expert["name"], expert_result.get("success"))
         except Exception as exc:
@@ -80,6 +91,7 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
         status="success" if daily_result.get("success") else "failed",
         message=daily_result.get("error") or f"Processed {daily_result.get('posts_processed', 0)} posts",
         payload=daily_result,
+        compact=True,
     )
     logger.info("daily briefing result for %s: success=%s", today, daily_result.get("success"))
 
@@ -91,6 +103,7 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
             status="success" if topics_result.get("success") else "failed",
             message=topics_result.get("error") or f"Processed {topics_result.get('posts_processed', 0)} posts",
             payload=topics_result,
+            compact=True,
         )
         logger.info("topic briefing result for %s: success=%s", today, topics_result.get("success"))
 

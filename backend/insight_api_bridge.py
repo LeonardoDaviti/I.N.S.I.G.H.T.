@@ -438,6 +438,7 @@ class InsightApiBridge:
                 status="success" if result.get("success") else "failed",
                 message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
                 payload=result,
+                compact=True,
             )
             return result
         except Exception as e:
