@@ -184,8 +184,14 @@ class BriefingService:
             )
         return hydrated
 
-    async def generate_daily_briefing(self, date_str: str) -> Dict[str, Any]:
-        """Generate a markdown daily briefing for a single day."""
+    async def generate_daily_briefing(self, date_str: str, refresh: bool = False) -> Dict[str, Any]:
+        """Generate a markdown daily briefing for a single day.
+
+        With refresh=False a stored briefing is returned as-is. Without that check
+        every read re-billed the LLM and overwrote the stored row, so simply opening
+        a past day in the UI both cost money and destroyed the artifact. The topics
+        variant below has always done this; the daily path did not.
+        """
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         posts = self.posts_service.get_posts_by_date(target_date)
 
@@ -198,6 +204,29 @@ class BriefingService:
                 "posts_processed": 0,
                 "total_posts_fetched": 0,
             }
+
+        if not refresh:
+            cached = self.store_service.get_briefing("daily_briefing", date_str, "default")
+            if cached and (cached.get("content") or "").strip():
+                cached_payload = cached.get("payload") or {}
+                return {
+                    "success": True,
+                    "briefing": cached["content"],
+                    "format": cached.get("render_format") or "markdown",
+                    "saved_briefing_id": cached["id"],
+                    "posts": posts,
+                    "date": date_str,
+                    "posts_processed": cached_payload.get("posts_processed", len(posts)),
+                    "total_posts_fetched": len(posts),
+                    "estimated_tokens": cached_payload.get("estimated_tokens", 0),
+                    "one_sentence_takeaway": cached_payload.get("one_sentence_takeaway")
+                    or self._briefing_takeaway(cached["content"]),
+                    "references": self._hydrate_artifact_references(
+                        self._briefing_artifact_type("daily_briefing", "default"), cached["id"]
+                    ),
+                    "generator": cached_payload.get("generator"),
+                    "cached": True,
+                }
 
         setup_ok = self.processor.setup_processor()
 

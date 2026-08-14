@@ -873,7 +873,7 @@ class InsightApiBridge:
 
     # ============= BRIEFINGS =============
 
-    async def generate_daily_briefing(self, date_str: str, *, job_id: str | None = None) -> Dict[str, Any]:
+    async def generate_daily_briefing(self, date_str: str, refresh: bool = False, *, job_id: str | None = None) -> Dict[str, Any]:
         """Generate a DB-backed daily briefing."""
         job_id = job_id or self._start_job_safe(
             "daily_briefing",
@@ -883,7 +883,7 @@ class InsightApiBridge:
         )
         try:
             self._append_job_event_safe(job_id, message=f"Starting daily briefing for {date_str}", level="info")
-            result = await self.briefing_service.generate_daily_briefing(date_str)
+            result = await self.briefing_service.generate_daily_briefing(date_str, refresh=refresh)
             self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",

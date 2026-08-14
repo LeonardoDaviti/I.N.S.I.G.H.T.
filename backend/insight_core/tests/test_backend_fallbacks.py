@@ -159,6 +159,9 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
                 ]
 
         class FakeStoreService:
+            def get_briefing(self, subject_type, subject_key, variant="default"):
+                return None  # no cached briefing: exercise the generation path
+
             def save_briefing(self, **kwargs):
                 return {"id": "briefing-1"}
 
@@ -202,6 +205,9 @@ class BriefingServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
                 ]
 
         class FakeStoreService:
+            def get_briefing(self, subject_type, subject_key, variant="default"):
+                return None  # no cached briefing: exercise the generation path
+
             def save_briefing(self, **kwargs):
                 return {"id": "briefing-2"}
 

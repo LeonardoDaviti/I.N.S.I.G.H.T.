@@ -1353,6 +1353,7 @@ async def generate_daily_briefing(request: BriefingRequest, background_tasks: Ba
                         "daily_briefing",
                         api_bridge.generate_daily_briefing,
                         date,
+                        bool(request.refresh),
                         job_id=job_id,
                     )
                     return _accepted_job_response(job_id, "daily_briefing", message="Daily briefing generation started")
@@ -1364,7 +1365,7 @@ async def generate_daily_briefing(request: BriefingRequest, background_tasks: Ba
                 refresh=bool(request.refresh),
             )
         else:
-            result = await api_bridge.generate_daily_briefing(date)
+            result = await api_bridge.generate_daily_briefing(date, bool(request.refresh))
         
         if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
             logger.error(f"❌ Engine error: {result['error']}")

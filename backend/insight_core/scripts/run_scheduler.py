@@ -85,7 +85,7 @@ async def run_cycle(logger, db_url: str, operations_service: OperationsService, 
     briefing_service = BriefingService(db_url)
     today = datetime.now(timezone.utc).date().isoformat()
     daily_job_id = operations_service.start_job("daily_briefing", trigger="scheduler", payload={"date": today})
-    daily_result = await briefing_service.generate_daily_briefing(today)
+    daily_result = await briefing_service.generate_daily_briefing(today, refresh=True)
     operations_service.finish_job(
         daily_job_id,
         status="success" if daily_result.get("success") else "failed",

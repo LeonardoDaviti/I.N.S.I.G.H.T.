@@ -64,7 +64,7 @@ async def regenerate(db_url: str, dates: list[str]) -> int:
     failures = 0
     for date_str in dates:
         try:
-            result = await service.generate_daily_briefing(date_str)
+            result = await service.generate_daily_briefing(date_str, refresh=True)
             ok = bool(result.get("success"))
             failures += 0 if ok else 1
             print(
