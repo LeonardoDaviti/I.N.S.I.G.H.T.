@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, RefreshCw, ExternalLink, Inbox } from 'lucide-react';
 import { apiService, type Folder, type Post } from '../services/api';
+import MilestonesRail from '../components/MilestonesRail';
+import TrackBriefingPanel from '../components/TrackBriefingPanel';
 
 const PAGE_SIZE = 25;
 
@@ -92,7 +94,7 @@ export default function TrackPage() {
 
   return (
     <div className="app-shell min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto p-6">
+      <div className="max-w-3xl lg:max-w-6xl mx-auto p-6">
         <button
           onClick={() => navigate('/experts')}
           className="mb-3 inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
@@ -154,96 +156,110 @@ export default function TrackPage() {
           <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3">{error}</div>
         )}
 
-        {loading && posts.length === 0 && (
-          <div className="space-y-3">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="animate-pulse rounded-xl border border-gray-200 bg-white p-4">
-                <div className="h-4 bg-gray-200 rounded w-3/4 mb-2" />
-                <div className="h-3 bg-gray-100 rounded w-1/3" />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Two columns from lg up: reading feed left, milestones rail right.
+            The rail is LAST in the DOM, so on mobile it stacks below the feed. */}
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-6 lg:items-start">
+          <div className="min-w-0">
+            <TrackBriefingPanel folderId={trackId} className="mb-4" />
 
-        {!loading && posts.length === 0 && !error && (
-          <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
-            <Inbox className="w-8 h-8 mx-auto text-gray-400 mb-3" />
-            <div className="font-medium text-gray-900 mb-1">Nothing collected yet</div>
-            <p className="text-sm text-gray-600 max-w-md mx-auto">
-              This track has {sourceCount} sources but no posts. Newly added sources have no fetch
-              history, so they are collected on the next ingestion cycle. Run one from{' '}
-              <button onClick={() => navigate('/ingestion')} className="text-blue-600 hover:underline">
-                Ingestion Control
-              </button>
-              , or wait for the scheduler.
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {posts.map((post) => {
-            const thumb = thumbnailOf(post);
-            return (
-              <article
-                key={post.id}
-                className="rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition"
-              >
-                <div className="flex gap-3">
-                  {thumb && (
-                    <img
-                      src={thumb}
-                      alt=""
-                      loading="lazy"
-                      className="w-24 h-16 object-cover rounded-md shrink-0 bg-gray-100"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <h2 className="font-semibold text-gray-900 leading-snug">
-                      {post.title || '(untitled)'}
-                    </h2>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                      <span className="px-1.5 py-0.5 rounded bg-gray-100">{post.platform}</span>
-                      <span className="truncate max-w-[16rem]">{post.source_display_name}</span>
-                      <span>·</span>
-                      <span>{relativeTime(post.published_at)}</span>
-                    </div>
-                    <div className="mt-2 flex items-center gap-3 text-sm">
-                      <button
-                        onClick={() => navigate(`/posts/${post.id}`)}
-                        className="text-blue-600 hover:text-blue-800"
-                      >
-                        Read
-                      </button>
-                      {post.url && (
-                        <a
-                          href={post.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
-                        >
-                          Source <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
+            {loading && posts.length === 0 && (
+              <div className="space-y-3">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="animate-pulse rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2" />
+                    <div className="h-3 bg-gray-100 rounded w-1/3" />
                   </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                ))}
+              </div>
+            )}
 
-        {posts.length > 0 && posts.length < total && (
-          <button
-            onClick={() => void load({ append: true })}
-            disabled={loadingMore}
-            className="mt-4 w-full py-2 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {loadingMore ? 'Loading…' : `Load ${Math.min(PAGE_SIZE, total - posts.length)} more`}
-          </button>
-        )}
+            {!loading && posts.length === 0 && !error && (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
+                <Inbox className="w-8 h-8 mx-auto text-gray-400 mb-3" />
+                <div className="font-medium text-gray-900 mb-1">Nothing collected yet</div>
+                <p className="text-sm text-gray-600 max-w-md mx-auto">
+                  This track has {sourceCount} sources but no posts. Newly added sources have no fetch
+                  history, so they are collected on the next ingestion cycle. Run one from{' '}
+                  <button onClick={() => navigate('/ingestion')} className="text-blue-600 hover:underline">
+                    Ingestion Control
+                  </button>
+                  , or wait for the scheduler.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {posts.map((post) => {
+                const thumb = thumbnailOf(post);
+                return (
+                  <article
+                    key={post.id}
+                    className="rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition"
+                  >
+                    <div className="flex gap-3">
+                      {thumb && (
+                        <img
+                          src={thumb}
+                          alt=""
+                          loading="lazy"
+                          className="w-24 h-16 object-cover rounded-md shrink-0 bg-gray-100"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <h2 className="font-semibold text-gray-900 leading-snug">
+                          {post.title || '(untitled)'}
+                        </h2>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                          <span className="px-1.5 py-0.5 rounded bg-gray-100">{post.platform}</span>
+                          <span className="truncate max-w-[16rem]">{post.source_display_name}</span>
+                          <span>·</span>
+                          <span>{relativeTime(post.published_at)}</span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-3 text-sm">
+                          <button
+                            onClick={() => navigate(`/posts/${post.id}`)}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            Read
+                          </button>
+                          {post.url && (
+                            <a
+                              href={post.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                            >
+                              Source <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {posts.length > 0 && posts.length < total && (
+              <button
+                onClick={() => void load({ append: true })}
+                disabled={loadingMore}
+                className="mt-4 w-full py-2 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {loadingMore ? 'Loading…' : `Load ${Math.min(PAGE_SIZE, total - posts.length)} more`}
+              </button>
+            )}
+          </div>
+
+          {/* A long rail must not trap the page: it scrolls inside itself when it
+              outgrows the viewport. */}
+          <div className="mt-6 lg:mt-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+            <MilestonesRail folderId={trackId} />
+          </div>
+        </div>
       </div>
     </div>
   );

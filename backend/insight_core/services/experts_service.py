@@ -254,6 +254,11 @@ class ExpertsService:
             "start_date": payload.get("start_date"),
             "end_date": payload.get("end_date"),
             "posts_processed": payload.get("posts_processed", 0),
+            # Which generator produced this text. "fallback" means the deterministic
+            # stub, not model analysis - the UI must be able to say so. None for
+            # briefings stored before this key existed. Read-only passthrough; the
+            # generate path already returns this key (see generate_expert_briefing).
+            "generator": payload.get("generator"),
         }
 
     def _resolve_numeric_topics(

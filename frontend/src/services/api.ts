@@ -2319,6 +2319,59 @@ class ApiService {
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
   }
 
+  // ===== Milestones =====
+
+  /** Full milestone tree for a scope. Omit folderId for all non-arXiv sources. */
+  async getMilestones(opts?: { folderId?: string | null; includeHidden?: boolean }): Promise<MilestonesResponse> {
+    try {
+      const params = new URLSearchParams();
+      if (opts?.folderId) params.set('folder_id', opts.folderId);
+      if (opts?.includeHidden) params.set('include_hidden', 'true');
+      const qs = params.toString();
+      return await this.makeRequest(`/api/milestones${qs ? `?${qs}` : ''}`);
+    } catch (e) {
+      // Deliberately partial: callers read scope/coverage/stats/diagnostics through
+      // optional chaining, so a failed fetch renders an error state, not a crash.
+      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', vendors: [], papers: [] } as unknown as MilestonesResponse;
+    }
+  }
+
+  async getMilestoneLanes(folderId?: string | null): Promise<{ success: boolean; lanes: MilestoneLane[]; error?: string }> {
+    try { return await this.makeRequest(`/api/milestones/lanes${folderId ? `?folder_id=${folderId}` : ''}`); }
+    catch (e) { return { success: false, lanes: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async createMilestoneLane(payload: { name: string; vendor?: string; match_pattern?: string; folder_id?: string | null; lane_order?: number }): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
+    try { return await this.makeRequest('/api/milestones/lanes', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async updateMilestoneLane(laneId: string, fields: Partial<Pick<MilestoneLane, 'name' | 'vendor' | 'match_pattern' | 'lane_order' | 'enabled'>>): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
+    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'PUT', body: JSON.stringify(fields) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  async deleteMilestoneLane(laneId: string): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'DELETE' }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
+  /** Free dry-run of a lane pattern. No writes, no LLM, no tokens. */
+  async previewMilestonePattern(pattern: string, folderId?: string | null): Promise<MilestonePatternPreview> {
+    try {
+      const params = new URLSearchParams({ pattern });
+      if (folderId) params.set('folder_id', folderId);
+      return await this.makeRequest(`/api/milestones/preview?${params.toString()}`);
+    } catch (e) {
+      return { success: false, total_hits: 0, versions: [], samples: [], error: e instanceof Error ? e.message : 'Unknown error' };
+    }
+  }
+
+  async setMilestoneNodeState(payload: { node_key: string; state?: MilestoneState; custom_title?: string; note?: string }): Promise<{ success: boolean; error?: string }> {
+    try { return await this.makeRequest('/api/milestones/node-state', { method: 'POST', body: JSON.stringify(payload) }); }
+    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  }
+
   async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
     try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
@@ -2350,6 +2403,109 @@ export interface Folder {
   post_count?: number;
 }
 
+export type MilestoneState = 'active' | 'hidden' | 'pinned';
+
+export interface MilestoneEvidence {
+  post_id: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  source_name: string;
+  /** announce = earliest post (sets occurred_on); corroborate = a different source; mention = later ref */
+  role: 'announce' | 'corroborate' | 'mention';
+}
+
+export interface MilestoneComparison {
+  node_key: string;
+  title: string;
+  post_id: string;
+  post_title: string;
+  published_at: string | null;
+}
+
+export interface MilestoneNode {
+  node_key: string;
+  kind: 'release' | 'paper';
+  lane_id: string | null;
+  lane_name: string;
+  lane_order: number;
+  vendor: string | null;
+  title: string;
+  custom_title: string | null;
+  version_label: string | null;
+  /** zero-padded; THIS is chain order, not occurred_on */
+  version_sort: string;
+  occurred_on: string | null;
+  last_seen_on: string | null;
+  post_count: number;
+  source_count: number;
+  state: MilestoneState;
+  note: string | null;
+  /** single_source | retrospective | chain_start_at_corpus_edge | named_by_briefing */
+  flags: string[];
+  evidence: MilestoneEvidence[];
+  comparisons: MilestoneComparison[];
+}
+
+export interface MilestoneLaneGroup {
+  lane_id: string;
+  lane_name: string;
+  lane_order: number;
+  node_count: number;
+  nodes: MilestoneNode[];
+}
+
+export interface MilestoneVendorGroup {
+  vendor: string;
+  latest_on: string;
+  node_count: number;
+  lanes: MilestoneLaneGroup[];
+}
+
+export interface MilestoneLane {
+  id: string;
+  folder_id: string | null;
+  name: string;
+  vendor: string | null;
+  match_pattern: string;
+  lane_order: number;
+  enabled: boolean;
+}
+
+export interface MilestonePatternPreview {
+  success: boolean;
+  total_hits: number;
+  versions: { version_label: string; post_count: number }[];
+  samples: { post_id: string; title: string; published_at: string | null; source_name: string; version_label: string }[];
+  error?: string;
+}
+
+export interface MilestonesResponse {
+  success: boolean;
+  error?: string;
+  scope: { folder_id: string | null; name: string; kind: string | null; source_count: number | null };
+  coverage: {
+    posts_in_scope: number;
+    sources_in_scope: number;
+    first_post_at: string | null;
+    last_post_at: string | null;
+    weeks_covered: number;
+  };
+  vendors: MilestoneVendorGroup[];
+  papers: MilestoneNode[];
+  stats: { nodes: number; lanes: number; vendors: number; comparisons: number; papers: number };
+  diagnostics: {
+    lanes_configured: number;
+    lanes_matched: number;
+    hidden_nodes: number;
+    briefings_available: number;
+    hit_rows: number;
+    truncated: boolean;
+  };
+  elapsed_ms?: number;
+  cached?: boolean;
+}
+
 export interface Expert {
   id: string;
   name: string;
@@ -2371,11 +2527,21 @@ export interface ExpertTopic {
 export interface ExpertRunResult {
   success: boolean;
   cached?: boolean;
+  expert?: Expert;
   briefing?: string;
+  /** render_format of the stored briefing; "markdown" in practice */
+  format?: string;
+  saved_briefing_id?: string;
   topics?: ExpertTopic[];
   posts_processed?: number;
   start_date?: string;
   end_date?: string;
+  /**
+   * Which generator produced this briefing: a model name (e.g. "gemini-3.1-flash-lite-preview")
+   * or the literal "fallback", meaning the deterministic stub — NOT analysis.
+   * Absent on briefings stored before this key existed.
+   */
+  generator?: string | null;
   error?: string;
 }
 

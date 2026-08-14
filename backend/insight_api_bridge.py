@@ -5,6 +5,7 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.folders_service import FoldersService
 from insight_core.services.experts_service import ExpertsService
+from insight_core.services.milestones_service import MilestonesService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.topics_service import TopicsService
 from insight_core.services.briefing_service import BriefingService
@@ -35,6 +36,7 @@ class InsightApiBridge:
         self.db = ensure_database()
         self.sources_service = SourcesService(self.db)
         self.folders_service = FoldersService(self.db)
+        self.milestones_service = MilestonesService(self.db)
         self.experts_service = ExpertsService(self.db)
         self.posts_service = PostsService(self.db)
         self.topics_service = TopicsService(self.db)
@@ -498,6 +500,96 @@ class InsightApiBridge:
         try:
             removed = self.folders_service.remove_source(folder_id, source_id)
             return {"success": True, "removed": removed, "folder_id": folder_id, "source_id": source_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ============= MILESTONES =============
+
+    def get_milestones(self, folder_id: str | None = None,
+                       include_hidden: bool = False) -> Dict[str, Any]:
+        """The whole tree for one scope. One request renders the page."""
+        try:
+            return self.milestones_service.get_tree(
+                folder_id=folder_id, include_hidden=include_hidden
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e), "vendors": [], "papers": [],
+                    "scope": {"folder_id": folder_id, "name": "Unknown", "kind": None,
+                              "source_count": 0},
+                    "coverage": {"posts_in_scope": 0, "sources_in_scope": 0,
+                                 "first_post_at": None, "last_post_at": None,
+                                 "weeks_covered": 0},
+                    "stats": {"nodes": 0, "lanes": 0, "vendors": 0,
+                              "comparisons": 0, "papers": 0},
+                    "diagnostics": {"lanes_configured": 0, "lanes_matched": 0,
+                                    "hidden_nodes": 0, "briefings_available": 0,
+                                    "hit_rows": 0, "truncated": False}}
+
+    def get_milestone_lanes(self, folder_id: str | None = None) -> Dict[str, Any]:
+        """Lane vocabulary for a scope: global lanes plus this folder's own."""
+        try:
+            lanes = self.milestones_service.list_lanes(folder_id)
+            return {"success": True, "lanes": lanes, "total": len(lanes)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "lanes": []}
+
+    def create_milestone_lane(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a lane. match_pattern is optional - one is generated from the name."""
+        try:
+            lane = self.milestones_service.create_lane(
+                name=str(config.get("name") or ""),
+                vendor=config.get("vendor"),
+                match_pattern=config.get("match_pattern"),
+                folder_id=config.get("folder_id") or None,
+                lane_order=int(config.get("lane_order", 500)),
+            )
+            return {"success": True, "lane": lane}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "lane": None}
+        except Exception as e:
+            return {"success": False, "error": str(e), "lane": None}
+
+    def update_milestone_lane(self, lane_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Update a lane. Editing match_pattern reshapes the whole tree instantly."""
+        try:
+            lane = self.milestones_service.update_lane(lane_id, fields)
+            return {"success": True, "lane": lane}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "lane": None}
+        except Exception as e:
+            return {"success": False, "error": str(e), "lane": None}
+
+    def delete_milestone_lane(self, lane_id: str) -> Dict[str, Any]:
+        """Delete a lane."""
+        try:
+            deleted = self.milestones_service.delete_lane(lane_id)
+            if not deleted:
+                return {"success": False, "error": f"Lane {lane_id} not found"}
+            return {"success": True, "deleted": True, "lane_id": lane_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def preview_milestone_pattern(self, pattern: str,
+                                  folder_id: str | None = None) -> Dict[str, Any]:
+        """Free dry-run of a lane pattern: no writes, no LLM, no tokens."""
+        try:
+            return self.milestones_service.preview_pattern(pattern, folder_id)
+        except Exception as e:
+            return {"success": False, "error": str(e),
+                    "total_hits": 0, "versions": [], "samples": []}
+
+    def set_milestone_node_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Hide, pin, or rename one derived node. The only user write in the feature."""
+        try:
+            row = self.milestones_service.set_node_state(
+                node_key=str(payload.get("node_key") or ""),
+                state=payload.get("state"),
+                custom_title=payload.get("custom_title"),
+                note=payload.get("note"),
+            )
+            return {"success": True, "override": row}
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

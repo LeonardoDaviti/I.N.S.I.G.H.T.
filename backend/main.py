@@ -1151,6 +1151,101 @@ async def remove_folder_source(folder_id: str, source_id: str):
         return {"success": False, "error": str(e)}
 
 
+# ============= MILESTONES ENDPOINTS =============
+
+
+@app.get("/api/milestones")
+async def get_milestones(
+    folder_id: str | None = Query(None),
+    include_hidden: bool = Query(False),
+):
+    """The milestone tree for a scope. Computed on read; no LLM, no derive job.
+
+    folder_id omitted = all non-arXiv sources (the default landing scope: both
+    Telegram release feeds belong to no folder).
+    """
+    try:
+        logger.info(f"🏁 Milestones folder_id={folder_id} hidden={include_hidden}")
+        return api_bridge.get_milestones(folder_id=folder_id, include_hidden=include_hidden)
+    except Exception as e:
+        logger.exception("Failed to build milestones")
+        return {"success": False, "error": str(e), "vendors": [], "papers": []}
+
+
+@app.get("/api/milestones/lanes")
+async def get_milestone_lanes(folder_id: str | None = Query(None)):
+    """Lane vocabulary: global lanes plus this folder's own."""
+    try:
+        logger.info(f"🏁 Milestone lanes folder_id={folder_id}")
+        return api_bridge.get_milestone_lanes(folder_id)
+    except Exception as e:
+        logger.exception("Failed to list milestone lanes")
+        return {"success": False, "error": str(e), "lanes": []}
+
+
+@app.post("/api/milestones/lanes")
+async def create_milestone_lane(config: dict):
+    """Create a lane. Body: {name, vendor?, match_pattern?, folder_id?, lane_order?}"""
+    try:
+        logger.info("🏁 Creating milestone lane")
+        return api_bridge.create_milestone_lane(config)
+    except Exception as e:
+        logger.exception("Failed to create milestone lane")
+        return {"success": False, "error": str(e), "lane": None}
+
+
+@app.put("/api/milestones/lanes/{lane_id}")
+async def update_milestone_lane(lane_id: str, fields: dict):
+    """Update a lane. Body: any of {name, vendor, match_pattern, lane_order, enabled}"""
+    try:
+        logger.info(f"🏁 Updating milestone lane {lane_id}")
+        return api_bridge.update_milestone_lane(lane_id, fields)
+    except Exception as e:
+        logger.exception("Failed to update milestone lane")
+        return {"success": False, "error": str(e), "lane": None}
+
+
+@app.delete("/api/milestones/lanes/{lane_id}")
+async def delete_milestone_lane(lane_id: str):
+    """Delete a lane."""
+    try:
+        logger.info(f"🏁 Deleting milestone lane {lane_id}")
+        return api_bridge.delete_milestone_lane(lane_id)
+    except Exception as e:
+        logger.exception("Failed to delete milestone lane")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/milestones/preview")
+async def preview_milestone_pattern(
+    pattern: str = Query(..., min_length=1, max_length=400),
+    folder_id: str | None = Query(None),
+):
+    """Dry-run a lane pattern before committing it. Free: no writes, no tokens."""
+    try:
+        logger.info(f"🏁 Milestone pattern preview folder_id={folder_id}")
+        return api_bridge.preview_milestone_pattern(pattern, folder_id)
+    except Exception as e:
+        logger.exception("Failed to preview milestone pattern")
+        return {"success": False, "error": str(e), "total_hits": 0,
+                "versions": [], "samples": []}
+
+
+@app.post("/api/milestones/node-state")
+async def set_milestone_node_state(payload: dict):
+    """Hide / pin / rename one node. Body: {node_key, state?, custom_title?, note?}
+
+    node_key is deterministic ('release:<lane_id>:<version>' or 'paper:<post_id>')
+    and goes in the body, not the path, because it contains ':'.
+    """
+    try:
+        logger.info(f"🏁 Milestone node state {payload.get('node_key')}")
+        return api_bridge.set_milestone_node_state(payload)
+    except Exception as e:
+        logger.exception("Failed to set milestone node state")
+        return {"success": False, "error": str(e)}
+
+
 # ============= EXPERTS ENDPOINTS =============
 
 
