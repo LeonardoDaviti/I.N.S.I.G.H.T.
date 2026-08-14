@@ -40,8 +40,8 @@ services:
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
       SAFE_INGEST_SKIP_THRESHOLD_HOURS: ${SAFE_INGEST_SKIP_THRESHOLD_HOURS:-20}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
-      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.7-flash}
+      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-3.6-flash,gemini-3.5-flash,gemini-flash-latest,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.0-flash}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
       INSIGHT_LOG_DIR: /app/logs
       # glibc: cap per-thread arenas and keep the trim threshold static, so freed
@@ -88,8 +88,8 @@ services:
       INSIGHT_SYNC_SOURCES_EACH_CYCLE: ${INSIGHT_SYNC_SOURCES_EACH_CYCLE:-true}
       INSIGHT_GENERATE_DAILY_BRIEFING: ${INSIGHT_GENERATE_DAILY_BRIEFING:-true}
       INSIGHT_GENERATE_TOPIC_BRIEFING: ${INSIGHT_GENERATE_TOPIC_BRIEFING:-false}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
-      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.7-flash}
+      GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-3.6-flash,gemini-3.5-flash,gemini-flash-latest,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.0-flash}
       INSIGHT_LOG_DIR: /app/logs
       # glibc: cap per-thread arenas and keep the trim threshold static, so freed
       # pages actually return to the OS instead of being pinned by fragmentation.
