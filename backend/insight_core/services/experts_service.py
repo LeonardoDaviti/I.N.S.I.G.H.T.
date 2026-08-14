@@ -74,6 +74,18 @@ class ExpertsService:
 
     # ---- Briefing generation ----
 
+    @staticmethod
+    def _subject_key(expert_id: str, end_date) -> str:
+        """Storage key for one expert run.
+
+        Previously this was the bare expert_id, which collided with
+        UNIQUE(subject_type, subject_key, variant): every scheduled run overwrote the
+        previous one, so 179 successful runs left 2 rows. Dating the key preserves
+        history. Readers that want "the latest" use the prefix lookups in
+        BriefingsStoreService, which also match the old undated rows.
+        """
+        return f"{expert_id}:{end_date.isoformat() if hasattr(end_date, 'isoformat') else end_date}"
+
     async def generate_expert_briefing(
         self, expert_id: str, as_of_date: str | None = None, refresh: bool = False
     ) -> Dict[str, Any]:
@@ -97,7 +109,9 @@ class ExpertsService:
 
         # Cache: skip the LLM call when a briefing already exists for this exact window.
         if not refresh:
-            cached = self.store_service.get_briefing("expert_briefing", expert_id, variant)
+            cached = self.store_service.get_briefing(
+                "expert_briefing", self._subject_key(expert_id, end_date), variant
+            )
             if cached:
                 payload = cached.get("payload") or {}
                 if (
@@ -151,7 +165,7 @@ class ExpertsService:
 
         saved = self.store_service.save_briefing(
             subject_type="expert_briefing",
-            subject_key=expert_id,
+            subject_key=self._subject_key(expert_id, end_date),
             variant=variant,
             render_format="markdown",
             title=f"{expert['name']} — {start_date} to {end_date}",
@@ -208,7 +222,7 @@ class ExpertsService:
     def last_briefing_at(self, expert: Dict[str, Any]) -> Optional[str]:
         """Lightweight: when this expert's briefing was last stored (ISO), or None."""
         variant = expert.get("output_variant") or "topics"
-        ts = self.store_service.get_briefing_timestamp("expert_briefing", expert["id"], variant)
+        ts = self.store_service.get_latest_briefing_timestamp("expert_briefing", expert["id"], variant)
         if not ts:
             return None
         return ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
@@ -218,7 +232,7 @@ class ExpertsService:
         expert = self.get_expert(expert_id)
         if not expert:
             return {"success": False, "error": f"Expert {expert_id} not found"}
-        cached = self.store_service.get_briefing(
+        cached = self.store_service.get_latest_briefing(
             "expert_briefing", expert_id, expert.get("output_variant") or "topics"
         )
         if not cached:

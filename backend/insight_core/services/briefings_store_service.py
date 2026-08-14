@@ -27,6 +27,28 @@ class BriefingsStoreService:
             with conn.cursor() as cur:
                 return self.repo.get_briefing(cur, subject_type, subject_key, variant)
 
+    def get_latest_briefing(
+        self,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Most recent briefing for a subject_key prefix (e.g. all runs of one expert)."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_latest_briefing(cur, subject_type, subject_key_prefix, variant)
+
+    def get_latest_briefing_timestamp(
+        self,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+    ):
+        """Timestamp of the most recent briefing for a subject_key prefix."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.get_latest_briefing_timestamp(cur, subject_type, subject_key_prefix, variant)
+
     def get_briefing_timestamp(
         self,
         subject_type: str,

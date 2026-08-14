@@ -13,6 +13,71 @@ from psycopg import Cursor
 class BriefingsRepository:
     """Database access layer for the briefings table."""
 
+    def get_latest_briefing(
+        self,
+        cur: Cursor,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Most recent briefing whose subject_key starts with the given prefix.
+
+        Expert briefings are keyed "<expert_id>:<end_date>" so each run is preserved.
+        Rows written before that change are keyed with the bare expert_id, and the
+        prefix match still finds them.
+        """
+        cur.execute(
+            """
+            SELECT id, subject_type, subject_key, variant, render_format, title, content,
+                   payload, created_at, updated_at
+            FROM briefings
+            WHERE subject_type = %s
+              AND (subject_key = %s OR subject_key LIKE %s)
+              AND variant = %s
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 1
+            """,
+            (subject_type, subject_key_prefix, f"{subject_key_prefix}:%", variant),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": str(row[0]),
+            "subject_type": row[1],
+            "subject_key": row[2],
+            "variant": row[3],
+            "render_format": row[4],
+            "title": row[5],
+            "content": row[6],
+            "payload": row[7] or {},
+            "created_at": row[8],
+            "updated_at": row[9],
+        }
+
+    def get_latest_briefing_timestamp(
+        self,
+        cur: Cursor,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+    ) -> Optional[datetime]:
+        """Timestamp of the most recent briefing for a subject_key prefix."""
+        cur.execute(
+            """
+            SELECT COALESCE(updated_at, created_at)
+            FROM briefings
+            WHERE subject_type = %s
+              AND (subject_key = %s OR subject_key LIKE %s)
+              AND variant = %s
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 1
+            """,
+            (subject_type, subject_key_prefix, f"{subject_key_prefix}:%", variant),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def get_briefing_timestamp(
         self,
         cur: Cursor,
