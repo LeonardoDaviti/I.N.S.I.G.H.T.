@@ -32,6 +32,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       API_PORT: 8000
+      # uvicorn --workers uses multiprocessing "spawn": zero copy-on-write, so each
+      # worker pays the full ~116MB import cost privately, plus the supervisor which
+      # imports the app and then only supervises. 1 worker is plenty for this load.
+      API_WORKERS: ${API_WORKERS:-1}
       BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
@@ -40,6 +44,10 @@ services:
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
       INSIGHT_LOG_DIR: /app/logs
+      # glibc: cap per-thread arenas and keep the trim threshold static, so freed
+      # pages actually return to the OS instead of being pinned by fragmentation.
+      MALLOC_ARENA_MAX: "2"
+      MALLOC_TRIM_THRESHOLD_: "131072"
     # Langfuse keys come from .env directly (env_file), not ${..} substitution,
     # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:
@@ -83,6 +91,10 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.0-flash}
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-2.5-flash,gemini-flash-latest,gemini-2.0-flash}
       INSIGHT_LOG_DIR: /app/logs
+      # glibc: cap per-thread arenas and keep the trim threshold static, so freed
+      # pages actually return to the OS instead of being pinned by fragmentation.
+      MALLOC_ARENA_MAX: "2"
+      MALLOC_TRIM_THRESHOLD_: "131072"
     # Langfuse keys come from .env directly (env_file), not ${..} substitution,
     # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:

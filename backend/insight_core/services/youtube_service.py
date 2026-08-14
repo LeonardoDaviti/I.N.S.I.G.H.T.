@@ -433,8 +433,18 @@ Transcript:
         posts.sort(key=lambda item: item.get("date") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         return posts
 
+    # Bulk keys in yt-dlp's per-video JSON that nothing downstream reads. `formats`
+    # is usually the majority of a 2-8MB dump. Deliberately NOT discarded:
+    # `subtitles` and `automatic_captions` feed _extract_transcript (see :502), and
+    # `thumbnails` feeds media_urls (see :391) - dropping those breaks ingestion.
+    _YTDLP_DISCARD_KEYS = (
+        "formats",
+        "requested_formats",
+        "heatmap",
+    )
+
     def _get_video_details(self, video_id: str) -> Dict[str, Any]:
-        return self._run_ytdlp_json(
+        details = self._run_ytdlp_json(
             [
                 "--dump-single-json",
                 "--skip-download",
@@ -442,6 +452,9 @@ Transcript:
                 f"https://www.youtube.com/watch?v={video_id}",
             ]
         )
+        for key in self._YTDLP_DISCARD_KEYS:
+            details.pop(key, None)
+        return details
 
     def _run_ytdlp_json(self, args: List[str]) -> Dict[str, Any]:
         command = ["yt-dlp", *args]
