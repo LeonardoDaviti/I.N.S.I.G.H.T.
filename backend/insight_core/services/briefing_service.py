@@ -206,9 +206,11 @@ class BriefingService:
                 raise RuntimeError("Gemini processor setup failed")
             await self.processor.connect()
             briefing = await self.processor.daily_briefing(posts)
+            generator = getattr(self.processor, "model_name", None) or "gemini"
         except Exception as exc:
             self.logger.warning("Falling back to deterministic daily briefing for %s: %s", date_str, exc)
             briefing = self.processor._fallback_daily_briefing(posts)
+            generator = "fallback"
         finally:
             try:
                 await self.processor.disconnect()
@@ -227,6 +229,10 @@ class BriefingService:
             payload={
                 "posts_processed": len(posts),
                 "source": "database",
+                # Which generator actually produced this text. Without it there was no
+                # way - in the DB, the API or the UI - to tell a real briefing from the
+                # deterministic string-concat fallback.
+                "generator": generator,
                 "estimated_tokens": estimated_tokens,
                 "one_sentence_takeaway": self._briefing_takeaway(briefing),
             },
