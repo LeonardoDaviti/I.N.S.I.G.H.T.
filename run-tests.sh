@@ -29,10 +29,14 @@ fi
 # at a scratch database if you do not want them touching live data.
 DB_URL="${TEST_DATABASE_URL:-postgresql://insight:insight@postgres:5432/insight}"
 
+if [ "$#" -eq 0 ]; then
+  set -- discover -s insight_core/tests -p 'test_*.py'
+fi
+
 exec docker run --rm \
   --network insight_insight-network \
   --env-file .env \
   -e DATABASE_URL="$DB_URL" \
   -e LANGFUSE_ENABLED=false \
   -w /app insight-backend:latest \
-  python -m unittest "${@:-discover -s insight_core/tests -p test_*.py}"
+  python -m unittest "$@"
