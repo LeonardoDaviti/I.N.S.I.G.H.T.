@@ -233,6 +233,28 @@ class ExpertsService:
             return None
         return ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
 
+    def list_briefing_history(self, expert_id: str, limit: int = 60) -> Dict[str, Any]:
+        """Past runs of this expert, newest first. Metadata only."""
+        expert = self.get_expert(expert_id)
+        if not expert:
+            return {"success": False, "error": f"Expert {expert_id} not found", "briefings": []}
+        variant = expert.get("output_variant") or "topics"
+        entries = self.store_service.list_briefings("expert_briefing", expert_id, variant, limit)
+        return {"success": True, "expert": expert, "briefings": entries}
+
+    def get_briefing_for_date(self, expert_id: str, end_date: str) -> Dict[str, Any]:
+        """One specific past briefing, addressed by its end date."""
+        expert = self.get_expert(expert_id)
+        if not expert:
+            return {"success": False, "error": f"Expert {expert_id} not found"}
+        variant = expert.get("output_variant") or "topics"
+        cached = self.store_service.get_briefing(
+            "expert_briefing", self._subject_key(expert_id, end_date), variant
+        )
+        if not cached:
+            return {"success": False, "error": f"No briefing stored for {end_date}", "expert": expert}
+        return self._cached_response(expert, cached)
+
     def get_latest_briefing(self, expert_id: str) -> Dict[str, Any]:
         """Fetch the most recent stored briefing for an expert."""
         expert = self.get_expert(expert_id)

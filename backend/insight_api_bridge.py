@@ -675,6 +675,20 @@ class InsightApiBridge:
             self._finish_job_safe(job_id, status="failed", message=str(e), payload={"expert_id": expert_id})
             return {"success": False, "error": str(e), "expert_id": expert_id}
 
+    def list_expert_briefings(self, expert_id: str, limit: int = 60) -> Dict[str, Any]:
+        """History of an expert's briefings, newest first."""
+        try:
+            return self.experts_service.list_briefing_history(expert_id, limit)
+        except Exception as e:
+            return {"success": False, "error": str(e), "briefings": []}
+
+    def get_expert_briefing_for_date(self, expert_id: str, end_date: str) -> Dict[str, Any]:
+        """One past briefing by its end date."""
+        try:
+            return self.experts_service.get_briefing_for_date(expert_id, end_date)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def get_expert_latest_briefing(self, expert_id: str) -> Dict[str, Any]:
         """Fetch the most recent stored briefing for an expert."""
         try:

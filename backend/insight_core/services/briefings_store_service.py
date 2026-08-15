@@ -3,7 +3,7 @@ Persistence service for markdown briefing outputs.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import psycopg
 
@@ -26,6 +26,18 @@ class BriefingsStoreService:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_briefing(cur, subject_type, subject_key, variant)
+
+    def list_briefings(
+        self,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+        limit: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Metadata-only history for a subject_key prefix, newest first."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                return self.repo.list_briefings(cur, subject_type, subject_key_prefix, variant, limit)
 
     def get_latest_briefing(
         self,

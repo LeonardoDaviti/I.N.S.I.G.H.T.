@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from psycopg import Cursor
 from insight_core.utils.json_safe import json_default
@@ -13,6 +13,55 @@ from insight_core.utils.json_safe import json_default
 
 class BriefingsRepository:
     """Database access layer for the briefings table."""
+
+    def list_briefings(
+        self,
+        cur: Cursor,
+        subject_type: str,
+        subject_key_prefix: str,
+        variant: str = "default",
+        limit: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """History for one subject, newest first - metadata only, no content.
+
+        Expert briefings are keyed "<expert_id>:<end_date>", so this is what makes past
+        runs browsable the way daily briefings already are. Deliberately does NOT project
+        content or payload: a history list of 60 entries would otherwise pull 60 briefing
+        bodies to render a date picker.
+        """
+        cur.execute(
+            """
+            SELECT id, subject_key, title,
+                   COALESCE(updated_at, created_at) AS at,
+                   length(content)                  AS content_length,
+                   payload->>'generator'            AS generator,
+                   payload->>'posts_processed'      AS posts_processed,
+                   payload->>'start_date'           AS start_date,
+                   payload->>'end_date'             AS end_date
+            FROM briefings
+            WHERE subject_type = %s
+              AND (subject_key = %s OR subject_key LIKE %s)
+              AND variant = %s
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT %s
+            """,
+            (subject_type, subject_key_prefix, f"{subject_key_prefix}:%", variant,
+             max(1, min(int(limit), 200))),
+        )
+        return [
+            {
+                "id": str(r[0]),
+                "subject_key": r[1],
+                "title": r[2],
+                "at": r[3].isoformat() if hasattr(r[3], "isoformat") else r[3],
+                "content_length": r[4],
+                "generator": r[5],
+                "posts_processed": int(r[6]) if r[6] else None,
+                "start_date": r[7],
+                "end_date": r[8] or (r[1].split(":", 1)[1] if ":" in (r[1] or "") else None),
+            }
+            for r in cur.fetchall()
+        ]
 
     def get_latest_briefing(
         self,

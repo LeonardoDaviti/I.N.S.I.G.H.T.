@@ -1337,11 +1337,24 @@ async def run_expert(expert_id: str, background_tasks: BackgroundTasks, body: di
         return {"success": False, "error": str(e), "expert_id": expert_id}
 
 
+@app.get("/api/experts/{expert_id}/briefings")
+async def list_expert_briefings(expert_id: str, limit: int = Query(60, ge=1, le=200)):
+    """History of an expert's briefings, newest first. Metadata only, no content."""
+    try:
+        logger.info(f"\U0001F4DA Listing briefing history for expert: {expert_id}")
+        return api_bridge.list_expert_briefings(expert_id, limit)
+    except Exception as e:
+        logger.exception("Failed to list expert briefings")
+        return {"success": False, "error": str(e), "briefings": []}
+
+
 @app.get("/api/experts/{expert_id}/briefing")
-async def get_expert_briefing(expert_id: str):
+async def get_expert_briefing(expert_id: str, date: str | None = Query(None)):
     """Fetch the most recent stored briefing for an expert."""
     try:
         logger.info(f"🧑‍🔬 Fetching latest briefing for expert: {expert_id}")
+        if date:
+            return api_bridge.get_expert_briefing_for_date(expert_id, date)
         return api_bridge.get_expert_latest_briefing(expert_id)
     except Exception as e:
         logger.exception("Failed to get expert briefing")

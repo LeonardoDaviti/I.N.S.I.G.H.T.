@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState, type CSSProperties } 
 import { Link } from 'react-router-dom';
 import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { apiService } from '../services/api';
-import type { Expert, ExpertRunResult, ExpertTopic } from '../services/api';
+import type { Expert, ExpertRunResult, ExpertTopic, ExpertBriefingHistoryEntry } from '../services/api';
 
 // react-markdown + rehype pulls a ~100 KB gz chunk. A track with no expert bound,
 // or no briefing yet, must not pay for it, so it loads only when there is markdown.
@@ -87,7 +87,10 @@ export default function TrackBriefingPanel({
 }) {
   const [expert, setExpert] = useState<Expert | null>(null);
   const [briefing, setBriefing] = useState<ExpertRunResult | null>(null);
+  const [history, setHistory] = useState<ExpertBriefingHistoryEntry[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
   const [open, setOpen] = useState(true);
 
   const load = useCallback(async () => {
@@ -107,10 +110,31 @@ export default function TrackBriefingPanel({
       setLoading(false);
       return;
     }
-    const result = await apiService.getExpertBriefing(bound.id);
+    const [result, past] = await Promise.all([
+      apiService.getExpertBriefing(bound.id),
+      apiService.getExpertBriefingHistory(bound.id),
+    ]);
     setBriefing(result ?? null);
+    const entries = asArray<ExpertBriefingHistoryEntry>(past?.briefings);
+    setHistory(entries);
+    setSelectedDate(entries[0]?.end_date ?? null);
     setLoading(false);
   }, [folderId]);
+
+  /** Load one past briefing by its end date. Cached server-side; costs no LLM call. */
+  const selectDate = useCallback(
+    async (endDate: string) => {
+      if (!expert || endDate === selectedDate) return;
+      setSwitching(true);
+      const result = await apiService.getExpertBriefing(expert.id, endDate);
+      if (result?.success) {
+        setBriefing(result);
+        setSelectedDate(endDate);
+      }
+      setSwitching(false);
+    },
+    [expert, selectedDate],
+  );
 
   useEffect(() => {
     void load();
@@ -162,6 +186,34 @@ export default function TrackBriefingPanel({
     );
   }
 
+  /** Past runs, newest first. Each is already stored, so switching costs nothing. */
+  const historyStrip =
+    history.length > 1 ? (
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-100 px-4 py-2">
+        <span className="mr-1 text-[11px] uppercase tracking-wider text-gray-400">History</span>
+        {history.slice(0, 14).map((entry) => {
+          const date = entry.end_date || entry.subject_key;
+          const isActive = date === selectedDate;
+          return (
+            <button
+              key={entry.id}
+              onClick={() => void selectDate(date as string)}
+              disabled={switching}
+              title={`${entry.posts_processed ?? '?'} posts · ${entry.generator ?? 'unknown generator'}`}
+              className={`rounded px-1.5 py-0.5 text-[11px] transition disabled:opacity-50 ${
+                isActive
+                  ? 'bg-gray-900 text-white'
+                  : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {(date || '').slice(5)}
+              {entry.generator === 'fallback' && <span className="ml-1 text-amber-500">!</span>}
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <section className={`rounded-xl border border-gray-200 bg-white ${className}`}>
       <div className="flex items-start gap-2 p-4">
@@ -200,8 +252,10 @@ export default function TrackBriefingPanel({
         </button>
       </div>
 
+      {historyStrip}
+
       {open && (
-        <div className="border-t border-gray-100 p-4">
+        <div className={`border-t border-gray-100 p-4 ${switching ? 'opacity-50' : ''}`}>
           {briefing?.briefing && (
             <div className="text-sm text-gray-800" style={LIGHT_MARKDOWN_VARS}>
               <Suspense

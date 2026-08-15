@@ -2314,9 +2314,30 @@ class ApiService {
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
   }
 
-  async getExpertBriefing(expertId: string): Promise<ExpertRunResult> {
-    try { return await this.makeRequest(`/api/experts/${expertId}/briefing`); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+  /** Latest stored briefing, or a specific past one when `date` (its end date) is given. */
+  async getExpertBriefing(expertId: string, date?: string): Promise<ExpertRunResult> {
+    try {
+      const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+      return await this.makeRequest(`/api/experts/${expertId}/briefing${qs}`);
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
+    }
+  }
+
+  /** Past runs of an expert, newest first. Metadata only - no briefing bodies. */
+  async getExpertBriefingHistory(
+    expertId: string,
+    limit = 60,
+  ): Promise<{
+    success: boolean;
+    briefings: ExpertBriefingHistoryEntry[];
+    error?: string;
+  }> {
+    try {
+      return await this.makeRequest(`/api/experts/${expertId}/briefings?limit=${limit}`);
+    } catch (e) {
+      return { success: false, briefings: [], error: e instanceof Error ? e.message : 'Unknown error' };
+    }
   }
 
   // ===== Milestones =====
@@ -2504,6 +2525,21 @@ export interface MilestonesResponse {
   };
   elapsed_ms?: number;
   cached?: boolean;
+}
+
+export interface ExpertBriefingHistoryEntry {
+  id: string;
+  subject_key: string;
+  title?: string | null;
+  /** ISO timestamp of the last write */
+  at?: string | null;
+  content_length?: number | null;
+  /** model name, or "fallback" for the deterministic stub */
+  generator?: string | null;
+  posts_processed?: number | null;
+  start_date?: string | null;
+  /** the date this briefing covers up to - use as the `date` arg to getExpertBriefing */
+  end_date?: string | null;
 }
 
 export interface Expert {
