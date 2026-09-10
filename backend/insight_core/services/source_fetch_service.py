@@ -1362,9 +1362,36 @@ class SourceFetchService:
         merged_settings = self.sources_service.get_source_with_settings(source_id)["settings"] if source else {}
         current_archive = (merged_settings or {}).get("archive", {})
 
+        # What is left to archive, and how long it would take, derived rather than
+        # remembered. These used to be written only by plan_archive and run_archive, so a
+        # source that was never planned had no backlog figure at all, and one that had been
+        # partly archived kept whatever number its last plan produced - it never fell as
+        # posts came in. stored_posts is a COUNT taken above and available_posts is the
+        # source's own reported size, so the subtraction is free on every path that gets here.
+        source_type = data.get("source_type") or current_archive.get("source_type") or "generic_rss"
+        available_posts = data.get("available_posts", current_archive.get("available_posts"))
+        page_size = data.get("page_size", current_archive.get("page_size")) or 1
+        rate_limit = data.get("rate_limit", current_archive.get("rate_limit"))
+        derived_remaining = remaining_posts = data.get("remaining_posts")
+        estimated_pages = data.get("estimated_pages")
+        estimated_seconds = data.get("estimated_seconds")
+
+        if isinstance(available_posts, int) and available_posts >= 0:
+            derived_remaining = max(0, available_posts - stats["post_count"])
+            # An explicit plan wins: it encodes a desired_posts the operator chose, which
+            # may be far smaller than the whole archive.
+            if mode == "live" or remaining_posts is None:
+                remaining_posts = derived_remaining
+                estimated_pages = self._estimate_pages(source_type, derived_remaining, page_size)
+                estimated_seconds = self._estimate_seconds(source_type, estimated_pages, rate_limit)
+
         archive_status = current_archive.get("status", "not_archived")
         if mode in {"archive", "archive_progress"}:
             archive_status = self._derive_archive_status(stats["post_count"], data.get("available_posts"))
+        elif mode == "live" and isinstance(available_posts, int):
+            # A live fetch now knows both numbers, so the badge stops being frozen at
+            # whatever the last explicit archive run left behind.
+            archive_status = self._derive_archive_status(stats["post_count"], available_posts)
         history = list(current_archive.get("history") or [])
         if mode in {"plan", "archive", "live"}:
             history.append(self._archive_history_event(mode, stats, data))
@@ -1388,11 +1415,14 @@ class SourceFetchService:
                 ),
                 "source_type": data.get("source_type", current_archive.get("source_type")),
                 "page_size": data.get("page_size", current_archive.get("page_size")),
-                "estimated_pages": data.get("estimated_pages", current_archive.get("estimated_pages")),
-                "estimated_seconds": data.get("estimated_seconds", current_archive.get("estimated_seconds")),
+                "estimated_pages": estimated_pages if estimated_pages is not None else current_archive.get("estimated_pages"),
+                "estimated_seconds": estimated_seconds if estimated_seconds is not None else current_archive.get("estimated_seconds"),
                 "last_requested_posts": data.get("desired_posts", current_archive.get("last_requested_posts")),
                 "last_pages_fetched": data.get("pages_fetched", current_archive.get("last_pages_fetched")),
-                "remaining_posts": data.get("remaining_posts", current_archive.get("remaining_posts")),
+                "remaining_posts": remaining_posts if remaining_posts is not None else current_archive.get("remaining_posts"),
+                # The full backlog regardless of any plan's desired_posts, so the UI can
+                # say "1,204 of 5,000 archived" without re-planning.
+                "backlog_posts": derived_remaining,
                 "rate_limit": data.get("rate_limit", current_archive.get("rate_limit")),
                 "checkpoint": checkpoint,
                 "resume_ready": self._checkpoint_is_resumable(checkpoint),

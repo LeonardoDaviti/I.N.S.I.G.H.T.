@@ -337,3 +337,90 @@ class RecordLiveFetchTests(unittest.TestCase):
         self.assertNotIn("inspected", data,
                          "a failed inspection must not stamp last_inspected_at, or the "
                          "source would wait a full interval before retrying")
+
+
+class ArchiveBacklogEstimateTests(unittest.TestCase):
+    """Backlog and time-to-archive are derived on every live fetch, not remembered.
+
+    They used to be written only by plan_archive/run_archive, so a source that had never
+    been planned carried no backlog figure at all, and a partly-archived one kept whatever
+    its last plan produced - the number never fell as posts came in.
+    """
+
+    def setUp(self):
+        self.service = SourceFetchService("postgresql://test:test@localhost/test")
+        self.saved = {}
+
+        def fake_merge(source_id, settings):
+            self.saved = settings["archive"]
+
+        self.service.sources_service.merge_source_settings = fake_merge
+        self.service.sources_service.get_source_by_id = lambda _id: {"id": _id}
+        self.service.sources_service.get_source_with_settings = lambda _id: {
+            "settings": {"archive": self.current}}
+        self.current = {}
+
+    def _record(self, stored, data, mode="live"):
+        self.service.posts_service.get_source_post_stats = lambda _id: {"post_count": stored}
+        self.service._record_archive_metadata_sync("s1", data, mode)
+        return self.saved
+
+    def test_backlog_is_available_minus_stored(self):
+        saved = self._record(120, {"available_posts": 500, "page_size": 20,
+                                   "source_type": "generic_rss"})
+        self.assertEqual(saved["backlog_posts"], 380)
+        self.assertEqual(saved["remaining_posts"], 380)
+
+    def test_backlog_falls_as_posts_arrive(self):
+        first = self._record(100, {"available_posts": 500, "page_size": 20,
+                                   "source_type": "generic_rss"})["backlog_posts"]
+        second = self._record(400, {"available_posts": 500, "page_size": 20,
+                                    "source_type": "generic_rss"})["backlog_posts"]
+        self.assertEqual((first, second), (400, 100))
+
+    def test_a_fully_archived_source_reports_zero_not_negative(self):
+        saved = self._record(900, {"available_posts": 500, "page_size": 20,
+                                   "source_type": "generic_rss"})
+        self.assertEqual(saved["backlog_posts"], 0)
+        self.assertEqual(saved["estimated_seconds"], 0)
+        self.assertEqual(saved["status"], "archived")
+
+    def test_time_estimate_scales_with_the_backlog(self):
+        small = self._record(480, {"available_posts": 500, "page_size": 10,
+                                   "source_type": "telegram_rss"})["estimated_seconds"]
+        large = self._record(0, {"available_posts": 500, "page_size": 10,
+                                 "source_type": "telegram_rss"})["estimated_seconds"]
+        self.assertGreater(large, small)
+        self.assertGreater(large, 0)
+
+    def test_rate_limited_sources_are_estimated_slower_than_plain_rss(self):
+        """The estimate must reflect the politeness delays the archive will actually pay."""
+        rss = self._record(0, {"available_posts": 500, "page_size": 10,
+                               "source_type": "generic_rss"})["estimated_seconds"]
+        telegram = self._record(0, {"available_posts": 500, "page_size": 10,
+                                    "source_type": "telegram_rss"})["estimated_seconds"]
+        self.assertGreater(telegram, rss)
+
+    def test_status_updates_on_a_live_fetch(self):
+        self.current = {"status": "not_archived"}
+        saved = self._record(250, {"available_posts": 500, "page_size": 20,
+                                   "source_type": "generic_rss"})
+        self.assertEqual(saved["status"], "partial",
+                         "the badge must not stay frozen at whatever the last archive run left")
+
+    def test_unknown_available_posts_keeps_the_stored_figures(self):
+        self.current = {"remaining_posts": 42, "estimated_seconds": 99, "status": "partial"}
+        saved = self._record(10, {"source_type": "generic_rss"})
+        self.assertEqual(saved["remaining_posts"], 42)
+        self.assertEqual(saved["estimated_seconds"], 99)
+        self.assertEqual(saved["status"], "partial")
+
+    def test_an_explicit_plan_wins_over_the_derived_backlog(self):
+        """A plan encodes a desired_posts the operator chose, often far below the whole archive."""
+        saved = self._record(0, {"available_posts": 5000, "page_size": 20, "desired_posts": 100,
+                                 "remaining_posts": 100, "estimated_pages": 5,
+                                 "estimated_seconds": 5, "source_type": "generic_rss"},
+                             mode="plan")
+        self.assertEqual(saved["remaining_posts"], 100)
+        self.assertEqual(saved["backlog_posts"], 5000,
+                         "the full backlog is still reported alongside the plan's target")
