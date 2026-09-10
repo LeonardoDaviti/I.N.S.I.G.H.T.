@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, FileText, GitBranch, RefreshCw } from 'lucide-react';
 import { apiService } from '../services/api';
 import type {
+  MilestoneComparison,
+  MilestoneEvidence,
   MilestoneLaneGroup,
-  MilestoneNode,
+  MilestoneListNode,
   MilestoneVendorGroup,
   MilestonesResponse,
 } from '../services/api';
@@ -49,12 +51,50 @@ function Chip({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted
   );
 }
 
+/** Four states, not `rows | null`. A failed lookup used to store [] and the
+ *  "already loaded" guard then read that as done, so a drawer that lost one race
+ *  rendered "Evidence (7)" over an empty box, unretryable, for the life of the page.
+ *  'error' and 'loaded-but-empty' are different facts and must not paint the same. */
+type EvidenceState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; rows: MilestoneEvidence[] }
+  | { status: 'error'; message: string };
+
 /** One node on a lane spine. The evidence drawer is the provenance affordance:
- *  the rail never asserts a landmark without the posts behind it one click away. */
-function RailNode({ node }: { node: MilestoneNode }) {
+ *  the rail never asserts a landmark without the posts behind it one click away.
+ *
+ *  Evidence rows are NOT in the tree response any more - they were two thirds of a
+ *  1.85MB payload for a drawer almost nobody opens - so opening the drawer fetches
+ *  them. The count in the summary is node.post_count, which is by construction
+ *  exactly the number of evidence rows the backend built the node from. */
+function RailNode({ node, folderId }: { node: MilestoneListNode; folderId?: string }) {
   const dim = node.source_count <= 1;
-  const evidence = asArray<MilestoneNode['evidence'][number]>(node.evidence);
-  const comparisons = asArray<MilestoneNode['comparisons'][number]>(node.comparisons);
+  const comparisons = asArray<MilestoneComparison>(node.comparisons);
+  const [evidence, setEvidence] = useState<EvidenceState>({ status: 'idle' });
+
+  const loadEvidence = useCallback(async () => {
+    // Only 'idle' and 'error' re-enter: 'loaded' is the cache, and holding off on
+    // 'loading' stops an open/close/open flurry from firing a second request at a
+    // route that rebuilds the whole tree (~6.6s) whenever the 60s memo has expired.
+    if (evidence.status === 'loading' || evidence.status === 'loaded') return;
+    setEvidence({ status: 'loading' });
+    try {
+      const res = await apiService.getMilestoneNode(node.node_key, folderId);
+      // Every backend failure path — "Node not found" after a memo expiry rebuilt a
+      // tree truncated at MAX_HIT_ROWS, a bridge exception, a non-2xx caught in the
+      // service — comes back as success:false with an empty evidence list.
+      if (!res?.success) {
+        setEvidence({ status: 'error', message: res?.error || 'Failed to load evidence' });
+        return;
+      }
+      setEvidence({ status: 'loaded', rows: asArray<MilestoneEvidence>(res.evidence) });
+    } catch (e) {
+      // getMilestoneNode already swallows its own errors; this is here so an
+      // unexpected throw can never strand the drawer on "Loading…" forever.
+      setEvidence({ status: 'error', message: e instanceof Error ? e.message : 'Failed to load evidence' });
+    }
+  }, [evidence.status, node.node_key, folderId]);
 
   return (
     <div className="relative pb-3 last:pb-0">
@@ -100,21 +140,45 @@ function RailNode({ node }: { node: MilestoneNode }) {
           </div>
         )}
 
-        {evidence.length > 0 && (
-          <details className="mt-1 group">
+        {node.post_count > 0 && (
+          <details
+            className="mt-1 group"
+            // onToggle fires on close too; without the open check, collapsing a
+            // drawer that failed would immediately re-request it in the background.
+            onToggle={(e) => {
+              if (e.currentTarget.open) void loadEvidence();
+            }}
+          >
             <summary className="cursor-pointer list-none text-[11px] text-gray-400 hover:text-gray-600">
               <ChevronRight className="mr-0.5 inline h-3 w-3 transition group-open:rotate-90" />
-              Evidence ({evidence.length})
+              Evidence ({node.post_count})
             </summary>
             <div className="mt-1.5 space-y-1.5 border-l border-gray-200 pl-2">
-              {evidence.map((e) => (
-                <Link key={e.post_id} to={`/posts/${e.post_id}`} className="block hover:opacity-80">
-                  <div className="line-clamp-2 text-[11px] leading-snug text-gray-700">{e.title}</div>
-                  <div className="truncate text-[10px] uppercase tracking-wide text-gray-400">
-                    {e.role} · {e.source_name} · {shortDate(e.published_at)}
-                  </div>
-                </Link>
-              ))}
+              {evidence.status === 'loading' && (
+                <div className="text-[11px] text-gray-400">Loading…</div>
+              )}
+              {evidence.status === 'error' && (
+                <div className="break-words text-[11px] text-red-600">
+                  {evidence.message}
+                  <button onClick={() => void loadEvidence()} className="ml-1.5 underline">
+                    Retry
+                  </button>
+                </div>
+              )}
+              {/* post_count is meant to equal the row count, so zero rows here means
+                  the two disagree — say so rather than paint an empty drawer. */}
+              {evidence.status === 'loaded' && evidence.rows.length === 0 && (
+                <div className="text-[11px] text-gray-400">No evidence rows returned.</div>
+              )}
+              {evidence.status === 'loaded' &&
+                evidence.rows.map((e) => (
+                  <Link key={e.post_id} to={`/posts/${e.post_id}`} className="block hover:opacity-80">
+                    <div className="line-clamp-2 text-[11px] leading-snug text-gray-700">{e.title}</div>
+                    <div className="truncate text-[10px] uppercase tracking-wide text-gray-400">
+                      {e.role} · {e.source_name} · {shortDate(e.published_at)}
+                    </div>
+                  </Link>
+                ))}
             </div>
           </details>
         )}
@@ -123,8 +187,8 @@ function RailNode({ node }: { node: MilestoneNode }) {
   );
 }
 
-function LaneBlock({ lane }: { lane: MilestoneLaneGroup }) {
-  const nodes = asArray<MilestoneNode>(lane.nodes);
+function LaneBlock({ lane, folderId }: { lane: MilestoneLaneGroup; folderId?: string }) {
+  const nodes = asArray<MilestoneListNode>(lane.nodes);
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-gray-400">
@@ -135,14 +199,14 @@ function LaneBlock({ lane }: { lane: MilestoneLaneGroup }) {
           Newest/highest version first — the backend orders by version_sort, not date. */}
       <div className="relative border-l border-gray-200 pl-4">
         {nodes.map((node) => (
-          <RailNode key={node.node_key} node={node} />
+          <RailNode key={node.node_key} node={node} folderId={folderId} />
         ))}
       </div>
     </div>
   );
 }
 
-function VendorBlock({ vendor }: { vendor: MilestoneVendorGroup }) {
+function VendorBlock({ vendor, folderId }: { vendor: MilestoneVendorGroup; folderId?: string }) {
   const lanes = asArray<MilestoneLaneGroup>(vendor.lanes);
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
@@ -154,7 +218,7 @@ function VendorBlock({ vendor }: { vendor: MilestoneVendorGroup }) {
       </div>
       <div className="space-y-4">
         {lanes.map((lane) => (
-          <LaneBlock key={lane.lane_id} lane={lane} />
+          <LaneBlock key={lane.lane_id} lane={lane} folderId={folderId} />
         ))}
       </div>
     </div>
@@ -191,7 +255,7 @@ export default function MilestonesRail({
   }, [load]);
 
   const vendors = asArray<MilestoneVendorGroup>(tree?.vendors);
-  const papers = asArray<MilestoneNode>(tree?.papers);
+  const papers = asArray<MilestoneListNode>(tree?.papers);
   const coverage = tree?.coverage;
   const stats = tree?.stats;
   const diagnostics = tree?.diagnostics;
@@ -260,10 +324,17 @@ export default function MilestonesRail({
         </div>
       )}
 
+      {/* The `!loading` gate is load-bearing beyond the skeleton: it unmounts every
+          RailNode for the duration of a refresh, which is what discards each drawer's
+          fetched evidence. RailNode is keyed by node_key at a stable position, so if
+          this ever renders the previous tree while the new one loads (the obvious
+          anti-flicker "improvement"), React keeps those instances and a reopened
+          drawer shows pre-refresh rows under a post-refresh count. Fold a per-load
+          generation counter into the RailNode key before making that change. */}
       {!loading && vendors.length > 0 && (
         <div className="mt-4 space-y-3">
           {vendors.map((vendor) => (
-            <VendorBlock key={vendor.vendor} vendor={vendor} />
+            <VendorBlock key={vendor.vendor} vendor={vendor} folderId={folderId} />
           ))}
         </div>
       )}
@@ -276,7 +347,7 @@ export default function MilestonesRail({
           </div>
           <div className="relative border-l border-gray-200 pl-4">
             {papers.map((node) => (
-              <RailNode key={node.node_key} node={node} />
+              <RailNode key={node.node_key} node={node} folderId={folderId} />
             ))}
           </div>
         </div>

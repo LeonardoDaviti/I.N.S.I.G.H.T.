@@ -1166,10 +1166,48 @@ async def get_milestones(
     """
     try:
         logger.info(f"🏁 Milestones folder_id={folder_id} hidden={include_hidden}")
-        return api_bridge.get_milestones(folder_id=folder_id, include_hidden=include_hidden)
+        # Same treatment as /api/milestones/node, and more necessary here: this is the route
+        # that actually pays the ~6.6s cold derivation. Only the cheap node route was moved
+        # off the loop, leaving the expensive one blocking every other request behind it.
+        return await asyncio.to_thread(
+            api_bridge.get_milestones, folder_id=folder_id, include_hidden=include_hidden
+        )
     except Exception as e:
         logger.exception("Failed to build milestones")
         return {"success": False, "error": str(e), "vendors": [], "papers": []}
+
+
+@app.get("/api/milestones/node")
+async def get_milestone_node(
+    node_key: str = Query(..., min_length=1, max_length=200),
+    folder_id: str | None = Query(None),
+    include_hidden: bool = Query(False),
+):
+    """Evidence and comparison edges for one node, on demand.
+
+    node_key is a query param, not a path segment, for the same reason node-state
+    puts it in the body: keys are 'release:<lane_id>:<version>' / 'paper:<post_id>'
+    and carry ':' and '.'.
+
+    include_hidden must match what the list call used, or this rebuilds the tree
+    against a second cache key instead of reading the one already in memory.
+
+    OFF THE EVENT LOOP, unlike its neighbours. The bridge call is fully synchronous
+    psycopg, and on a node-cache miss it can spend seconds deriving the tree - the
+    measured cold derivation is 6.6s. Awaiting it inline in an `async def` would park
+    the single event loop for that whole time and stall every other in-flight request
+    (feed, briefings, operations polling). asyncio.to_thread is the same mechanism
+    _run_sync_job_background already uses to keep blocking work off the loop.
+    """
+    try:
+        logger.info(f"🏁 Milestone node {node_key} folder_id={folder_id}")
+        return await asyncio.to_thread(
+            api_bridge.get_milestone_node,
+            node_key=node_key, folder_id=folder_id, include_hidden=include_hidden,
+        )
+    except Exception as e:
+        logger.exception("Failed to load milestone node")
+        return {"success": False, "error": str(e), "evidence": [], "comparisons": []}
 
 
 @app.get("/api/milestones/lanes")

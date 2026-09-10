@@ -2357,6 +2357,19 @@ class ApiService {
     }
   }
 
+  /** Evidence + comparisons for one node. The tree no longer carries them, so this
+   *  backs the evidence drawer. Server-side it walks the same 60s-memoized tree the
+   *  list call just built, so after a page load it is a cache read, not a query. */
+  async getMilestoneNode(nodeKey: string, folderId?: string | null): Promise<MilestoneNodeDetail> {
+    try {
+      const params = new URLSearchParams({ node_key: nodeKey });
+      if (folderId) params.set('folder_id', folderId);
+      return await this.makeRequest(`/api/milestones/node?${params.toString()}`);
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', evidence: [], comparisons: [] };
+    }
+  }
+
   async getMilestoneLanes(folderId?: string | null): Promise<{ success: boolean; lanes: MilestoneLane[]; error?: string }> {
     try { return await this.makeRequest(`/api/milestones/lanes${folderId ? `?folder_id=${folderId}` : ''}`); }
     catch (e) { return { success: false, lanes: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
@@ -2441,9 +2454,37 @@ export interface MilestoneComparison {
   title: string;
   post_id: string;
   post_title: string;
-  published_at: string | null;
+  /** detail response only; the list projection strips it (nothing renders it) */
+  published_at?: string | null;
 }
 
+/** What GET /api/milestones/node returns: the per-node detail the tree stopped shipping. */
+export interface MilestoneNodeDetail {
+  success: boolean;
+  error?: string;
+  node_key?: string;
+  evidence: MilestoneEvidence[];
+  /** uncapped here, unlike the 3 the list projection keeps */
+  comparisons: MilestoneComparison[];
+}
+
+/** A node as it arrives in the tree. Everything the rail paints without a click and
+ *  nothing else — evidence and the comparison tail come from getMilestoneNode. */
+export interface MilestoneListNode {
+  node_key: string;
+  title: string;
+  custom_title: string | null;
+  occurred_on: string | null;
+  post_count: number;
+  source_count: number;
+  /** single_source | retrospective | chain_start_at_corpus_edge | named_by_briefing */
+  flags: string[];
+  /** capped at 3 server-side; comparison_count is the true total */
+  comparisons: MilestoneComparison[];
+  comparison_count: number;
+}
+
+/** The full derived node. Backend-internal now: no response carries it whole. */
 export interface MilestoneNode {
   node_key: string;
   kind: 'release' | 'paper';
@@ -2471,14 +2512,12 @@ export interface MilestoneNode {
 export interface MilestoneLaneGroup {
   lane_id: string;
   lane_name: string;
-  lane_order: number;
   node_count: number;
-  nodes: MilestoneNode[];
+  nodes: MilestoneListNode[];
 }
 
 export interface MilestoneVendorGroup {
   vendor: string;
-  latest_on: string;
   node_count: number;
   lanes: MilestoneLaneGroup[];
 }
@@ -2513,7 +2552,7 @@ export interface MilestonesResponse {
     weeks_covered: number;
   };
   vendors: MilestoneVendorGroup[];
-  papers: MilestoneNode[];
+  papers: MilestoneListNode[];
   stats: { nodes: number; lanes: number; vendors: number; comparisons: number; papers: number };
   diagnostics: {
     lanes_configured: number;

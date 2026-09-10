@@ -525,6 +525,17 @@ class InsightApiBridge:
                                     "hidden_nodes": 0, "briefings_available": 0,
                                     "hit_rows": 0, "truncated": False}}
 
+    def get_milestone_node(self, node_key: str, folder_id: str | None = None,
+                           include_hidden: bool = False) -> Dict[str, Any]:
+        """Evidence + comparisons for one node. The list call no longer ships them."""
+        try:
+            return self.milestones_service.get_node(
+                node_key=node_key, folder_id=folder_id, include_hidden=include_hidden
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e),
+                    "evidence": [], "comparisons": []}
+
     def get_milestone_lanes(self, folder_id: str | None = None) -> Dict[str, Any]:
         """Lane vocabulary for a scope: global lanes plus this folder's own."""
         try:

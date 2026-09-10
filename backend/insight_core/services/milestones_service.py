@@ -18,8 +18,9 @@ import os
 import re
 import time
 import threading
+from contextlib import contextmanager
 from datetime import date, datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Iterator, List, Dict, Any, Optional, Tuple
 
 import psycopg
 
@@ -37,11 +38,50 @@ MAX_LANES = int(os.getenv("INSIGHT_MILESTONES_MAX_LANES", "200"))
 # switching and back-navigation free without ever showing stale data for longer than
 # one ingestion is likely to take. Mutations drop the cache entirely.
 CACHE_TTL_SECONDS = int(os.getenv("INSIGHT_MILESTONES_CACHE_TTL", "60"))
+# The evidence drawer is a SECOND cache tier on purpose, with a much longer TTL.
+# get_node used to share the 60s tree memo, so the ordinary reading-rail pattern -
+# open a track, read for two minutes, click "Evidence (5)" - fell off the memo and
+# paid a full 6.6s corpus derivation to return five rows, rebuilding all 1177 nodes.
+# A node's evidence is far more stable than the tree header (it only changes when
+# ingestion adds a post to that exact node), so it can be held much longer at no
+# real staleness cost, and mutations still drop it via _invalidate.
+NODE_CACHE_TTL_SECONDS = int(os.getenv("INSIGHT_MILESTONES_NODE_CACHE_TTL", "900"))
+# The node index pins that scope's evidence rows in memory (~1.2MB of the 1.85MB the
+# list payload used to ship) for the whole TTL, so bound how many scopes can be pinned
+# at once. Realistically one or two tracks are hot; the rest are evicted oldest-first.
+MAX_NODE_CACHE_SCOPES = 16
+# _CACHE holds the full payload including every evidence row, so it is the fatter tier and
+# gets the tighter bound. Two scopes covers the realistic pattern (the main rail plus one
+# track); anything beyond that is a folder_id nobody is currently looking at.
+MAX_CACHE_SCOPES = 2
 
 _CACHE: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
+# scope key -> (stored_at, {node_key: node}). Values are the SAME node dicts the tree
+# payload holds, so warming this costs a pointer store per node, not a copy.
+_NODE_CACHE: Dict[Tuple, Tuple[float, Dict[str, Dict[str, Any]]]] = {}
 _CACHE_LOCK = threading.Lock()
 
+# Bumped by every _invalidate(). A build reads it before touching the DB and refuses to
+# store its result if it changed in the meantime. main.py runs get_milestone_node through
+# asyncio.to_thread, so a build genuinely runs in parallel with the event loop now - before
+# that, API_WORKERS=1 plus fully synchronous route bodies made _build_full and _invalidate
+# mutually atomic and this could not happen. Without the guard, a 6.6s build that started
+# before a 'hide' click repopulates both tiers with pre-hide data on the way out, and the
+# one user-facing write in this feature appears to do nothing for up to
+# NODE_CACHE_TTL_SECONDS - a page refresh included.
+_CACHE_GENERATION = 0
+# cache_key -> (lock, waiter_count). Single-flight: N concurrent misses on one scope share
+# one derivation instead of each opening its own psycopg connection and materialising its
+# own MAX_HIT_ROWS hit set. The single event loop used to enforce this for free.
+_BUILD_LOCKS: Dict[Tuple, list] = {}
+
 _SAFE_NAME = re.compile(r"^[\w .+/&-]{1,60}$")
+
+
+def _evict_oldest(cache: Dict[Tuple, Tuple[float, Any]], max_entries: int) -> None:
+    """Drop oldest-first until the cache is within bounds. Call under _CACHE_LOCK."""
+    while len(cache) > max_entries:
+        del cache[min(cache, key=lambda key: cache[key][0])]
 
 
 def _version_sort(label: str) -> str:
@@ -200,17 +240,223 @@ class MilestonesService:
     # ---------- the tree ----------
 
     def _invalidate(self) -> None:
+        # Both tiers, always. A lane edit changes which posts land on which node, so a
+        # surviving node index would hand back evidence for a node that no longer exists.
+        # The generation bump also disowns every build already in flight, which clearing
+        # alone cannot do - see _CACHE_GENERATION.
+        global _CACHE_GENERATION
         with _CACHE_LOCK:
+            _CACHE_GENERATION += 1
             _CACHE.clear()
+            _NODE_CACHE.clear()
 
     def get_tree(self, folder_id: Optional[str] = None,
                  include_hidden: bool = False) -> Dict[str, Any]:
+        """The list payload: the full tree with the per-node detail projected away.
+
+        Measured at 1.85MB on the live corpus, of which ~two thirds was evidence rows
+        and uncapped comparison edges that the rail only renders behind a click (or,
+        for comparisons, never past the third). Detail now comes from get_node.
+        """
+        return self._project_list(self._build_full(folder_id, include_hidden))
+
+    # Everything the rail reads off a node on first paint. Anything not in here is
+    # either backend-internal (version_sort orders the chain, state drives hiding) or
+    # fetched on demand by get_node.
+    _LIST_NODE_FIELDS = ("node_key", "title", "custom_title", "occurred_on",
+                         "post_count", "source_count", "flags")
+    # The rail renders .slice(0, 3). Shipping the other 40 edges of a busy node is
+    # pure waste; comparison_count keeps a "+N more" affordance possible.
+    LIST_COMPARISON_CAP = 3
+
+    def _project_list(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Rebuild payload with slimmed nodes.
+
+        MUST construct new dicts, never mutate in place: _build_full hands back a
+        shallow copy of the memoized payload, so `del node["evidence"]` here would
+        gut the cached full tree and break get_node for the rest of the TTL.
+        """
+        def node(src: Dict[str, Any]) -> Dict[str, Any]:
+            out = {key: src.get(key) for key in self._LIST_NODE_FIELDS}
+            comparisons = src.get("comparisons") or []
+            out["comparisons"] = [
+                {"node_key": c.get("node_key"), "title": c.get("title"),
+                 "post_id": c.get("post_id"), "post_title": c.get("post_title")}
+                for c in comparisons[:self.LIST_COMPARISON_CAP]
+            ]
+            out["comparison_count"] = len(comparisons)
+            return out
+
+        slim = dict(payload)
+        slim["vendors"] = [
+            {
+                "vendor": v.get("vendor"),
+                "node_count": v.get("node_count"),
+                "lanes": [
+                    {
+                        "lane_id": l.get("lane_id"),
+                        "lane_name": l.get("lane_name"),
+                        "node_count": l.get("node_count"),
+                        "nodes": [node(n) for n in (l.get("nodes") or [])],
+                    }
+                    for l in (v.get("lanes") or [])
+                ],
+            }
+            for v in (payload.get("vendors") or [])
+        ]
+        slim["papers"] = [node(p) for p in (payload.get("papers") or [])]
+        return slim
+
+    def get_node(self, node_key: str, folder_id: Optional[str] = None,
+                 include_hidden: bool = False) -> Dict[str, Any]:
+        """Evidence and comparisons for one node, uncapped.
+
+        No SQL of its own in the common case: every full-tree build indexes its nodes
+        into _NODE_CACHE, which outlives the tree memo by NODE_CACHE_TTL_SECONDS, so a
+        drawer click minutes after the page load is a dict lookup and no DB round trip.
+
+        A miss still costs one whole-tree derivation, because a node's comparison edges
+        are cross-lane by construction - they exist only where one post matches two
+        different lanes - and repo_milestones exposes no way to ask for one node's or
+        one post's hits. That rebuild is now bounded to once per scope per node-cache
+        TTL rather than once per click, it warms every other node on the page with it,
+        and main.py runs this whole call off the event loop.
+
+        Pass the SAME include_hidden the list call used or this hits a second cache key
+        and rebuilds the whole tree.
+        """
+        key = (node_key or "").strip()
+        if not key:
+            return {"success": False, "error": "node_key is required",
+                    "evidence": [], "comparisons": []}
+        index = self._cached_index(folder_id, include_hidden)
+        if index is not None:
+            node = index.get(key)
+            if node is not None:
+                return self._node_detail(node)
+            return {"success": False, "error": "Node not found",
+                    "evidence": [], "comparisons": []}
+        payload = self._build_full(folder_id, include_hidden)
+        for vendor in payload.get("vendors") or []:
+            for lane in vendor.get("lanes") or []:
+                for node in lane.get("nodes") or []:
+                    if node.get("node_key") == key:
+                        return self._node_detail(node)
+        for paper in payload.get("papers") or []:
+            if paper.get("node_key") == key:
+                return self._node_detail(paper)
+        return {"success": False, "error": "Node not found",
+                "evidence": [], "comparisons": []}
+
+    @staticmethod
+    def _node_detail(node: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "node_key": node.get("node_key"),
+            "evidence": list(node.get("evidence") or []),
+            "comparisons": list(node.get("comparisons") or []),
+        }
+
+    @staticmethod
+    def _cached_index(folder_id: Optional[str],
+                      include_hidden: bool) -> Optional[Dict[str, Dict[str, Any]]]:
+        """The whole scope's node index, or None if cold. Not one node.
+
+        Returning the index rather than a node is what lets get_node answer 'Node not
+        found' from memory: within a scope the index is exactly the set of nodes the
+        tree walk would find, so an unknown key needs no derivation either. Otherwise a
+        stale or bogus node_key rebuilds the corpus on every request.
+        """
         cache_key = (folder_id or "", bool(include_hidden))
-        now = time.monotonic()
+        with _CACHE_LOCK:
+            entry = _NODE_CACHE.get(cache_key)
+            if not entry or time.monotonic() - entry[0] >= NODE_CACHE_TTL_SECONDS:
+                return None
+            return entry[1]
+
+    @staticmethod
+    def _store(cache_key: Tuple, generation: int, payload: Dict[str, Any],
+               nodes: List[Dict[str, Any]]) -> None:
+        """Publish one build to both cache tiers, or to neither.
+
+        Only the nodes that survived the include_hidden filter are indexed, so a hidden node
+        stays 'Node not found' in the drawer exactly as it is in the tree walk.
+
+        Both tiers are written under one lock acquisition: they are two views of the same
+        derivation, and an _invalidate() landing between them would leave the drawer holding
+        evidence for a tree nobody can see. A build whose generation is stale drops its
+        result entirely rather than resurrecting pre-mutation data.
+
+        Timestamps are taken HERE, not at build start. Stamping a 30s build with its start
+        time makes it the oldest entry the instant it lands, so the slowest-building scope -
+        the one the node cache exists for - evicts itself on insert.
+        """
+        stored_at = time.monotonic()
+        index = {n["node_key"]: n for n in nodes}
+        with _CACHE_LOCK:
+            if generation != _CACHE_GENERATION:
+                return
+            _CACHE[cache_key] = (stored_at, payload)
+            _NODE_CACHE[cache_key] = (stored_at, index)
+            # Both tiers are bounded, and _CACHE more tightly than _NODE_CACHE: it holds the
+            # FULL payload (evidence rows included, ~4MB per scope at MAX_HIT_ROWS) while the
+            # index holds ~1.2MB. _read_cache only *ignores* stale entries, it never dropped
+            # them, so every distinct folder_id ever passed to /api/milestones - a query
+            # param, so caller-controlled - pinned a payload until the next _invalidate().
+            # That is the same shape as the /api/operations/overview growth that cost ~1GB.
+            _evict_oldest(_CACHE, MAX_CACHE_SCOPES)
+            _evict_oldest(_NODE_CACHE, MAX_NODE_CACHE_SCOPES)
+
+    @staticmethod
+    def _read_cache(cache_key: Tuple) -> Optional[Dict[str, Any]]:
         with _CACHE_LOCK:
             cached = _CACHE.get(cache_key)
-            if cached and now - cached[0] < CACHE_TTL_SECONDS:
+            if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
                 return dict(cached[1], cached=True)
+            return None
+
+    @staticmethod
+    @contextmanager
+    def _build_slot(cache_key: Tuple) -> Iterator[None]:
+        """Hold the single-flight lock for one scope, refcounted so the dict stays bounded.
+
+        folder_id reaches here straight off a query param, so leaving one lock per key
+        behind forever is an unbounded dict keyed by user input.
+        """
+        with _CACHE_LOCK:
+            entry = _BUILD_LOCKS.get(cache_key)
+            if entry is None:
+                entry = _BUILD_LOCKS[cache_key] = [threading.Lock(), 0]
+            entry[1] += 1
+        try:
+            # Acquired outside _CACHE_LOCK: it is held for the whole multi-second derivation.
+            with entry[0]:
+                yield
+        finally:
+            with _CACHE_LOCK:
+                entry[1] -= 1
+                if entry[1] <= 0:
+                    _BUILD_LOCKS.pop(cache_key, None)
+
+    def _build_full(self, folder_id: Optional[str] = None,
+                    include_hidden: bool = False) -> Dict[str, Any]:
+        cache_key = (folder_id or "", bool(include_hidden))
+        cached = self._read_cache(cache_key)
+        if cached is not None:
+            return cached
+        with self._build_slot(cache_key):
+            # Re-check: whoever held the slot has just published, and paying for a second
+            # full derivation of the same scope is exactly what the slot exists to prevent.
+            cached = self._read_cache(cache_key)
+            if cached is not None:
+                return cached
+            return self._derive_full(cache_key, folder_id, include_hidden)
+
+    def _derive_full(self, cache_key: Tuple, folder_id: Optional[str],
+                     include_hidden: bool) -> Dict[str, Any]:
+        # Read BEFORE the DB work: anything invalidated from here on invalidates this build.
+        with _CACHE_LOCK:
+            generation = _CACHE_GENERATION
 
         started = time.monotonic()
         source_ids = self._resolve_source_ids(folder_id)
@@ -289,8 +535,9 @@ class MilestonesService:
             "elapsed_ms": round((time.monotonic() - started) * 1000, 1),
             "cached": False,
         }
-        with _CACHE_LOCK:
-            _CACHE[cache_key] = (now, payload)
+        # Warms the drawer tier from the same build. nodes/papers here are post-filter and
+        # post-comparison-prune, i.e. the exact dicts the tree walk in get_node would find.
+        self._store(cache_key, generation, payload, nodes + papers)
         return payload
 
     def _describe_scope(self, folder_id: Optional[str],
