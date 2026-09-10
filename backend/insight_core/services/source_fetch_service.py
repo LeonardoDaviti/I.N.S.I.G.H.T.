@@ -34,6 +34,13 @@ from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
 
+# How stale archive size metadata may get before a live fetch re-measures it. This is a
+# second full fetch of the source - a re-download for RSS, an unbounded channel dump for
+# YouTube - so it is the most expensive thing in a cycle that nobody is waiting on. What it
+# produces is available_posts, which drifts by a few items a day, and first_post_date, which
+# is the date of the oldest post and never changes. 0 restores the old every-cycle behaviour.
+ARCHIVE_INSPECT_INTERVAL_HOURS = float(os.getenv("INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS", "168"))
+
 
 class SourceFetchService:
     """Central fetch/archive service for DB-backed sources."""
@@ -432,14 +439,55 @@ class SourceFetchService:
             "display_name": source_settings.get("display_name") or source_url,
         }
 
-    async def record_live_fetch(self, source_id: str, source: Dict[str, Any], fetched_posts: int) -> None:
-        """Refresh archive metadata after a live fetch."""
+    def _archive_inspection_due(self, source: Dict[str, Any]) -> bool:
+        """Has it been long enough to re-measure this source's archive size?"""
+        if ARCHIVE_INSPECT_INTERVAL_HOURS <= 0:
+            return True
+        last = ((source.get("settings") or {}).get("archive") or {}).get("last_inspected_at")
+        if not last:
+            return True
         try:
-            inspection = await self.inspect_source(source)
-        except Exception as exc:
-            self.logger.warning("Skipping archive metadata refresh for %s: %s", source_id, exc)
-            return
+            at = datetime.fromisoformat(str(last))
+        except (TypeError, ValueError):
+            return True  # Unreadable timestamp: measure rather than skip forever.
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - at).total_seconds() / 3600
+        return age_hours >= ARCHIVE_INSPECT_INTERVAL_HOURS
 
+    async def record_live_fetch(self, source_id: str, source: Dict[str, Any], fetched_posts: int) -> None:
+        """Refresh archive metadata after a live fetch.
+
+        This used to re-inspect the source unconditionally, which meant fetching it a
+        SECOND time in the same cycle: _inspect_generic_rss_source downloads and re-parses
+        the identical feed the fetch phase just read, and inspect_channel runs a full
+        unbounded yt-dlp dump of every video on the channel. Across 223 sources that is
+        roughly double the HTTP traffic and, for YouTube, 8 yt-dlp spawns per channel
+        instead of 6 - to produce two values: available_posts, which moves by a handful of
+        items a day, and first_post_date, which is the date of the oldest post and does not
+        move at all.
+
+        So the measurement is now on its own cadence, tracked by its own timestamp
+        (last_inspected_at, distinct from last_live_fetch_at, which necessarily updates
+        every cycle and so cannot gate anything).
+
+        The cheap half still runs every cycle: stored_posts comes from a COUNT on the posts
+        table, not from the network, and _record_archive_metadata falls back to the stored
+        value for every key an inspection would have supplied.
+        """
+        inspection: Dict[str, Any] = {}
+        if self._archive_inspection_due(source):
+            try:
+                inspection = await self.inspect_source(source)
+                inspection["inspected"] = True
+            except Exception as exc:
+                # Record the cheap half anyway. Returning here - as this used to - meant a
+                # source whose inspection failed also stopped reporting its stored post
+                # count, so the Archive panel froze on the sources most worth watching.
+                self.logger.warning("Archive inspection failed for %s: %s", source_id, exc)
+                inspection = {}
+
+        inspection.setdefault("source_type", self.classify_source(source))
         inspection["posts_fetched"] = fetched_posts
         await self._record_archive_metadata(source_id, inspection, mode="live")
 
@@ -1330,6 +1378,14 @@ class SourceFetchService:
                 "first_post_date": data.get("first_post_date", current_archive.get("first_post_date")),
                 "last_archived_at": datetime.now(timezone.utc).isoformat() if mode == "archive" else current_archive.get("last_archived_at"),
                 "last_live_fetch_at": datetime.now(timezone.utc).isoformat() if mode == "live" else current_archive.get("last_live_fetch_at"),
+                # Set only when the source was actually re-measured. last_live_fetch_at
+                # updates on every cycle by definition, so it cannot gate the measurement
+                # cadence - it would report "just inspected" forever.
+                "last_inspected_at": (
+                    datetime.now(timezone.utc).isoformat()
+                    if data.get("inspected") or mode in {"plan", "archive"}
+                    else current_archive.get("last_inspected_at")
+                ),
                 "source_type": data.get("source_type", current_archive.get("source_type")),
                 "page_size": data.get("page_size", current_archive.get("page_size")),
                 "estimated_pages": data.get("estimated_pages", current_archive.get("estimated_pages")),
