@@ -1,7 +1,8 @@
-import os, sys, json
+import os, sys, json, hashlib
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, Iterator, List, Tuple, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -32,8 +33,64 @@ class PostsRepository:
     # WRITE OPERATIONS
     # ===============================
 
+    # posts carries TWO unique keys: posts_url_key on (url) and the partial unique index
+    # posts_source_external_unique on (source_id, external_id) WHERE external_id IS NOT NULL.
+    # Postgres allows exactly one inference specification per INSERT, so ON CONFLICT (url)
+    # leaves the second index completely uncovered. On 2026-07-22 two scheduler cycles hit
+    # it with LessWrong post XLSWRFPdgPTjLtaj5 - stable _id, but pageUrl carries a title
+    # slug that moves when the author renames the post - and each raised a real
+    # unique_violation. Because the save loop commits once at the very end, that single row
+    # aborted the transaction and discarded the ENTIRE ~30-minute fetch of every source,
+    # silently: record_live_fetch never ran, so the Operations panel showed nothing wrong.
+    # Ingestion stayed dead for 21 days. Everything below exists so one post can never again
+    # cost a whole cycle.
+    _CONFLICT_INDEX = "posts_source_external_unique"
+
+    # Bounded because each retry only happens when another writer moved the rows under us.
+    # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
+    # this means something is genuinely wrong rather than merely contended.
+    _CONFLICT_MAX_ATTEMPTS = 4
+
+    _CONFLICT_LOOKUP_SQL = """
+        WITH url_row AS (
+            SELECT id, source_id
+              FROM posts
+             WHERE url = %(url)s
+        )
+        SELECT id, TRUE AS matched_by_url
+          FROM url_row
+        UNION ALL
+        SELECT id, FALSE
+          FROM posts
+         WHERE %(external_id)s::text IS NOT NULL
+           AND external_id = %(external_id)s::text
+           AND source_id = COALESCE(
+                   (SELECT source_id FROM url_row),
+                   %(source_id)s::uuid
+               )
+    """
+    # UNION ALL rather than OR so each arm uses its own index; a row matching both keys just
+    # comes back twice and is deduped by id. The ::text/::uuid casts are required - psycopg
+    # sends untyped parameters and Postgres cannot resolve `%(external_id)s IS NOT NULL`
+    # without them.
+    #
+    # Arm 2 is scoped to the URL ROW's source_id, not the incoming one, and the difference is
+    # what makes the retry loop terminate. ON CONFLICT (url) picks its victim by url alone and
+    # _post_update_assignments never reassigns source_id, so when two sources carry the same
+    # url the row being updated stays with its original owner - and the index entry it
+    # violates is therefore (that owner, external_id), which a lookup scoped to the incoming
+    # source_id cannot see. It would report "no blocker", the caller would replay the same
+    # doomed UPDATE, and upsert_post would burn all four attempts and raise. Falling back to
+    # the incoming source_id covers the no-url-row case, where the failed statement really was
+    # a plain INSERT under this source.
+
     def upsert_post(self, cur: Cursor, post: Dict[str, Any], source_id: str) -> Tuple[str, bool]:
-        """Save single post. Returns (post_id, was_inserted)."""
+        """Save single post. Returns (post_id, was_inserted).
+
+        Never raises on a post that already exists under either unique key: the write runs
+        inside a savepoint, and a posts_source_external_unique violation is resolved by
+        identity instead of aborting the caller's transaction.
+        """
         # if new -> insert
         # if exists -> do nothing
         # if exists but different -> Update
@@ -64,17 +121,47 @@ class PostsRepository:
         title_hash = evidence.get("title_hash")
         normalization_version = evidence.get("normalization_version")
 
+        # Named parameters (not positional) so the INSERT and the three recovery UPDATEs can
+        # share one dict; the recovery statements touch different column subsets.
+        params: Dict[str, Any] = {
+            "source_id": source_id,
+            "url": url,
+            "external_id": external_id,
+            "published_at": published_at,
+            "title": title,
+            "content": content,
+            "content_html": content_html,
+            "lang": lang,
+            "title_original": memory_fields.get("title_original"),
+            "body_original": memory_fields.get("body_original"),
+            "title_pivot": memory_fields.get("title_pivot"),
+            "summary_pivot": memory_fields.get("summary_pivot"),
+            "title_pivot_version": memory_fields.get("title_pivot_version"),
+            "summary_pivot_version": memory_fields.get("summary_pivot_version"),
+            "content_hash": content_hash,
+            "language_code": language_code,
+            "language_confidence": language_confidence,
+            "normalized_url": normalized_url,
+            "canonical_url": canonical_url,
+            "url_host": url_host,
+            "title_hash": title_hash,
+            "normalization_version": normalization_version,
+            "metadata": metadata,
+            "media_urls": media_urls,
+            "categories": categories,
+        }
+
         # SQL QUERY
         # Build SQL query
         query = """
             INSERT INTO posts (
-                source_id, 
-                url, 
+                source_id,
+                url,
                 external_id,
-                published_at, 
-                title, 
-                content, 
-                content_html, 
+                published_at,
+                title,
+                content,
+                content_html,
                 lang,
                 title_original,
                 body_original,
@@ -92,80 +179,276 @@ class PostsRepository:
                 normalization_version,
                 enriched_at,
                 metadata,
-                media_urls, 
+                media_urls,
                 categories
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s::jsonb, %s::jsonb, %s::jsonb)
+            VALUES (
+                %(source_id)s,
+                %(url)s,
+                %(external_id)s,
+                %(published_at)s,
+                %(title)s,
+                %(content)s,
+                %(content_html)s,
+                %(lang)s,
+                %(title_original)s,
+                %(body_original)s,
+                %(title_pivot)s,
+                %(summary_pivot)s,
+                %(title_pivot_version)s,
+                %(summary_pivot_version)s,
+                %(content_hash)s,
+                %(language_code)s,
+                %(language_confidence)s,
+                %(normalized_url)s,
+                %(canonical_url)s,
+                %(url_host)s,
+                %(title_hash)s,
+                %(normalization_version)s,
+                now(),
+                %(metadata)s::jsonb,
+                %(media_urls)s::jsonb,
+                %(categories)s::jsonb
+            )
             ON CONFLICT (url) DO UPDATE SET
-                external_id = COALESCE(EXCLUDED.external_id, posts.external_id),
-                published_at = COALESCE(EXCLUDED.published_at, posts.published_at),
-                title = COALESCE(EXCLUDED.title, posts.title),
-                content = COALESCE(EXCLUDED.content, posts.content),
-                content_html = COALESCE(EXCLUDED.content_html, posts.content_html),
-                lang = COALESCE(EXCLUDED.lang, posts.lang),
-                title_original = COALESCE(EXCLUDED.title_original, posts.title_original),
-                body_original = COALESCE(EXCLUDED.body_original, posts.body_original),
-                title_pivot = EXCLUDED.title_pivot,
-                summary_pivot = EXCLUDED.summary_pivot,
-                title_pivot_version = EXCLUDED.title_pivot_version,
-                summary_pivot_version = EXCLUDED.summary_pivot_version,
-                content_hash = COALESCE(EXCLUDED.content_hash, posts.content_hash),
-                language_code = EXCLUDED.language_code,
-                language_confidence = EXCLUDED.language_confidence,
-                normalized_url = EXCLUDED.normalized_url,
-                canonical_url = EXCLUDED.canonical_url,
-                url_host = EXCLUDED.url_host,
-                title_hash = EXCLUDED.title_hash,
-                normalization_version = EXCLUDED.normalization_version,
-                enriched_at = now(),
-                metadata = COALESCE(EXCLUDED.metadata, posts.metadata),
-                media_urls = EXCLUDED.media_urls,
-                categories = EXCLUDED.categories,
-                fetched_at = now(),
-                updated_at = now()
+                {assignments}
             RETURNING id, (xmax = 0) AS inserted
+        """.format(assignments=self._post_update_assignments(row_prefix="posts."))
+
+        for attempt in range(self._CONFLICT_MAX_ATTEMPTS):
+            try:
+                # The savepoint is what stops one bad row from poisoning the whole batch.
+                # Without it Postgres puts the backend in aborted-transaction state and every
+                # later statement fails with 25P02, so the caller's single terminal commit is
+                # never reached and every post gathered that cycle is rolled back.
+                with self._savepoint(cur, "insight_upsert_post"):
+                    cur.execute(query, params)
+                    row = cur.fetchone()
+            except psycopg.errors.UniqueViolation as exc:
+                # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
+                # can reach here is the uncovered index. Anything else is unexpected and must
+                # stay loud rather than be swallowed by a resolver that cannot handle it.
+                if exc.diag.constraint_name != self._CONFLICT_INDEX:
+                    raise
+                resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
+                if resolved is not None:
+                    return resolved
+                continue
+
+            post_id = str(row[0])  # UUID → string
+            was_inserted = row[1]  # Boolean
+
+            # Log action
+            action = "Inserted" if was_inserted else "Updated"
+            self.logger.debug(f"{action} post: {url[:60]}...")
+
+            return (post_id, was_inserted)
+
+        raise RuntimeError(
+            f"upsert_post could not resolve {self._CONFLICT_INDEX} for {url} "
+            f"after {self._CONFLICT_MAX_ATTEMPTS} attempts"
+        )
+
+    def _resolve_external_id_collision(
+        self, cur: Cursor, params: Dict[str, Any], *, attempt: int = 0
+    ) -> Optional[Tuple[str, bool]]:
+        """Settle a (source_id, external_id) clash by identity. Returns None to retry the insert.
+
+        Returns (post_id, False) - the row demonstrably already existed, so it can never be
+        an insert, and the `xmax = 0` trick only applies to the INSERT ... RETURNING path.
+
+        `attempt` is the caller's retry counter, used only to give up on writing external_id
+        once a replay has already proved that write cannot land.
         """
-        
-        # Execute with parameters
-        cur.execute(query, (
-            source_id,
-            url,
-            external_id,
-            published_at,
-            title,
-            content,
-            content_html,
-            lang,
-            memory_fields.get("title_original"),
-            memory_fields.get("body_original"),
-            memory_fields.get("title_pivot"),
-            memory_fields.get("summary_pivot"),
-            memory_fields.get("title_pivot_version"),
-            memory_fields.get("summary_pivot_version"),
-            content_hash,
-            language_code,
-            language_confidence,
-            normalized_url,
-            canonical_url,
-            url_host,
-            title_hash,
-            normalization_version,
-            metadata,
-            media_urls,
-            categories
-        ))
-        
-        # Fetch result
-        row = cur.fetchone()
-        post_id = str(row[0])  # UUID → string
-        was_inserted = row[1]  # Boolean
-        
-        # Log action
-        action = "Inserted" if was_inserted else "Updated"
-        self.logger.debug(f"{action} post: {url[:60]}...")
-        
-        return (post_id, was_inserted)
-        
+        # The one statement that used to run bare. It cannot violate anything, but any other
+        # failure (statement_timeout, pg_cancel_backend, a malformed source_id failing the
+        # ::uuid cast) would leave the connection in aborted-transaction state, and safe_ingest
+        # answers that by rolling back to the last checkpoint - turning one bad post back into
+        # a lost batch of up to SAVE_COMMIT_BATCH good ones. Free in the currency that matters:
+        # Postgres assigns an XID to a subtransaction only when it writes, so a SELECT-only
+        # savepoint never enters the 64-entry per-backend subxid cache.
+        # fetchall() has to happen inside the block: _savepoint's RELEASE runs on this same
+        # cursor and discards the pending result set.
+        with self._savepoint(cur, "insight_upsert_lookup"):
+            cur.execute(self._CONFLICT_LOOKUP_SQL, params)
+            lookup_rows = cur.fetchall()
+
+        url_row_id: Optional[str] = None
+        external_row_id: Optional[str] = None
+        for row in lookup_rows:
+            if row[1]:
+                url_row_id = str(row[0])
+            else:
+                external_row_id = str(row[0])
+
+        if url_row_id is None and external_row_id is None:
+            # Both rows vanished between the violation and this lookup - we lost a race with
+            # another writer. Nothing to resolve; let the caller replay the insert.
+            return None
+
+        if url_row_id is not None and external_row_id is not None and url_row_id != external_row_id:
+            # THE TWO-ROW COLLISION. The incoming post's url belongs to one row and its
+            # external_id to another. external_id is deliberately NOT assigned below: writing
+            # it would violate posts_source_external_unique against the other row, and we
+            # cannot instead move that row's url onto this one because url is NOT NULL and
+            # totally unique - it has nowhere to go. So the url row wins the identity, the
+            # clash is stamped into metadata for a human to merge, and neither row is
+            # deleted: post_artifacts / story_posts / topic_posts / the entity and event
+            # mention tables all cascade on delete and would take curated analyst work with
+            # them. Merging is a reviewable operation, not an ingest-loop side effect.
+            self.logger.warning(
+                "external_id collision: post %s holds url %s while post %s holds "
+                "(source_id=%s, external_id=%s); updating the url row and leaving its "
+                "external_id untouched",
+                url_row_id,
+                params["url"],
+                external_row_id,
+                params["source_id"],
+                params["external_id"],
+            )
+            statement = """
+                UPDATE posts SET
+                    {assignments}
+                WHERE id = %(target_id)s::uuid
+                RETURNING id
+            """.format(
+                assignments=self._post_update_assignments(
+                    set_external_id=False,
+                    metadata_expr=self._COLLISION_METADATA_EXPR,
+                )
+            )
+            resolved = dict(params, target_id=url_row_id, conflicting_post_id=external_row_id)
+        elif url_row_id is not None:
+            # The other row is gone or is the same row; the plain url-keyed update applies.
+            # Second time through, it is not: attempt > 0 means this exact write already
+            # violated the index once, so the blocking row exists but the lookup cannot see
+            # it. Drop external_id from the SET list rather than replay a statement we have
+            # watched fail - the loop is bounded, and exhausting it raises RuntimeError out
+            # of upsert_post into callers (SourceFetchService._persist_posts, scripts/ingest)
+            # that have no per-post try/except and would lose the whole batch.
+            statement = """
+                UPDATE posts SET
+                    {assignments}
+                WHERE id = %(target_id)s::uuid
+                RETURNING id
+            """.format(assignments=self._post_update_assignments(set_external_id=attempt == 0))
+            resolved = dict(params, target_id=url_row_id)
+        else:
+            # The common case: same post, moved url. LessWrong's pageUrl embeds a title slug
+            # and _id does not, so a rename decouples the two keys. Repair the url here so
+            # the next cycle takes the fast path instead of colliding again. external_id is
+            # already the incoming value by definition of how this row was found.
+            statement = """
+                UPDATE posts SET
+                    {assignments}
+                WHERE id = %(target_id)s::uuid
+                RETURNING id
+            """.format(assignments=self._post_update_assignments(set_url=True, set_external_id=False))
+            resolved = dict(params, target_id=external_row_id)
+
+        try:
+            with self._savepoint(cur, "insight_upsert_resolve"):
+                cur.execute(statement, resolved)
+                row = cur.fetchone()
+        except psycopg.errors.UniqueViolation:
+            # Only the url-writing branches can land here, and only if another writer took
+            # that url or external_id in the meantime. Replaying converges: the next lookup
+            # now sees both rows and takes the two-row branch, which writes neither unique
+            # column and therefore cannot violate anything.
+            return None
+
+        if row is None:
+            # Row disappeared between lookup and update.
+            return None
+        return (str(row[0]), False)
+
+    # Merges the incoming metadata exactly as the normal path does, then records the clash.
+    _COLLISION_METADATA_EXPR = (
+        "COALESCE(COALESCE(%(metadata)s::jsonb, metadata), jsonb_build_object()) || "
+        "jsonb_build_object('external_id_conflict', jsonb_build_object("
+        "'external_id', %(external_id)s::text, "
+        "'conflicting_post_id', %(conflicting_post_id)s::text, "
+        "'detected_at', now()))"
+    )
+
+    def _post_update_assignments(
+        self,
+        *,
+        row_prefix: str = "",
+        set_url: bool = False,
+        set_external_id: bool = True,
+        metadata_expr: Optional[str] = None,
+    ) -> str:
+        """Build the SET list shared by ON CONFLICT DO UPDATE and the recovery UPDATEs.
+
+        One builder rather than four copies, because a post repaired through the collision
+        resolver must end up with exactly the columns it would have got on the fast path.
+        row_prefix is "posts." inside ON CONFLICT DO UPDATE - there a bare column name is
+        ambiguous against EXCLUDED and Postgres rejects the statement - and "" in a plain
+        UPDATE, where a bare name already means the pre-update row.
+        """
+        row = row_prefix
+        assignments: List[str] = []
+        if set_url:
+            assignments.append("url = %(url)s")
+        if set_external_id:
+            assignments.append(f"external_id = COALESCE(%(external_id)s, {row}external_id)")
+        assignments.extend([
+            f"published_at = COALESCE(%(published_at)s, {row}published_at)",
+            f"title = COALESCE(%(title)s, {row}title)",
+            f"content = COALESCE(%(content)s, {row}content)",
+            f"content_html = COALESCE(%(content_html)s, {row}content_html)",
+            f"lang = COALESCE(%(lang)s, {row}lang)",
+            f"title_original = COALESCE(%(title_original)s, {row}title_original)",
+            f"body_original = COALESCE(%(body_original)s, {row}body_original)",
+            "title_pivot = %(title_pivot)s",
+            "summary_pivot = %(summary_pivot)s",
+            "title_pivot_version = %(title_pivot_version)s",
+            "summary_pivot_version = %(summary_pivot_version)s",
+            f"content_hash = COALESCE(%(content_hash)s, {row}content_hash)",
+            "language_code = %(language_code)s",
+            "language_confidence = %(language_confidence)s",
+            "normalized_url = %(normalized_url)s",
+            "canonical_url = %(canonical_url)s",
+            "url_host = %(url_host)s",
+            "title_hash = %(title_hash)s",
+            "normalization_version = %(normalization_version)s",
+            "enriched_at = now()",
+            f"metadata = {metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'}",
+            "media_urls = %(media_urls)s::jsonb",
+            "categories = %(categories)s::jsonb",
+            "fetched_at = now()",
+            "updated_at = now()",
+        ])
+        return ",\n                ".join(assignments)
+
+    @contextmanager
+    def _savepoint(self, cur: Cursor, name: str) -> Iterator[None]:
+        """Isolate one statement so its failure cannot poison the caller's transaction.
+
+        Emits SAVEPOINT by hand instead of using psycopg's conn.transaction(): both ingest
+        callers open a plain non-autocommit connection and upsert_post issues its very first
+        statement, so conn.transaction() would emit BEGIN/COMMIT per post and silently move
+        the batch's commit boundary. Raw SAVEPOINT rides on psycopg's implicit BEGIN and
+        leaves the caller's single terminal commit exactly where it is. The savepoint is
+        released on both paths so the stack does not grow across thousands of posts.
+        """
+        conn = cur.connection
+        if getattr(conn, "autocommit", False):
+            # No enclosing transaction to protect, and SAVEPOINT outside one is a no-op that
+            # makes ROLLBACK TO fail. conn.transaction() opens a real one for the statement.
+            with conn.transaction():
+                yield
+            return
+
+        cur.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except Exception:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+            cur.execute(f"RELEASE SAVEPOINT {name}")
+            raise
+        cur.execute(f"RELEASE SAVEPOINT {name}")
 
 
     def upsert_posts_batch(self, cur: Cursor, posts: List[Dict[str, Any]], source_id: str) -> Dict[str, int]:
