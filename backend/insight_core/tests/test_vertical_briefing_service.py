@@ -208,9 +208,12 @@ class VerticalBriefingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(result["tracks"]), 3)
         self.assertIn(self.source_display_name, result["vertical_briefing"])
 
-        track_titles = [track["title"] for track in result["tracks"]]
-        self.assertTrue(any("Autoresearch" in title for title in track_titles))
-        self.assertTrue(any("Agentic" in title for title in track_titles))
+        # Track titles come from the entity layer, which canonicalises casing - the seeded
+        # "Autoresearch ..." surfaces as the canonical entity "AutoResearch". Casing is the
+        # canonicaliser's to own, so match on identity, not on the seed's spelling.
+        track_titles = [track["title"].casefold() for track in result["tracks"]]
+        self.assertTrue(any("autoresearch" in title for title in track_titles))
+        self.assertTrue(any("agentic" in title for title in track_titles))
         self.assertTrue(any(track["track_kind"] == "one_off_update" for track in result["tracks"]))
 
         all_post_ids = {

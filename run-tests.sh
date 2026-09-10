@@ -19,8 +19,11 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Build only if the image is missing; pass REBUILD=1 to force.
-if [ "${REBUILD:-0}" = "1" ] || ! docker image inspect insight-backend:latest >/dev/null 2>&1; then
+# Build every run. The image bakes the source in (no volume is mounted, because mounting
+# backend/ over /app would restore the vendored stubs the Dockerfile deletes), so a stale
+# image silently tests code that is no longer on disk - a green run that proves nothing.
+# Layer caching makes a no-change rebuild cost about a second. SKIP_BUILD=1 opts out.
+if [ "${SKIP_BUILD:-0}" != "1" ]; then
   echo "==> building insight-backend:latest"
   docker compose build backend
 fi
