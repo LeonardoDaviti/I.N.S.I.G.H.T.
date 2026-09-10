@@ -122,13 +122,18 @@ class _HostLimiter:
 
     @staticmethod
     def host_key(source: dict) -> str:
-        # extract_url_host, not a local urlparse: it applies HOST_ALIASES and strips "www.",
-        # and it is already the function that computes posts.url_host for the rows this same
-        # script writes. A private copy put www.reddit.com and old.reddit.com in different
-        # buckets - splitting exactly the clustered hosts this limiter exists to serialise.
-        hostname = extract_url_host(source.get("handle_or_url"))
-        if hostname:
-            return hostname
+        handle = source.get("handle_or_url") or ""
+        # Only ask for a host when this is actually a URL. extract_url_host parses bare
+        # handles as hosts - "@chan" -> "chan", "r/MachineLearning" -> "r" - which hands
+        # nearly every handle source a private bucket and switches the limiter off for it.
+        if "://" in handle:
+            # extract_url_host, not a local urlparse: it applies HOST_ALIASES and strips
+            # "www.", and it already computes posts.url_host for the rows this same script
+            # writes. A private copy put www.reddit.com and old.reddit.com in different
+            # buckets - splitting exactly the clusters this limiter exists to serialise.
+            hostname = extract_url_host(handle)
+            if hostname:
+                return hostname
         # Bare handles (@channel, subreddit names) have no host; group them per platform
         # rather than letting them all share one bucket.
         return f"platform:{source.get('platform')}"
