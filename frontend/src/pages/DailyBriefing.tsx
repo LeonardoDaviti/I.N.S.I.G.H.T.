@@ -9,6 +9,7 @@ import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import SourceAvatar from '../components/SourceAvatar';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import { filterSourceGroups, getPlatformLabel, getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
+import { writeToClipboard } from '../lib/clipboard';
 
 const SIDEBAR_WIDTH_STEPS = [280, 340, 400];
 const SIDEBAR_WIDTH_STORAGE_KEY = 'insight.briefing.sidebar-width';
@@ -31,7 +32,9 @@ async function copyPostText(post: Post): Promise<void> {
   const container = document.createElement('div');
   container.innerHTML = getRenderablePostContent(post);
   const text = (container.textContent || container.innerText || post.content || '').trim();
-  await navigator.clipboard.writeText(text);
+  // Not navigator.clipboard directly: that object only exists in a secure context, and
+  // INSIGHT is served over plain HTTP on a Tailscale address. See lib/clipboard.ts.
+  await writeToClipboard(text);
 }
 
 const IMAGE_URL_PATTERN = /\.(?:jpe?g|png|gif|webp|avif|bmp)(?:[?#].*)?$/i;
