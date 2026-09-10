@@ -385,7 +385,14 @@ class SourceFetchService:
             return posts
 
         if source_type == "youtube_channel":
-            return self.youtube_service.fetch_live_posts(source["handle_or_url"], limit)
+            # yt-dlp is a subprocess that can run for minutes. Called bare from an async def
+            # it blocks the event loop, which freezes /health and every in-flight request
+            # whenever ingest is triggered through POST /api/safe-ingest-posts. safe_ingest
+            # used to dodge this by reaching past the service to youtube_service directly;
+            # fixing it here covers the archive backfill callers too, which could not.
+            return await asyncio.to_thread(
+                self.youtube_service.fetch_live_posts, source["handle_or_url"], limit
+            )
 
         if source_type == "reddit_subreddit":
             return await self._fetch_reddit_live_posts(source["handle_or_url"], limit)
@@ -409,7 +416,7 @@ class SourceFetchService:
         elif source_type == "nitter_rss":
             inspection = await self._inspect_nitter_source(source_url)
         elif source_type == "youtube_channel":
-            inspection = self._inspect_youtube_source(source_url)
+            inspection = await self._inspect_youtube_source(source_url)
         elif source_type == "reddit_subreddit":
             inspection = self._inspect_reddit_source(source_url)
         elif source_type == "generic_rss":
@@ -519,8 +526,16 @@ class SourceFetchService:
             },
         }
 
-    def _inspect_youtube_source(self, source_url: str) -> Dict[str, Any]:
-        return self.youtube_service.inspect_channel(source_url)
+    async def _inspect_youtube_source(self, source_url: str) -> Dict[str, Any]:
+        # inspect_channel shells out to yt-dlp and communicate() is a blocking C call with no
+        # await inside it, so calling this directly from an `async def` freezes the event
+        # loop for the whole channel scan - now budgeted at YTDLP_CHANNEL_SCAN_TIMEOUT_SECONDS
+        # (900s). safe_ingest reaches here through record_live_fetch, and when ingest is
+        # triggered via POST /api/safe-ingest-posts that runs on the API's own loop: /health
+        # stops answering and the compose healthcheck flips insight-api to unhealthy after
+        # ~150s. The fetch phase already moved its yt-dlp call off the loop; this was the one
+        # remaining place that did not.
+        return await asyncio.to_thread(self.youtube_service.inspect_channel, source_url)
 
     def _inspect_reddit_source(self, source_url: str) -> Dict[str, Any]:
         return {
@@ -1284,6 +1299,16 @@ class SourceFetchService:
         }
 
     async def _record_archive_metadata(self, source_id: str, data: Dict[str, Any], mode: str) -> None:
+        """Off-loop wrapper. The body is four blocking DB round trips and zero awaits.
+
+        Declared `async def` but fully synchronous, it ran straight on the event loop for
+        every source in the archive-refresh phase - re-opening the same /health stall that
+        moving _inspect_youtube_source off the loop was meant to close, and serialising the
+        refresh tasks that phase runs concurrently.
+        """
+        await asyncio.to_thread(self._record_archive_metadata_sync, source_id, data, mode)
+
+    def _record_archive_metadata_sync(self, source_id: str, data: Dict[str, Any], mode: str) -> None:
         stats = self.posts_service.get_source_post_stats(source_id)
         source = self.sources_service.get_source_by_id(source_id)
         merged_settings = self.sources_service.get_source_with_settings(source_id)["settings"] if source else {}

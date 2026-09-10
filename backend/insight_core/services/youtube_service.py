@@ -7,7 +7,9 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -25,6 +27,25 @@ class YouTubeService:
 
     DEFAULT_PAGE_SIZE = 15
     DEFAULT_LANGUAGES = ("en", "en-US", "en-GB", "ru", "ka")
+
+    # yt-dlp defaults to --retries 10 / --fragment-retries 10 / --extractor-retries 3 with
+    # exponential sleeps between them. Against "Sign in to confirm you're not a bot" that
+    # is how one video cost 7.5 minutes on 2026-07-23, with nothing bounding the call.
+    # Cut the retries and put a hard wall on every invocation.
+    YTDLP_HARDENING_ARGS = ("--retries", "2", "--extractor-retries", "1", "--socket-timeout", "15")
+    DEFAULT_YTDLP_TIMEOUT_SECONDS = 90
+    # A whole-channel listing legitimately takes longer than a single video.
+    DEFAULT_YTDLP_PLAYLIST_TIMEOUT_SECONDS = 180
+    # inspect_channel enumerates EVERY video on the channel (that count is the archive's
+    # available_posts, and the last entry is its first_post_date), so it is not a 180s job on
+    # a channel with thousands of videos - it was unbounded before the timeouts landed. Given
+    # its own, much larger budget rather than a --playlist-end limit, because a limit would
+    # silently redefine available_posts as "min(total, limit)" and first_post_date as "oldest
+    # of the last N", which is exactly the metadata this call exists to produce.
+    DEFAULT_YTDLP_CHANNEL_SCAN_TIMEOUT_SECONDS = 900
+    # Total wall-clock allowed for pulling subtitles for one video: the format loop used to
+    # be unbounded at 60s per HTTP attempt across every format of every language.
+    DEFAULT_TRANSCRIPT_BUDGET_SECONDS = 90
     STOPWORDS = {
         "the", "and", "for", "with", "from", "into", "about", "your", "this", "that",
         "what", "when", "how", "why", "are", "you", "our", "their", "will", "just",
@@ -40,10 +61,44 @@ class YouTubeService:
             for item in os.environ.get("YOUTUBE_PREFERRED_LANGUAGES", ",".join(self.DEFAULT_LANGUAGES)).split(",")
             if item.strip()
         ) or self.DEFAULT_LANGUAGES
+        self.ytdlp_timeout_seconds = int(
+            os.environ.get("YTDLP_TIMEOUT_SECONDS", str(self.DEFAULT_YTDLP_TIMEOUT_SECONDS))
+        )
+        self.ytdlp_playlist_timeout_seconds = int(
+            os.environ.get(
+                "YTDLP_PLAYLIST_TIMEOUT_SECONDS", str(self.DEFAULT_YTDLP_PLAYLIST_TIMEOUT_SECONDS)
+            )
+        )
+        self.ytdlp_channel_scan_timeout_seconds = int(
+            os.environ.get(
+                "YTDLP_CHANNEL_SCAN_TIMEOUT_SECONDS",
+                str(self.DEFAULT_YTDLP_CHANNEL_SCAN_TIMEOUT_SECONDS),
+            )
+        )
+        self.transcript_budget_seconds = int(
+            os.environ.get(
+                "YOUTUBE_TRANSCRIPT_BUDGET_SECONDS", str(self.DEFAULT_TRANSCRIPT_BUDGET_SECONDS)
+            )
+        )
 
     def inspect_channel(self, source_handle: str) -> Dict[str, Any]:
         channel_ref = self._normalize_channel_ref(source_handle)
-        entries = self._list_channel_entries(channel_ref["channel_url"])
+        try:
+            entries = self._list_channel_entries(
+                channel_ref["channel_url"], timeout=self.ytdlp_channel_scan_timeout_seconds
+            )
+        except Exception as exc:
+            # Every caller of inspect_channel swallows this into a warning about the fetch
+            # (record_live_fetch does), so the only symptom of a channel scan failing is
+            # available_posts / first_post_date frozen at their old values with nothing said.
+            # Name the consequence here, at the only place that knows what was lost.
+            self.logger.error(
+                "Channel scan failed for %s - archive metadata (available_posts, "
+                "first_post_date) will stay stale: %s",
+                channel_ref["channel_url"],
+                exc,
+            )
+            raise
         oldest_details = self._get_video_details(entries[-1]["id"]) if entries else None
         first_post_date = self._parse_upload_date(oldest_details.get("upload_date")) if oldest_details else None
 
@@ -349,7 +404,12 @@ Transcript:
             "rss_url": None,
         }
 
-    def _list_channel_entries(self, channel_url: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _list_channel_entries(
+        self,
+        channel_url: str,
+        limit: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         args = [
             "--dump-single-json",
             "--flat-playlist",
@@ -359,7 +419,23 @@ Transcript:
         if limit:
             args.extend(["--playlist-end", str(limit)])
 
-        info = self._run_ytdlp_json(args + [f"{channel_url.rstrip('/')}/videos"])
+        if timeout is None:
+            # No --playlist-end means a full channel scan, not a page fetch, whoever asked for
+            # it: list_channel_videos(limit=None) - and build_channel_roadmap / build_playlists
+            # through it - dumps every video exactly as inspect_channel does, and the archive
+            # video list, roadmap and playlist views are all reachable with limit optional.
+            # Charging that the 180s page budget breaks precisely the largest channels, which
+            # is the regression the channel-scan budget was introduced to prevent.
+            timeout = (
+                self.ytdlp_playlist_timeout_seconds
+                if limit
+                else self.ytdlp_channel_scan_timeout_seconds
+            )
+
+        info = self._run_ytdlp_json(
+            args + [f"{channel_url.rstrip('/')}/videos"],
+            timeout=timeout,
+        )
         entries = info.get("entries") or []
         normalized = []
         for entry in entries:
@@ -456,18 +532,45 @@ Transcript:
             details.pop(key, None)
         return details
 
-    def _run_ytdlp_json(self, args: List[str]) -> Dict[str, Any]:
-        command = ["yt-dlp", *args]
-        process = subprocess.run(command, capture_output=True, text=True, check=False)
-        if process.returncode != 0:
-            stderr = (process.stderr or process.stdout or "").strip()
-            raise ValueError(f"yt-dlp failed ({process.returncode}): {stderr[:500]}")
+    def _run_ytdlp_json(self, args: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+        command = ["yt-dlp", *self.YTDLP_HARDENING_ARGS, *args]
+        timeout = timeout or self.ytdlp_timeout_seconds
+        started = time.monotonic()
 
-        output = (process.stdout or "").strip()
+        # start_new_session so the timeout can kill the whole process group: subprocess
+        # timeouts only kill the direct child, and yt-dlp leaves grandchildren behind.
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._kill_process_group(process)
+            process.communicate()
+            # Same exception shape as the failure branch below, so callers such as
+            # _hydrate_entries_to_posts skip the video instead of losing the channel.
+            raise ValueError(f"yt-dlp timed out after {timeout}s: {command[-1]}")
+
+        if process.returncode != 0:
+            message = (stderr or stdout or "").strip()
+            raise ValueError(f"yt-dlp failed ({process.returncode}): {message[:500]}")
+
+        output = (stdout or "").strip()
         if not output:
             raise ValueError("yt-dlp returned empty output")
 
+        self.logger.debug("yt-dlp finished in %.1fs: %s", time.monotonic() - started, command[-1])
         return json.loads(output)
+
+    def _kill_process_group(self, process: subprocess.Popen) -> None:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            process.kill()
 
     def _extract_video_id(self, value: str) -> Optional[str]:
         if re.fullmatch(r"[A-Za-z0-9_-]{11}", value):
@@ -497,24 +600,31 @@ Transcript:
             return None
 
     def _extract_transcript(self, details: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+        # One deadline for the whole video. Without it a video with many caption languages
+        # can spend 60s per HTTP attempt across every format of every language, which is a
+        # second unbounded path next to yt-dlp itself.
+        deadline = time.monotonic() + self.transcript_budget_seconds
+
         for bucket_name in ("subtitles", "automatic_captions"):
             bucket = details.get(bucket_name) or {}
             for language in self.preferred_languages:
                 formats = bucket.get(language) or []
-                transcript = self._fetch_transcript_from_formats(formats)
+                transcript = self._fetch_transcript_from_formats(formats, deadline)
                 if transcript:
                     return transcript, f"{bucket_name}:{language}"
 
         for bucket_name in ("subtitles", "automatic_captions"):
             bucket = details.get(bucket_name) or {}
             for language, formats in bucket.items():
-                transcript = self._fetch_transcript_from_formats(formats)
+                transcript = self._fetch_transcript_from_formats(formats, deadline)
                 if transcript:
                     return transcript, f"{bucket_name}:{language}"
 
         return None, None
 
-    def _fetch_transcript_from_formats(self, formats: List[Dict[str, Any]]) -> Optional[str]:
+    def _fetch_transcript_from_formats(
+        self, formats: List[Dict[str, Any]], deadline: Optional[float] = None
+    ) -> Optional[str]:
         prioritized = sorted(
             formats,
             key=lambda item: {"json3": 0, "vtt": 1, "ttml": 2}.get(item.get("ext"), 9),
@@ -523,8 +633,12 @@ Transcript:
             subtitle_url = format_info.get("url")
             if not subtitle_url:
                 continue
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                self.logger.debug("Transcript budget exhausted, stopping subtitle fetches")
+                return None
             try:
-                payload = self._fetch_text(subtitle_url)
+                payload = self._fetch_text(subtitle_url, timeout=remaining)
                 transcript = self._parse_subtitle_payload(payload, format_info.get("ext"))
             except Exception as exc:
                 self.logger.debug("Subtitle fetch failed for %s: %s", subtitle_url, exc)
@@ -533,9 +647,10 @@ Transcript:
                 return transcript
         return None
 
-    def _fetch_text(self, url: str) -> str:
+    def _fetch_text(self, url: str, timeout: Optional[float] = None) -> str:
+        effective_timeout = 60 if timeout is None else max(1.0, min(60.0, timeout))
         request = urllib.request.Request(url, headers={"User-Agent": "INSIGHT YouTube/1.0"})
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=effective_timeout) as response:
             return response.read().decode("utf-8", errors="replace")
 
     def _parse_subtitle_payload(self, payload: str, ext: Optional[str]) -> str:
