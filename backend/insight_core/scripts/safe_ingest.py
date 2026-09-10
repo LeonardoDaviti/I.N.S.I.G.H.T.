@@ -45,6 +45,28 @@ logger = get_component_logger("safe_ingest")
 # Configuration
 SKIP_THRESHOLD_HOURS = int(os.getenv("SAFE_INGEST_SKIP_THRESHOLD_HOURS", "20"))
 
+# yt-dlp is the single most expensive thing a cycle does, and the only one bounded by a
+# remote party's patience rather than by us: each channel is a subprocess doing JS player
+# extraction, the budget is 2-wide, and it is the floor the whole cycle sits on. Off, the
+# 32 YouTube sources are skipped entirely and a cycle is pure HTTP.
+YTDLP_ENABLED = str(os.getenv("INSIGHT_YTDLP_ENABLED", "1")).strip().lower() not in {
+    "0", "false", "no", "off",
+}
+
+# YouTube runs on its own, much slower cadence. Channels publish on the order of ten videos
+# a month, so re-scanning every 20 hours spends the most expensive budget in the system
+# re-reading a list that has not changed. Weekly rather than monthly deliberately: a month
+# of backlog does not fit in one fetch window (see YOUTUBE_MIN_POSTS_PER_FETCH), and a
+# month-old "latest video" is not news.
+YOUTUBE_SKIP_THRESHOLD_HOURS = float(os.getenv("SAFE_INGEST_YOUTUBE_SKIP_THRESHOLD_HOURS", "168"))
+
+# The backlog guard from the adaptive-cadence spec, applied here because this is the first
+# place a cadence outruns a fetch window. The YouTube platform default is 5 posts per fetch,
+# sized for a 20-hour cycle. At 168 hours any channel publishing more than 5 videos a week
+# would silently lose the overflow - the fetch would succeed and the posts would simply
+# never exist. A floor of 15 covers ~2/day, comfortably above what these channels publish.
+YOUTUBE_MIN_POSTS_PER_FETCH = int(os.getenv("SAFE_INGEST_YOUTUBE_MIN_POSTS", "15"))
+
 # Platforms served by SourceFetchService. Everything else goes through a shared
 # connector object (in practice: telegram) and MUST stay sequential - see FETCH below.
 LIVE_FETCH_PLATFORMS = {"rss", "reddit", "youtube"}
@@ -308,6 +330,15 @@ def should_fetch_source(cur: Cursor, source: dict, trigger: str = "manual") -> t
     """
     source_id = source["id"]
     display_name = source["settings"].get("display_name") or source["handle_or_url"]
+    is_youtube = source.get("platform") == "youtube"
+
+    # Case -1: yt-dlp switched off. Not a failure and not backoff - the operator chose a
+    # cycle without YouTube in it, so say so plainly rather than reporting these as skipped
+    # for freshness.
+    if is_youtube and not YTDLP_ENABLED:
+        return False, "🚫 yt-dlp disabled (INSIGHT_YTDLP_ENABLED=0)"
+
+    skip_threshold_hours = YOUTUBE_SKIP_THRESHOLD_HOURS if is_youtube else SKIP_THRESHOLD_HOURS
 
     # Case 0: dead source serving out a backoff window. 73 of 235 sources are in a
     # permanent error state and each one burns a full 30s timeout every single cycle.
@@ -338,8 +369,11 @@ def should_fetch_source(cur: Cursor, source: dict, trigger: str = "manual") -> t
         time_since_fetch = now - latest_fetched_at
         hours_since_fetch = time_since_fetch.total_seconds() / 3600
 
-        if hours_since_fetch < SKIP_THRESHOLD_HOURS:
-            return False, f"⏭️  Recently fetched {hours_since_fetch:.1f}h ago ({post_count} posts)"
+        if hours_since_fetch < skip_threshold_hours:
+            return False, (
+                f"⏭️  Recently fetched {hours_since_fetch:.1f}h ago ({post_count} posts, "
+                f"{skip_threshold_hours:.0f}h cadence)"
+            )
         else:
             return True, f"🔄 Stale data ({hours_since_fetch:.1f}h old, {post_count} posts)"
 
@@ -423,6 +457,10 @@ async def _fetch_source(
         async with contextlib.AsyncExitStack() as gates:
             is_ytdlp = connector is None and fetch_service.classify_source(source) == "youtube_channel"
             if is_ytdlp:
+                # Backlog guard for the weekly cadence. The stored default is 5, sized for a
+                # 20-hour cycle; over 168 hours anything past the fifth video would be
+                # dropped by a fetch that still reported success.
+                max_posts = max(max_posts, YOUTUBE_MIN_POSTS_PER_FETCH)
                 # No host lock on top of this: youtube.com is one host key, so the lock would
                 # serialise all 32 channels instead of letting MAX_YTDLP_CONCURRENCY run.
                 # The spacer supplies the politeness the host lock would have, without the

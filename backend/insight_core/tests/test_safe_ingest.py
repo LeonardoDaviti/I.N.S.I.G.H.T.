@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -354,6 +355,127 @@ class ShouldFetchSourceTests(unittest.TestCase):
         should, _ = si.should_fetch_source(_FakeCursor((10, stale)), _source("https://a.example.com/rss"),
                                            trigger="scheduler")
         self.assertTrue(should)
+
+
+class YouTubeCadenceTests(unittest.TestCase):
+    """YouTube runs on a weekly cadence and can be switched off entirely."""
+
+    def _cursor(self, hours_ago: float):
+        return _FakeCursor((10, datetime.now(timezone.utc) - timedelta(hours=hours_ago)))
+
+    def test_youtube_is_skipped_inside_the_weekly_window(self):
+        should, reason = si.should_fetch_source(
+            self._cursor(48), _source("https://www.youtube.com/@a", platform="youtube"),
+            trigger="scheduler")
+        self.assertFalse(should, "48h is stale for RSS but fresh for a weekly cadence")
+        self.assertIn("168h cadence", reason)
+
+    def test_youtube_is_fetched_once_the_week_is_up(self):
+        should, _ = si.should_fetch_source(
+            self._cursor(si.YOUTUBE_SKIP_THRESHOLD_HOURS + 1),
+            _source("https://www.youtube.com/@a", platform="youtube"), trigger="scheduler")
+        self.assertTrue(should)
+
+    def test_other_platforms_keep_the_short_cadence(self):
+        """The weekly cadence must not leak onto the 188 RSS sources."""
+        should, _ = si.should_fetch_source(
+            self._cursor(si.SKIP_THRESHOLD_HOURS + 1),
+            _source("https://a.example.com/rss"), trigger="scheduler")
+        self.assertTrue(should)
+
+    def test_disabling_ytdlp_skips_youtube_with_a_clear_reason(self):
+        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
+            should, reason = si.should_fetch_source(
+                self._cursor(9999), _source("https://www.youtube.com/@a", platform="youtube"),
+                trigger="scheduler")
+        self.assertFalse(should)
+        self.assertIn("yt-dlp disabled", reason)
+
+    def test_disabling_ytdlp_does_not_touch_other_platforms(self):
+        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
+            should, _ = si.should_fetch_source(
+                self._cursor(si.SKIP_THRESHOLD_HOURS + 1), _source("https://a.example.com/rss"),
+                trigger="scheduler")
+        self.assertTrue(should)
+
+    def test_disabling_ytdlp_beats_a_manual_trigger(self):
+        """Off means off - a manual run must not spawn yt-dlp behind the operator's back."""
+        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
+            should, _ = si.should_fetch_source(
+                self._cursor(9999), _source("https://www.youtube.com/@a", platform="youtube"),
+                trigger="manual")
+        self.assertFalse(should)
+
+    def test_fetch_window_covers_the_cadence(self):
+        """The backlog guard from the cadence spec.
+
+        A 168h interval against the platform default of 5 posts per fetch silently drops
+        everything past the fifth video: the fetch succeeds and the posts never exist.
+        """
+        days = si.YOUTUBE_SKIP_THRESHOLD_HOURS / 24
+        self.assertGreaterEqual(
+            si.YOUTUBE_MIN_POSTS_PER_FETCH / days, 2.0,
+            "the fetch window must cover at least ~2 videos/day over the interval",
+        )
+
+
+class _FakeYouTubeService:
+    def __init__(self):
+        self.limits: list[int] = []
+
+    def fetch_live_posts(self, _handle, limit):
+        self.limits.append(limit)
+        return []
+
+
+class YouTubeBacklogGuardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stored_limit_of_five_is_raised_to_the_floor(self):
+        youtube = _FakeYouTubeService()
+
+        class _YtFetchService:
+            youtube_service = youtube
+
+            def classify_source(self, _source):
+                return "youtube_channel"
+
+        source = _source("https://www.youtube.com/@a", platform="youtube",
+                         max_posts_per_fetch=5)
+        await si._fetch_source(
+            source,
+            fetch_service=_YtFetchService(),
+            operations_service=_FakeOperations(),
+            sources_service=_FakeSourcesService(),
+            trigger="scheduler",
+            semaphore=asyncio.Semaphore(4),
+            ytdlp_semaphore=asyncio.Semaphore(2),
+            ytdlp_spacer=si._StartSpacer(0),
+            host_limiter=si._HostLimiter(),
+        )
+        self.assertEqual(youtube.limits, [si.YOUTUBE_MIN_POSTS_PER_FETCH])
+
+    async def test_a_higher_configured_limit_is_respected(self):
+        youtube = _FakeYouTubeService()
+
+        class _YtFetchService:
+            youtube_service = youtube
+
+            def classify_source(self, _source):
+                return "youtube_channel"
+
+        source = _source("https://www.youtube.com/@a", platform="youtube",
+                         max_posts_per_fetch=50)
+        await si._fetch_source(
+            source,
+            fetch_service=_YtFetchService(),
+            operations_service=_FakeOperations(),
+            sources_service=_FakeSourcesService(),
+            trigger="scheduler",
+            semaphore=asyncio.Semaphore(4),
+            ytdlp_semaphore=asyncio.Semaphore(2),
+            ytdlp_spacer=si._StartSpacer(0),
+            host_limiter=si._HostLimiter(),
+        )
+        self.assertEqual(youtube.limits, [50], "the floor must not cap an operator's setting")
 
 
 class _FakeOperations:
