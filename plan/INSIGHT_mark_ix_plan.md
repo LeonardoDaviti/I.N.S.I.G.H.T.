@@ -1360,6 +1360,16 @@ Rules:
 - `SKIP_BUILD=1 TEST_DATABASE_URL=$T ./run-tests.sh insight_core.tests.test_safe_ingest`
 - `MIGRATE=1 TEST_DATABASE_URL=$T ./run-tests.sh`
 
+**As built (2026-10-09) — deviations from the text above, all keeping its intent:**
+- **Created early:** `ingestion/kinds/base.py` holds only `PolitenessProfile` (fields as in §D.1, no `rate_limit`/`estimate_seconds` yet), because `decide_fetch` takes a profile; B3 adds the rest. `ingestion/ports.py` holds only `DbFetchStateStore` (one connection per call, clock + `backoff_delay` injected), which `safe_ingest.py`, `ingest.py` and the bridge share; B4 adds the protocols and other adapters. The interim profiles are `YTDLP_PROFILE` / `HOST_LOCK_PROFILE` in `safe_ingest.py`, picked by `interim_profile()` (`classify_source(...) == "youtube_channel"`).
+- **Profile floor applies to probation too.** `fetch_interval` step 4 runs after step 2, so an `unknown` YouTube channel waits 168h, not 24h (yt-dlp is the expensive kind either way). The backlog guard needs a mean gap, so it never applies to probation.
+- **`cadence_sample_size` counts distinct publication timestamps** in the 20-post window, not posts. On 2026-10-09, 4 live sources stamped whole batches with one time; their mean gap was 0, and the guard would have polled them hourly. With one distinct timestamp they stay `unknown` (24h probation). `tier_for` is unchanged; the SQL tier CASE is pinned to it by a parity test.
+- **`refresh_cadence(..., source_ids=None)`** gained an optional scope so the rollback-pattern tests touch only their scratch rows.
+- **The bridge also called `record_source_status`** (`fetch_source_now` and `run_archive`, via `_record_source_status_safe`); the spec listed only the ingest scripts. `fetch_source_now` now records a normal outcome (`_record_fetch_outcome_safe`). An archive run no longer writes fetch state at all: paging old posts must neither delay the next live fetch nor reset its backoff, and the archive keeps its own status in `settings.archive`.
+- **A connector outage** (`_record_connector_outage`, telegram) is recorded as `unavailable`, which keeps the Mark VIII rule that a shared connector fault does not advance any source's backoff.
+- **`safe_ingest_posts`** gained keyword seams (`sources_service`, `fetch_service`, `fetch_state`, `availability`, `clock`) for the decision-phase tests, records the decisions once per cycle, and its result adds `sources_unavailable_skipped` and `decisions` (`{kind: count}`). `should_fetch_source(source, state_row, trigger, *, profile, now, availability)` returns a `ShouldFetch` that unpacks as `(fetch, reason)` and exposes `.kind` / `.decision`.
+- `SourcesRepository.get_sources_with_post_counts` also returns the four cadence columns `cadence_stats` reads. `OperationsService.get_source_health` reads fetch state through `_load_fetch_states` (a seam for its unit test). `SAFE_INGEST_SKIP_THRESHOLD_HOURS` is gone from `docker-compose.yml` and `.env.example`.
+
 ### B2. Save batch owns its transaction; enrichment as a follow-on step
 **Files:**
 - edit: `db/repo_posts.py`

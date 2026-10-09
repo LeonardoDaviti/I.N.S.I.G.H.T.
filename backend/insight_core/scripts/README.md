@@ -17,31 +17,27 @@ python insight_core/scripts/safe_ingest.py
 
 ### How It Works
 
-The script intelligently filters sources before fetching:
+Since Mark IX (B1) every source gets one decision from `ingestion.schedule.decide_fetch`,
+fed by the source's cadence columns and its row in `source_fetch_state`:
 
-1. **New Sources (0 posts)** → ✅ FETCH
-   - Newly added sources that have never been fetched
-   
-2. **Stale Sources (>24h)** → ✅ FETCH
-   - Sources with posts older than 24 hours
-   
-3. **Recent Sources (<24h)** → ⏭️ SKIP
-   - Sources fetched within the last 24 hours
+1. **Unavailable** (yt-dlp switched off with `INSIGHT_YTDLP_ENABLED=0`) → ⏭️ SKIP, reported
+   as unavailable, never as backoff
+2. **In backoff** after consecutive errors (1h, 2h, 4h ... 24h; 7d once dormant) → ⏭️ SKIP.
+   A manual run ignores backoff, but still respects freshness
+3. **New source** (no successful fetch, 0 posts) → ✅ FETCH
+4. **Due**: the source's adaptive fetch interval has elapsed since its last *successful*
+   fetch (an empty fetch counts) → ✅ FETCH, otherwise ⏭️ SKIP
 
-### Features
-
-- **Zero Schema Changes**: Uses existing `posts.fetched_at` data
-- **Development-Friendly**: Prevents redundant fetches during feature development
-- **Transparent Logging**: Shows exactly why each source is fetched or skipped
-- **Production-Ready**: Same reliability as regular `ingest.py`
+The interval comes from the mean gap between the source's latest 20 posts (half the gap,
+clamped to 24h..21d; 24h probation while there are fewer than 3 dated posts; 168h minimum
+for yt-dlp), capped by a backlog guard so a fast feed is polled before it can overflow.
+`sources.fetch_interval_hours_override` replaces all of that for one source.
 
 ### Configuration
 
-You can adjust the skip threshold at the top of the script:
-
-```python
-SKIP_THRESHOLD_HOURS = 24  # Change to 12, 48, etc.
-```
+- `INSIGHT_YTDLP_ENABLED` (default 1)
+- `INSIGHT_BACKOFF_BASE_MINUTES` (60), `INSIGHT_BACKOFF_MAX_HOURS` (24),
+  `INSIGHT_BACKOFF_DORMANT_AFTER` (10), `INSIGHT_BACKOFF_DORMANT_MAX_HOURS` (168)
 
 ### Example Session
 

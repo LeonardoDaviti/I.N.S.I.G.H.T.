@@ -10,8 +10,13 @@ from typing import Any, Dict, List, Optional
 
 import psycopg
 
+from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.sources_service import SourcesService
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value else None
 
 
 class OperationsService:
@@ -327,30 +332,6 @@ class OperationsService:
             "finished_at": row[10].isoformat() if row[10] else None,
         }
 
-    def record_source_status(
-        self,
-        source_id: str,
-        *,
-        status: str,
-        message: Optional[str] = None,
-        trigger: str = "manual",
-        fetched_posts: Optional[int] = None,
-    ) -> None:
-        source = self.sources_service.get_source_with_settings(source_id)
-        ops = (source.get("settings") or {}).get("ops", {})
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        next_ops = {
-            "last_status": status,
-            "last_message": message,
-            "last_trigger": trigger,
-            "last_checked_at": now_iso,
-            "last_fetched_posts": fetched_posts if fetched_posts is not None else ops.get("last_fetched_posts"),
-            "last_success_at": now_iso if status == "healthy" else ops.get("last_success_at"),
-            "last_error_at": now_iso if status == "error" else ops.get("last_error_at"),
-        }
-        self.sources_service.merge_source_settings(source_id, {"ops": next_ops})
-
     def get_operations_overview(self) -> Dict[str, Any]:
         # The SQL projection above is what fixed the memory, not this limit, so keep
         # enough history for the alerts panel to still catch a stale failure.
@@ -433,13 +414,26 @@ class OperationsService:
         }
 
     def get_source_health(self) -> List[Dict[str, Any]]:
+        """Per-source health in the Mark VIII row shape, read from source_fetch_state.
+
+        B6 replaces this with the schedule-aware SourceHealthRow (decide_fetch per row);
+        until then the shape stays put so the Operations panel keeps working.
+        """
         sources = self.sources_service.get_all_sources_with_settings()
+        states = self._load_fetch_states([source["id"] for source in sources])
         health_rows: List[Dict[str, Any]] = []
         for source in sources:
             settings = source.get("settings") or {}
-            ops = settings.get("ops", {})
             archive = settings.get("archive", {})
-            status = ops.get("last_status") or ("healthy" if archive.get("stored_posts") else "unknown")
+            state = states.get(source["id"])
+            last_outcome = state.last_outcome if state else None
+            status = last_outcome or ("healthy" if archive.get("stored_posts") else "unknown")
+            if state and last_outcome in ("error", "unavailable"):
+                message = state.last_error
+            elif state and state.last_fetched_posts is not None:
+                message = f"Fetched {state.last_fetched_posts} posts"
+            else:
+                message = None
             health_rows.append(
                 {
                     "source_id": source["id"],
@@ -449,16 +443,22 @@ class OperationsService:
                     "stored_posts": source.get("post_count", 0),
                     "archive_status": archive.get("status"),
                     "status": status,
-                    "last_checked_at": ops.get("last_checked_at") or archive.get("last_live_fetch_at"),
-                    "last_success_at": ops.get("last_success_at") or archive.get("last_live_fetch_at"),
-                    "last_error_at": ops.get("last_error_at"),
-                    "last_message": ops.get("last_message"),
+                    "last_checked_at": _iso(state.last_attempt_at if state else None)
+                    or archive.get("last_live_fetch_at"),
+                    "last_success_at": _iso(state.last_success_at if state else None)
+                    or archive.get("last_live_fetch_at"),
+                    "last_error_at": _iso(state.last_error_at if state else None),
+                    "last_message": message,
                 }
             )
 
-        order = {"error": 0, "running": 1, "healthy": 2, "unknown": 3}
+        order = {"error": 0, "unavailable": 1, "running": 1, "empty": 2, "healthy": 2, "unknown": 3}
         health_rows.sort(key=lambda row: (order.get(row["status"], 9), row["display_name"].lower()))
         return health_rows
+
+    def _load_fetch_states(self, source_ids: List[str]) -> Dict[str, FetchStateRow]:
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            return FetchStateRepository().load(cur, source_ids)
 
     def _default_scheduler_config(self) -> Dict[str, Any]:
         return self._normalize_scheduler_config(

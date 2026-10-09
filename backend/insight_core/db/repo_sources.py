@@ -132,23 +132,28 @@ class SourcesRepository:
     
     def get_sources_with_post_counts(self, cur: Cursor) -> List[Dict[str, Any]]:
         """
-        Get all sources with their post counts.
-        
+        Get all sources with their post counts and cadence columns.
+
         Returns:
-            List of source dicts with post_count field
+            List of source dicts with post_count, mean_gap_seconds, cadence_sample_size,
+            cadence_tier and fetch_interval_hours_override (the inputs cadence_stats reads)
         """
         query = """
-            SELECT 
+            SELECT
                 s.id,
                 s.platform,
                 s.handle_or_url,
                 s.enabled,
                 s.created_at,
                 s.updated_at,
-                COUNT(p.id) as post_count
+                COUNT(p.id) as post_count,
+                s.mean_gap_seconds,
+                s.cadence_sample_size,
+                s.cadence_tier,
+                s.fetch_interval_hours_override
             FROM sources s
             LEFT JOIN posts p ON s.id = p.source_id
-            GROUP BY s.id, s.platform, s.handle_or_url, s.enabled, s.created_at, s.updated_at
+            GROUP BY s.id
             ORDER BY s.platform, s.handle_or_url
         """
         cur.execute(query)
@@ -163,7 +168,11 @@ class SourcesRepository:
                 "enabled": row[3],
                 "created_at": row[4],
                 "updated_at": row[5],
-                "post_count": row[6]
+                "post_count": row[6],
+                "mean_gap_seconds": row[7],
+                "cadence_sample_size": row[8],
+                "cadence_tier": row[9],
+                "fetch_interval_hours_override": row[10],
             })
         
         self.logger.debug(f"Retrieved {len(sources)} sources with post counts")
@@ -225,12 +234,16 @@ class SourcesRepository:
         Returns:
             The merged settings dict, or None when the source does not exist.
         """
-        source = self.get_source_by_id(cur, source_id)
-        if not source:
+        # FOR UPDATE: a plain read let two concurrent merges both read the old JSONB and
+        # the second write silently drop the first one's keys. The row lock makes the
+        # second merge wait for the first to commit and then merge on top of it.
+        cur.execute("SELECT settings FROM sources WHERE id = %s FOR UPDATE", (source_id,))
+        locked = cur.fetchone()
+        if not locked:
             self.logger.warning(f"Source {source_id} not found")
             return None
 
-        current_settings = source.get("settings") or {}
+        current_settings = locked[0] or {}
         merged_settings = self._deep_merge_dicts(current_settings, settings)
 
         query = """

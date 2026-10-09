@@ -2,37 +2,49 @@
 """
 Safe ingestion script that only fetches from sources that need updating.
 
-Filtering Logic:
-- Sources in backoff after repeated failures → SKIP (unless triggered manually)
-- Sources with 0 posts (newly added) → FETCH
-- Sources with latest fetch older than SAFE_INGEST_SKIP_THRESHOLD_HOURS → FETCH
-- Sources with recent fetches inside that window → SKIP
+Filtering logic (Mark IX B1): one decision, ingestion.schedule.decide_fetch, fed by the
+source's cadence columns and its row in source_fetch_state:
+- kind unavailable (yt-dlp off) → SKIP, reported as unavailable, never as backoff
+- in backoff after repeated failures → SKIP (a manual trigger ignores backoff only)
+- new source (no successful fetch, 0 posts) → FETCH
+- otherwise FETCH once the adaptive fetch interval has elapsed since the last
+  *successful* fetch (empty fetches count), else SKIP
 
-This prevents redundant fetching during development iterations.
+B4 replaces this module with a CLI shim over ingestion.run_ingestion.
 
 Usage: python backend/insight_core/scripts/safe_ingest.py
 """
 import sys
 from pathlib import Path
 import contextlib
-import random
 import time
 import os
-import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Callable, Iterator
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import asyncio
 import psycopg
-from psycopg import Cursor
 from insight_core.db.ensure_db import ensure_database
+from insight_core.db.repo_fetch_state import FetchStateRow
 from insight_core.db.repo_posts import PostsRepository
+from insight_core.ingestion.kinds.base import PolitenessProfile
+from insight_core.ingestion.ports import DbFetchStateStore
+from insight_core.ingestion.schedule import (
+    Availability,
+    DecisionKind,
+    FetchDecision,
+    availability_from_env,
+    cadence_stats,
+    decide_fetch,
+)
+from insight_core.ingestion.types import FetchOutcome, OutcomeStatus
 from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.sources_service import SourcesService
-from insight_core.services.operations_service import OperationsService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.connectors import create_connector
 from insight_core.utils.url_normalization import extract_url_host
@@ -42,30 +54,25 @@ DEBUG_MODE = False  # DEBUG here also puts the API at DEBUG level (bridge import
 setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
 
-# Configuration
-SKIP_THRESHOLD_HOURS = int(os.getenv("SAFE_INGEST_SKIP_THRESHOLD_HOURS", "20"))
-
+# Interim politeness profiles (B1-B3). B3 moves them onto the source kinds, and the
+# runner resolves them through KindRegistry; until then YouTube is recognised by
+# classify_source, so a /feeds/videos.xml URL stored as platform rss gets the same rules.
+#
 # yt-dlp is the single most expensive thing a cycle does, and the only one bounded by a
-# remote party's patience rather than by us: each channel is a subprocess doing JS player
-# extraction, the budget is 2-wide, and it is the floor the whole cycle sits on. Off, the
-# 32 YouTube sources are skipped entirely and a cycle is pure HTTP.
-YTDLP_ENABLED = str(os.getenv("INSIGHT_YTDLP_ENABLED", "1")).strip().lower() not in {
-    "0", "false", "no", "off",
-}
-
-# YouTube runs on its own, much slower cadence. Channels publish on the order of ten videos
-# a month, so re-scanning every 20 hours spends the most expensive budget in the system
-# re-reading a list that has not changed. Weekly rather than monthly deliberately: a month
-# of backlog does not fit in one fetch window (see YOUTUBE_MIN_POSTS_PER_FETCH), and a
-# month-old "latest video" is not news.
-YOUTUBE_SKIP_THRESHOLD_HOURS = float(os.getenv("SAFE_INGEST_YOUTUBE_SKIP_THRESHOLD_HOURS", "168"))
-
-# The backlog guard from the adaptive-cadence spec, applied here because this is the first
-# place a cadence outruns a fetch window. The YouTube platform default is 5 posts per fetch,
-# sized for a 20-hour cycle. At 168 hours any channel publishing more than 5 videos a week
-# would silently lose the overflow - the fetch would succeed and the posts would simply
-# never exist. A floor of 15 covers ~2/day, comfortably above what these channels publish.
-YOUTUBE_MIN_POSTS_PER_FETCH = int(os.getenv("SAFE_INGEST_YOUTUBE_MIN_POSTS", "15"))
+# remote party's patience rather than by us. Its profile carries:
+#   - requires="ytdlp": INSIGHT_YTDLP_ENABLED=0 skips every YouTube source as unavailable
+#   - a 168h cadence floor: channels publish ~10 videos a month, so re-scanning daily spends
+#     the most expensive budget in the system re-reading a list that has not changed
+#   - min 15 posts per fetch: the stored default of 5 was sized for a 20h cycle, and over a
+#     week anything past the fifth video would be dropped by a fetch that still succeeded
+YTDLP_PROFILE = PolitenessProfile(
+    concurrency_pool="ytdlp",
+    cadence_floor=timedelta(hours=168),
+    min_posts_per_fetch=15,
+    requires="ytdlp",
+    blocking_io=True,
+)
+HOST_LOCK_PROFILE = PolitenessProfile(concurrency_pool="host-lock")
 
 # Platforms served by SourceFetchService. Everything else goes through a shared
 # connector object (in practice: telegram) and MUST stay sequential - see FETCH below.
@@ -102,10 +109,6 @@ HOST_MIN_INTERVAL_OVERRIDES = {
     **{host: float(SourceFetchService.NITTER_PAGE_DELAY_SECONDS)
        for host in SourceFetchService.NITTER_HOSTS},
 }
-
-# Dead-source backoff: 15m, 30m, 1h, 2h, 4h, 8h, 16h, 24h, 24h...
-BACKOFF_BASE_MINUTES = int(os.getenv("SAFE_INGEST_BACKOFF_BASE_MINUTES", "15"))
-BACKOFF_MAX_HOURS = int(os.getenv("SAFE_INGEST_BACKOFF_MAX_HOURS", "24"))
 
 # Enrichment runs in chunks purely so it can report progress; the services themselves
 # are happy with the whole batch.
@@ -270,167 +273,76 @@ def _transaction_is_poisoned(conn) -> bool:
     return conn.info.transaction_status == _PQ_INERROR
 
 
-def get_source_post_stats(cur: Cursor, source_id: str) -> tuple[int, datetime | None]:
-    """
-    Get post count and latest fetch time for a source.
-
-    Returns:
-        (post_count, latest_fetched_at)
-    """
-    query = """
-        SELECT
-            COUNT(*) as post_count,
-            MAX(fetched_at) as latest_fetched_at
-        FROM posts
-        WHERE source_id = %s
-    """
-    cur.execute(query, (source_id,))
-    row = cur.fetchone()
-
-    post_count = row[0] if row else 0
-    latest_fetched_at = row[1] if row and row[1] else None
-
-    return post_count, latest_fetched_at
-
-
-def _backoff_state(source: dict) -> dict:
-    """Read the backoff block written by _record_backoff.
-
-    Deliberately a separate settings key from `ops`: OperationsService.record_source_status
-    does a read-modify-write of `ops` across two connections, so a counter living there
-    would be silently clobbered by concurrent status writes.
-    """
-    state = (source.get("settings") or {}).get("ingest_backoff")
-    return state if isinstance(state, dict) else {}
-
-
-def _next_retry_at(consecutive_failures: int, now: datetime) -> str:
-    """Exponential backoff capped at BACKOFF_MAX_HOURS, jittered.
-
-    Jitter matters: 73 sources are permanently failing, and without it they all wake up
-    in the same second of every cycle.
-    """
-    # Jitter is applied to the CAPPED delay and only downward, so BACKOFF_MAX_HOURS is a
-    # bound an operator can read as one. Jittering upward after the cap (0.85-1.15 of 24h)
-    # parked a stuck source up to 27.6h; jittering before it leaves every source at the
-    # ceiling landing on exactly 24h, which is the herd this exists to break up.
-    delay_minutes = min(
-        BACKOFF_BASE_MINUTES * (2 ** max(0, consecutive_failures - 1)),
-        BACKOFF_MAX_HOURS * 60,
-    ) * random.uniform(0.85, 1.0)
-    return (now + timedelta(minutes=delay_minutes)).isoformat()
-
-
-def should_fetch_source(cur: Cursor, source: dict, trigger: str = "manual") -> tuple[bool, str]:
-    """
-    Determine if a source should be fetched based on post history.
-
-    Returns:
-        (should_fetch: bool, reason: str)
-    """
-    source_id = source["id"]
-    display_name = source["settings"].get("display_name") or source["handle_or_url"]
-    is_youtube = source.get("platform") == "youtube"
-
-    # Case -1: yt-dlp switched off. Not a failure and not backoff - the operator chose a
-    # cycle without YouTube in it, so say so plainly rather than reporting these as skipped
-    # for freshness.
-    if is_youtube and not YTDLP_ENABLED:
-        return False, "🚫 yt-dlp disabled (INSIGHT_YTDLP_ENABLED=0)"
-
-    skip_threshold_hours = YOUTUBE_SKIP_THRESHOLD_HOURS if is_youtube else SKIP_THRESHOLD_HOURS
-
-    # Case 0: dead source serving out a backoff window. 73 of 235 sources are in a
-    # permanent error state and each one burns a full 30s timeout every single cycle.
-    # A manual trigger always bypasses this - that is the operator's "try it now" button.
-    if trigger != "manual":
-        state = _backoff_state(source)
-        next_retry_at = state.get("next_retry_at")
-        if next_retry_at:
-            try:
-                retry_at = datetime.fromisoformat(next_retry_at)
-                if retry_at.tzinfo is None:
-                    retry_at = retry_at.replace(tzinfo=timezone.utc)
-            except (TypeError, ValueError):
-                retry_at = None
-            if retry_at and datetime.now(timezone.utc) < retry_at:
-                failures = state.get("consecutive_failures") or 0
-                return False, f"🚫 Backoff until {next_retry_at} ({failures} consecutive failures)"
-
-    post_count, latest_fetched_at = get_source_post_stats(cur, source_id)
-
-    # Case 1: No posts yet (newly added source)
-    if post_count == 0:
-        return True, "📦 New source (0 posts)"
-
-    # Case 2: Has posts, check freshness
-    if latest_fetched_at:
-        now = datetime.now(timezone.utc)
-        time_since_fetch = now - latest_fetched_at
-        hours_since_fetch = time_since_fetch.total_seconds() / 3600
-
-        if hours_since_fetch < skip_threshold_hours:
-            return False, (
-                f"⏭️  Recently fetched {hours_since_fetch:.1f}h ago ({post_count} posts, "
-                f"{skip_threshold_hours:.0f}h cadence)"
-            )
-        else:
-            return True, f"🔄 Stale data ({hours_since_fetch:.1f}h old, {post_count} posts)"
-
-    # Case 3: Has posts but no fetched_at (shouldn't happen, but safe fallback)
-    return True, f"⚠️  Unknown fetch time ({post_count} posts)"
-
-
-async def _record_backoff(sources_service: SourcesService, source: dict, *, failed: bool) -> None:
-    """Advance or clear the failure counter for one source.
-
-    Only a fetch that *errored* advances the ladder. Every other outcome - including a fetch
-    that answered with zero posts - clears it: an empty feed answered, it just had nothing
-    new, and it burned no timeout.
-    """
-    state = _backoff_state(source)
-    failures = int(state.get("consecutive_failures") or 0)
-    now = datetime.now(timezone.utc)
-
-    if failed:
-        failures += 1
-        payload = {
-            "consecutive_failures": failures,
-            "next_retry_at": _next_retry_at(failures, now),
-            "last_error_at": now.isoformat(),
-        }
-    else:
-        if not failures and not state.get("next_retry_at"):
-            return  # Already clean - do not spend a connection saying so.
-        payload = {
-            "consecutive_failures": 0,
-            "next_retry_at": None,
-            "last_success_at": now.isoformat(),
-        }
-
+def interim_profile(fetch_service, source: dict) -> PolitenessProfile:
+    """The politeness profile a source gets until B3's KindRegistry exists."""
     try:
-        await asyncio.to_thread(
-            sources_service.merge_source_settings, source["id"], {"ingest_backoff": payload}
-        )
-        source.setdefault("settings", {})["ingest_backoff"] = {**state, **payload}
-    except Exception as exc:
-        logger.warning("Could not persist backoff state for %s: %s", source["handle_or_url"], exc)
+        if fetch_service.classify_source(source) == "youtube_channel":
+            return YTDLP_PROFILE
+    except Exception as exc:  # classification must never cost the cycle
+        logger.warning("Could not classify %s: %s", source.get("handle_or_url"), exc)
+    return HOST_LOCK_PROFILE
+
+
+@dataclass(frozen=True)
+class ShouldFetch:
+    """should_fetch_source's answer. Unpacks as (fetch, reason); .kind/.decision for the rest."""
+
+    fetch: bool
+    reason: str
+    decision: FetchDecision
+
+    @property
+    def kind(self) -> DecisionKind:
+        return self.decision.kind
+
+    def __iter__(self) -> Iterator:
+        yield self.fetch
+        yield self.reason
+
+
+def should_fetch_source(
+    source: dict,
+    state: FetchStateRow | None,
+    trigger: str = "manual",
+    *,
+    profile: PolitenessProfile = HOST_LOCK_PROFILE,
+    now: datetime | None = None,
+    availability: Availability | None = None,
+) -> ShouldFetch:
+    """Adapter from the Mark VIII call shape to decide_fetch.
+
+    A manual trigger keeps its Mark VIII meaning through ignore_backoff: it skips the
+    backoff window (the operator's "try it now") but still respects freshness. B4 replaces
+    this with FetchRequest.force.
+    """
+    decision = decide_fetch(
+        cadence_stats(source, state),
+        profile,
+        now or datetime.now(timezone.utc),
+        force=False,
+        availability=availability or availability_from_env(),
+        ignore_backoff=(trigger == "manual"),
+    )
+    return ShouldFetch(decision.fetch, decision.detail, decision)
 
 
 async def _fetch_source(
     source: dict,
     *,
     fetch_service: SourceFetchService,
-    operations_service: OperationsService,
-    sources_service: SourcesService,
+    fetch_state: DbFetchStateStore,
     trigger: str,
     semaphore: asyncio.Semaphore,
     ytdlp_semaphore: asyncio.Semaphore,
     ytdlp_spacer: _StartSpacer,
     host_limiter: _HostLimiter,
     connector=None,
+    post_limit: int | None = None,
 ) -> dict:
-    """Fetch one source and record its status. Never raises.
+    """Fetch one source and record its fetch outcome. Never raises.
+
+    post_limit is the decision's limit (already floored by the profile); without one the
+    source's own max_posts_per_fetch applies.
 
     "Never raises" is a contract, not a courtesy: these coroutines run under asyncio.gather,
     so anything escaping one of them takes the whole cycle's fetch with it. That is why even
@@ -445,7 +357,7 @@ async def _fetch_source(
     error: str | None = None
 
     try:
-        max_posts = settings["max_posts_per_fetch"]
+        max_posts = post_limit if post_limit is not None else settings["max_posts_per_fetch"]
         # Gate order is load-bearing: the narrow gate (per-host lock, yt-dlp budget) is taken
         # BEFORE the global semaphore. Taken inside it - as this did originally - a run of
         # same-host sources parks all MAX_FETCH_CONCURRENCY slots on tasks that are merely
@@ -457,10 +369,9 @@ async def _fetch_source(
         async with contextlib.AsyncExitStack() as gates:
             is_ytdlp = connector is None and fetch_service.classify_source(source) == "youtube_channel"
             if is_ytdlp:
-                # Backlog guard for the weekly cadence. The stored default is 5, sized for a
-                # 20-hour cycle; over 168 hours anything past the fifth video would be
-                # dropped by a fetch that still reported success.
-                max_posts = max(max_posts, YOUTUBE_MIN_POSTS_PER_FETCH)
+                # Backlog guard for the weekly cadence (see YTDLP_PROFILE). decide_fetch
+                # already floors post_limit; this keeps the floor for direct callers.
+                max_posts = max(max_posts, YTDLP_PROFILE.min_posts_per_fetch)
                 # No host lock on top of this: youtube.com is one host key, so the lock would
                 # serialise all 32 channels instead of letting MAX_YTDLP_CONCURRENCY run.
                 # The spacer supplies the politeness the host lock would have, without the
@@ -496,33 +407,20 @@ async def _fetch_source(
 
     if error is None:
         logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts in {elapsed:.1f}s")
-        status = "healthy" if posts else "empty"
-        message = f"Fetched {len(posts)} posts"
     else:
-        logger.error(f"❌ Failed to fetch from {source['handle_or_url']}: {error}")
-        status = "error"
-        message = error
+        logger.error(f"❌ Failed to fetch from {source.get('handle_or_url')}: {error}")
 
+    # One outcome write replaces the Mark VIII status + backoff pair. A fetch that raises
+    # nothing but returns nothing is `empty`, not healthy - that is how a silently dead feed
+    # looks - but it is still a success: it clears the failure ladder and advances
+    # last_success_at, so a recovered-but-quiet feed is not parked at a high count forever.
+    outcome = FetchOutcome.from_fetch(
+        str(source.get("id")), fetched=len(posts), error=error, duration_s=elapsed
+    )
     try:
-        await asyncio.to_thread(
-            operations_service.record_source_status,
-            source["id"],
-            # A fetch that raises nothing but returns nothing is not healthy - that is
-            # exactly how a silently dead feed looks. Report it as such so the
-            # Operations panel can surface it.
-            status=status,
-            message=message,
-            trigger=trigger,
-            fetched_posts=len(posts) if error is None else None,
-        )
+        await asyncio.to_thread(fetch_state.record_outcome, outcome, trigger=trigger)
     except Exception as exc:
-        logger.warning("Could not record status for %s: %s", source["handle_or_url"], exc)
-
-    # An empty fetch is a successful answer and clears the ladder exactly like a non-empty
-    # one. Skipping it here (the original `if status != "empty"`) left a recovered-but-quiet
-    # feed parked at consecutive_failures=6 forever, so the next transient blip sent it
-    # straight to a ~16h delay instead of restarting at 15 minutes.
-    await _record_backoff(sources_service, source, failed=status == "error")
+        logger.warning("Could not record fetch outcome for %s: %s", source.get("handle_or_url"), exc)
 
     return {
         "source": source,
@@ -535,36 +433,43 @@ async def _fetch_source(
 
 
 async def _record_connector_outage(
-    operations_service: OperationsService,
+    fetch_state: DbFetchStateStore,
     sources: list[dict],
     error: str,
     trigger: str,
 ) -> list[dict]:
     """Report the sources a connector-level failure never let us attempt.
 
-    Their backoff ladder is deliberately NOT advanced: a shared connector fault (locked
-    session, FloodWaitError) is no evidence that any individual channel is dead, and parking
-    all of telegram for hours because one connect() failed would be its own outage.
+    Recorded as `unavailable`, so their backoff ladder is deliberately NOT advanced: a shared
+    connector fault (locked session, FloodWaitError) is no evidence that any individual
+    channel is dead, and parking all of telegram for hours because one connect() failed
+    would be its own outage.
     """
-    results = []
-    for source in sources:
-        try:
-            await asyncio.to_thread(
-                operations_service.record_source_status,
-                source["id"],
-                status="error",
-                message=f"Connector unavailable: {error}",
-                trigger=trigger,
-                fetched_posts=None,
-            )
-        except Exception as exc:
-            logger.warning("Could not record status for %s: %s", source.get("handle_or_url"), exc)
-        results.append(_failed_result(source, error))
-    return results
+    outcomes = [
+        FetchOutcome(str(source.get("id")), OutcomeStatus.UNAVAILABLE, 0,
+                     f"Connector unavailable: {error}", 0.0)
+        for source in sources
+    ]
+    try:
+        await asyncio.to_thread(fetch_state.record_outcomes, outcomes, trigger=trigger)
+    except Exception as exc:
+        logger.warning("Could not record connector outage for %s sources: %s", len(sources), exc)
+    return [_failed_result(source, error) for source in sources]
 
 
-async def safe_ingest_posts(trigger: str = "manual"):
-    """Fetch and save posts only from sources that need updating."""
+async def safe_ingest_posts(
+    trigger: str = "manual",
+    *,
+    sources_service: SourcesService | None = None,
+    fetch_service: SourceFetchService | None = None,
+    fetch_state: DbFetchStateStore | None = None,
+    availability: Callable[[], Availability] = availability_from_env,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+):
+    """Fetch and save posts only from sources that are due.
+
+    The keyword arguments are seams for tests; the defaults are the real adapters.
+    """
 
     # Start total timer
     total_start_time = time.time()
@@ -574,9 +479,18 @@ async def safe_ingest_posts(trigger: str = "manual"):
     db_url = ensure_database()
 
     # 1. Get all sources with settings from database
-    sources_service = SourcesService(db_url)
-    operations_service = OperationsService(db_url)
-    fetch_service = SourceFetchService(db_url)
+    sources_service = sources_service or SourcesService(db_url)
+    fetch_service = fetch_service or SourceFetchService(db_url)
+    fetch_state = fetch_state or DbFetchStateStore(db_url)
+
+    # Refresh cadence first, so new sources leave probation and gaps follow the posts
+    # (B4 moves this to the daily work). Best-effort: stale tiers beat no cycle.
+    try:
+        refreshed = await asyncio.to_thread(fetch_state.refresh_cadence)
+        logger.info(f"📈 Cadence refreshed for {refreshed} sources")
+    except Exception as exc:
+        logger.warning("Cadence refresh failed (continuing with stored tiers): %s", exc)
+
     all_sources = sources_service.get_all_sources_with_settings()
 
     # Filter only enabled sources
@@ -588,35 +502,65 @@ async def safe_ingest_posts(trigger: str = "manual"):
 
     logger.info(f"📊 Found {len(enabled_sources)} enabled sources")
 
-    # 2. Filter sources based on fetch history
+    # 2. Decide, from the fetch state (one load) and the cadence columns.
     sources_to_fetch = []
     sources_to_skip = []
-    backoff_skipped = 0
+    post_limits: dict[str, int] = {}
+    decisions: list[tuple[str, FetchDecision]] = []
+    decision_counts: dict[str, int] = {}
 
-    with psycopg.connect(db_url) as conn:
-        with conn.cursor() as cur:
-            for source in enabled_sources:
-                should_fetch, reason = should_fetch_source(cur, source, trigger)
-                display_name = source["settings"].get("display_name") or source["handle_or_url"]
+    states = await asyncio.to_thread(fetch_state.load, [s["id"] for s in enabled_sources])
+    available = availability()
+    now = clock()
+    for source in enabled_sources:
+        answer = should_fetch_source(
+            source,
+            states.get(source["id"]),
+            trigger,
+            profile=interim_profile(fetch_service, source),
+            now=now,
+            availability=available,
+        )
+        decisions.append((source["id"], answer.decision))
+        decision_counts[answer.kind.value] = decision_counts.get(answer.kind.value, 0) + 1
+        display_name = source["settings"].get("display_name") or source["handle_or_url"]
 
-                if should_fetch:
-                    sources_to_fetch.append(source)
-                    logger.info(f"✅ {display_name}: {reason}")
-                else:
-                    sources_to_skip.append(source)
-                    if reason.startswith("🚫"):
-                        backoff_skipped += 1
-                    logger.info(f"⏭️  {display_name}: {reason}")
+        if answer.fetch:
+            sources_to_fetch.append(source)
+            post_limits[source["id"]] = answer.decision.post_limit
+            logger.info(f"✅ {display_name}: {answer.reason}")
+        else:
+            sources_to_skip.append(source)
+            logger.info(f"⏭️  {display_name}: {answer.reason}")
+
+    # Counted from the decision kind, never from the reason text: yt-dlp-off sources are
+    # unavailable, not in backoff (the Mark VIII 🚫 prefix counted both as backoff).
+    backoff_skipped = decision_counts.get(DecisionKind.SKIP_BACKOFF.value, 0)
+    unavailable_skipped = decision_counts.get(DecisionKind.SKIP_UNAVAILABLE.value, 0)
+
+    try:
+        await asyncio.to_thread(fetch_state.record_decisions, decisions)
+    except Exception as exc:
+        logger.warning("Could not record fetch decisions: %s", exc)
 
     # 3. Summary
     logger.info("=" * 60)
     logger.info(f"📥 Sources to fetch: {len(sources_to_fetch)}")
-    logger.info(f"⏭️  Sources to skip:  {len(sources_to_skip)} ({backoff_skipped} in backoff)")
+    logger.info(
+        f"⏭️  Sources to skip:  {len(sources_to_skip)} ({backoff_skipped} in backoff, "
+        f"{unavailable_skipped} unavailable)"
+    )
     logger.info("=" * 60)
+
+    skip_counts = {
+        "sources_backoff_skipped": backoff_skipped,
+        "sources_unavailable_skipped": unavailable_skipped,
+        "decisions": decision_counts,
+    }
 
     if not sources_to_fetch:
         logger.info("✨ All sources are up to date! Nothing to fetch.")
-        return _empty_result(sources_backoff_skipped=backoff_skipped)
+        return _empty_result(**skip_counts)
 
     # 4. Group by platform and sort by priority within each platform
     by_platform = {}
@@ -658,8 +602,7 @@ async def safe_ingest_posts(trigger: str = "manual"):
 
     fetch_kwargs = {
         "fetch_service": fetch_service,
-        "operations_service": operations_service,
-        "sources_service": sources_service,
+        "fetch_state": fetch_state,
         "trigger": trigger,
         "semaphore": semaphore,
         "ytdlp_semaphore": ytdlp_semaphore,
@@ -693,7 +636,8 @@ async def safe_ingest_posts(trigger: str = "manual"):
         # a whole cycle should rest on: without return_exceptions one unexpected error
         # discards every source fetched so far. Every returned exception is inspected below.
         results = await asyncio.gather(
-            *(_fetch_source(s, **fetch_kwargs) for s in live_sources),
+            *(_fetch_source(s, post_limit=post_limits.get(s["id"]), **fetch_kwargs)
+              for s in live_sources),
             return_exceptions=True,
         )
         collected: list[dict] = []
@@ -732,12 +676,14 @@ async def safe_ingest_posts(trigger: str = "manual"):
                 error = "connector unavailable or not configured"
                 logger.warning(f"⚠️  Skipping platform {platform}: {error}")
                 return await _record_connector_outage(
-                    operations_service, sources, error, trigger
+                    fetch_state, sources, error, trigger
                 )
             await connector.connect()
             logger.info(f"🔌 Connected to {platform} connector")
             for idx, source in enumerate(sources):
-                results.append(await _fetch_source(source, connector=connector, **fetch_kwargs))
+                results.append(await _fetch_source(
+                    source, connector=connector, post_limit=post_limits.get(source["id"]),
+                    **fetch_kwargs))
                 if idx < len(sources) - 1:
                     delay = source["settings"]["fetch_delay_seconds"]
                     logger.info(f"⏳ Waiting {delay}s before next {platform} source...")
@@ -755,7 +701,7 @@ async def safe_ingest_posts(trigger: str = "manual"):
             # Operations panel show the outage instead of the cycle silently shrinking.
             results.extend(
                 await _record_connector_outage(
-                    operations_service, sources[len(results):], str(exc), trigger
+                    fetch_state, sources[len(results):], str(exc), trigger
                 )
             )
         finally:
@@ -1066,13 +1012,17 @@ async def safe_ingest_posts(trigger: str = "manual"):
         "sources_ingested": succeeded,
         "sources_attempted": attempted,
         "sources_failed": len(failed_sources),
-        "sources_backoff_skipped": backoff_skipped,
+        **skip_counts,
         "failures": failed_sources[:20],
         "error": "; ".join(error_parts) if error_parts else None,
     }
 
 
-def _empty_result(sources_backoff_skipped: int = 0) -> dict:
+def _empty_result(
+    sources_backoff_skipped: int = 0,
+    sources_unavailable_skipped: int = 0,
+    decisions: dict[str, int] | None = None,
+) -> dict:
     """Nothing-to-do result carrying the full key set callers expect."""
     return {
         "success": True,
@@ -1085,6 +1035,8 @@ def _empty_result(sources_backoff_skipped: int = 0) -> dict:
         "sources_attempted": 0,
         "sources_failed": 0,
         "sources_backoff_skipped": sources_backoff_skipped,
+        "sources_unavailable_skipped": sources_unavailable_skipped,
+        "decisions": dict(decisions or {}),
         "failures": [],
         "error": None,
     }

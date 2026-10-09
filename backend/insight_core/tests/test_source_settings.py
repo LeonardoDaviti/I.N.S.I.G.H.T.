@@ -13,6 +13,7 @@ import unittest
 import psycopg
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.services.sources_service import SourcesService
+from insight_core.tests._db import delete_scratch_sources, insert_scratch_source, requires_test_db
 
 # Use test database or fallback to dev database
 DATABASE_URL = os.getenv('TEST_DATABASE_URL') or os.getenv('DATABASE_URL')
@@ -131,6 +132,47 @@ class TestSourceSettings(unittest.TestCase):
         self.assertIsNotNone(test_source)
         self.assertIn("settings", test_source)
         self.assertIsInstance(test_source["settings"], dict)
+
+
+@requires_test_db
+class ConcurrentMergeTests(unittest.TestCase):
+    """merge_source_settings must serialise on the row, or concurrent merges lose keys (E8)."""
+
+    def setUp(self):
+        self.repo = SourcesRepository(DATABASE_URL)
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.source_id = insert_scratch_source(cur, settings_json='{"display_name": "x"}')
+            conn.commit()
+
+    def tearDown(self):
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            conn.commit()
+
+    def test_second_merge_waits_for_the_first_and_keeps_both_keys(self):
+        first = psycopg.connect(DATABASE_URL)
+        second = psycopg.connect(DATABASE_URL)
+        try:
+            with first.cursor() as cur1, second.cursor() as cur2:
+                self.repo.merge_source_settings(cur1, self.source_id, {"archive": {"status": "a"}})
+
+                cur2.execute("SET lock_timeout = '300ms'")
+                with self.assertRaises(psycopg.errors.LockNotAvailable,
+                                       msg="the second merge must block on the row lock"):
+                    self.repo.merge_source_settings(cur2, self.source_id, {"priority": 3})
+                second.rollback()
+
+                first.commit()
+                merged = self.repo.merge_source_settings(cur2, self.source_id, {"priority": 3})
+                second.commit()
+
+            self.assertEqual(merged["archive"], {"status": "a"})
+            self.assertEqual(merged["priority"], 3)
+            self.assertEqual(merged["display_name"], "x")
+        finally:
+            first.close()
+            second.close()
 
 
 if __name__ == "__main__":

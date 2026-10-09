@@ -36,15 +36,23 @@ def ensure_schema_migrations(cur: psycopg.Cursor) -> None:
     """)
 
 
+MIGRATION_LOCK_KEY = "insight.migrate"
+
+
 def acquire_migration_lock(cur: psycopg.Cursor) -> None:
-    """Serialize migrations across multiple processes/containers."""
-    # The local psycopg shim does not handle advisory locks cleanly.
-    # Migrations in this environment are single-process, so a no-op is sufficient.
-    return None
+    """Serialize migrations across processes/containers. Must be the transaction's first statement.
+
+    The backend and ingestion containers both run migrate.py at start. Two concurrent
+    transactions running the same `CREATE TABLE IF NOT EXISTS` can still fail with a
+    duplicate pg_type key, so the second one waits here until the first commits - and
+    then sees every version already applied. A transaction-scoped lock: Postgres releases
+    it at commit or rollback, so a crashed migrator can never leave it held.
+    """
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (MIGRATION_LOCK_KEY,))
 
 
 def release_migration_lock(cur: psycopg.Cursor) -> None:
-    """Release the migration advisory lock."""
+    """No-op: the xact lock taken by acquire_migration_lock ends with the transaction."""
     return None
 
 def applied_versions(cur: psycopg.Cursor) -> Set[str]:

@@ -10,15 +10,19 @@ be checked without a network or a live cycle:
     anything that escapes takes the whole cycle's fetch with it)
   - the per-host limiter must actually serialise same-host requests, and must NOT
     serialise different hosts
-  - the backoff ladder must terminate, stay under its documented ceiling, and clear
-  - a source that answered with zero posts is a success, not a failure
+  - a source that answered with zero posts is a success (`empty`), not a failure
+  - (Mark IX B1) should_fetch_source is a thin adapter over decide_fetch; the decision
+    phase of safe_ingest_posts counts backoff from the decision kind, so yt-dlp-off
+    sources are unavailable, never backoff. The ladder itself is tested in
+    test_fetch_schedule (backoff_delay) and test_repo_fetch_state (record_outcome).
 
-Deliberately not covered here: safe_ingest_posts() end to end. It needs a live corpus and
-real sources, and running it is exactly what we must not do.
+Deliberately not covered here: a safe_ingest_posts() run that fetches. It needs a live
+corpus and real sources, and running it is exactly what we must not do.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import unittest
 import unittest.mock
@@ -28,15 +32,19 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from insight_core.db.repo_fetch_state import FetchStateRow
+from insight_core.ingestion.schedule import Availability, DecisionKind
+from insight_core.ingestion.types import FetchOutcome, OutcomeStatus
 from insight_core.scripts import safe_ingest as si
 
 
-def _source(handle: str, platform: str = "rss", priority: int = 999, **settings) -> dict:
+def _source(handle: str, platform: str = "rss", priority: int = 999, post_count: int = 0,
+            **settings) -> dict:
     base = {"display_name": handle, "priority": priority, "fetch_delay_seconds": 0,
             "max_posts_per_fetch": 20}
     base.update(settings)
     return {"id": f"id-{handle}", "handle_or_url": handle, "platform": platform,
-            "enabled": True, "settings": base}
+            "enabled": True, "post_count": post_count, "settings": base}
 
 
 class HostKeyTests(unittest.TestCase):
@@ -201,222 +209,170 @@ class InterleaveTests(unittest.TestCase):
         self.assertEqual(si._interleave_by_host([]), [])
 
 
-class BackoffLadderTests(unittest.TestCase):
-    def setUp(self):
-        self.now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
-
-    def _delay_hours(self, failures: int) -> float:
-        at = datetime.fromisoformat(si._next_retry_at(failures, self.now))
-        return (at - self.now).total_seconds() / 3600
-
-    def test_ladder_grows_then_holds_at_the_ceiling(self):
-        first = self._delay_hours(1)
-        self.assertLess(first, 1.0, "the ladder must start small, not at the cap")
-        self.assertGreater(self._delay_hours(4), first)
-
-    def test_never_exceeds_the_documented_ceiling(self):
-        """Jitter is applied AFTER the cap and downward only.
-
-        Jittering upward (0.85-1.15 of 24h) parked a stuck source for up to 27.6h, so
-        BACKOFF_MAX_HOURS did not mean what an operator would read it to mean.
-        """
-        for failures in (8, 12, 40, 500):
-            for _ in range(200):
-                self.assertLessEqual(self._delay_hours(failures), si.BACKOFF_MAX_HOURS)
-
-    def test_ceiling_cohort_is_spread_not_synchronised(self):
-        """73 sources at the ceiling must not all wake in the same second."""
-        draws = {round(self._delay_hours(20), 4) for _ in range(200)}
-        self.assertGreater(len(draws), 50, "delays are effectively identical - herd intact")
-
-    def test_zero_and_negative_failure_counts_do_not_explode(self):
-        for failures in (0, -1):
-            self.assertLessEqual(self._delay_hours(failures), si.BACKOFF_MAX_HOURS)
-            self.assertGreater(self._delay_hours(failures), 0)
+NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+ALL_ON = Availability(ytdlp_enabled=True, telegram_credentials=False)
+YTDLP_OFF = Availability(ytdlp_enabled=False, telegram_credentials=False)
 
 
-class _FakeSourcesService:
-    def __init__(self, raises: bool = False):
-        self.calls: list[tuple] = []
-        self.raises = raises
-
-    def merge_source_settings(self, source_id, payload):
-        if self.raises:
-            raise RuntimeError("db down")
-        self.calls.append((source_id, payload))
+def _state(source: dict, **fields) -> FetchStateRow:
+    return FetchStateRow(source_id=source["id"], **fields)
 
 
-class RecordBackoffTests(unittest.IsolatedAsyncioTestCase):
-    async def test_failure_advances_the_counter(self):
-        service = _FakeSourcesService()
-        source = _source("https://a.example.com/rss")
-        await si._record_backoff(service, source, failed=True)
-        payload = service.calls[0][1]["ingest_backoff"]
-        self.assertEqual(payload["consecutive_failures"], 1)
-        self.assertIsNotNone(payload["next_retry_at"])
+class _FakeFetchState:
+    """In-memory stand-in for DbFetchStateStore; records every call."""
 
-        await si._record_backoff(service, source, failed=True)
-        self.assertEqual(service.calls[1][1]["ingest_backoff"]["consecutive_failures"], 2,
-                         "state must be read back from the source dict between calls")
+    def __init__(self, states: dict | None = None):
+        self.states = dict(states or {})
+        self.outcomes: list[tuple[FetchOutcome, str]] = []
+        self.decisions: list[tuple[str, object]] = []
+        self.refreshed = 0
 
-    async def test_success_clears_the_ladder(self):
-        service = _FakeSourcesService()
-        source = _source("https://a.example.com/rss")
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 6,
-                                                "next_retry_at": "2026-09-11T00:00:00+00:00"}
-        await si._record_backoff(service, source, failed=False)
-        payload = service.calls[0][1]["ingest_backoff"]
-        self.assertEqual(payload["consecutive_failures"], 0)
-        self.assertIsNone(payload["next_retry_at"])
+    def load(self, source_ids):
+        return {sid: self.states[sid] for sid in source_ids if sid in self.states}
 
-    async def test_an_empty_fetch_is_a_success(self):
-        """A recovered-but-quiet feed must not keep its failure counter.
+    def record_decisions(self, decisions):
+        self.decisions.extend(decisions)
 
-        It answered; it just had nothing new, and it burned no timeout. Leaving the counter
-        at 6 meant one later blip jumped straight to a ~16h delay.
-        """
-        service = _FakeSourcesService()
-        source = _source("https://a.example.com/rss")
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 6,
-                                                "next_retry_at": "2026-09-11T00:00:00+00:00"}
-        await si._record_backoff(service, source, failed=False)
-        self.assertEqual(service.calls[0][1]["ingest_backoff"]["consecutive_failures"], 0)
+    def record_outcome(self, outcome, *, trigger):
+        self.outcomes.append((outcome, trigger))
 
-    async def test_already_clean_source_costs_no_connection(self):
-        service = _FakeSourcesService()
-        await si._record_backoff(service, _source("https://a.example.com/rss"), failed=False)
-        self.assertEqual(service.calls, [])
+    def record_outcomes(self, outcomes, *, trigger):
+        for outcome in outcomes:
+            self.record_outcome(outcome, trigger=trigger)
 
-    async def test_a_failing_database_does_not_raise(self):
-        """This runs inside _fetch_source, whose contract is that it never raises."""
-        service = _FakeSourcesService(raises=True)
-        await si._record_backoff(service, _source("https://a.example.com/rss"), failed=True)
+    def refresh_cadence(self):
+        self.refreshed += 1
+        return 0
 
 
-class _FakeCursor:
-    def __init__(self, row):
-        self._row = row
-
-    def execute(self, *_args, **_kwargs):
-        return None
-
-    def fetchone(self):
-        return self._row
+class _RaisingFetchState(_FakeFetchState):
+    def record_outcome(self, outcome, *, trigger):
+        raise RuntimeError("db down")
 
 
 class ShouldFetchSourceTests(unittest.TestCase):
+    """The B1 adapter: Mark VIII call shape, decide_fetch underneath."""
+
+    def decide(self, source, state=None, trigger="scheduler", **kwargs):
+        kwargs.setdefault("now", NOW)
+        kwargs.setdefault("availability", ALL_ON)
+        return si.should_fetch_source(source, state, trigger, **kwargs)
+
     def test_source_in_backoff_is_skipped_on_a_scheduled_run(self):
-        source = _source("https://a.example.com/rss")
-        future = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 5, "next_retry_at": future}
-        should, reason = si.should_fetch_source(_FakeCursor((10, datetime(2020, 1, 1, tzinfo=timezone.utc))),
-                                                source, trigger="scheduler")
+        source = _source("https://a.example.com/rss", post_count=10)
+        answer = self.decide(source, _state(source, consecutive_failures=5,
+                                            next_retry_at=NOW + timedelta(hours=4),
+                                            last_success_at=NOW - timedelta(days=30)))
+        should, reason = answer
         self.assertFalse(should)
+        self.assertEqual(answer.kind, DecisionKind.SKIP_BACKOFF)
         self.assertIn("Backoff", reason)
 
-    def test_manual_trigger_bypasses_backoff(self):
-        """The operator's 'try it now' button must always work."""
-        source = _source("https://a.example.com/rss")
-        future = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 5, "next_retry_at": future}
-        should, _ = si.should_fetch_source(_FakeCursor((10, datetime(2020, 1, 1, tzinfo=timezone.utc))),
-                                           source, trigger="manual")
-        self.assertTrue(should)
+    def test_manual_trigger_ignores_backoff_but_respects_freshness(self):
+        source = _source("https://a.example.com/rss", post_count=10)
+        in_backoff = dict(consecutive_failures=5, next_retry_at=NOW + timedelta(hours=4))
+
+        fresh = self.decide(source, _state(source, **in_backoff,
+                                           last_success_at=NOW - timedelta(hours=2)),
+                            trigger="manual")
+        self.assertFalse(fresh.fetch)
+        self.assertEqual(fresh.kind, DecisionKind.SKIP_NOT_DUE)
+
+        stale = self.decide(source, _state(source, **in_backoff,
+                                           last_success_at=NOW - timedelta(hours=25)),
+                            trigger="manual")
+        self.assertTrue(stale.fetch)
+        self.assertEqual(stale.kind, DecisionKind.FETCH_DUE)
 
     def test_expired_backoff_window_lets_the_source_through(self):
-        source = _source("https://a.example.com/rss")
-        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 5, "next_retry_at": past}
-        should, _ = si.should_fetch_source(_FakeCursor((10, datetime(2020, 1, 1, tzinfo=timezone.utc))),
-                                           source, trigger="scheduler")
-        self.assertTrue(should)
-
-    def test_corrupt_next_retry_at_does_not_park_the_source_forever(self):
-        source = _source("https://a.example.com/rss")
-        source["settings"]["ingest_backoff"] = {"consecutive_failures": 5, "next_retry_at": "not-a-date"}
-        should, _ = si.should_fetch_source(_FakeCursor((10, datetime(2020, 1, 1, tzinfo=timezone.utc))),
-                                           source, trigger="scheduler")
-        self.assertTrue(should, "an unparseable timestamp must fail open, not strand the source")
+        source = _source("https://a.example.com/rss", post_count=10)
+        answer = self.decide(source, _state(source, consecutive_failures=5,
+                                            next_retry_at=NOW - timedelta(hours=1),
+                                            last_success_at=NOW - timedelta(hours=1)))
+        self.assertTrue(answer.fetch)
+        self.assertEqual(answer.kind, DecisionKind.FETCH_RETRY)
 
     def test_new_source_is_always_fetched(self):
-        should, reason = si.should_fetch_source(_FakeCursor((0, None)), _source("https://a.example.com/rss"),
-                                                trigger="scheduler")
+        should, reason = self.decide(_source("https://a.example.com/rss"))
         self.assertTrue(should)
         self.assertIn("New source", reason)
 
     def test_recently_fetched_source_is_skipped(self):
-        recent = datetime.now(timezone.utc) - timedelta(hours=1)
-        should, _ = si.should_fetch_source(_FakeCursor((10, recent)), _source("https://a.example.com/rss"),
-                                           trigger="scheduler")
-        self.assertFalse(should)
+        source = _source("https://a.example.com/rss", post_count=10)
+        answer = self.decide(source, _state(source, last_success_at=NOW - timedelta(hours=1)))
+        self.assertFalse(answer.fetch)
+        self.assertEqual(answer.kind, DecisionKind.SKIP_NOT_DUE)
 
     def test_stale_source_is_fetched(self):
-        stale = datetime.now(timezone.utc) - timedelta(hours=si.SKIP_THRESHOLD_HOURS + 5)
-        should, _ = si.should_fetch_source(_FakeCursor((10, stale)), _source("https://a.example.com/rss"),
-                                           trigger="scheduler")
-        self.assertTrue(should)
+        source = _source("https://a.example.com/rss", post_count=10)
+        answer = self.decide(source, _state(source, last_success_at=NOW - timedelta(hours=30)))
+        self.assertTrue(answer.fetch)
+
+    def test_staleness_counts_from_the_last_success_not_from_posts(self):
+        """Posts but no recorded success (pre-0019 source): due, not 'recently fetched'."""
+        source = _source("https://a.example.com/rss", post_count=10)
+        self.assertTrue(self.decide(source, None).fetch)
+
+    def test_empty_fetch_counts_as_fresh(self):
+        source = _source("https://a.example.com/rss", post_count=10)
+        answer = self.decide(source, _state(source, last_outcome="empty",
+                                            last_success_at=NOW - timedelta(hours=2)))
+        self.assertFalse(answer.fetch)
 
 
 class YouTubeCadenceTests(unittest.TestCase):
-    """YouTube runs on a weekly cadence and can be switched off entirely."""
+    """YouTube runs on a weekly cadence (the yt-dlp profile floor) and can be switched off."""
 
-    def _cursor(self, hours_ago: float):
-        return _FakeCursor((10, datetime.now(timezone.utc) - timedelta(hours=hours_ago)))
+    YT = _source("https://www.youtube.com/@a", platform="youtube", post_count=10)
+    RSS = _source("https://a.example.com/rss", post_count=10)
+
+    def decide(self, source, hours_ago, *, profile, trigger="scheduler", availability=ALL_ON):
+        state = _state(source, last_success_at=NOW - timedelta(hours=hours_ago))
+        return si.should_fetch_source(source, state, trigger, profile=profile, now=NOW,
+                                      availability=availability)
 
     def test_youtube_is_skipped_inside_the_weekly_window(self):
-        should, reason = si.should_fetch_source(
-            self._cursor(48), _source("https://www.youtube.com/@a", platform="youtube"),
-            trigger="scheduler")
-        self.assertFalse(should, "48h is stale for RSS but fresh for a weekly cadence")
-        self.assertIn("168h cadence", reason)
+        answer = self.decide(self.YT, 48, profile=si.YTDLP_PROFILE)
+        self.assertFalse(answer.fetch, "48h is stale for RSS but fresh for a weekly cadence")
+        self.assertIn("168.0h", answer.reason)
 
     def test_youtube_is_fetched_once_the_week_is_up(self):
-        should, _ = si.should_fetch_source(
-            self._cursor(si.YOUTUBE_SKIP_THRESHOLD_HOURS + 1),
-            _source("https://www.youtube.com/@a", platform="youtube"), trigger="scheduler")
-        self.assertTrue(should)
+        self.assertTrue(self.decide(self.YT, 169, profile=si.YTDLP_PROFILE).fetch)
 
     def test_other_platforms_keep_the_short_cadence(self):
-        """The weekly cadence must not leak onto the 188 RSS sources."""
-        should, _ = si.should_fetch_source(
-            self._cursor(si.SKIP_THRESHOLD_HOURS + 1),
-            _source("https://a.example.com/rss"), trigger="scheduler")
-        self.assertTrue(should)
+        """The weekly cadence must not leak onto the RSS sources."""
+        self.assertTrue(self.decide(self.RSS, 25, profile=si.HOST_LOCK_PROFILE).fetch)
 
-    def test_disabling_ytdlp_skips_youtube_with_a_clear_reason(self):
-        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
-            should, reason = si.should_fetch_source(
-                self._cursor(9999), _source("https://www.youtube.com/@a", platform="youtube"),
-                trigger="scheduler")
-        self.assertFalse(should)
-        self.assertIn("yt-dlp disabled", reason)
+    def test_disabling_ytdlp_skips_youtube_as_unavailable(self):
+        answer = self.decide(self.YT, 9999, profile=si.YTDLP_PROFILE, availability=YTDLP_OFF)
+        self.assertFalse(answer.fetch)
+        self.assertEqual(answer.kind, DecisionKind.SKIP_UNAVAILABLE)
+        self.assertIn("yt-dlp disabled", answer.reason)
 
     def test_disabling_ytdlp_does_not_touch_other_platforms(self):
-        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
-            should, _ = si.should_fetch_source(
-                self._cursor(si.SKIP_THRESHOLD_HOURS + 1), _source("https://a.example.com/rss"),
-                trigger="scheduler")
-        self.assertTrue(should)
+        answer = self.decide(self.RSS, 25, profile=si.HOST_LOCK_PROFILE, availability=YTDLP_OFF)
+        self.assertTrue(answer.fetch)
 
     def test_disabling_ytdlp_beats_a_manual_trigger(self):
         """Off means off - a manual run must not spawn yt-dlp behind the operator's back."""
-        with unittest.mock.patch.object(si, "YTDLP_ENABLED", False):
-            should, _ = si.should_fetch_source(
-                self._cursor(9999), _source("https://www.youtube.com/@a", platform="youtube"),
-                trigger="manual")
-        self.assertFalse(should)
+        answer = self.decide(self.YT, 9999, profile=si.YTDLP_PROFILE, trigger="manual",
+                             availability=YTDLP_OFF)
+        self.assertFalse(answer.fetch)
 
-    def test_fetch_window_covers_the_cadence(self):
-        """The backlog guard from the cadence spec.
+    def test_youtube_decision_raises_the_post_limit_to_the_floor(self):
+        source = _source("https://www.youtube.com/@a", platform="youtube", post_count=10,
+                         max_posts_per_fetch=5)
+        answer = self.decide(source, 200, profile=si.YTDLP_PROFILE)
+        self.assertEqual(answer.decision.post_limit, 15)
 
-        A 168h interval against the platform default of 5 posts per fetch silently drops
-        everything past the fifth video: the fetch succeeds and the posts never exist.
-        """
-        days = si.YOUTUBE_SKIP_THRESHOLD_HOURS / 24
-        self.assertGreaterEqual(
-            si.YOUTUBE_MIN_POSTS_PER_FETCH / days, 2.0,
-            "the fetch window must cover at least ~2 videos/day over the interval",
-        )
+    def test_interim_profile_follows_the_kind_not_the_platform(self):
+        class _Classify:
+            def classify_source(self, source):
+                return "youtube_channel" if "videos.xml" in source["handle_or_url"] else "generic_rss"
+
+        feed = _source("https://www.youtube.com/feeds/videos.xml?channel_id=x", platform="rss")
+        self.assertIs(si.interim_profile(_Classify(), feed), si.YTDLP_PROFILE)
+        self.assertIs(si.interim_profile(_Classify(), self.RSS), si.HOST_LOCK_PROFILE)
 
 
 class _FakeYouTubeService:
@@ -428,62 +384,48 @@ class _FakeYouTubeService:
         return []
 
 
+class _YtFetchService:
+    def __init__(self, youtube):
+        self.youtube_service = youtube
+
+    def classify_source(self, _source):
+        return "youtube_channel"
+
+
+def _gates() -> dict:
+    return {
+        "semaphore": asyncio.Semaphore(4),
+        "ytdlp_semaphore": asyncio.Semaphore(2),
+        "ytdlp_spacer": si._StartSpacer(0),
+        "host_limiter": si._HostLimiter(),
+    }
+
+
 class YouTubeBacklogGuardTests(unittest.IsolatedAsyncioTestCase):
     async def test_stored_limit_of_five_is_raised_to_the_floor(self):
         youtube = _FakeYouTubeService()
-
-        class _YtFetchService:
-            youtube_service = youtube
-
-            def classify_source(self, _source):
-                return "youtube_channel"
-
         source = _source("https://www.youtube.com/@a", platform="youtube",
                          max_posts_per_fetch=5)
-        await si._fetch_source(
-            source,
-            fetch_service=_YtFetchService(),
-            operations_service=_FakeOperations(),
-            sources_service=_FakeSourcesService(),
-            trigger="scheduler",
-            semaphore=asyncio.Semaphore(4),
-            ytdlp_semaphore=asyncio.Semaphore(2),
-            ytdlp_spacer=si._StartSpacer(0),
-            host_limiter=si._HostLimiter(),
-        )
-        self.assertEqual(youtube.limits, [si.YOUTUBE_MIN_POSTS_PER_FETCH])
+        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
+                               fetch_state=_FakeFetchState(), trigger="scheduler", **_gates())
+        self.assertEqual(youtube.limits, [si.YTDLP_PROFILE.min_posts_per_fetch])
 
     async def test_a_higher_configured_limit_is_respected(self):
         youtube = _FakeYouTubeService()
-
-        class _YtFetchService:
-            youtube_service = youtube
-
-            def classify_source(self, _source):
-                return "youtube_channel"
-
         source = _source("https://www.youtube.com/@a", platform="youtube",
                          max_posts_per_fetch=50)
-        await si._fetch_source(
-            source,
-            fetch_service=_YtFetchService(),
-            operations_service=_FakeOperations(),
-            sources_service=_FakeSourcesService(),
-            trigger="scheduler",
-            semaphore=asyncio.Semaphore(4),
-            ytdlp_semaphore=asyncio.Semaphore(2),
-            ytdlp_spacer=si._StartSpacer(0),
-            host_limiter=si._HostLimiter(),
-        )
+        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
+                               fetch_state=_FakeFetchState(), trigger="scheduler", **_gates())
         self.assertEqual(youtube.limits, [50], "the floor must not cap an operator's setting")
 
-
-class _FakeOperations:
-    def __init__(self):
-        self.statuses: list[dict] = []
-
-    def record_source_status(self, source_id, **kwargs):
-        self.statuses.append({"source_id": source_id, **kwargs})
+    async def test_the_decision_limit_is_used(self):
+        youtube = _FakeYouTubeService()
+        source = _source("https://www.youtube.com/@a", platform="youtube",
+                         max_posts_per_fetch=5)
+        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
+                               fetch_state=_FakeFetchState(), trigger="scheduler",
+                               post_limit=30, **_gates())
+        self.assertEqual(youtube.limits, [30])
 
 
 class _FakeFetchService:
@@ -491,7 +433,7 @@ class _FakeFetchService:
         self.behaviour = behaviour
 
     def classify_source(self, source):
-        return "generic_rss"
+        return "youtube_channel" if source.get("platform") == "youtube" else "generic_rss"
 
     async def fetch_live_posts(self, source, limit=20):
         return self.behaviour(source, limit)
@@ -500,17 +442,13 @@ class _FakeFetchService:
 class FetchSourceNeverRaisesTests(unittest.IsolatedAsyncioTestCase):
     """_fetch_source runs under asyncio.gather; anything escaping costs the cycle."""
 
-    async def _run(self, source, behaviour):
+    async def _run(self, source, behaviour, fetch_state=None):
         return await si._fetch_source(
             source,
             fetch_service=_FakeFetchService(behaviour),
-            operations_service=_FakeOperations(),
-            sources_service=_FakeSourcesService(),
+            fetch_state=fetch_state or _FakeFetchState(),
             trigger="scheduler",
-            semaphore=asyncio.Semaphore(4),
-            ytdlp_semaphore=asyncio.Semaphore(2),
-            ytdlp_spacer=si._StartSpacer(0),
-            host_limiter=si._HostLimiter(),
+            **_gates(),
         )
 
     async def test_a_raising_fetch_returns_an_error_result(self):
@@ -538,6 +476,11 @@ class FetchSourceNeverRaisesTests(unittest.IsolatedAsyncioTestCase):
         result = await self._run(source, lambda _s, _l: [])
         self.assertIsInstance(result, dict)
 
+    async def test_a_failing_fetch_state_store_does_not_raise(self):
+        result = await self._run(_source("https://a.example.com/rss"), lambda _s, _l: [],
+                                 fetch_state=_RaisingFetchState())
+        self.assertIsNone(result["error"])
+
     async def test_one_failure_does_not_take_the_gather_down(self):
         def sometimes(source, _limit):
             if "bad" in source["handle_or_url"]:
@@ -552,6 +495,112 @@ class FetchSourceNeverRaisesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(1 for r in results if r.get("error")), 1)
         self.assertEqual(sum(1 for r in results if r["posts"]), 2,
                          "the healthy sources must still deliver their posts")
+
+
+class FetchOutcomeRecordingTests(unittest.IsolatedAsyncioTestCase):
+    """Every fetch writes exactly one outcome; the classification is healthy/empty/error."""
+
+    async def _recorded_outcome(self, behaviour):
+        state = _FakeFetchState()
+        source = _source("https://a.example.com/rss")
+        await si._fetch_source(source, fetch_service=_FakeFetchService(behaviour),
+                               fetch_state=state, trigger="manual", **_gates())
+        self.assertEqual(len(state.outcomes), 1)
+        outcome, trigger = state.outcomes[0]
+        self.assertEqual(outcome.source_id, source["id"])
+        self.assertEqual(trigger, "manual")
+        return outcome
+
+    async def test_posts_are_healthy(self):
+        outcome = await self._recorded_outcome(lambda _s, _l: [{"url": "a"}, {"url": "b"}])
+        self.assertEqual((outcome.status, outcome.fetched), (OutcomeStatus.HEALTHY, 2))
+
+    async def test_zero_posts_is_empty_not_healthy(self):
+        """An empty answer is how a silently dead feed looks - but it is still a success."""
+        outcome = await self._recorded_outcome(lambda _s, _l: [])
+        self.assertEqual(outcome.status, OutcomeStatus.EMPTY)
+        self.assertTrue(outcome.status.is_success)
+
+    async def test_a_raise_is_an_error(self):
+        def boom(_s, _l):
+            raise RuntimeError("503")
+
+        outcome = await self._recorded_outcome(boom)
+        self.assertEqual(outcome.status, OutcomeStatus.ERROR)
+        self.assertIn("503", outcome.error)
+
+    async def test_connector_outage_is_unavailable_not_error(self):
+        """A shared connector fault must not advance every telegram source's backoff."""
+        state = _FakeFetchState()
+        sources = [_source("@a", platform="telegram"), _source("@b", platform="telegram")]
+        results = await si._record_connector_outage(state, sources, "session locked", "scheduler")
+        self.assertEqual(len(results), 2)
+        self.assertEqual({o.status for o, _ in state.outcomes}, {OutcomeStatus.UNAVAILABLE})
+        self.assertIn("session locked", state.outcomes[0][0].error)
+
+
+class _FakeSourcesService:
+    def __init__(self, sources):
+        self.sources = sources
+
+    def get_all_sources_with_settings(self):
+        return [dict(s) for s in self.sources]
+
+
+class SafeIngestDecisionPhaseTests(unittest.IsolatedAsyncioTestCase):
+    """safe_ingest_posts end to end through its seams, for runs that fetch nothing."""
+
+    async def _run(self, sources, states=None, trigger="scheduler", **kwargs):
+        fetch_state = _FakeFetchState(states)
+        result = await si.safe_ingest_posts(
+            trigger,
+            sources_service=_FakeSourcesService(sources),
+            fetch_service=_FakeFetchService(lambda _s, _l: self.fail("nothing may be fetched")),
+            fetch_state=fetch_state,
+            clock=lambda: NOW,
+            **kwargs,
+        )
+        return result, fetch_state
+
+    async def test_ytdlp_off_counts_unavailable_not_backoff(self):
+        youtube = _source("https://www.youtube.com/@a", platform="youtube", post_count=10)
+        # In backoff too: the Mark VIII 🚫 prefix counted this as backoff either way.
+        states = {youtube["id"]: _state(youtube, consecutive_failures=3,
+                                        next_retry_at=NOW + timedelta(hours=1))}
+        with unittest.mock.patch.dict(os.environ, {"INSIGHT_YTDLP_ENABLED": "0"}):
+            result, fetch_state = await self._run([youtube], states)
+
+        self.assertEqual(result["sources_backoff_skipped"], 0)
+        self.assertEqual(result["sources_unavailable_skipped"], 1)
+        self.assertEqual(result["decisions"], {"skip_unavailable": 1})
+        self.assertEqual(result["sources_attempted"], 0)
+        self.assertEqual(fetch_state.outcomes, [], "unavailable is never an outcome of a skip")
+        self.assertEqual([d.kind for _, d in fetch_state.decisions], [DecisionKind.SKIP_UNAVAILABLE])
+
+    async def test_manual_trigger_ignores_backoff_but_respects_freshness(self):
+        source = _source("https://a.example.com/rss", post_count=10)
+        states = {source["id"]: _state(source, consecutive_failures=5,
+                                       next_retry_at=NOW + timedelta(hours=4),
+                                       last_success_at=NOW - timedelta(hours=2))}
+        result, _ = await self._run([source], states, trigger="manual",
+                                    availability=lambda: ALL_ON)
+        self.assertEqual(result["decisions"], {"skip_not_due": 1})
+        self.assertEqual(result["sources_backoff_skipped"], 0)
+
+    async def test_backoff_is_counted_from_the_decision_kind(self):
+        source = _source("https://a.example.com/rss", post_count=10)
+        states = {source["id"]: _state(source, consecutive_failures=2,
+                                       next_retry_at=NOW + timedelta(hours=1))}
+        result, fetch_state = await self._run([source], states, availability=lambda: ALL_ON)
+        self.assertEqual(result["sources_backoff_skipped"], 1)
+        self.assertEqual(fetch_state.refreshed, 1, "cadence is refreshed once per cycle")
+
+    async def test_disabled_sources_are_not_decided(self):
+        source = _source("https://a.example.com/rss")
+        source["enabled"] = False
+        result, fetch_state = await self._run([source], availability=lambda: ALL_ON)
+        self.assertEqual(fetch_state.decisions, [])
+        self.assertEqual(result["sources_attempted"], 0)
 
 
 class EnrichmentTests(unittest.TestCase):

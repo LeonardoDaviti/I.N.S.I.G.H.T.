@@ -17,7 +17,8 @@ from insight_core.db.repo_posts import PostsRepository
 from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.sources_service import SourcesService
-from insight_core.services.operations_service import OperationsService
+from insight_core.ingestion.ports import DbFetchStateStore
+from insight_core.ingestion.types import FetchOutcome
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.connectors import create_connector
 import psycopg
@@ -39,7 +40,7 @@ async def ingest_posts(trigger: str = "manual"):
     
     # 1. Get all sources with settings from database
     sources_service = SourcesService(db_url)
-    operations_service = OperationsService(db_url)
+    fetch_state = DbFetchStateStore(db_url)
     fetch_service = SourceFetchService(db_url)
     all_sources = sources_service.get_all_sources_with_settings()
     
@@ -107,12 +108,9 @@ async def ingest_posts(trigger: str = "manual"):
                 else:
                     posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
                 logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts")
-                operations_service.record_source_status(
-                    source["id"],
-                    status="healthy",
-                    message=f"Fetched {len(posts)} posts",
+                fetch_state.record_outcome(
+                    FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None, duration_s=0.0),
                     trigger=trigger,
-                    fetched_posts=len(posts),
                 )
                 
                 # Attach source_id to each post
@@ -128,12 +126,13 @@ async def ingest_posts(trigger: str = "manual"):
             except Exception as e:
                 # Log error but continue with remaining sources
                 logger.error(f"❌ Failed to fetch from {source['handle_or_url']}: {e}")
-                operations_service.record_source_status(
-                    source["id"],
-                    status="error",
-                    message=str(e),
-                    trigger=trigger,
-                )
+                try:
+                    fetch_state.record_outcome(
+                        FetchOutcome.from_fetch(source["id"], fetched=0, error=str(e), duration_s=0.0),
+                        trigger=trigger,
+                    )
+                except Exception as record_exc:
+                    logger.warning("Could not record fetch outcome: %s", record_exc)
                 continue
         
         if connector:

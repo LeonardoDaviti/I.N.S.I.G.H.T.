@@ -36,6 +36,20 @@ if [ "$#" -eq 0 ]; then
   set -- discover -s insight_core/tests -p 'test_*.py'
 fi
 
+# MIGRATE=1 applies pending migrations to $DB_URL first, in the same image, so a slice that
+# adds a migration never runs its tests against an unmigrated schema. Against the live
+# `insight` DB this is exactly what the container start does anyway - take a backup first.
+if [ "${MIGRATE:-0}" = "1" ]; then
+  echo "==> migrating ${DB_URL##*/}"
+  docker run --rm \
+    --network insight_insight-network \
+    --env-file .env \
+    -e DATABASE_URL="$DB_URL" \
+    -e LANGFUSE_ENABLED=false \
+    -w /app insight-backend:latest \
+    python -m insight_core.db.migrate
+fi
+
 exec docker run --rm \
   --network insight_insight-network \
   --env-file .env \

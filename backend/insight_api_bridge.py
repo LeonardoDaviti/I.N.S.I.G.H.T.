@@ -18,6 +18,8 @@ from insight_core.services.inbox_service import InboxService
 from insight_core.services.analyst_actions_service import AnalystActionsService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
+from insight_core.ingestion.ports import DbFetchStateStore
+from insight_core.ingestion.types import FetchOutcome
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.stories_service import StoriesService
@@ -48,6 +50,7 @@ class InsightApiBridge:
         self.evidence_service = EvidenceFoundationService(self.db)
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
+        self.fetch_state = DbFetchStateStore(self.db)
         self.post_detail_service = PostDetailService(self.db)
         self.explainability_service = ExplainabilityService(self.db)
         self.stories_service = StoriesService(self.db)
@@ -87,9 +90,13 @@ class InsightApiBridge:
         except Exception:
             return
 
-    def _record_source_status_safe(self, source_id: str, **kwargs) -> None:
+    def _record_fetch_outcome_safe(self, source_id: str, *, fetched: int = 0, error: str | None = None) -> None:
+        """Record a manual live fetch in source_fetch_state (healthy/empty/error). Never raises."""
         try:
-            self.operations_service.record_source_status(source_id, **kwargs)
+            self.fetch_state.record_outcome(
+                FetchOutcome.from_fetch(source_id, fetched=fetched, error=error, duration_s=0.0),
+                trigger="manual",
+            )
         except Exception:
             return
 
@@ -1012,14 +1019,9 @@ class InsightApiBridge:
                 resume=resume,
                 rate_limit_overrides=rate_limit_overrides,
             )
-            if result.get("success"):
-                self._record_source_status_safe(
-                    source_id,
-                    status="healthy",
-                    message=f"Archived {result.get('posts_fetched', 0)} posts",
-                    trigger="manual",
-                    fetched_posts=result.get("posts_fetched"),
-                )
+            # An archive run is not a live fetch: it does not touch source_fetch_state, so
+            # paging old posts can neither delay the next live fetch nor reset its backoff.
+            # Its own status lives in settings.archive.
             self._finish_job_safe(
                 job_id,
                 status="success" if result.get("success") else "failed",
@@ -1028,12 +1030,6 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self._record_source_status_safe(
-                source_id,
-                status="error",
-                message=str(e),
-                trigger="manual",
-            )
             self._finish_job_safe(
                 job_id,
                 status="failed",
@@ -1081,13 +1077,7 @@ class InsightApiBridge:
         )
         try:
             result = await self.source_fetch_service.ingest_source_now(source_id, limit)
-            self._record_source_status_safe(
-                source_id,
-                status="healthy",
-                message=f"Fetched {result.get('posts_fetched', 0)} posts",
-                trigger="manual",
-                fetched_posts=result.get("posts_fetched"),
-            )
+            self._record_fetch_outcome_safe(source_id, fetched=int(result.get("posts_fetched") or 0))
             self._finish_job_safe(
                 job_id,
                 status="success",
@@ -1096,12 +1086,7 @@ class InsightApiBridge:
             )
             return result
         except Exception as e:
-            self._record_source_status_safe(
-                source_id,
-                status="error",
-                message=str(e),
-                trigger="manual",
-            )
+            self._record_fetch_outcome_safe(source_id, error=str(e))
             self._finish_job_safe(
                 job_id,
                 status="failed",
