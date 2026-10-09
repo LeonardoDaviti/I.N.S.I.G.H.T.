@@ -8,8 +8,9 @@ be checked without a network or a live cycle:
 
   - no single source failure may escape _fetch_source (it runs under asyncio.gather, so
     anything that escapes takes the whole cycle's fetch with it)
-  - the per-host limiter must actually serialise same-host requests, and must NOT
-    serialise different hosts
+  - (Mark IX B3) the per-host limiter, start spacer and interleave moved to
+    ingestion/gates.py with their tests (test_fetch_gates); _fetch_source takes the
+    source's kind and FetchGates
   - a source that answered with zero posts is a success (`empty`), not a failure
   - (Mark IX B1) should_fetch_source is a thin adapter over decide_fetch; the decision
     phase of safe_ingest_posts counts backoff from the decision kind, so yt-dlp-off
@@ -33,9 +34,15 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_fetch_state import FetchStateRow
+from insight_core.ingestion.gates import FetchGates
+from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds.base import PolitenessProfile
+from insight_core.ingestion.kinds.generic_rss import GENERIC_RSS_PROFILE
+from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
 from insight_core.ingestion.schedule import Availability, DecisionKind
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus
 from insight_core.scripts import safe_ingest as si
+from insight_core.tests._kind_fakes import FakeKind, unavailable
 
 
 def _source(handle: str, platform: str = "rss", priority: int = 999, post_count: int = 0,
@@ -45,168 +52,6 @@ def _source(handle: str, platform: str = "rss", priority: int = 999, post_count:
     base.update(settings)
     return {"id": f"id-{handle}", "handle_or_url": handle, "platform": platform,
             "enabled": True, "post_count": post_count, "settings": base}
-
-
-class HostKeyTests(unittest.TestCase):
-    """host_key must collapse the aliases the limiter exists to serialise."""
-
-    def test_aliases_and_www_collapse_to_one_bucket(self):
-        pairs = [
-            ("https://www.reddit.com/r/x/.rss", "https://old.reddit.com/r/x/.rss"),
-            ("https://www.youtube.com/@a", "https://m.youtube.com/@a"),
-            ("https://github.com/a.atom", "https://www.github.com/b.atom"),
-        ]
-        for left, right in pairs:
-            with self.subTest(left=left):
-                self.assertEqual(
-                    si._HostLimiter.host_key(_source(left)),
-                    si._HostLimiter.host_key(_source(right)),
-                    "a private urlparse copy put these in different buckets, splitting "
-                    "exactly the clusters the limiter exists to serialise",
-                )
-
-    def test_distinct_hosts_stay_distinct(self):
-        self.assertNotEqual(
-            si._HostLimiter.host_key(_source("https://github.com/a.atom")),
-            si._HostLimiter.host_key(_source("https://reddit.com/r/a/.rss")),
-        )
-
-    def test_bare_handles_group_per_platform_not_all_together(self):
-        telegram = si._HostLimiter.host_key(_source("@chan", platform="telegram"))
-        youtube = si._HostLimiter.host_key(_source("@chan2", platform="youtube"))
-        self.assertNotEqual(telegram, youtube)
-        self.assertEqual(telegram, si._HostLimiter.host_key(_source("@other", platform="telegram")))
-
-
-class HostOverrideTests(unittest.TestCase):
-    def test_every_telegram_and_nitter_host_has_a_floor(self):
-        """The hardcoded table covered 2 of 5 hosts; telegram.local got 0s.
-
-        That host is every self-hosted Telegram source (35 on the deployed instance) and
-        the bridge already answers "Too many requests" under a sequential cycle.
-        """
-        from insight_core.services.source_fetch_service import SourceFetchService
-
-        for host in SourceFetchService.TELEGRAM_HOSTS:
-            self.assertEqual(si.HOST_MIN_INTERVAL_OVERRIDES.get(host),
-                             float(SourceFetchService.TELEGRAM_PAGE_DELAY_SECONDS), host)
-        for host in SourceFetchService.NITTER_HOSTS:
-            self.assertEqual(si.HOST_MIN_INTERVAL_OVERRIDES.get(host),
-                             float(SourceFetchService.NITTER_PAGE_DELAY_SECONDS), host)
-
-
-class HostLimiterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_same_host_requests_do_not_overlap(self):
-        limiter = si._HostLimiter()
-        overlap = {"max": 0, "live": 0}
-
-        async def call():
-            async with limiter.slot("example.com", 0):
-                overlap["live"] += 1
-                overlap["max"] = max(overlap["max"], overlap["live"])
-                await asyncio.sleep(0.02)
-                overlap["live"] -= 1
-
-        await asyncio.gather(*(call() for _ in range(5)))
-        self.assertEqual(overlap["max"], 1, "same-host requests must be serialised")
-
-    async def test_different_hosts_run_concurrently(self):
-        limiter = si._HostLimiter()
-        live = {"max": 0, "n": 0}
-
-        async def call(host):
-            async with limiter.slot(host, 0):
-                live["n"] += 1
-                live["max"] = max(live["max"], live["n"])
-                await asyncio.sleep(0.02)
-                live["n"] -= 1
-
-        await asyncio.gather(*(call(f"h{i}.example.com") for i in range(5)))
-        self.assertEqual(live["max"], 5, "a per-HOST limiter must not serialise across hosts")
-
-    async def test_min_interval_spaces_successive_calls(self):
-        limiter = si._HostLimiter()
-        loop = asyncio.get_running_loop()
-        stamps = []
-
-        async def call():
-            async with limiter.slot("example.com", 0.05):
-                stamps.append(loop.time())
-
-        await asyncio.gather(call(), call(), call())
-        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
-        for gap in gaps:
-            self.assertGreaterEqual(round(gap, 3), 0.045, f"gaps={gaps}")
-
-    async def test_override_raises_a_floor_below_it(self):
-        """A source configured with 0s on telegram.local still gets the bridge's floor."""
-        limiter = si._HostLimiter()
-        loop = asyncio.get_running_loop()
-        stamps = []
-        # Patch the real floor down so the test stays fast; the point is that the
-        # override wins over the source's own (lower) fetch_delay_seconds.
-        original = si.HOST_MIN_INTERVAL_OVERRIDES.get("telegram.local")
-        si.HOST_MIN_INTERVAL_OVERRIDES["telegram.local"] = 0.05
-        try:
-            async def call():
-                async with limiter.slot("telegram.local", 0):
-                    stamps.append(loop.time())
-
-            await asyncio.gather(call(), call())
-        finally:
-            if original is None:
-                si.HOST_MIN_INTERVAL_OVERRIDES.pop("telegram.local", None)
-            else:
-                si.HOST_MIN_INTERVAL_OVERRIDES["telegram.local"] = original
-
-        self.assertGreaterEqual(round(stamps[1] - stamps[0], 3), 0.045)
-
-
-class StartSpacerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_spaces_starts_without_serialising_the_work(self):
-        spacer = si._StartSpacer(0.03)
-        loop = asyncio.get_running_loop()
-        starts = []
-
-        async def call():
-            await spacer.wait()
-            starts.append(loop.time())
-            await asyncio.sleep(0.1)  # far longer than the interval
-
-        await asyncio.gather(*(call() for _ in range(3)))
-        gaps = [b - a for a, b in zip(starts, starts[1:])]
-        for gap in gaps:
-            self.assertGreaterEqual(round(gap, 3), 0.025, f"gaps={gaps}")
-
-    async def test_zero_interval_is_a_no_op(self):
-        spacer = si._StartSpacer(0)
-        await asyncio.wait_for(asyncio.gather(*(spacer.wait() for _ in range(50))), timeout=1)
-
-
-class InterleaveTests(unittest.TestCase):
-    def test_same_host_runs_are_broken_up(self):
-        sources = (
-            [_source(f"https://www.youtube.com/@c{i}") for i in range(4)]
-            + [_source(f"https://feed{i}.example.com/rss") for i in range(2)]
-        )
-        ordered = si._interleave_by_host(sources)
-        hosts = [si._HostLimiter.host_key(s) for s in ordered]
-
-        self.assertEqual(len(ordered), len(sources), "interleaving must not drop sources")
-        self.assertNotEqual(hosts[0], hosts[1],
-                            "the first tasks gather starts must want different gates")
-
-    def test_priority_tiers_stay_ordered(self):
-        sources = [
-            _source("https://a.example.com/1", priority=5),
-            _source("https://b.example.com/1", priority=1),
-            _source("https://c.example.com/1", priority=1),
-        ]
-        ordered = si._interleave_by_host(sources)
-        self.assertEqual([s["settings"]["priority"] for s in ordered], [1, 1, 5])
-
-    def test_empty_input(self):
-        self.assertEqual(si._interleave_by_host([]), [])
 
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
@@ -332,111 +177,84 @@ class YouTubeCadenceTests(unittest.TestCase):
                                       availability=availability)
 
     def test_youtube_is_skipped_inside_the_weekly_window(self):
-        answer = self.decide(self.YT, 48, profile=si.YTDLP_PROFILE)
+        answer = self.decide(self.YT, 48, profile=YOUTUBE_PROFILE)
         self.assertFalse(answer.fetch, "48h is stale for RSS but fresh for a weekly cadence")
         self.assertIn("168.0h", answer.reason)
 
     def test_youtube_is_fetched_once_the_week_is_up(self):
-        self.assertTrue(self.decide(self.YT, 169, profile=si.YTDLP_PROFILE).fetch)
+        self.assertTrue(self.decide(self.YT, 169, profile=YOUTUBE_PROFILE).fetch)
 
     def test_other_platforms_keep_the_short_cadence(self):
         """The weekly cadence must not leak onto the RSS sources."""
-        self.assertTrue(self.decide(self.RSS, 25, profile=si.HOST_LOCK_PROFILE).fetch)
+        self.assertTrue(self.decide(self.RSS, 25, profile=GENERIC_RSS_PROFILE).fetch)
 
     def test_disabling_ytdlp_skips_youtube_as_unavailable(self):
-        answer = self.decide(self.YT, 9999, profile=si.YTDLP_PROFILE, availability=YTDLP_OFF)
+        answer = self.decide(self.YT, 9999, profile=YOUTUBE_PROFILE, availability=YTDLP_OFF)
         self.assertFalse(answer.fetch)
         self.assertEqual(answer.kind, DecisionKind.SKIP_UNAVAILABLE)
         self.assertIn("yt-dlp disabled", answer.reason)
 
     def test_disabling_ytdlp_does_not_touch_other_platforms(self):
-        answer = self.decide(self.RSS, 25, profile=si.HOST_LOCK_PROFILE, availability=YTDLP_OFF)
+        answer = self.decide(self.RSS, 25, profile=GENERIC_RSS_PROFILE, availability=YTDLP_OFF)
         self.assertTrue(answer.fetch)
 
     def test_disabling_ytdlp_beats_a_manual_trigger(self):
         """Off means off - a manual run must not spawn yt-dlp behind the operator's back."""
-        answer = self.decide(self.YT, 9999, profile=si.YTDLP_PROFILE, trigger="manual",
+        answer = self.decide(self.YT, 9999, profile=YOUTUBE_PROFILE, trigger="manual",
                              availability=YTDLP_OFF)
         self.assertFalse(answer.fetch)
 
     def test_youtube_decision_raises_the_post_limit_to_the_floor(self):
         source = _source("https://www.youtube.com/@a", platform="youtube", post_count=10,
                          max_posts_per_fetch=5)
-        answer = self.decide(source, 200, profile=si.YTDLP_PROFILE)
+        answer = self.decide(source, 200, profile=YOUTUBE_PROFILE)
         self.assertEqual(answer.decision.post_limit, 15)
 
-    def test_interim_profile_follows_the_kind_not_the_platform(self):
-        class _Classify:
-            def classify_source(self, source):
-                return "youtube_channel" if "videos.xml" in source["handle_or_url"] else "generic_rss"
+    def test_the_profile_follows_the_kind_not_the_platform(self):
+        from insight_core.ingestion.http import KindHttp
 
+        registry = KindRegistry.default(KindHttp(), object())
         feed = _source("https://www.youtube.com/feeds/videos.xml?channel_id=x", platform="rss")
-        self.assertIs(si.interim_profile(_Classify(), feed), si.YTDLP_PROFILE)
-        self.assertIs(si.interim_profile(_Classify(), self.RSS), si.HOST_LOCK_PROFILE)
+        self.assertIs(registry.resolve(feed).profile, YOUTUBE_PROFILE)
+        self.assertIs(registry.resolve(self.RSS).profile, GENERIC_RSS_PROFILE)
 
 
-class _FakeYouTubeService:
-    def __init__(self):
-        self.limits: list[int] = []
-
-    def fetch_live_posts(self, _handle, limit):
-        self.limits.append(limit)
-        return []
+def _gates() -> FetchGates:
+    return FetchGates(max_concurrency=4, ytdlp_concurrency=2, ytdlp_min_start_interval_s=0, host_floors={})
 
 
-class _YtFetchService:
-    def __init__(self, youtube):
-        self.youtube_service = youtube
-
-    def classify_source(self, _source):
-        return "youtube_channel"
-
-
-def _gates() -> dict:
-    return {
-        "semaphore": asyncio.Semaphore(4),
-        "ytdlp_semaphore": asyncio.Semaphore(2),
-        "ytdlp_spacer": si._StartSpacer(0),
-        "host_limiter": si._HostLimiter(),
-    }
+def _recording_kind(profile: PolitenessProfile, behaviour=None) -> FakeKind:
+    return FakeKind("fake", profile, behaviour or (lambda _s, _l: []))
 
 
 class YouTubeBacklogGuardTests(unittest.IsolatedAsyncioTestCase):
-    async def test_stored_limit_of_five_is_raised_to_the_floor(self):
-        youtube = _FakeYouTubeService()
+    async def _limits(self, max_posts_per_fetch, **kwargs):
+        kind = _recording_kind(YOUTUBE_PROFILE)
         source = _source("https://www.youtube.com/@a", platform="youtube",
-                         max_posts_per_fetch=5)
-        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
-                               fetch_state=_FakeFetchState(), trigger="scheduler", **_gates())
-        self.assertEqual(youtube.limits, [si.YTDLP_PROFILE.min_posts_per_fetch])
+                         max_posts_per_fetch=max_posts_per_fetch)
+        await si._fetch_source(source, kind=kind, fetch_state=_FakeFetchState(),
+                               trigger="scheduler", gates=_gates(), **kwargs)
+        return [limit for _, limit in kind.fetch_calls]
+
+    async def test_stored_limit_of_five_is_raised_to_the_floor(self):
+        self.assertEqual(await self._limits(5), [YOUTUBE_PROFILE.min_posts_per_fetch])
 
     async def test_a_higher_configured_limit_is_respected(self):
-        youtube = _FakeYouTubeService()
-        source = _source("https://www.youtube.com/@a", platform="youtube",
-                         max_posts_per_fetch=50)
-        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
-                               fetch_state=_FakeFetchState(), trigger="scheduler", **_gates())
-        self.assertEqual(youtube.limits, [50], "the floor must not cap an operator's setting")
+        self.assertEqual(await self._limits(50), [50], "the floor must not cap an operator's setting")
 
     async def test_the_decision_limit_is_used(self):
-        youtube = _FakeYouTubeService()
-        source = _source("https://www.youtube.com/@a", platform="youtube",
-                         max_posts_per_fetch=5)
-        await si._fetch_source(source, fetch_service=_YtFetchService(youtube),
-                               fetch_state=_FakeFetchState(), trigger="scheduler",
-                               post_limit=30, **_gates())
-        self.assertEqual(youtube.limits, [30])
+        self.assertEqual(await self._limits(5, post_limit=30), [30])
 
 
 class _FakeFetchService:
+    """What safe_ingest_posts needs from SourceFetchService in the decision phase."""
+
     def __init__(self, behaviour):
-        self.behaviour = behaviour
-
-    def classify_source(self, source):
-        return "youtube_channel" if source.get("platform") == "youtube" else "generic_rss"
-
-    async def fetch_live_posts(self, source, limit=20):
-        return self.behaviour(source, limit)
+        self.kinds = KindRegistry([
+            FakeKind("youtube_channel", YOUTUBE_PROFILE, behaviour,
+                     matches=lambda source: source.get("platform") == "youtube"),
+            FakeKind("generic_rss", GENERIC_RSS_PROFILE, behaviour),
+        ])
 
 
 class FetchSourceNeverRaisesTests(unittest.IsolatedAsyncioTestCase):
@@ -445,10 +263,10 @@ class FetchSourceNeverRaisesTests(unittest.IsolatedAsyncioTestCase):
     async def _run(self, source, behaviour, fetch_state=None):
         return await si._fetch_source(
             source,
-            fetch_service=_FakeFetchService(behaviour),
+            kind=_recording_kind(GENERIC_RSS_PROFILE, behaviour),
             fetch_state=fetch_state or _FakeFetchState(),
             trigger="scheduler",
-            **_gates(),
+            gates=_gates(),
         )
 
     async def test_a_raising_fetch_returns_an_error_result(self):
@@ -503,8 +321,8 @@ class FetchOutcomeRecordingTests(unittest.IsolatedAsyncioTestCase):
     async def _recorded_outcome(self, behaviour):
         state = _FakeFetchState()
         source = _source("https://a.example.com/rss")
-        await si._fetch_source(source, fetch_service=_FakeFetchService(behaviour),
-                               fetch_state=state, trigger="manual", **_gates())
+        await si._fetch_source(source, kind=_recording_kind(GENERIC_RSS_PROFILE, behaviour),
+                               fetch_state=state, trigger="manual", gates=_gates())
         self.assertEqual(len(state.outcomes), 1)
         outcome, trigger = state.outcomes[0]
         self.assertEqual(outcome.source_id, source["id"])
@@ -529,14 +347,11 @@ class FetchOutcomeRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome.status, OutcomeStatus.ERROR)
         self.assertIn("503", outcome.error)
 
-    async def test_connector_outage_is_unavailable_not_error(self):
-        """A shared connector fault must not advance every telegram source's backoff."""
-        state = _FakeFetchState()
-        sources = [_source("@a", platform="telegram"), _source("@b", platform="telegram")]
-        results = await si._record_connector_outage(state, sources, "session locked", "scheduler")
-        self.assertEqual(len(results), 2)
-        self.assertEqual({o.status for o, _ in state.outcomes}, {OutcomeStatus.UNAVAILABLE})
-        self.assertIn("session locked", state.outcomes[0][0].error)
+    async def test_a_kind_that_is_unavailable_records_unavailable_not_error(self):
+        """KindUnavailable is never backoff (e.g. telegram_mtproto without a session)."""
+        outcome = await self._recorded_outcome(unavailable("no Telegram session"))
+        self.assertEqual(outcome.status, OutcomeStatus.UNAVAILABLE)
+        self.assertIn("no Telegram session", outcome.error)
 
 
 class _FakeSourcesService:
@@ -594,6 +409,17 @@ class SafeIngestDecisionPhaseTests(unittest.IsolatedAsyncioTestCase):
         result, fetch_state = await self._run([source], states, availability=lambda: ALL_ON)
         self.assertEqual(result["sources_backoff_skipped"], 1)
         self.assertEqual(fetch_state.refreshed, 1, "cadence is refreshed once per cycle")
+
+    async def test_a_bare_telegram_handle_is_unavailable_until_b8(self):
+        """Resolved to telegram_mtproto (Mark VIII: generic_rss); no credentials -> unavailable."""
+        from insight_core.ingestion.http import KindHttp
+
+        source = _source("ai_newz", platform="telegram")
+        result, fetch_state = await self._run([source], kinds=KindRegistry.default(KindHttp(), object()),
+                                              availability=lambda: ALL_ON)
+        self.assertEqual(result["decisions"], {"skip_unavailable": 1})
+        self.assertEqual(result["sources_backoff_skipped"], 0)
+        self.assertEqual(fetch_state.outcomes, [])
 
     async def test_disabled_sources_are_not_decided(self):
         source = _source("https://a.example.com/rss")

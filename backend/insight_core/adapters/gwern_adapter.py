@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds.base import Inspection, RateLimit
 
 
 class GwernAdapter(BaseSourceAdapter):
@@ -18,6 +19,7 @@ class GwernAdapter(BaseSourceAdapter):
     HOSTS = {"gwern.net", "www.gwern.net"}
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1
+    CHECKPOINT_MODES = frozenset({"gwern_index"})
     SITEMAP_PATH = "/sitemap.xml"
     NEWEST_PATH = "/doc/newest/index"
     SKIP_PATHS = {
@@ -48,22 +50,11 @@ class GwernAdapter(BaseSourceAdapter):
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
         return (parsed.hostname or "").lower() in self.HOSTS
 
-    def default_rate_limit(self) -> Dict[str, Any]:
-        return {"page_delay_seconds": self.PAGE_DELAY_SECONDS}
-
-    def checkpoint_is_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict) and checkpoint.get("mode") == "gwern_index" and checkpoint.get("next_index") is not None
-
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
+    async def inspect(self, source: Dict[str, Any]) -> Inspection:
         urls = await self._discover_archive_urls(source)
-        return {
-            "available_posts": len(urls),
-            "page_size": self.PAGE_SIZE,
-            "first_post_date": None,
-            "rate_limit": self.default_rate_limit(),
-        }
+        return Inspection(len(urls), self.PAGE_SIZE, None)
 
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         urls = await self._discover_recent_urls(source, limit=max(limit * 3, 12))
         posts: List[Dict[str, Any]] = []
         seen = set()
@@ -79,79 +70,21 @@ class GwernAdapter(BaseSourceAdapter):
                 break
         return posts
 
-    async def archive_posts(
-        self,
-        source: Dict[str, Any],
-        target_posts: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-        *,
-        checkpoint: Optional[Dict[str, Any]] = None,
-        initial_collected: int = 0,
-        initial_pages_fetched: int = 0,
-        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
-        rate_limit: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
-        urls = await self._discover_archive_urls(source)
-        next_index = int((checkpoint or {}).get("next_index") or 0)
-        pages_fetched = int(initial_pages_fetched or 0)
-        collected: List[Dict[str, Any]] = []
-
-        while (len(collected) + initial_collected) < target_posts and next_index < len(urls):
-            batch_limit = min(self.PAGE_SIZE, target_posts - (len(collected) + initial_collected))
-            batch_urls = urls[next_index: next_index + batch_limit]
-            if not batch_urls:
-                break
-
-            batch_posts: List[Dict[str, Any]] = []
-            for url in batch_urls:
-                post = await self._fetch_page_post(source, url)
-                if post:
-                    batch_posts.append(post)
-                    collected.append(post)
-
-            next_index += len(batch_urls)
-            pages_fetched += 1
-            checkpoint_payload = {
-                "mode": "gwern_index",
-                "next_index": next_index,
-                "pages_fetched": pages_fetched,
-                "collected_posts": len(collected) + initial_collected,
-                "total_candidates": len(urls),
-            }
-            progress_payload = {
-                "stage": "page_fetched",
-                "platform": "gwern",
-                "pages_fetched": pages_fetched,
-                "posts_collected": len(collected) + initial_collected,
-                "target_posts": target_posts,
-                "next_index": next_index,
-                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100),
-                "message": f"Fetched Gwern batch {pages_fetched}",
-            }
-            await self.service._emit_page(page_callback, batch_posts, checkpoint_payload, progress_payload)
-            await self.service._emit_progress(progress_callback, progress_payload)
-
-            if (len(collected) + initial_collected) < target_posts and next_index < len(urls):
-                await asyncio.sleep(int((rate_limit or {}).get("page_delay_seconds", self.PAGE_DELAY_SECONDS)))
-
-        final_checkpoint = {
-            "mode": "gwern_index",
-            "next_index": next_index,
-            "pages_fetched": pages_fetched,
-            "collected_posts": len(collected) + initial_collected,
-            "total_candidates": len(urls),
-        }
-        return collected[: max(0, target_posts - initial_collected)], pages_fetched, final_checkpoint
+    async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
+                            rate: RateLimit):
+        entries = await self._discover_archive_urls(source)
+        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_page_post):
+            yield page
 
     async def _discover_archive_urls(self, source: Dict[str, Any]) -> List[str]:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or "https://gwern.net"))
         base = f"{parsed.scheme or 'https'}://{parsed.netloc or 'gwern.net'}"
         sitemap_url = f"{base}{self.SITEMAP_PATH}"
-        body, _ = await self.service._fetch_text(sitemap_url)
+        body, _ = await self.http.get_text(sitemap_url)
         root = ET.fromstring(body)
         urls: List[str] = []
         for node in root.iter():
-            if self.service._local_name(node.tag) != "loc" or not (node.text or "").strip():
+            if parsing.local_name(node.tag) != "loc" or not (node.text or "").strip():
                 continue
             url = node.text.strip()
             if self._is_candidate_page_url(url):
@@ -162,7 +95,7 @@ class GwernAdapter(BaseSourceAdapter):
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or "https://gwern.net"))
         base = f"{parsed.scheme or 'https'}://{parsed.netloc or 'gwern.net'}"
         newest_url = f"{base}{self.NEWEST_PATH}"
-        body, _ = await self.service._fetch_text(newest_url)
+        body, _ = await self.http.get_text(newest_url)
         urls: List[str] = []
         seen = set()
 
@@ -188,7 +121,7 @@ class GwernAdapter(BaseSourceAdapter):
 
     async def _fetch_page_post(self, source: Dict[str, Any], url: str) -> Optional[Dict[str, Any]]:
         try:
-            html, _ = await self.service._fetch_text(url)
+            html, _ = await self.http.get_text(url)
         except Exception:
             return None
 
@@ -200,15 +133,15 @@ class GwernAdapter(BaseSourceAdapter):
             or canonical_url
         )
         markdown_url = self._extract_markdown_url(html) or f"{canonical_url}.md"
-        article_html = self.service._extract_article_html(html)
+        article_html = parsing.extract_article_html(html)
         markdown_body = ""
         try:
-            markdown_text, _ = await self.service._fetch_text(markdown_url)
+            markdown_text, _ = await self.http.get_text(markdown_url)
             markdown_body = self._strip_front_matter(markdown_text)
         except Exception:
             markdown_body = ""
 
-        content_text = markdown_body.strip() or self.service._strip_html(article_html) or (self._extract_meta_content(html, "description") or "")
+        content_text = markdown_body.strip() or parsing.strip_html(article_html) or (self._extract_meta_content(html, "description") or "")
         if not content_text.strip():
             return None
 
@@ -231,7 +164,7 @@ class GwernAdapter(BaseSourceAdapter):
             "title": title,
             "content": content_text,
             "content_html": article_html,
-            "date": self.service._parse_datetime_value(created_at),
+            "date": parsing.parse_datetime_value(created_at),
             "media_urls": media_urls,
             "categories": categories,
             "metadata": {
@@ -306,7 +239,7 @@ class GwernAdapter(BaseSourceAdapter):
         match = re.search(r"(?is)<title>(.*?)</title>", html)
         if not match:
             return ""
-        return self.service._strip_html(match.group(1)).strip()
+        return parsing.strip_html(match.group(1)).strip()
 
     def _strip_front_matter(self, markdown_text: str) -> str:
         text = markdown_text or ""

@@ -106,9 +106,6 @@ class YouTubeService:
             "available_posts": len(entries),
             "page_size": self.DEFAULT_PAGE_SIZE,
             "first_post_date": first_post_date.isoformat() if first_post_date else None,
-            "rate_limit": {
-                "page_delay_seconds": 2,
-            },
             "channel": {
                 "channel_url": channel_ref["channel_url"],
                 "rss_url": channel_ref["rss_url"],

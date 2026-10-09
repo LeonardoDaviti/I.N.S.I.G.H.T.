@@ -12,15 +12,19 @@ source's cadence columns and its row in source_fetch_state:
 
 B4 replaces this module with a CLI shim over ingestion.run_ingestion.
 
+Politeness (Mark IX B3): each source resolves to a SourceKind (ingestion/kinds) whose
+PolitenessProfile drives both the decision (cadence floor, minimum posts, requirements)
+and the gates: FetchGates.slot(kind.profile, kind.host_key(source)) for the fetch and for
+the archive-metadata refresh alike.
+
 Usage: python backend/insight_core/scripts/safe_ingest.py
 """
 import sys
 from pathlib import Path
-import contextlib
 import time
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable, Iterator
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -31,7 +35,10 @@ import psycopg
 from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_fetch_state import FetchStateRow
 from insight_core.db.repo_posts import PostsRepository
-from insight_core.ingestion.kinds.base import PolitenessProfile
+from insight_core.ingestion.gates import FetchGates, interleave_by_host
+from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds.base import KindUnavailable, PolitenessProfile, SourceKind
+from insight_core.ingestion.kinds.generic_rss import GENERIC_RSS_PROFILE
 from insight_core.ingestion.ports import DbFetchStateStore
 from insight_core.ingestion.schedule import (
     Availability,
@@ -46,69 +53,11 @@ from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.source_fetch_service import SourceFetchService
-from insight_core.connectors import create_connector
-from insight_core.utils.url_normalization import extract_url_host
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
 DEBUG_MODE = False  # DEBUG here also puts the API at DEBUG level (bridge imports this module)
 setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
-
-# Interim politeness profiles (B1-B3). B3 moves them onto the source kinds, and the
-# runner resolves them through KindRegistry; until then YouTube is recognised by
-# classify_source, so a /feeds/videos.xml URL stored as platform rss gets the same rules.
-#
-# yt-dlp is the single most expensive thing a cycle does, and the only one bounded by a
-# remote party's patience rather than by us. Its profile carries:
-#   - requires="ytdlp": INSIGHT_YTDLP_ENABLED=0 skips every YouTube source as unavailable
-#   - a 168h cadence floor: channels publish ~10 videos a month, so re-scanning daily spends
-#     the most expensive budget in the system re-reading a list that has not changed
-#   - min 15 posts per fetch: the stored default of 5 was sized for a 20h cycle, and over a
-#     week anything past the fifth video would be dropped by a fetch that still succeeded
-YTDLP_PROFILE = PolitenessProfile(
-    concurrency_pool="ytdlp",
-    cadence_floor=timedelta(hours=168),
-    min_posts_per_fetch=15,
-    requires="ytdlp",
-    blocking_io=True,
-)
-HOST_LOCK_PROFILE = PolitenessProfile(concurrency_pool="host-lock")
-
-# Platforms served by SourceFetchService. Everything else goes through a shared
-# connector object (in practice: telegram) and MUST stay sequential - see FETCH below.
-LIVE_FETCH_PLATFORMS = {"rss", "reddit", "youtube"}
-
-# Conservative default. The ceiling that matters is not this number but the default
-# asyncio executor (min(32, cpu_count + 4)): SourceFetchService does all of its network
-# I/O through asyncio.to_thread, so anything above that queues invisibly and the
-# semaphore stops meaning anything.
-MAX_FETCH_CONCURRENCY = max(1, int(os.getenv("SAFE_INGEST_MAX_CONCURRENCY", "8")))
-
-# yt-dlp needs its own, much smaller budget: YouTube's bot detection is per-IP, not
-# per-channel, and 2026-07-23 we spent 7.5 minutes on a single video retrying against
-# "Sign in to confirm you're not a bot". Firing 22 channels at once guarantees that state.
-MAX_YTDLP_CONCURRENCY = max(1, int(os.getenv("SAFE_INGEST_YTDLP_CONCURRENCY", "2")))
-
-# ...and a minimum gap between two yt-dlp starts on top of that budget. youtube.com is one
-# host key, so yt-dlp sources deliberately skip the per-host limiter - which is also the only
-# place fetch_delay_seconds is consulted. Without this the 22 configured channels went from
-# "one at a time, spaced by fetch_delay" to "two at a time, back to back for the whole
-# block", i.e. exactly the traffic shape that produced the 2026-07-23 bot-detection episode.
-# Spacing STARTS rather than holding a lock, so the 2-slot budget stays usable.
-YTDLP_MIN_START_INTERVAL_SECONDS = float(os.getenv("SAFE_INGEST_YTDLP_MIN_INTERVAL", "3"))
-
-# Hosts that need more spacing than the source's own fetch_delay_seconds. Derived from the
-# host sets and delays SourceFetchService already owns rather than retyped: the hardcoded
-# pair {"nitter.net", "tg.i-c-a.su"} covered 2 of the 5 hosts in those sets, so telegram.local
-# - which is every self-hosted Telegram source, 35 of them on the deployed instance - got a
-# 0s floor. That bridge already answers "Too many requests" under a SEQUENTIAL cycle, so a
-# 0s floor under a concurrent one is the one combination guaranteed to make it worse.
-HOST_MIN_INTERVAL_OVERRIDES = {
-    **{host: float(SourceFetchService.TELEGRAM_PAGE_DELAY_SECONDS)
-       for host in SourceFetchService.TELEGRAM_HOSTS},
-    **{host: float(SourceFetchService.NITTER_PAGE_DELAY_SECONDS)
-       for host in SourceFetchService.NITTER_HOSTS},
-}
 
 # Enrichment runs in chunks purely so it can report progress; the services themselves
 # are happy with the whole batch.
@@ -126,115 +75,9 @@ ENRICH_CHUNK_SIZE = max(1, int(os.getenv("SAFE_INGEST_ENRICH_CHUNK_SIZE", "100")
 SAVE_COMMIT_BATCH = max(1, int(os.getenv("SAFE_INGEST_SAVE_COMMIT_BATCH", "20")))
 
 # record_live_fetch re-inspects the source (for YouTube: a full unbounded yt-dlp channel
-# dump per channel) right after we already fetched it. Kept on by default so archive
-# metadata stays accurate, but an operator can switch it off when a cycle must be fast.
+# dump) on its own cadence. Kept on by default so archive metadata stays accurate, but an
+# operator can switch it off when a cycle must be fast.
 REFRESH_ARCHIVE_METADATA = os.getenv("SAFE_INGEST_REFRESH_ARCHIVE_METADATA", "1") != "0"
-
-
-class _HostLimiter:
-    """One in-flight request per host, spaced by the source's fetch_delay_seconds.
-
-    The old loop did a global `await asyncio.sleep(fetch_delay)` between sources. Under
-    asyncio.gather that sleep buys nothing - every task sleeps at the same time - while
-    the real politeness need becomes acute, because sources cluster hard by host
-    (12 of them are github.com, 10 reddit.com, 6 arxiv) and 38 hosts see a single
-    request each. Spacing belongs per host, not per loop iteration.
-    """
-
-    def __init__(self) -> None:
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._last_request_at: dict[str, float] = {}
-
-    @staticmethod
-    def host_key(source: dict) -> str:
-        handle = source.get("handle_or_url") or ""
-        # Only ask for a host when this is actually a URL. extract_url_host parses bare
-        # handles as hosts - "@chan" -> "chan", "r/MachineLearning" -> "r" - which hands
-        # nearly every handle source a private bucket and switches the limiter off for it.
-        if "://" in handle:
-            # extract_url_host, not a local urlparse: it applies HOST_ALIASES and strips
-            # "www.", and it already computes posts.url_host for the rows this same script
-            # writes. A private copy put www.reddit.com and old.reddit.com in different
-            # buckets - splitting exactly the clusters this limiter exists to serialise.
-            hostname = extract_url_host(handle)
-            if hostname:
-                return hostname
-        # Bare handles (@channel, subreddit names) have no host; group them per platform
-        # rather than letting them all share one bucket.
-        return f"platform:{source.get('platform')}"
-
-    @contextlib.asynccontextmanager
-    async def slot(self, host: str, min_interval: float):
-        min_interval = max(float(min_interval or 0), HOST_MIN_INTERVAL_OVERRIDES.get(host, 0.0))
-        lock = self._locks.get(host)
-        if lock is None:
-            lock = self._locks[host] = asyncio.Lock()
-
-        async with lock:
-            last = self._last_request_at.get(host)
-            if last is not None:
-                wait = min_interval - (time.monotonic() - last)
-                if wait > 0:
-                    logger.debug("⏳ %s: waiting %.1fs for host spacing", host, wait)
-                    await asyncio.sleep(wait)
-            try:
-                yield
-            finally:
-                self._last_request_at[host] = time.monotonic()
-
-
-class _StartSpacer:
-    """Minimum wall-clock gap between the *starts* of successive operations.
-
-    Not a _HostLimiter: that holds its lock for the whole call, which would serialise the
-    22 youtube.com channels into one at a time and undo MAX_YTDLP_CONCURRENCY. This only
-    hands out start slots, so N calls may still overlap - they just cannot begin together.
-    """
-
-    def __init__(self, min_interval: float) -> None:
-        self._min_interval = max(0.0, min_interval)
-        self._lock = asyncio.Lock()
-        self._next_start_at = 0.0
-
-    async def wait(self) -> None:
-        if not self._min_interval:
-            return
-        async with self._lock:
-            now = time.monotonic()
-            start_at = max(now, self._next_start_at)
-            # Reserved before sleeping, so the next caller queues behind this slot rather
-            # than racing for the same one once the lock is released.
-            self._next_start_at = start_at + self._min_interval
-        delay = start_at - time.monotonic()
-        if delay > 0:
-            logger.debug("⏳ yt-dlp: waiting %.1fs for start spacing", delay)
-            await asyncio.sleep(delay)
-
-
-def _interleave_by_host(sources: list[dict]) -> list[dict]:
-    """Round-robin the fetch queue across hosts, keeping priority tiers in order.
-
-    Ordering by (priority, handle_or_url) alone puts the ~32 youtube.com channels in one
-    contiguous run and the ~12 github.com feeds in another, and asyncio.gather starts tasks
-    in list order - so the first MAX_FETCH_CONCURRENCY tasks all want the same gate and the
-    global budget stops meaning anything. Interleaving makes the tasks that start together
-    mostly want *different* gates. Within a tier the input order is preserved per host, so
-    priority still decides who goes first.
-    """
-    tiers: dict = {}
-    for source in sources:
-        tier = tiers.setdefault(source["settings"]["priority"], {})
-        tier.setdefault(_HostLimiter.host_key(source), []).append(source)
-
-    ordered: list[dict] = []
-    for priority in sorted(tiers):
-        buckets = tiers[priority]
-        while buckets:
-            for host in list(buckets):
-                ordered.append(buckets[host].pop(0))
-                if not buckets[host]:
-                    del buckets[host]
-    return ordered
 
 
 def _failed_result(source: dict, error: str) -> dict:
@@ -273,16 +116,6 @@ def _transaction_is_poisoned(conn) -> bool:
     return conn.info.transaction_status == _PQ_INERROR
 
 
-def interim_profile(fetch_service, source: dict) -> PolitenessProfile:
-    """The politeness profile a source gets until B3's KindRegistry exists."""
-    try:
-        if fetch_service.classify_source(source) == "youtube_channel":
-            return YTDLP_PROFILE
-    except Exception as exc:  # classification must never cost the cycle
-        logger.warning("Could not classify %s: %s", source.get("handle_or_url"), exc)
-    return HOST_LOCK_PROFILE
-
-
 @dataclass(frozen=True)
 class ShouldFetch:
     """should_fetch_source's answer. Unpacks as (fetch, reason); .kind/.decision for the rest."""
@@ -305,7 +138,7 @@ def should_fetch_source(
     state: FetchStateRow | None,
     trigger: str = "manual",
     *,
-    profile: PolitenessProfile = HOST_LOCK_PROFILE,
+    profile: PolitenessProfile = GENERIC_RSS_PROFILE,
     now: datetime | None = None,
     availability: Availability | None = None,
 ) -> ShouldFetch:
@@ -329,20 +162,16 @@ def should_fetch_source(
 async def _fetch_source(
     source: dict,
     *,
-    fetch_service: SourceFetchService,
+    kind: SourceKind,
     fetch_state: DbFetchStateStore,
     trigger: str,
-    semaphore: asyncio.Semaphore,
-    ytdlp_semaphore: asyncio.Semaphore,
-    ytdlp_spacer: _StartSpacer,
-    host_limiter: _HostLimiter,
-    connector=None,
+    gates: FetchGates,
     post_limit: int | None = None,
 ) -> dict:
-    """Fetch one source and record its fetch outcome. Never raises.
+    """Fetch one source through its kind, under its gates, and record the outcome. Never raises.
 
     post_limit is the decision's limit (already floored by the profile); without one the
-    source's own max_posts_per_fetch applies.
+    source's own max_posts_per_fetch applies, raised to the profile's minimum.
 
     "Never raises" is a contract, not a courtesy: these coroutines run under asyncio.gather,
     so anything escaping one of them takes the whole cycle's fetch with it. That is why even
@@ -355,68 +184,40 @@ async def _fetch_source(
     started_at = time.time()
     posts: list = []
     error: str | None = None
+    unavailable: str | None = None
 
     try:
-        max_posts = post_limit if post_limit is not None else settings["max_posts_per_fetch"]
-        # Gate order is load-bearing: the narrow gate (per-host lock, yt-dlp budget) is taken
-        # BEFORE the global semaphore. Taken inside it - as this did originally - a run of
-        # same-host sources parks all MAX_FETCH_CONCURRENCY slots on tasks that are merely
-        # waiting for one host lock or for the 2-slot yt-dlp budget, nothing else can start,
-        # and effective concurrency collapses to 1-2. Waiting for a narrow gate must never
-        # cost a global slot. (_interleave_by_host attacks the same problem from the other
-        # end; both are needed, since interleaving alone still stalls once enough same-host
-        # tasks are in flight.)
-        async with contextlib.AsyncExitStack() as gates:
-            is_ytdlp = connector is None and fetch_service.classify_source(source) == "youtube_channel"
-            if is_ytdlp:
-                # Backlog guard for the weekly cadence (see YTDLP_PROFILE). decide_fetch
-                # already floors post_limit; this keeps the floor for direct callers.
-                max_posts = max(max_posts, YTDLP_PROFILE.min_posts_per_fetch)
-                # No host lock on top of this: youtube.com is one host key, so the lock would
-                # serialise all 32 channels instead of letting MAX_YTDLP_CONCURRENCY run.
-                # The spacer supplies the politeness the host lock would have, without the
-                # serialisation - see YTDLP_MIN_START_INTERVAL_SECONDS.
-                await gates.enter_async_context(ytdlp_semaphore)
-                await ytdlp_spacer.wait()
-            elif connector is None:
-                await gates.enter_async_context(
-                    host_limiter.slot(_HostLimiter.host_key(source), settings["fetch_delay_seconds"])
-                )
-            await gates.enter_async_context(semaphore)
-
+        max_posts = post_limit if post_limit is not None else max(
+            settings["max_posts_per_fetch"], kind.profile.min_posts_per_fetch
+        )
+        async with gates.slot(kind.profile, kind.host_key(source),
+                              per_source_delay_s=settings.get("fetch_delay_seconds") or 0):
             logger.info(f"📥 [{priority}] Fetching up to {max_posts} posts from {display_name}")
-            if connector is not None:
-                posts = await connector.fetch_posts(source["handle_or_url"], limit=max_posts)
-            elif is_ytdlp:
-                # SourceFetchService.fetch_live_posts calls YouTubeService.fetch_live_posts
-                # synchronously, and that shells out to yt-dlp - awaiting it would block the
-                # whole event loop for minutes and silently serialise every other source.
-                # Same call, moved off the loop and behind the yt-dlp budget.
-                posts = await asyncio.to_thread(
-                    fetch_service.youtube_service.fetch_live_posts,
-                    source["handle_or_url"],
-                    max_posts,
-                )
-            else:
-                posts = await fetch_service.fetch_live_posts(source, limit=max_posts)
+            posts = await kind.fetch_latest(source, max_posts)
+    except KindUnavailable as exc:
+        unavailable = exc.reason
+        posts = []
     except Exception as exc:
         error = str(exc)
         posts = []
 
     elapsed = time.time() - started_at
 
-    if error is None:
+    if unavailable is not None:
+        logger.warning(f"🚫 {display_name}: unavailable ({unavailable})")
+    elif error is None:
         logger.info(f"✅ [{priority}] {display_name}: fetched {len(posts)} posts in {elapsed:.1f}s")
     else:
         logger.error(f"❌ Failed to fetch from {source.get('handle_or_url')}: {error}")
 
-    # One outcome write replaces the Mark VIII status + backoff pair. A fetch that raises
-    # nothing but returns nothing is `empty`, not healthy - that is how a silently dead feed
-    # looks - but it is still a success: it clears the failure ladder and advances
-    # last_success_at, so a recovered-but-quiet feed is not parked at a high count forever.
-    outcome = FetchOutcome.from_fetch(
-        str(source.get("id")), fetched=len(posts), error=error, duration_s=elapsed
-    )
+    # One outcome write per fetch. A fetch that raises nothing but returns nothing is
+    # `empty`, not healthy - that is how a silently dead feed looks - but it is still a
+    # success: it clears the failure ladder and advances last_success_at. A kind that turns
+    # out to be unavailable is `unavailable`, which never advances backoff.
+    if unavailable is not None:
+        outcome = FetchOutcome(str(source.get("id")), OutcomeStatus.UNAVAILABLE, 0, unavailable, elapsed)
+    else:
+        outcome = FetchOutcome.from_fetch(str(source.get("id")), fetched=len(posts), error=error, duration_s=elapsed)
     try:
         await asyncio.to_thread(fetch_state.record_outcome, outcome, trigger=trigger)
     except Exception as exc:
@@ -424,37 +225,12 @@ async def _fetch_source(
 
     return {
         "source": source,
-        "platform": source["platform"],
+        "platform": source.get("platform"),
         "posts": posts,
-        "error": error,
+        "error": error if unavailable is None else f"unavailable: {unavailable}",
         "started_at": started_at,
         "ended_at": started_at + elapsed,
     }
-
-
-async def _record_connector_outage(
-    fetch_state: DbFetchStateStore,
-    sources: list[dict],
-    error: str,
-    trigger: str,
-) -> list[dict]:
-    """Report the sources a connector-level failure never let us attempt.
-
-    Recorded as `unavailable`, so their backoff ladder is deliberately NOT advanced: a shared
-    connector fault (locked session, FloodWaitError) is no evidence that any individual
-    channel is dead, and parking all of telegram for hours because one connect() failed
-    would be its own outage.
-    """
-    outcomes = [
-        FetchOutcome(str(source.get("id")), OutcomeStatus.UNAVAILABLE, 0,
-                     f"Connector unavailable: {error}", 0.0)
-        for source in sources
-    ]
-    try:
-        await asyncio.to_thread(fetch_state.record_outcomes, outcomes, trigger=trigger)
-    except Exception as exc:
-        logger.warning("Could not record connector outage for %s sources: %s", len(sources), exc)
-    return [_failed_result(source, error) for source in sources]
 
 
 async def safe_ingest_posts(
@@ -463,6 +239,8 @@ async def safe_ingest_posts(
     sources_service: SourcesService | None = None,
     fetch_service: SourceFetchService | None = None,
     fetch_state: DbFetchStateStore | None = None,
+    kinds: KindRegistry | None = None,
+    gates: FetchGates | None = None,
     availability: Callable[[], Availability] = availability_from_env,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ):
@@ -482,6 +260,7 @@ async def safe_ingest_posts(
     sources_service = sources_service or SourcesService(db_url)
     fetch_service = fetch_service or SourceFetchService(db_url)
     fetch_state = fetch_state or DbFetchStateStore(db_url)
+    kinds = kinds or fetch_service.kinds
 
     # Refresh cadence first, so new sources leave probation and gaps follow the posts
     # (B4 moves this to the daily work). Best-effort: stale tiers beat no cycle.
@@ -517,7 +296,7 @@ async def safe_ingest_posts(
             source,
             states.get(source["id"]),
             trigger,
-            profile=interim_profile(fetch_service, source),
+            profile=kinds.resolve(source).profile,
             now=now,
             availability=available,
         )
@@ -562,22 +341,17 @@ async def safe_ingest_posts(
         logger.info("✨ All sources are up to date! Nothing to fetch.")
         return _empty_result(**skip_counts)
 
-    # 4. Group by platform and sort by priority within each platform
-    by_platform = {}
+    # 4. Order: priority first, then round-robin across hosts so the tasks gather starts
+    #    together mostly want different gates.
+    sources_to_fetch.sort(key=lambda s: (s["settings"]["priority"], s["handle_or_url"]))
+    sources_to_fetch = interleave_by_host(sources_to_fetch)
+    source_kinds = {source["id"]: kinds.resolve(source) for source in sources_to_fetch}
+    by_platform: dict[str, list[dict]] = {}
+    by_pool: dict[str, int] = {}
     for source in sources_to_fetch:
-        platform = source["platform"]
-        if platform not in by_platform:
-            by_platform[platform] = []
-        by_platform[platform].append(source)
-
-    # Sort sources within each platform by priority (lower = first)
-    for platform in by_platform:
-        by_platform[platform].sort(key=lambda s: (
-            s["settings"]["priority"],
-            s["handle_or_url"]
-        ))
-
-    # Log priority order for each platform
+        by_platform.setdefault(source["platform"], []).append(source)
+        pool = source_kinds[source["id"]].profile.concurrency_pool
+        by_pool[pool] = by_pool.get(pool, 0) + 1
     for platform, sources in by_platform.items():
         priority_info = [
             f"[{s['settings']['priority']}] {s['settings'].get('display_name') or s['handle_or_url']}"
@@ -585,180 +359,60 @@ async def safe_ingest_posts(
         ]
         logger.info(f"📋 {platform.upper()} priority order: {' → '.join(priority_info)}")
 
-    # 5. Fetch. Live platforms run concurrently under a global semaphore plus a per-host
-    #    limiter; connector platforms (telegram) stay strictly sequential because they
-    #    share one Telethon client, one MTProto connection, one session file on disk, and
-    #    a request_counter throttle whose read-modify-write has an `await` in the middle -
-    #    parallelising them silently disables the throttle and earns a FloodWaitError on
-    #    the account.
+    # 5. Fetch. Every source runs concurrently through its kind; FetchGates applies the
+    #    politeness profile (host lock + host floor, or the yt-dlp pool and start spacer)
+    #    under one global budget.
     all_posts = []
     failed_sources: list[dict] = []
     source_lookup = {source["id"]: source for source in sources_to_fetch}
+    gates = gates or FetchGates.shared()
 
-    semaphore = asyncio.Semaphore(MAX_FETCH_CONCURRENCY)
-    ytdlp_semaphore = asyncio.Semaphore(MAX_YTDLP_CONCURRENCY)
-    ytdlp_spacer = _StartSpacer(YTDLP_MIN_START_INTERVAL_SECONDS)
-    host_limiter = _HostLimiter()
-
-    fetch_kwargs = {
-        "fetch_service": fetch_service,
-        "fetch_state": fetch_state,
-        "trigger": trigger,
-        "semaphore": semaphore,
-        "ytdlp_semaphore": ytdlp_semaphore,
-        "ytdlp_spacer": ytdlp_spacer,
-        "host_limiter": host_limiter,
-    }
-
-    live_sources = [
-        source
-        for platform, sources in by_platform.items()
-        if platform in LIVE_FETCH_PLATFORMS
-        for source in sources
-    ]
-    live_sources.sort(key=lambda s: (s["settings"]["priority"], s["handle_or_url"]))
-    live_sources = _interleave_by_host(live_sources)
-
-    connector_platforms = {
-        platform: sources
-        for platform, sources in by_platform.items()
-        if platform not in LIVE_FETCH_PLATFORMS
-    }
-
-    async def run_live_sources() -> list[dict]:
-        if not live_sources:
-            return []
-        logger.info(
-            f"🚀 Fetching {len(live_sources)} live sources with concurrency "
-            f"{MAX_FETCH_CONCURRENCY} (yt-dlp {MAX_YTDLP_CONCURRENCY})"
-        )
-        # _fetch_source is written never to raise, but "written never to" is not a guarantee
-        # a whole cycle should rest on: without return_exceptions one unexpected error
-        # discards every source fetched so far. Every returned exception is inspected below.
-        results = await asyncio.gather(
-            *(_fetch_source(s, post_limit=post_limits.get(s["id"]), **fetch_kwargs)
-              for s in live_sources),
-            return_exceptions=True,
-        )
-        collected: list[dict] = []
-        for source, result in zip(live_sources, results):
-            if isinstance(result, BaseException):
-                logger.error(
-                    "💥 Unhandled error fetching %s (cycle continues): %s",
-                    source.get("handle_or_url"),
-                    result,
-                    exc_info=result,
-                )
-                collected.append(_failed_result(source, f"unhandled fetch error: {result}"))
-            else:
-                collected.append(result)
-        return collected
-
-    async def run_connector_platform(platform: str, sources: list[dict]) -> list[dict]:
-        """Fetch one connector platform's sources sequentially. Never raises.
-
-        create_connector / connect() / disconnect() all sat outside any try here, which put
-        the whole cycle back on the exact failure this module exists to prevent: a locked or
-        expired Telethon session raises about a second in, and every RSS/Reddit/YouTube post
-        being fetched alongside it is thrown away. One platform's outage costs that platform.
-        """
-        results: list[dict] = []
-        connector = None
-        try:
-            connector = create_connector(platform)
-            if connector is None:
-                # Returning [] here booked all 12 telegram sources as ingested - `succeeded =
-                # attempted - len(failed_sources)` counts anything that never reaches
-                # failed_sources - so a container missing TELEGRAM_API_ID reported
-                # `success: True, sources_failed: 0` and contributed nothing, indistinguishable
-                # from 12 healthy channels with no new posts. That is the exact pathology this
-                # module's return value was rewritten to stop reporting.
-                error = "connector unavailable or not configured"
-                logger.warning(f"⚠️  Skipping platform {platform}: {error}")
-                return await _record_connector_outage(
-                    fetch_state, sources, error, trigger
-                )
-            await connector.connect()
-            logger.info(f"🔌 Connected to {platform} connector")
-            for idx, source in enumerate(sources):
-                results.append(await _fetch_source(
-                    source, connector=connector, post_limit=post_limits.get(source["id"]),
-                    **fetch_kwargs))
-                if idx < len(sources) - 1:
-                    delay = source["settings"]["fetch_delay_seconds"]
-                    logger.info(f"⏳ Waiting {delay}s before next {platform} source...")
-                    await asyncio.sleep(delay)
-        except Exception as exc:
-            logger.error(
-                "💥 %s connector failed after %s/%s sources (the rest of the cycle is kept): %s",
-                platform,
-                len(results),
-                len(sources),
-                exc,
-                exc_info=True,
-            )
-            # Sources we never reached are still reported, so the run's counts and the
-            # Operations panel show the outage instead of the cycle silently shrinking.
-            results.extend(
-                await _record_connector_outage(
-                    fetch_state, sources[len(results):], str(exc), trigger
-                )
-            )
-        finally:
-            if connector is not None:
-                try:
-                    await connector.disconnect()
-                    logger.info(f"🔌 Disconnected from {platform} connector")
-                except Exception as exc:
-                    logger.warning("Could not disconnect %s connector: %s", platform, exc)
-        return results
-
-    fetch_groups = [("live", live_sources, run_live_sources())]
-    fetch_groups += [
-        (platform, sources, run_connector_platform(platform, sources))
-        for platform, sources in connector_platforms.items()
-    ]
-
-    # return_exceptions is what keeps a group failure local. Without it the first group to
-    # raise aborts the gather, discards every post the others already fetched, and - because
-    # gather does NOT cancel its siblings - leaves them running detached for the remaining
-    # ~30 minutes, writing status rows for a run whose posts will never be saved, until
-    # asyncio.run tears them down mid-flight by closing the loop.
-    grouped_results = await asyncio.gather(
-        *(coro for _, _, coro in fetch_groups), return_exceptions=True
+    logger.info(
+        f"🚀 Fetching {len(sources_to_fetch)} sources with concurrency {gates.max_concurrency} "
+        f"(yt-dlp {gates.ytdlp_concurrency}); pools: {by_pool}"
     )
-
-    for (label, group_sources, _), group in zip(fetch_groups, grouped_results):
-        if isinstance(group, BaseException):
-            # Both group runners are supposed to be exception-proof, so reaching this is a
-            # bug worth a stack trace - but it costs one platform, never the cycle. Every
-            # source in the group is booked as failed so the run's counts stay honest.
+    # _fetch_source is written never to raise, but "written never to" is not a guarantee a
+    # whole cycle should rest on: without return_exceptions one unexpected error discards
+    # every source fetched so far, and - because gather does NOT cancel its siblings - leaves
+    # them running detached. Every returned exception is inspected below.
+    gathered = await asyncio.gather(
+        *(
+            _fetch_source(s, kind=source_kinds[s["id"]], fetch_state=fetch_state, trigger=trigger,
+                          gates=gates, post_limit=post_limits.get(s["id"]))
+            for s in sources_to_fetch
+        ),
+        return_exceptions=True,
+    )
+    results: list[dict] = []
+    for source, result in zip(sources_to_fetch, gathered):
+        if isinstance(result, BaseException):
             logger.error(
-                "💥 Fetch group '%s' failed entirely: %s", label, group, exc_info=group
+                "💥 Unhandled error fetching %s (cycle continues): %s",
+                source.get("handle_or_url"),
+                result,
+                exc_info=result,
             )
-            failed_sources.extend(
-                {"source": s.get("handle_or_url"), "error": f"fetch group '{label}' failed: {group}"}
-                for s in group_sources
-            )
+            results.append(_failed_result(source, f"unhandled fetch error: {result}"))
+        else:
+            results.append(result)
+    del gathered
+
+    for result in results:
+        platform = result["platform"]
+        window = platform_timings.get(platform)
+        if window is None:
+            platform_timings[platform] = [result["started_at"], result["ended_at"]]
+        else:
+            window[0] = min(window[0], result["started_at"])
+            window[1] = max(window[1], result["ended_at"])
+
+        if result["error"]:
+            failed_sources.append({"source": result["source"]["handle_or_url"], "error": result["error"]})
             continue
-        for result in group:
-            platform = result["platform"]
-            window = platform_timings.get(platform)
-            if window is None:
-                platform_timings[platform] = [result["started_at"], result["ended_at"]]
-            else:
-                window[0] = min(window[0], result["started_at"])
-                window[1] = max(window[1], result["ended_at"])
 
-            if result["error"]:
-                failed_sources.append(
-                    {"source": result["source"]["handle_or_url"], "error": result["error"]}
-                )
-                continue
-
-            for post in result["posts"]:
-                post["_source_id"] = result["source"]["id"]
-            all_posts.extend(result["posts"])
+        for post in result["posts"]:
+            post["_source_id"] = result["source"]["id"]
+        all_posts.extend(result["posts"])
 
     platform_timings = {p: window[1] - window[0] for p, window in platform_timings.items()}
     fetch_elapsed = time.time() - total_start_time
@@ -769,10 +423,8 @@ async def safe_ingest_posts(
         f"📦 Fetch phase done in {fetch_elapsed:.1f}s: {fetched_count} posts, "
         f"{len(failed_sources)} failed sources"
     )
-    # grouped_results pins every fetched post a second time via result["posts"]. The
-    # exception objects it may hold also carry __traceback__, whose frames keep that
-    # source's locals alive; they have already been logged with exc_info above.
-    del grouped_results
+    # results pins every fetched post a second time via result["posts"].
+    del results
 
     # 6. Save to database. Every post is isolated by the SAVEPOINT repo_posts.upsert_post
     #    opens around its own write (and releases on both paths): a single row violating
@@ -908,7 +560,7 @@ async def safe_ingest_posts(
         refreshable = [
             (source_id, count)
             for source_id, count in per_source_fetch_counts.items()
-            if (source_lookup.get(source_id) or {}).get("platform") in LIVE_FETCH_PLATFORMS
+            if source_id in source_lookup
         ]
         logger.info(f"🗂️  Refreshing archive metadata for {len(refreshable)} sources...")
         refreshed = 0
@@ -921,17 +573,9 @@ async def safe_ingest_posts(
             display_name = settings.get("display_name") or source["handle_or_url"]
             started = time.time()
             try:
-                async with contextlib.AsyncExitStack() as gates:
-                    if fetch_service.classify_source(source) == "youtube_channel":
-                        await gates.enter_async_context(ytdlp_semaphore)
-                        await ytdlp_spacer.wait()
-                    else:
-                        await gates.enter_async_context(
-                            host_limiter.slot(
-                                _HostLimiter.host_key(source), settings.get("fetch_delay_seconds") or 0
-                            )
-                        )
-                    await gates.enter_async_context(semaphore)
+                kind = source_kinds[source_id]
+                async with gates.slot(kind.profile, kind.host_key(source),
+                                      per_source_delay_s=settings.get("fetch_delay_seconds") or 0):
                     await fetch_service.record_live_fetch(
                         source_id, source, fetched_posts=fetched_posts
                     )

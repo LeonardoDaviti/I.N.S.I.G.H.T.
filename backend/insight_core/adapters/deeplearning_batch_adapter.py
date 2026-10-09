@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds.base import Inspection, RateLimit
 
 
 class DeepLearningBatchAdapter(BaseSourceAdapter):
@@ -30,23 +31,12 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
         return (parsed.hostname or "").lower() in self.HOSTS and (parsed.path or "").startswith(self.PATH_PREFIX)
 
-    def default_rate_limit(self) -> Dict[str, Any]:
-        return {"page_delay_seconds": self.PAGE_DELAY_SECONDS}
-
-    def checkpoint_is_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict) and checkpoint.get("mode") == "site_index" and checkpoint.get("next_index") is not None
-
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
+    async def inspect(self, source: Dict[str, Any]) -> Inspection:
         entries = await self._discover_entries()
         first_post_date = entries[-1]["published_at"] if entries else None
-        return {
-            "available_posts": len(entries),
-            "page_size": self.PAGE_SIZE,
-            "first_post_date": self.service._isoformat(first_post_date),
-            "rate_limit": self.default_rate_limit(),
-        }
+        return Inspection(len(entries), self.PAGE_SIZE, parsing.isoformat(first_post_date))
 
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         entries = await self._discover_entries()
         posts: List[Dict[str, Any]] = []
         for entry in entries[: max(1, limit)]:
@@ -55,82 +45,22 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
                 posts.append(post)
         return posts[:limit]
 
-    async def archive_posts(
-        self,
-        source: Dict[str, Any],
-        target_posts: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-        *,
-        checkpoint: Optional[Dict[str, Any]] = None,
-        initial_collected: int = 0,
-        initial_pages_fetched: int = 0,
-        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
-        rate_limit: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
+    async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
+                            rate: RateLimit):
         entries = await self._discover_entries()
-        next_index = int((checkpoint or {}).get("next_index") or 0)
-        pages_fetched = int(initial_pages_fetched or 0)
-        collected: List[Dict[str, Any]] = []
-
-        while (len(collected) + initial_collected) < target_posts and next_index < len(entries):
-            batch_limit = min(self.PAGE_SIZE, target_posts - (len(collected) + initial_collected))
-            batch_entries = entries[next_index: next_index + batch_limit]
-            if not batch_entries:
-                break
-
-            batch_posts: List[Dict[str, Any]] = []
-            for entry in batch_entries:
-                post = await self._fetch_issue_post(source, entry)
-                if post:
-                    batch_posts.append(post)
-                    collected.append(post)
-
-            next_index += len(batch_entries)
-            pages_fetched += 1
-            checkpoint_payload = {
-                "mode": "site_index",
-                "adapter": self.adapter_type,
-                "next_index": next_index,
-                "pages_fetched": pages_fetched,
-                "collected_posts": len(collected) + initial_collected,
-                "total_candidates": len(entries),
-            }
-            progress_payload = {
-                "stage": "page_fetched",
-                "platform": "deeplearning_batch",
-                "pages_fetched": pages_fetched,
-                "posts_collected": len(collected) + initial_collected,
-                "target_posts": target_posts,
-                "next_index": next_index,
-                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100.0),
-                "message": f"Fetched The Batch archive batch {pages_fetched}",
-            }
-            await self.service._emit_page(page_callback, batch_posts, checkpoint_payload, progress_payload)
-            await self.service._emit_progress(progress_callback, progress_payload)
-
-            if (len(collected) + initial_collected) < target_posts and next_index < len(entries):
-                await asyncio.sleep(int((rate_limit or {}).get("page_delay_seconds", self.PAGE_DELAY_SECONDS)))
-
-        final_checkpoint = {
-            "mode": "site_index",
-            "adapter": self.adapter_type,
-            "next_index": next_index,
-            "pages_fetched": pages_fetched,
-            "collected_posts": len(collected) + initial_collected,
-            "total_candidates": len(entries),
-        }
-        return collected[: max(0, target_posts - initial_collected)], pages_fetched, final_checkpoint
+        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_issue_post):
+            yield page
 
     async def _discover_entries(self) -> List[Dict[str, Any]]:
-        body, _ = await self.service._fetch_text(self.CHARON_SITEMAP_URL)
+        body, _ = await self.http.get_text(self.CHARON_SITEMAP_URL)
         root = ET.fromstring(body)
         entries: List[Dict[str, Any]] = []
 
         for node in root.iter():
-            if self.service._local_name(node.tag) != "url":
+            if parsing.local_name(node.tag) != "url":
                 continue
-            loc = self.service._child_text(node, "loc") or ""
-            lastmod = self.service._child_text(node, "lastmod")
+            loc = parsing.child_text(node, "loc") or ""
+            lastmod = parsing.child_text(node, "lastmod")
             parsed = urllib.parse.urlparse(loc)
             match = self.ISSUE_PATH_RE.match(parsed.path or "")
             if not match:
@@ -141,11 +71,11 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
                 {
                     "issue_number": issue_number,
                     "public_url": public_url,
-                    "published_at": self.service._parse_datetime_value(lastmod),
+                    "published_at": parsing.parse_datetime_value(lastmod),
                 }
             )
 
-        entries.sort(key=lambda item: item.get("published_at") or self.service._parse_datetime_value("1970-01-01T00:00:00+00:00"), reverse=True)
+        entries.sort(key=lambda item: item.get("published_at") or parsing.parse_datetime_value("1970-01-01T00:00:00+00:00"), reverse=True)
         return entries
 
     async def _fetch_issue_post(self, source: Dict[str, Any], entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -153,7 +83,7 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
         if not url:
             return None
 
-        html, _ = await self.service._fetch_text(url)
+        html, _ = await self.http.get_text(url)
         next_payload = self._extract_next_data(html)
         post = self._find_post_payload(next_payload)
         if not post:
@@ -162,8 +92,8 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
         title = str(post.get("title") or "").strip()
         content_html = str(post.get("html") or "").strip()
         if not content_html.strip():
-            content_html = self.service._extract_article_html(html)
-        content = self.service._strip_html(content_html)
+            content_html = parsing.extract_article_html(html)
+        content = parsing.strip_html(content_html)
         if not content.strip():
             content = str(post.get("custom_excerpt") or post.get("excerpt") or "").strip()
         if not content.strip():
@@ -188,7 +118,7 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
             "title": title or url,
             "content": content,
             "content_html": content_html,
-            "date": self.service._parse_datetime_value(str(post.get("published_at") or "")) or entry.get("published_at"),
+            "date": parsing.parse_datetime_value(str(post.get("published_at") or "")) or entry.get("published_at"),
             "media_urls": [feature_image] if feature_image else [],
             "categories": categories,
             "metadata": {

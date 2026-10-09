@@ -13,53 +13,60 @@ from insight_core.adapters.gwern_adapter import GwernAdapter
 from insight_core.adapters.lesswrong_adapter import LessWrongAdapter
 from insight_core.adapters.philschmid_adapter import PhilSchmidCloudAttentionAdapter
 from insight_core.adapters.zerotomastery_adapter import ZeroToMasteryMonthlyAdapter
-from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.ingestion.kinds import KindRegistry
+from insight_core.tests._kind_fakes import FakeHttp
 
 
 class SourceAdapterTests(unittest.TestCase):
+    """The site adapters are SourceKinds (B3): they take KindHttp, here a FakeHttp."""
+
     def setUp(self):
-        self.service = SourceFetchService("postgresql://test:test@localhost/test")
+        self.http = FakeHttp()
+        self.kinds = KindRegistry.default(self.http, object())
+
+    def classify(self, source):
+        return self.kinds.resolve(source).name
 
     def test_classify_source_detects_custom_adapters(self):
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://www.lesswrong.com/feed.xml"}
             ),
             "lesswrong_graphql",
         )
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://gwern.net"}
             ),
             "gwern_site",
         )
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://darioamodei.com"}
             ),
             "dario_site",
         )
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://www.deeplearning.ai/the-batch/"}
             ),
             "deeplearning_batch_site",
         )
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://www.philschmid.de/cloud-attention"}
             ),
             "philschmid_cloud_attention",
         )
         self.assertEqual(
-            self.service.classify_source(
+            self.classify(
                 {"platform": "rss", "handle_or_url": "https://zerotomastery.io/newsletters/machine-learning-monthly/1/"}
             ),
             "zerotomastery_ml_monthly",
         )
 
     def test_lesswrong_count_available_posts_uses_offset_search(self):
-        adapter = LessWrongAdapter(self.service)
+        adapter = LessWrongAdapter(self.http)
 
         async def fake_post_json(url, payload, user_agent=None, extra_headers=None):
             variables = payload.get("variables") or {}
@@ -83,12 +90,12 @@ class SourceAdapterTests(unittest.TestCase):
                 ]
             return {"data": {"posts": {"results": rows}}}
 
-        self.service._post_json = fake_post_json  # type: ignore[method-assign]
+        self.http.post_json = fake_post_json  # type: ignore[method-assign]
         count = asyncio.run(adapter._count_available_posts())
         self.assertEqual(count, 5)
 
     def test_lesswrong_fetch_live_posts_formats_html_body(self):
-        adapter = LessWrongAdapter(self.service)
+        adapter = LessWrongAdapter(self.http)
 
         async def fake_post_json(url, payload, user_agent=None, extra_headers=None):
             return {
@@ -109,8 +116,8 @@ class SourceAdapterTests(unittest.TestCase):
                 }
             }
 
-        self.service._post_json = fake_post_json  # type: ignore[method-assign]
-        posts = asyncio.run(adapter.fetch_live_posts({"handle_or_url": "https://www.lesswrong.com/feed.xml"}, 1))
+        self.http.post_json = fake_post_json  # type: ignore[method-assign]
+        posts = asyncio.run(adapter.fetch_latest({"handle_or_url": "https://www.lesswrong.com/feed.xml"}, 1))
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["external_id"], "abc123")
         self.assertEqual(posts[0]["content"], "Hello")
@@ -118,7 +125,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(posts[0]["metadata"]["author_slug"], "alice")
 
     def test_gwern_sitemap_filters_to_html_pages(self):
-        adapter = GwernAdapter(self.service)
+        adapter = GwernAdapter(self.http)
         xml = """<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
           <url><loc>https://gwern.net/style-guide</loc></url>
@@ -133,7 +140,7 @@ class SourceAdapterTests(unittest.TestCase):
         async def fake_fetch_text(url, user_agent=None):
             return xml, {}
 
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         urls = asyncio.run(adapter._discover_archive_urls({"handle_or_url": "https://gwern.net"}))
 
         self.assertEqual(
@@ -146,7 +153,7 @@ class SourceAdapterTests(unittest.TestCase):
         )
 
     def test_gwern_recent_url_discovery_ignores_nav_and_assets(self):
-        adapter = GwernAdapter(self.service)
+        adapter = GwernAdapter(self.http)
         html = """
         <html>
           <body>
@@ -162,7 +169,7 @@ class SourceAdapterTests(unittest.TestCase):
         async def fake_fetch_text(url, user_agent=None):
             return html, {}
 
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         urls = asyncio.run(adapter._discover_recent_urls({"handle_or_url": "https://gwern.net"}, limit=10))
         self.assertEqual(
             urls,
@@ -173,7 +180,7 @@ class SourceAdapterTests(unittest.TestCase):
         )
 
     def test_dario_discovers_homepage_entries_and_fetches_post(self):
-        adapter = DarioAmodeiAdapter(self.service)
+        adapter = DarioAmodeiAdapter(self.http)
         homepage = """
         <a href="/essay/machines-of-loving-grace">Essay</a>
         <a href="/post/the-urgency-of-interpretability">Post</a>
@@ -195,7 +202,7 @@ class SourceAdapterTests(unittest.TestCase):
                 return homepage, {}
             return detail, {}
 
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         entries = asyncio.run(adapter._discover_entries({"handle_or_url": "https://darioamodei.com"}))
         self.assertEqual(
             entries,
@@ -210,7 +217,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(post["categories"], ["post"])
 
     def test_batch_adapter_discovers_issue_urls_from_sitemap(self):
-        adapter = DeepLearningBatchAdapter(self.service)
+        adapter = DeepLearningBatchAdapter(self.http)
         xml = """<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
           <url><loc>https://charonhub.deeplearning.ai/issue-345/</loc><lastmod>2026-03-20T15:36:15.000Z</lastmod></url>
@@ -222,13 +229,13 @@ class SourceAdapterTests(unittest.TestCase):
         async def fake_fetch_text(url, user_agent=None):
             return xml, {}
 
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         entries = asyncio.run(adapter._discover_entries())
         self.assertEqual([entry["issue_number"] for entry in entries], [345, 344])
         self.assertEqual(entries[0]["public_url"], "https://www.deeplearning.ai/the-batch/issue-345/")
 
     def test_batch_adapter_extracts_post_from_next_data(self):
-        adapter = DeepLearningBatchAdapter(self.service)
+        adapter = DeepLearningBatchAdapter(self.http)
         next_payload = {
             "props": {
                 "pageProps": {
@@ -250,7 +257,7 @@ class SourceAdapterTests(unittest.TestCase):
         async def fake_fetch_text(url, user_agent=None):
             return html, {}
 
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         post = asyncio.run(
             adapter._fetch_issue_post(
                 {"handle_or_url": "https://www.deeplearning.ai/the-batch/"},
@@ -262,7 +269,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(post["categories"], ["The Batch"])
 
     def test_philschmid_extracts_issue_urls_and_page_count(self):
-        adapter = PhilSchmidCloudAttentionAdapter(self.service)
+        adapter = PhilSchmidCloudAttentionAdapter(self.http)
         html = """
         <a href="/cloud-attention/issue-30">Issue 30</a>
         <a href="/cloud-attention/issue-29">Issue 29</a>
@@ -272,12 +279,12 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(adapter._extract_max_page(html), 4)
         async def fake_fetch_text(url, user_agent=None):
             return html, {}
-        self.service._fetch_text = fake_fetch_text  # type: ignore[method-assign]
+        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
         entries = asyncio.run(adapter._discover_entries({"handle_or_url": "https://www.philschmid.de/cloud-attention"}))
         self.assertEqual(entries[0]["url"], "https://www.philschmid.de/cloud-attention/issue-30")
 
     def test_zerotomastery_extracts_archive_entries_from_page_data(self):
-        adapter = ZeroToMasteryMonthlyAdapter(self.service)
+        adapter = ZeroToMasteryMonthlyAdapter(self.http)
         payload = {
             "result": {
                 "data": {

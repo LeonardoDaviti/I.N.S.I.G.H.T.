@@ -1,54 +1,106 @@
-"""Base contract for source-specific archive adapters."""
+"""Base for the six site adapters. BaseSourceAdapter implements SourceKind directly.
+
+A site adapter is a source kind like any other (spec §D.2): it takes the shared KindHttp,
+uses the pure helpers in ingestion/kinds/parsing.py, and yields one ArchivePage per page
+of its archive. Its politeness profile is a host lock with PAGE_DELAY_SECONDS between pages.
+"""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, Dict, List, Optional, Sequence
+
+from insight_core.ingestion.kinds.base import (
+    ArchivePage,
+    BaseKind,
+    Inspection,
+    PolitenessProfile,
+    RateLimit,
+    Source,
+    resume_counts,
+)
 
 
-class BaseSourceAdapter(ABC):
+class BaseSourceAdapter(BaseKind):
     """Shared contract for non-standard source acquisition paths."""
 
-    adapter_type = "base"
+    adapter_type: ClassVar[str] = "base"
+    PAGE_DELAY_SECONDS: ClassVar[float] = 1
+    # Checkpoint modes this adapter writes; a checkpoint is resumable when its mode is one
+    # of these and it carries RESUME_KEY.
+    CHECKPOINT_MODES: ClassVar[frozenset[str]] = frozenset({"site_index"})
+    RESUME_KEY: ClassVar[str] = "next_index"
+    PAGE_SIZE: ClassVar[int] = 20
 
-    def __init__(self, service: Any):
-        self.service = service
+    def __init__(self, http: Any):
+        self.http = http
 
-    @abstractmethod
-    def matches(self, source: Dict[str, Any]) -> bool:
-        """Return True when the adapter owns the source."""
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.name = cls.adapter_type
+        cls.profile = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=cls.PAGE_DELAY_SECONDS)
 
-    @abstractmethod
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
-        """Inspect the source and report archive capabilities."""
+    def checkpoint_resumable(self, checkpoint: Any) -> bool:
+        return (
+            isinstance(checkpoint, dict)
+            and checkpoint.get("mode") in self.CHECKPOINT_MODES
+            and checkpoint.get(self.RESUME_KEY) is not None
+        )
 
-    @abstractmethod
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        """Fetch the latest items for regular ingestion."""
-
-    @abstractmethod
-    async def archive_posts(
+    async def index_pages(
         self,
-        source: Dict[str, Any],
-        target_posts: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-        *,
-        checkpoint: Optional[Dict[str, Any]] = None,
-        initial_collected: int = 0,
-        initial_pages_fetched: int = 0,
-        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
-        rate_limit: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
-        """Archive posts using an adapter-specific strategy."""
+        source: Source,
+        entries: Sequence[Any],
+        target: int,
+        checkpoint: Optional[dict],
+        rate: RateLimit,
+        fetch_one: Callable[[Source, Any], Awaitable[Optional[Dict[str, Any]]]],
+    ) -> AsyncIterator[ArchivePage]:
+        """Archive a discovered entry list in PAGE_SIZE batches, one ArchivePage per batch.
 
-    def default_rate_limit(self) -> Dict[str, Any]:
-        return {"page_delay_seconds": 1}
+        The checkpoint carries next_index into `entries`, so a resumed run continues where
+        the last page ended. Entries whose fetch yields nothing still advance the index.
+        """
+        collected, pages_fetched = resume_counts(checkpoint)
+        next_index = int((checkpoint or {}).get("next_index") or 0)
+        mode = next(iter(self.CHECKPOINT_MODES))
 
-    def checkpoint_is_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict)
+        while collected < target and next_index < len(entries):
+            batch = entries[next_index: next_index + min(self.PAGE_SIZE, target - collected)]
+            if not batch:
+                break
 
-    def estimate_seconds(self, estimated_pages: int, rate_limit: Optional[Dict[str, Any]] = None) -> int:
-        if estimated_pages <= 0:
-            return 0
-        page_delay = int((rate_limit or {}).get("page_delay_seconds", self.default_rate_limit().get("page_delay_seconds", 1)))
-        return estimated_pages + max(0, estimated_pages - 1) * page_delay
+            posts: List[Dict[str, Any]] = []
+            for entry in batch:
+                post = await fetch_one(source, entry)
+                if post:
+                    posts.append(post)
+            collected += len(posts)
+            next_index += len(batch)
+            pages_fetched += 1
+
+            page_checkpoint: Dict[str, Any] = {"mode": mode}
+            if mode == "site_index":
+                page_checkpoint["adapter"] = self.adapter_type
+            page_checkpoint.update({
+                "next_index": next_index,
+                "pages_fetched": pages_fetched,
+                "collected_posts": collected,
+                "total_candidates": len(entries),
+            })
+            yield ArchivePage(posts, page_checkpoint)
+
+            if collected < target and next_index < len(entries):
+                await self.http.sleep(rate.page_delay_s)
+
+    # Subclasses implement matches, fetch_latest, inspect and archive_pages.
+    def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
+        raise NotImplementedError
+
+    async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:  # pragma: no cover
+        raise NotImplementedError
+
+    async def inspect(self, source: Source) -> Inspection:  # pragma: no cover
+        raise NotImplementedError
+
+    def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):  # pragma: no cover
+        raise NotImplementedError

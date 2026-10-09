@@ -1,8 +1,7 @@
-"""Registry for custom source archive adapters."""
+"""The six site adapters. Each one is a SourceKind (see base_adapter.py); KindRegistry.default
+builds them with the shared KindHttp, ahead of the generic kinds in resolution priority."""
 
 from __future__ import annotations
-
-from typing import Any, Dict, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.adapters.dario_adapter import DarioAmodeiAdapter
@@ -22,22 +21,4 @@ ADAPTER_CLASSES = (
     ZeroToMasteryMonthlyAdapter,
 )
 
-
-def create_source_adapter(service: Any, source: Dict[str, Any]) -> Optional[BaseSourceAdapter]:
-    for adapter_class in ADAPTER_CLASSES:
-        adapter = adapter_class(service)
-        if adapter.matches(source):
-            return adapter
-    return None
-
-
-__all__ = [
-    "BaseSourceAdapter",
-    "LessWrongAdapter",
-    "GwernAdapter",
-    "DarioAmodeiAdapter",
-    "DeepLearningBatchAdapter",
-    "PhilSchmidCloudAttentionAdapter",
-    "ZeroToMasteryMonthlyAdapter",
-    "create_source_adapter",
-]
+__all__ = ["ADAPTER_CLASSES", "BaseSourceAdapter"]

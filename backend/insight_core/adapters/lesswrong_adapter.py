@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import urllib.parse
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds.base import ArchivePage, Inspection, RateLimit, resume_counts
 
 
 class LessWrongAdapter(BaseSourceAdapter):
@@ -16,6 +17,8 @@ class LessWrongAdapter(BaseSourceAdapter):
     GRAPHQL_URL = "https://www.lesswrong.com/graphql"
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1
+    CHECKPOINT_MODES = frozenset({"lesswrong_offset"})
+    RESUME_KEY = "next_offset"
     HOSTS = {"www.lesswrong.com", "lesswrong.com"}
 
     POSTS_QUERY = """
@@ -54,49 +57,26 @@ class LessWrongAdapter(BaseSourceAdapter):
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
         return (parsed.hostname or "").lower() in self.HOSTS
 
-    def default_rate_limit(self) -> Dict[str, Any]:
-        return {"page_delay_seconds": self.PAGE_DELAY_SECONDS}
-
-    def checkpoint_is_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict) and checkpoint.get("mode") == "lesswrong_offset" and checkpoint.get("next_offset") is not None
-
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
+    async def inspect(self, source: Dict[str, Any]) -> Inspection:
         available_posts = await self._count_available_posts()
         oldest_post = None
         if available_posts > 0:
             page = await self._fetch_posts_meta_page(limit=1, offset=available_posts - 1)
             oldest_post = page[0] if page else None
 
-        return {
-            "available_posts": available_posts,
-            "page_size": self.PAGE_SIZE,
-            "first_post_date": self.service._isoformat((oldest_post or {}).get("date")),
-            "rate_limit": self.default_rate_limit(),
-        }
+        return Inspection(available_posts, self.PAGE_SIZE, parsing.isoformat((oldest_post or {}).get("date")))
 
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         return await self._fetch_posts_page(limit=max(1, min(limit, 50)), offset=0, source_url=str(source.get("handle_or_url") or ""))
 
-    async def archive_posts(
-        self,
-        source: Dict[str, Any],
-        target_posts: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-        *,
-        checkpoint: Optional[Dict[str, Any]] = None,
-        initial_collected: int = 0,
-        initial_pages_fetched: int = 0,
-        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
-        rate_limit: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
+    async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
+                            rate: RateLimit):
+        collected, pages_fetched = resume_counts(checkpoint)
         current_offset = int((checkpoint or {}).get("next_offset") or 0)
-        pages_fetched = int(initial_pages_fetched or 0)
-        collected: List[Dict[str, Any]] = []
 
-        while (len(collected) + initial_collected) < target_posts:
-            page_limit = min(self.PAGE_SIZE, target_posts - (len(collected) + initial_collected))
+        while collected < target:
             page_posts = await self._fetch_posts_page(
-                limit=page_limit,
+                limit=min(self.PAGE_SIZE, target - collected),
                 offset=current_offset,
                 source_url=str(source.get("handle_or_url") or ""),
             )
@@ -104,37 +84,17 @@ class LessWrongAdapter(BaseSourceAdapter):
                 break
 
             pages_fetched += 1
-            collected.extend(page_posts)
+            collected += len(page_posts)
             current_offset += len(page_posts)
-            checkpoint_payload = {
+            yield ArchivePage(page_posts, {
                 "mode": "lesswrong_offset",
                 "next_offset": current_offset,
                 "pages_fetched": pages_fetched,
-                "collected_posts": len(collected) + initial_collected,
-            }
-            progress_payload = {
-                "stage": "page_fetched",
-                "platform": "lesswrong",
-                "pages_fetched": pages_fetched,
-                "posts_collected": len(collected) + initial_collected,
-                "target_posts": target_posts,
-                "offset": current_offset,
-                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100),
-                "message": f"Fetched LessWrong page {pages_fetched}",
-            }
-            await self.service._emit_page(page_callback, page_posts, checkpoint_payload, progress_payload)
-            await self.service._emit_progress(progress_callback, progress_payload)
+                "collected_posts": collected,
+            })
 
-            if (len(collected) + initial_collected) < target_posts:
-                await asyncio.sleep(int((rate_limit or {}).get("page_delay_seconds", self.PAGE_DELAY_SECONDS)))
-
-        final_checkpoint = {
-            "mode": "lesswrong_offset",
-            "next_offset": current_offset,
-            "pages_fetched": pages_fetched,
-            "collected_posts": len(collected) + initial_collected,
-        }
-        return collected[: max(0, target_posts - initial_collected)], pages_fetched, final_checkpoint
+            if collected < target:
+                await self.http.sleep(rate.page_delay_s)
 
     async def _count_available_posts(self) -> int:
         if not await self._has_post_at_offset(0):
@@ -168,7 +128,7 @@ class LessWrongAdapter(BaseSourceAdapter):
                     "external_id": row.get("_id"),
                     "title": str(row.get("title") or "").strip(),
                     "url": str(row.get("pageUrl") or ""),
-                    "date": self.service._parse_datetime_value(row.get("postedAt")),
+                    "date": parsing.parse_datetime_value(row.get("postedAt")),
                 }
             )
         return posts
@@ -181,7 +141,7 @@ class LessWrongAdapter(BaseSourceAdapter):
             title = str(row.get("title") or "").strip()
             url = str(row.get("pageUrl") or "")
             author = row.get("user") or {}
-            media_urls = self.service._extract_html_image_urls(html_body)
+            media_urls = parsing.extract_html_image_urls(html_body)
             posts.append(
                 {
                     "platform": "rss",
@@ -190,9 +150,9 @@ class LessWrongAdapter(BaseSourceAdapter):
                     "external_id": row.get("_id"),
                     "guid": row.get("_id"),
                     "title": title,
-                    "content": self.service._strip_html(html_body),
+                    "content": parsing.strip_html(html_body),
                     "content_html": html_body,
-                    "date": self.service._parse_datetime_value(row.get("postedAt")),
+                    "date": parsing.parse_datetime_value(row.get("postedAt")),
                     "media_urls": media_urls,
                     "categories": [],
                     "metadata": {
@@ -219,7 +179,7 @@ class LessWrongAdapter(BaseSourceAdapter):
                 "offset": int(offset),
             },
         }
-        response = await self.service._post_json(self.GRAPHQL_URL, payload)
+        response = await self.http.post_json(self.GRAPHQL_URL, payload)
         if response.get("errors"):
             raise ValueError(f"LessWrong GraphQL request failed: {response['errors'][0].get('message')}")
         data = response.get("data", {})

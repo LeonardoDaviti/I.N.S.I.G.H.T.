@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import urllib.parse
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.ingestion.kinds import parsing
+from insight_core.ingestion.kinds.base import Inspection, RateLimit
 
 
 class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
@@ -30,27 +31,16 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
         return (parsed.hostname or "").lower() in self.HOSTS and (parsed.path or "").startswith(self.PATH_PREFIX)
 
-    def default_rate_limit(self) -> Dict[str, Any]:
-        return {"page_delay_seconds": self.PAGE_DELAY_SECONDS}
-
-    def checkpoint_is_resumable(self, checkpoint: Any) -> bool:
-        return isinstance(checkpoint, dict) and checkpoint.get("mode") == "site_index" and checkpoint.get("next_index") is not None
-
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
+    async def inspect(self, source: Dict[str, Any]) -> Inspection:
         entries = await self._discover_entries(source)
         first_post_date = None
         if entries:
             oldest_post = await self._fetch_issue_post(source, entries[-1], include_html=False)
-            first_post_date = self.service._isoformat((oldest_post or {}).get("date"))
+            first_post_date = parsing.isoformat((oldest_post or {}).get("date"))
 
-        return {
-            "available_posts": len(entries),
-            "page_size": self.PAGE_SIZE,
-            "first_post_date": first_post_date,
-            "rate_limit": self.default_rate_limit(),
-        }
+        return Inspection(len(entries), self.PAGE_SIZE, first_post_date)
 
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         entries = await self._discover_entries(source)
         posts: List[Dict[str, Any]] = []
         for entry in entries[: max(1, limit)]:
@@ -59,75 +49,15 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
                 posts.append(post)
         return posts[:limit]
 
-    async def archive_posts(
-        self,
-        source: Dict[str, Any],
-        target_posts: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None,
-        *,
-        checkpoint: Optional[Dict[str, Any]] = None,
-        initial_collected: int = 0,
-        initial_pages_fetched: int = 0,
-        page_callback: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]], Awaitable[None] | None]] = None,
-        rate_limit: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Dict[str, Any]], int, Dict[str, Any]]:
+    async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
+                            rate: RateLimit):
         entries = await self._discover_entries(source)
-        next_index = int((checkpoint or {}).get("next_index") or 0)
-        pages_fetched = int(initial_pages_fetched or 0)
-        collected: List[Dict[str, Any]] = []
-
-        while (len(collected) + initial_collected) < target_posts and next_index < len(entries):
-            batch_limit = min(self.PAGE_SIZE, target_posts - (len(collected) + initial_collected))
-            batch_entries = entries[next_index: next_index + batch_limit]
-            if not batch_entries:
-                break
-
-            batch_posts: List[Dict[str, Any]] = []
-            for entry in batch_entries:
-                post = await self._fetch_issue_post(source, entry)
-                if post:
-                    batch_posts.append(post)
-                    collected.append(post)
-
-            next_index += len(batch_entries)
-            pages_fetched += 1
-            checkpoint_payload = {
-                "mode": "site_index",
-                "adapter": self.adapter_type,
-                "next_index": next_index,
-                "pages_fetched": pages_fetched,
-                "collected_posts": len(collected) + initial_collected,
-                "total_candidates": len(entries),
-            }
-            progress_payload = {
-                "stage": "page_fetched",
-                "platform": "philschmid",
-                "pages_fetched": pages_fetched,
-                "posts_collected": len(collected) + initial_collected,
-                "target_posts": target_posts,
-                "next_index": next_index,
-                "progress": min(100.0, ((len(collected) + initial_collected) / max(target_posts, 1)) * 100.0),
-                "message": f"Fetched Cloud Attention batch {pages_fetched}",
-            }
-            await self.service._emit_page(page_callback, batch_posts, checkpoint_payload, progress_payload)
-            await self.service._emit_progress(progress_callback, progress_payload)
-
-            if (len(collected) + initial_collected) < target_posts and next_index < len(entries):
-                await asyncio.sleep(int((rate_limit or {}).get("page_delay_seconds", self.PAGE_DELAY_SECONDS)))
-
-        final_checkpoint = {
-            "mode": "site_index",
-            "adapter": self.adapter_type,
-            "next_index": next_index,
-            "pages_fetched": pages_fetched,
-            "collected_posts": len(collected) + initial_collected,
-            "total_candidates": len(entries),
-        }
-        return collected[: max(0, target_posts - initial_collected)], pages_fetched, final_checkpoint
+        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_issue_post):
+            yield page
 
     async def _discover_entries(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         base = self._archive_url(source)
-        first_html, _ = await self.service._fetch_text(base)
+        first_html, _ = await self.http.get_text(base)
         max_page = self._extract_max_page(first_html)
         urls: List[str] = []
         seen = set()
@@ -136,7 +66,7 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
             if page == 1:
                 html = first_html
             else:
-                html, _ = await self.service._fetch_text(f"{base}?page={page}")
+                html, _ = await self.http.get_text(f"{base}?page={page}")
             for match in self.ISSUE_RE.finditer(html):
                 absolute_url = urllib.parse.urljoin(base, match.group("href"))
                 if absolute_url in seen:
@@ -157,10 +87,10 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
         if not url:
             return None
 
-        html, _ = await self.service._fetch_text(url)
+        html, _ = await self.http.get_text(url)
         metadata = self._extract_json_ld(html)
-        article_html = self.service._extract_article_html(html) if include_html else ""
-        content = self.service._strip_html(article_html or "")
+        article_html = parsing.extract_article_html(html) if include_html else ""
+        content = parsing.strip_html(article_html or "")
         if not content.strip():
             content = str(metadata.get("description") or self._extract_meta_content(html, "description") or "").strip()
         if not content.strip():
@@ -177,7 +107,7 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
             "title": str(metadata.get("headline") or self._extract_meta_content(html, "og:title") or url).strip(),
             "content": content,
             "content_html": article_html,
-            "date": self.service._parse_datetime_value(str(metadata.get("datePublished") or "")),
+            "date": parsing.parse_datetime_value(str(metadata.get("datePublished") or "")),
             "media_urls": [self._extract_meta_content(html, "og:image")] if self._extract_meta_content(html, "og:image") else [],
             "categories": ["Cloud Attention"],
             "metadata": {
