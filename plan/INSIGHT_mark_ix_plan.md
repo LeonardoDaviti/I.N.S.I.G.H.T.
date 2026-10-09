@@ -1395,6 +1395,11 @@ Rules:
 - `TEST_DATABASE_URL=$T ./run-tests.sh insight_core.tests.test_source_fetch_service`
 - `MIGRATE=1 TEST_DATABASE_URL=$T ./run-tests.sh`
 
+**As built (2026-10-09, landed after B3, immediately before B4). Deviations, all keeping the intent:**
+- **`Enricher.run` takes the inserted posts, not bare ids.** The real processors (`EntityMemoryService.process_posts`, `EventMemoryService.process_posts`) read post bodies (title, content, url) to extract mentions and events, so ids alone would force a reload of every post. `SaveBatchResult` therefore also carries `inserted_posts` (`{**post, id, source_id}`, the inserted rows only, pruned with the ids when a poisoned window is discarded). Enrichment still runs on inserted posts only; the runner tests assert on their ids.
+- **`commit_every`** defaults to `None`, meaning `INSIGHT_SAVE_COMMIT_BATCH` (fallback `SAFE_INGEST_SAVE_COMMIT_BATCH`, default 20). `INSIGHT_ENRICH_CHUNK_SIZE` (fallback `SAFE_INGEST_ENRICH_CHUNK_SIZE`, default 100) sets the enrichment chunk.
+- `_persist_posts` was deleted rather than kept as a wrapper: the archive loop and `ingest_source_now` call `SourceFetchService._save_and_enrich` (`save_batch` in a thread, then `Enricher`). B4 deletes `ingest_source_now`, `scripts/ingest.py` and the safe_ingest body, so this keeps only the B4 end state. `test_persist_posts_enriches_with_persisted_ids` became the archive-loop assertion that each page's inserted posts (and only those) are enriched.
+
 ### B3. Source kinds, politeness profiles and FetchGates
 **Files:**
 - new: `ingestion/gates.py` (incl. `HOST_FLOORS`), `ingestion/http.py` (incl. `sleep`), `ingestion/archive_metadata.py`, `ingestion/kinds/{__init__,base,parsing,generic_rss,telegram_rss,nitter_rss,reddit,youtube,telegram_mtproto}.py`. In B3 `telegram_mtproto.py` carries only `matches`, `host_key` and the §D.2 profile (`requires="telegram_creds"`); its fetch/inspect/archive raise `KindUnavailable`, and they are never reached because `Availability.telegram_credentials` is False until B8 builds the real kind from `connectors/telegram_connector.py`

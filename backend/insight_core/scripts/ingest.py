@@ -13,7 +13,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import asyncio
 from insight_core.db.ensure_db import ensure_database
-from insight_core.db.repo_posts import PostsRepository
+from insight_core.db.repo_posts import PostDraft, PostsRepository
+from insight_core.ingestion.enrichment import Enricher
 from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.sources_service import SourcesService
@@ -146,38 +147,18 @@ async def ingest_posts(trigger: str = "manual"):
         if DEBUG_MODE:
             logger.debug(f"⏱️  {platform.upper()} completed in {platform_elapsed:.2f}s")
     
-    # 4. Save to database
+    # 4. Save: one save batch (it owns the transaction), then enrichment of what it inserted.
     db_start_time = time.time()
-    repo = PostsRepository(db_url)
-    memory_service = EntityMemoryService(db_url)
-    event_service = EventMemoryService(db_url)
     per_source_fetch_counts = {}
-    persisted_posts = []
+    drafts = []
+    for post in all_posts:
+        post_copy = dict(post)
+        source_id = post_copy.pop("_source_id")
+        per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
+        drafts.append(PostDraft(source_id, post_copy))
     with psycopg.connect(db_url) as conn:
-        with conn.cursor() as cur:
-            for post in all_posts:
-                post_copy = dict(post)
-                source_id = post_copy.pop("_source_id")
-                per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
-                post_id, _ = repo.upsert_post(cur, post_copy, source_id)
-                persisted_posts.append(
-                    {
-                        **post_copy,
-                        "id": post_id,
-                        "_source_id": source_id,
-                    }
-                )
-        conn.commit()
-
-    if persisted_posts:
-        try:
-            memory_service.process_posts(persisted_posts)
-        except Exception as exc:
-            logger.warning("Entity memory enrichment skipped: %s", exc)
-        try:
-            event_service.process_posts(persisted_posts)
-        except Exception as exc:
-            logger.warning("Event memory enrichment skipped: %s", exc)
+        saved = PostsRepository(db_url).save_batch(conn, drafts)
+    await Enricher(EntityMemoryService(db_url), EventMemoryService(db_url)).run(saved.inserted_posts)
 
     for source_id, fetched_posts in per_source_fetch_counts.items():
         source = source_lookup.get(source_id)

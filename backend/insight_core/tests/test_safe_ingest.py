@@ -429,29 +429,6 @@ class SafeIngestDecisionPhaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["sources_attempted"], 0)
 
 
-class EnrichmentTests(unittest.TestCase):
-    def test_batch_is_chunked_and_fully_covered(self):
-        seen: list[int] = []
-        posts = [{"id": i} for i in range(250)]
-        si._run_enrichment("test", lambda chunk: seen.extend(p["id"] for p in chunk), posts)
-        self.assertEqual(seen, list(range(250)), "every post must reach the service exactly once")
-
-    def test_a_failing_chunk_does_not_lose_the_rest(self):
-        seen: list[int] = []
-
-        def flaky(chunk):
-            if chunk[0]["id"] == 0:
-                raise RuntimeError("first chunk fails")
-            seen.extend(p["id"] for p in chunk)
-
-        posts = [{"id": i} for i in range(250)]
-        si._run_enrichment("test", flaky, posts)
-        self.assertEqual(len(seen), 250 - si.ENRICH_CHUNK_SIZE)
-
-    def test_empty_batch_is_a_no_op(self):
-        si._run_enrichment("test", lambda _chunk: self.fail("must not be called"), [])
-
-
 class ResultShapeTests(unittest.TestCase):
     """run_scheduler and insight_api_bridge read these keys off every return path."""
 

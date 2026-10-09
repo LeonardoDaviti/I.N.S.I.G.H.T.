@@ -22,8 +22,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import psycopg
 
-from insight_core.db.repo_posts import PostsRepository
+from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
+from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import SourceKind, resume_counts
@@ -60,6 +61,7 @@ class SourceFetchService:
         self.http = http or KindHttp()
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
+        self.enricher = Enricher(self.memory_service, self.event_service)
 
     # ------------------------------------------------------------------ kinds
 
@@ -187,10 +189,10 @@ class SourceFetchService:
         checkpoint = start_checkpoint
         async for page in kind.archive_pages(source, target_posts, start_checkpoint, rate):
             if page.posts:
-                saved = await asyncio.to_thread(self._persist_posts, source_id, page.posts)
+                saved = await self._save_and_enrich(source_id, page.posts)
                 total_posts_fetched += len(page.posts)
-                total_inserted += saved["inserted"]
-                total_updated += saved["updated"]
+                total_inserted += saved.inserted
+                total_updated += saved.updated
             collected = resume_collected_posts + total_posts_fetched
             if page.checkpoint is not None:
                 checkpoint = page.checkpoint
@@ -277,7 +279,7 @@ class SourceFetchService:
             finally:
                 await connector.disconnect()
 
-        saved = await asyncio.to_thread(self._persist_posts, source_id, posts)
+        saved = await self._save_and_enrich(source_id, posts)
         if platform in {"rss", "reddit", "youtube"}:
             await self.record_live_fetch(source_id, source, fetched_posts=len(posts))
 
@@ -292,8 +294,8 @@ class SourceFetchService:
             },
             "fetched_limit": target_limit,
             "posts_fetched": len(posts),
-            "posts_inserted": saved["inserted"],
-            "posts_updated": saved["updated"],
+            "posts_inserted": saved.inserted,
+            "posts_updated": saved.updated,
             "stored_posts": post_stats["post_count"],
         }
 
@@ -344,40 +346,16 @@ class SourceFetchService:
 
     # ------------------------------------------------------------------ persistence
 
-    def _persist_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> Dict[str, int]:
-        inserted = 0
-        updated = 0
-        persisted_posts: List[Dict[str, Any]] = []
-
+    def _save_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> SaveBatchResult:
+        """One save batch for one source's posts (blocking; run it in a thread)."""
         with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                for post in posts:
-                    post_id, was_inserted = self.posts_repo.upsert_post(cur, post, source_id)
-                    persisted_posts.append({**post, "id": post_id, "_source_id": source_id})
-                    if was_inserted:
-                        inserted += 1
-                    else:
-                        updated += 1
-            conn.commit()
+            return self.posts_repo.save_batch(conn, [PostDraft(source_id, post) for post in posts])
 
-        memory_result: Dict[str, Any] = {"posts_processed": 0, "mentions_created": 0, "entities_linked": 0}
-        if persisted_posts:
-            try:
-                memory_result = self.memory_service.process_posts(persisted_posts)
-            except Exception as exc:
-                self.logger.warning("Entity memory enrichment skipped for %s: %s", source_id, exc)
-            try:
-                self.event_service.process_posts(persisted_posts)
-            except Exception as exc:
-                self.logger.warning("Event memory enrichment skipped for %s: %s", source_id, exc)
-
-        return {
-            "inserted": inserted,
-            "updated": updated,
-            "memory_processed": int(memory_result.get("posts_processed", 0)),
-            "memory_mentions": int(memory_result.get("mentions_created", 0)),
-            "memory_entities": int(memory_result.get("entities_linked", 0)),
-        }
+    async def _save_and_enrich(self, source_id: str, posts: List[Dict[str, Any]]) -> SaveBatchResult:
+        """save_batch off the loop, then enrichment over the posts it inserted."""
+        saved = await asyncio.to_thread(self._save_posts, source_id, posts)
+        await self.enricher.run(saved.inserted_posts)
+        return saved
 
     async def _record_archive_metadata(
         self, source_id: str, data: Dict[str, Any], mode: str, *, kind: Optional[SourceKind] = None

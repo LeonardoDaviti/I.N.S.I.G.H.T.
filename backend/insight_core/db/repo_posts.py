@@ -2,7 +2,8 @@ import os, sys, json, hashlib
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Any, Iterator, List, Tuple, Optional
+from dataclasses import dataclass, field
+from typing import Dict, Any, Iterator, List, Literal, Sequence, Tuple, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -15,6 +16,83 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.entity_memory import build_post_memory_fields
 from insight_core.utils.evidence import build_post_evidence_fields
 from insight_core.utils.json_safe import json_default
+
+
+def _env_commit_batch() -> int:
+    # INSIGHT_SAVE_COMMIT_BATCH, renamed from SAFE_INGEST_SAVE_COMMIT_BATCH (still read as a
+    # fallback for one version).
+    raw = os.getenv("INSIGHT_SAVE_COMMIT_BATCH") or os.getenv("SAFE_INGEST_SAVE_COMMIT_BATCH") or "20"
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 20
+
+
+# Commit every N attempted drafts. Deliberately small: upsert_post opens one writing
+# SAVEPOINT per post (two on the rare external_id collision path - its lookup savepoint is
+# read-only and so is never assigned an XID), and Postgres caches only 64 subtransaction ids
+# per backend. Past that the backend's snapshot is suboverflowed and EVERY OTHER backend in
+# the cluster falls back to pg_subtrans lookups for as long as the transaction stays open.
+# RELEASE SAVEPOINT does not hand the id back; only the top-level commit does, which is why
+# this is a commit interval and not a savepoint-stack depth.
+SAVE_COMMIT_BATCH = _env_commit_batch()
+
+# Detected once rather than by catching AttributeError per call: backend/psycopg is a
+# psql-shelling dev shim with no pq submodule (the image deletes it). Swallowing
+# AttributeError at the call site would also swallow a genuine psycopg API move and silently
+# disable the poisoned-transaction guard.
+_PQ_INERROR = getattr(getattr(psycopg, "pq", None), "TransactionStatus", None)
+_PQ_INERROR = getattr(_PQ_INERROR, "INERROR", None)
+
+
+def _transaction_is_poisoned(conn) -> bool:
+    """True when the connection sits in aborted-transaction state and accepts nothing."""
+    if _PQ_INERROR is None:
+        return False
+    return conn.info.transaction_status == _PQ_INERROR
+
+
+@dataclass(frozen=True)
+class PostDraft:
+    """A normalized post dict (url, title, content, date, ...) before it is saved."""
+
+    source_id: str
+    post: dict
+
+
+@dataclass(frozen=True)
+class PostSaveFailure:
+    url: Optional[str]
+    source_id: str
+    stage: Literal["upsert", "discarded"]   # discarded = lost to a poisoned-txn rollback
+    error: str
+
+
+@dataclass
+class SaveBatchResult:
+    inserted_ids: List[str] = field(default_factory=list)
+    updated_ids: List[str] = field(default_factory=list)
+    failures: List[PostSaveFailure] = field(default_factory=list)
+    by_source: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    # The inserted posts themselves ({**post, id, source_id}), for enrichment: the entity and
+    # event processors read post bodies, not ids.
+    inserted_posts: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def inserted(self) -> int:
+        return len(self.inserted_ids)
+
+    @property
+    def updated(self) -> int:
+        return len(self.updated_ids)
+
+    @property
+    def failed(self) -> int:
+        return len(self.failures)
+
+    def _count(self, source_id: str, key: str, delta: int = 1) -> None:
+        counts = self.by_source.setdefault(source_id, {"inserted": 0, "updated": 0, "failed": 0})
+        counts[key] += delta
 
 
 class PostsRepository:
@@ -260,10 +338,11 @@ class PostsRepository:
         `attempt` is the caller's retry counter, used only to give up on writing external_id
         once a replay has already proved that write cannot land.
         """
-        # The one statement that used to run bare. It cannot violate anything, but any other
-        # failure (statement_timeout, pg_cancel_backend, a malformed source_id failing the
-        # ::uuid cast) would leave the connection in aborted-transaction state, and safe_ingest
-        # answers that by rolling back to the last checkpoint - turning one bad post back into
+        # The collision lookup runs inside its own read-only savepoint. It cannot violate
+        # anything, but any other failure (statement_timeout, pg_cancel_backend, a malformed
+        # source_id failing the ::uuid cast) would otherwise leave the connection in
+        # aborted-transaction state, and save_batch answers that by rolling back to the last
+        # commit - turning one bad post back into
         # a lost batch of up to SAVE_COMMIT_BATCH good ones. Free in the currency that matters:
         # Postgres assigns an XID to a subtransaction only when it writes, so a SELECT-only
         # savepoint never enters the 64-entry per-backend subxid cache.
@@ -324,8 +403,7 @@ class PostsRepository:
             # violated the index once, so the blocking row exists but the lookup cannot see
             # it. Drop external_id from the SET list rather than replay a statement we have
             # watched fail - the loop is bounded, and exhausting it raises RuntimeError out
-            # of upsert_post into callers (SourceFetchService._persist_posts, scripts/ingest)
-            # that have no per-post try/except and would lose the whole batch.
+            # of upsert_post, which save_batch then reports as one failed post.
             statement = """
                 UPDATE posts SET
                     {assignments}
@@ -451,17 +529,80 @@ class PostsRepository:
         cur.execute(f"RELEASE SAVEPOINT {name}")
 
 
-    def upsert_posts_batch(self, cur: Cursor, posts: List[Dict[str, Any]], source_id: str) -> Dict[str, int]:
-        """Save multiple posts. Returns dict of (post_id, was_inserted) for each post."""
-        inserted = 0
-        updated = 0
-        for post in posts:
-            _, was_inserted = self.upsert_post(cur, post, source_id)
-            if was_inserted:
-                inserted += 1
-            else:
-                updated += 1
-        return {"inserted": inserted, "updated": updated}
+    def save_batch(
+        self,
+        conn: Connection,
+        drafts: Sequence[PostDraft],
+        *,
+        commit_every: Optional[int] = None,
+    ) -> SaveBatchResult:
+        """Upsert many drafts with per-post isolation; owns the transaction on `conn`.
+
+        Precondition: `conn` is not in autocommit mode and is idle. Commits every
+        `commit_every` attempted drafts (failures included: a failed post costs savepoints
+        too) and once at the end. A post that raises costs that post. If the failure left
+        the transaction aborted, everything since the last commit is rolled back and
+        reported as `discarded`, and the batch carries on.
+        """
+        commit_every = max(1, int(commit_every or SAVE_COMMIT_BATCH))
+        result = SaveBatchResult()
+        # Everything saved since the last commit: (draft, post_id, was_inserted).
+        window: List[Tuple[PostDraft, str, bool]] = []
+
+        def commit() -> None:
+            conn.commit()
+            window.clear()
+
+        with conn.cursor() as cur:
+            for index, draft in enumerate(drafts, start=1):
+                post = dict(draft.post)
+                post.pop("_source_id", None)
+                try:
+                    post_id, was_inserted = self.upsert_post(cur, post, draft.source_id)
+                except Exception as exc:
+                    result.failures.append(PostSaveFailure(post.get("url"), draft.source_id, "upsert", str(exc)))
+                    result._count(draft.source_id, "failed")
+                    self.logger.error("Failed to save post %s (source %s): %s", post.get("url"), draft.source_id, exc)
+                    # upsert_post normally leaves the transaction usable (its savepoints roll
+                    # the bad statement back), but verify rather than assume: an aborted
+                    # transaction rejects every later statement with 25P02, which would turn
+                    # one bad row back into a lost batch.
+                    if _transaction_is_poisoned(conn):
+                        conn.rollback()
+                        self._discard(result, window)
+                        window.clear()
+                else:
+                    post_id = str(post_id)
+                    window.append((draft, post_id, was_inserted))
+                    if was_inserted:
+                        result.inserted_ids.append(post_id)
+                        result.inserted_posts.append({**post, "id": post_id, "source_id": draft.source_id})
+                        result._count(draft.source_id, "inserted")
+                    else:
+                        result.updated_ids.append(post_id)
+                        result._count(draft.source_id, "updated")
+
+                if index % commit_every == 0:
+                    commit()
+        commit()
+        return result
+
+    def _discard(self, result: SaveBatchResult, window: List[Tuple[PostDraft, str, bool]]) -> None:
+        """Move every draft saved since the last commit into failures as `discarded`."""
+        if not window:
+            return
+        lost_ids = {post_id for _, post_id, _ in window}
+        result.inserted_ids = [i for i in result.inserted_ids if i not in lost_ids]
+        result.updated_ids = [i for i in result.updated_ids if i not in lost_ids]
+        result.inserted_posts = [p for p in result.inserted_posts if p["id"] not in lost_ids]
+        for draft, _post_id, was_inserted in window:
+            result._count(draft.source_id, "inserted" if was_inserted else "updated", -1)
+            result._count(draft.source_id, "failed")
+            result.failures.append(PostSaveFailure(
+                draft.post.get("url"), draft.source_id, "discarded",
+                "discarded: transaction rolled back after a failed post",
+            ))
+        self.logger.error("Transaction left in error state; rolled back %s uncommitted posts", len(window))
 
     # ===============================
     # READ OPERATIONS

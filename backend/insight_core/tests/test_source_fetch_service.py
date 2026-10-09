@@ -9,7 +9,9 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from datetime import datetime, timedelta, timezone
 
+from insight_core.db.repo_posts import SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
+from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, Inspection
@@ -33,57 +35,6 @@ class SourceFetchServiceTests(unittest.TestCase):
             self.service.resolve_kind({"platform": "reddit", "handle_or_url": "r/x"}),
             self.service.kinds.by_name("reddit_subreddit"),
         )
-
-    def test_persist_posts_enriches_with_persisted_ids(self):
-        class _FakeCursor:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class _FakeConnection:
-            def cursor(self):
-                return _FakeCursor()
-
-            def commit(self):
-                return None
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        posts = [
-            {"title": "Post One", "url": "https://example.com/1"},
-            {"title": "Post Two", "url": "https://example.com/2"},
-        ]
-
-        self.service.posts_repo = mock.Mock()
-        self.service.posts_repo.upsert_post.side_effect = [
-            ("post-1", True),
-            ("post-2", False),
-        ]
-        self.service.memory_service = mock.Mock()
-        self.service.memory_service.process_posts.return_value = {
-            "posts_processed": 2,
-            "mentions_created": 3,
-            "entities_linked": 4,
-        }
-        self.service.event_service = mock.Mock()
-
-        with mock.patch("insight_core.services.source_fetch_service.psycopg.connect", return_value=_FakeConnection()):
-            result = self.service._persist_posts("source-1", posts)
-
-        self.service.memory_service.process_posts.assert_called_once()
-        self.service.event_service.process_posts.assert_called_once()
-        enriched_posts = self.service.memory_service.process_posts.call_args.args[0]
-        self.assertEqual([post["id"] for post in enriched_posts], ["post-1", "post-2"])
-        self.assertTrue(all(post["_source_id"] == "source-1" for post in enriched_posts))
-        self.assertEqual(result["inserted"], 1)
-        self.assertEqual(result["updated"], 1)
-        self.assertEqual(result["memory_processed"], 2)
 
 
 class ArchiveInspectionCadenceTests(unittest.TestCase):
@@ -352,6 +303,14 @@ class PlanArchiveRateOverrideTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["estimated_pages"], 10)
 
 
+class _RecordingProcessor:
+    def __init__(self):
+        self.ids = []
+
+    def process_posts(self, posts):
+        self.ids.extend(post["id"] for post in posts)
+
+
 class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_page_is_saved_and_checkpointed(self):
         pages = [ArchivePage([{"url": "u1"}, {"url": "u2"}], {"mode": "fake", "pages_fetched": 1, "collected_posts": 2}),
@@ -363,15 +322,31 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)
         saved_batches = []
 
-        def fake_persist(source_id, posts):
+        def fake_save(source_id, posts):
             saved_batches.append([p["url"] for p in posts])
-            return {"inserted": len(posts), "updated": 0}
+            # The first post of each page is new, the rest already known.
+            result = SaveBatchResult()
+            for index, post in enumerate(posts):
+                post_id = f"id-{post['url']}"
+                if index == 0:
+                    result.inserted_ids.append(post_id)
+                    result.inserted_posts.append({**post, "id": post_id, "source_id": source_id})
+                else:
+                    result.updated_ids.append(post_id)
+            return result
 
-        service._persist_posts = fake_persist
+        service._save_posts = fake_save
+        entity, event = _RecordingProcessor(), _RecordingProcessor()
+        service.enricher = Enricher(entity, event)
         events = []
         result = await service.archive_source("s1", progress_callback=events.append)
 
         self.assertEqual(saved_batches, [["u1", "u2"], ["u3"]])
+        # Each page is a save batch followed by enrichment of the posts it inserted.
+        self.assertEqual(entity.ids, ["id-u1", "id-u3"])
+        self.assertEqual(event.ids, ["id-u1", "id-u3"])
+        self.assertEqual(result["posts_inserted"], 2)
+        self.assertEqual(result["posts_updated"], 1)
         self.assertEqual(result["posts_fetched"], 3)
         self.assertEqual(result["pages_fetched"], 2)
         self.assertEqual(result["checkpoint"]["collected_posts"], 3)

@@ -34,7 +34,8 @@ import asyncio
 import psycopg
 from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_fetch_state import FetchStateRow
-from insight_core.db.repo_posts import PostsRepository
+from insight_core.db.repo_posts import PostDraft, PostsRepository
+from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindUnavailable, PolitenessProfile, SourceKind
@@ -59,21 +60,6 @@ DEBUG_MODE = False  # DEBUG here also puts the API at DEBUG level (bridge import
 setup_logging(debug_mode=DEBUG_MODE)
 logger = get_component_logger("safe_ingest")
 
-# Enrichment runs in chunks purely so it can report progress; the services themselves
-# are happy with the whole batch.
-ENRICH_CHUNK_SIZE = max(1, int(os.getenv("SAFE_INGEST_ENRICH_CHUNK_SIZE", "100")))
-
-# Commit every N posts so a crash mid-save does not discard the whole cycle's writes.
-# Deliberately small: repo_posts.upsert_post opens one writing SAVEPOINT per post (two on the
-# rare external_id collision path - its lookup savepoint is read-only and so is never
-# assigned an XID at all), and Postgres only caches 64 subtransaction ids per backend. Past
-# that the backend's snapshot is marked suboverflowed and EVERY OTHER backend in the cluster
-# - the API serving /api/posts, the briefing jobs - falls back to pg_subtrans lookups for as
-# long as the transaction stays open, which here is the whole save phase. RELEASE SAVEPOINT
-# does not hand the id back; only the top-level commit does, which is why this is a commit
-# interval and not a savepoint-stack depth.
-SAVE_COMMIT_BATCH = max(1, int(os.getenv("SAFE_INGEST_SAVE_COMMIT_BATCH", "20")))
-
 # record_live_fetch re-inspects the source (for YouTube: a full unbounded yt-dlp channel
 # dump) on its own cadence. Kept on by default so archive metadata stays accurate, but an
 # operator can switch it off when a cycle must be fast.
@@ -91,29 +77,6 @@ def _failed_result(source: dict, error: str) -> dict:
         "started_at": now,
         "ended_at": now,
     }
-
-
-# Detected once, here, rather than by catching AttributeError per call: backend/psycopg is a
-# psql-shelling dev shim with no pq submodule (the image deletes it in favour of the real
-# package) and insight_api_bridge imports this module at API startup, so the shim must not
-# crash the import. Swallowing AttributeError at the call site instead would also swallow a
-# genuine psycopg API move and silently disable the batch-rollback guard - the connection
-# would report "not poisoned", the rollback would never run, and every later post in the run
-# would fail 25P02 until the terminal commit raised and took the whole cycle's writes.
-_PQ_INERROR = getattr(getattr(psycopg, "pq", None), "TransactionStatus", None)
-_PQ_INERROR = getattr(_PQ_INERROR, "INERROR", None)
-if _PQ_INERROR is None:
-    logger.warning(
-        "psycopg.pq.TransactionStatus.INERROR is unavailable - the aborted-transaction "
-        "guard in the save loop is disabled (expected only under the backend/psycopg shim)"
-    )
-
-
-def _transaction_is_poisoned(conn) -> bool:
-    """True when the connection sits in aborted-transaction state and accepts nothing."""
-    if _PQ_INERROR is None:
-        return False
-    return conn.info.transaction_status == _PQ_INERROR
 
 
 @dataclass(frozen=True)
@@ -426,123 +389,38 @@ async def safe_ingest_posts(
     # results pins every fetched post a second time via result["posts"].
     del results
 
-    # 6. Save to database. Every post is isolated by the SAVEPOINT repo_posts.upsert_post
-    #    opens around its own write (and releases on both paths): a single row violating
-    #    posts_source_external_unique used to abort the whole transaction and discard the
-    #    entire ~30-minute fetch - it did exactly that twice on 2026-07-22. A poisoned post
-    #    must cost one post, not one cycle. No second savepoint is wrapped around it here:
-    #    the outer one bought nothing and doubled the subtransaction ids charged against
-    #    Postgres's 64-per-backend cache (see SAVE_COMMIT_BATCH).
+    # 6. Save: one save batch for the whole cycle (PostsRepository.save_batch owns the
+    #    transaction, the commit cadence and poisoned-transaction recovery), then
+    #    enrichment over the posts it inserted.
     db_start_time = time.time()
-    repo = PostsRepository(db_url)
-    event_service = EventMemoryService(db_url)
-    per_source_fetch_counts = {}
-    persisted_posts = []
-    failed_posts: list[dict] = []
-    created_count = 0
-    with psycopg.connect(db_url) as conn:
-        with conn.cursor() as cur:
-            # Watermarks as of the last successful commit. If the transaction is ever left
-            # in error state everything written since that commit dies with the rollback,
-            # and persisted_posts must shrink with it - enrichment would otherwise be handed
-            # post ids that no longer exist.
-            committed_posts = 0
-            committed_created = 0
-            for index, post in enumerate(all_posts, start=1):
-                post_copy = dict(post)
-                source_id = post_copy.pop("_source_id")
-                per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
-
-                try:
-                    post_id, was_inserted = repo.upsert_post(cur, post_copy, source_id)
-                except Exception as exc:
-                    failed_posts.append(
-                        {
-                            "url": post_copy.get("url"),
-                            "source_id": source_id,
-                            "error": str(exc),
-                        }
-                    )
-                    logger.error(
-                        "❌ Failed to save post %s (source %s): %s",
-                        post_copy.get("url"),
-                        source_id,
-                        exc,
-                    )
-                    # upsert_post normally leaves the transaction usable - its savepoint has
-                    # already rolled the bad statement back. Its collision lookup is the one
-                    # statement that runs outside that savepoint, so verify instead of
-                    # assuming: an aborted transaction rejects every later statement with
-                    # 25P02, which would turn one poisoned row back into a lost batch.
-                    if _transaction_is_poisoned(conn):
-                        conn.rollback()
-                        discarded = persisted_posts[committed_posts:]
-                        del persisted_posts[committed_posts:]
-                        created_count = committed_created
-                        failed_posts.extend(
-                            {
-                                "url": item.get("url"),
-                                "source_id": item.get("_source_id"),
-                                "error": "discarded: transaction rolled back after a failed post",
-                            }
-                            for item in discarded
-                        )
-                        logger.error(
-                            "↩️  Transaction left in error state; rolled back %s uncommitted posts",
-                            len(discarded),
-                        )
-                else:
-                    if was_inserted:
-                        created_count += 1
-                    persisted_posts.append(
-                        {
-                            **post_copy,
-                            "id": post_id,
-                            "_source_id": source_id,
-                        }
-                    )
-                    logger.info(f"Saved post: {post_copy['url']}")
-
-                # Checkpoint on every iteration, failures included. Hung off the success path
-                # (behind the `continue` this replaces), a post that failed exactly on a batch
-                # boundary skipped its own commit and deferred it a whole extra batch - which
-                # doubles both the posts a later rollback can destroy and the subtransaction
-                # ids held open, the two numbers SAVE_COMMIT_BATCH exists to bound. A failed
-                # post costs savepoints too, so `index` - every post attempted - is the right
-                # denominator.
-                if index % SAVE_COMMIT_BATCH == 0:
-                    conn.commit()
-                    committed_posts = len(persisted_posts)
-                    committed_created = created_count
-        conn.commit()
-
-    save_elapsed = time.time() - db_start_time
-    logger.info(
-        f"💾 Saved {len(persisted_posts)}/{fetched_count} posts in {save_elapsed:.1f}s "
-        f"({created_count} new, {len(failed_posts)} failed)"
-    )
-    # Everything below needs post ids, not post bodies. all_posts holds 3000-5000 dicts
-    # carrying content, content_html and YouTube transcripts - on the order of 100-200MB -
-    # and without this it stayed live through enrichment AND the archive refresh, holding
-    # peak RSS for ~15 more minutes of yt-dlp work that needs none of it.
+    per_source_fetch_counts: dict[str, int] = {}
+    drafts = []
+    for post in all_posts:
+        post_copy = dict(post)
+        source_id = post_copy.pop("_source_id")
+        per_source_fetch_counts[source_id] = per_source_fetch_counts.get(source_id, 0) + 1
+        drafts.append(PostDraft(source_id, post_copy))
     all_posts.clear()
 
-    # 7. Enrichment. Chunked only so it reports progress: this phase used to be 8+ minutes
-    #    of complete silence, which is indistinguishable from a hang.
-    if persisted_posts:
-        _run_enrichment(
-            "Entity memory",
-            EntityMemoryService(db_url).process_posts,
-            persisted_posts,
-        )
-        _run_enrichment(
-            "Event memory",
-            event_service.process_posts,
-            persisted_posts,
-        )
-        # Same reasoning as all_posts: the archive refresh below is pure yt-dlp and HTTP,
-        # and nothing after this point reads a post body.
-        persisted_posts.clear()
+    def save_all():
+        with psycopg.connect(db_url) as conn:
+            return PostsRepository(db_url).save_batch(conn, drafts)
+
+    saved = await asyncio.to_thread(save_all)
+    drafts.clear()
+    created_count = saved.inserted
+    failed_posts = [
+        {"url": f.url, "source_id": f.source_id, "error": f.error} for f in saved.failures
+    ]
+    logger.info(
+        f"💾 Saved {saved.inserted + saved.updated}/{fetched_count} posts in {time.time() - db_start_time:.1f}s "
+        f"({created_count} new, {len(failed_posts)} failed)"
+    )
+
+    # 7. Enrichment, chunked and off the event loop; failing chunks are counted.
+    if saved.inserted_posts:
+        await Enricher(EntityMemoryService(db_url), EventMemoryService(db_url)).run(saved.inserted_posts)
+    saved.inserted_posts.clear()
 
     # 8. Archive metadata refresh. record_live_fetch re-inspects the source it just
     #    fetched (for YouTube that is a full unbounded yt-dlp channel dump), so log each
@@ -684,29 +562,6 @@ def _empty_result(
         "failures": [],
         "error": None,
     }
-
-
-def _run_enrichment(label: str, process_posts, posts: list[dict]) -> None:
-    """Run one enrichment service over the batch in chunks, reporting progress.
-
-    A failing chunk is logged and skipped rather than losing the whole batch, matching
-    the previous "enrichment is best-effort" behaviour.
-    """
-    started = time.time()
-    total = len(posts)
-    logger.info(f"🧠 {label}: processing {total} posts...")
-    for offset in range(0, total, ENRICH_CHUNK_SIZE):
-        chunk = posts[offset : offset + ENRICH_CHUNK_SIZE]
-        chunk_started = time.time()
-        try:
-            process_posts(chunk)
-        except Exception as exc:
-            logger.warning("%s enrichment skipped for chunk at %s: %s", label, offset, exc)
-        logger.info(
-            f"🧠 {label}: {min(offset + len(chunk), total)}/{total} posts "
-            f"({time.time() - chunk_started:.1f}s this chunk)"
-        )
-    logger.info(f"🧠 {label}: done in {time.time() - started:.1f}s")
 
 
 if __name__ == "__main__":
