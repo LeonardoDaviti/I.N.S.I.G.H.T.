@@ -6,7 +6,9 @@ identical. The estimate fixtures were likewise copied from the Mark VIII _estima
 """
 from __future__ import annotations
 
+import ast
 import asyncio
+import re
 import subprocess
 import sys
 import unittest
@@ -411,6 +413,60 @@ class TelegramMtprotoKindTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], cwd=str(BACKEND_DIR),
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+
+
+# The dead-connector names from the spec §D.5 grep; after B5 no .py file under backend/ may
+# mention them. Split so that this file does not match the grep itself.
+_DEAD = ["rss_" "connector", "reddit_" "connector", "youtube_" "connector", "tool_" "registry"]
+DEAD_CONNECTOR_NAMES = re.compile("|".join(
+    _DEAD + ["discover_" "connectors", "AVAILABLE_" "CONNECTORS", "create_" "connector"]))
+
+
+class ConnectorRemovalTests(unittest.TestCase):
+    """B5: the legacy connector package is gone except for the Telegram basis B8 replaces."""
+
+    def test_importing_ingestion_does_not_import_connectors_or_telethon(self):
+        script = (
+            "import sys\n"
+            "import insight_core.adapters\n"
+            "import insight_core.ingestion\n"
+            "from insight_core.ingestion import (archive_metadata, enrichment, gates, http, inspection,\n"
+            "    ports, runner, schedule, types)\n"
+            "from insight_core.ingestion.kinds import (base, generic_rss, nitter_rss, parsing, reddit,\n"
+            "    telegram_mtproto, telegram_rss, youtube)\n"
+            "import insight_core.services.source_fetch_service\n"
+            "bad = [m for m in sys.modules if m == 'telethon' or m.startswith('telethon.') "
+            "or m.startswith('insight_core.connectors') or m.startswith('insight_core.engines')]\n"
+            "assert not bad, bad\n"
+        )
+        result = subprocess.run([sys.executable, "-c", script], cwd=str(BACKEND_DIR),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+
+    def test_dead_connector_modules_are_deleted(self):
+        core = BACKEND_DIR / "insight_core"
+        for relative in [f"connectors/{name}.py" for name in _DEAD] + [
+                         "engines", "tests/connector_test.py", "tests/upsert_test.py",
+                         "tests/upsert_multiple_test.py", "tests/read_posts.py"]:
+            self.assertFalse((core / relative).exists(), relative)
+
+    def test_connectors_package_only_re_exports(self):
+        source = (BACKEND_DIR / "insight_core" / "connectors" / "__init__.py").read_text()
+        tree = ast.parse(source)
+        self.assertFalse([n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))])
+        exported = next(n for n in tree.body if isinstance(n, ast.Assign)
+                        and any(getattr(t, "id", None) == "__all__" for t in n.targets))
+        self.assertEqual(ast.literal_eval(exported.value), ["BaseConnector", "TelegramConnector"])
+
+    def test_no_python_file_references_a_dead_connector(self):
+        hits = []
+        for path in BACKEND_DIR.rglob("*.py"):
+            if path == Path(__file__).resolve():
+                continue
+            for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+                if DEAD_CONNECTOR_NAMES.search(line):
+                    hits.append(f"{path.relative_to(BACKEND_DIR)}:{number}: {line.strip()}")
+        self.assertEqual(hits, [])
 
 
 class SiteAdapterArchivePagesTests(unittest.IsolatedAsyncioTestCase):

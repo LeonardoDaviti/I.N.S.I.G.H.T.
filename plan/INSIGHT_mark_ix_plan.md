@@ -1532,6 +1532,13 @@ Rules:
 
 **Command:** `MIGRATE=1 TEST_DATABASE_URL=$T ./run-tests.sh`
 
+**As built (2026-10-09). Deviations from the text above, all keeping its intent:**
+- **The Mark I engine went too.** `engines/mark_i_foundation_engine.py` was the last `create_connector` caller. Its only callers were `backend/insight_bridge.py` (the Mark I `InsightBridge`, which `main.py` does not use) and the ad-hoc host scripts `backend/test_api.py` and `backend/test_engine.py`. `.dockerignore` already kept those scripts out of the image. All four, plus the `engines/` package, are deleted instead of rewiring a dead call.
+- **`telegram_connector.py`** loses its `@expose_tool` decorator and its `tool_registry` import, and nothing else. `connectors/__init__.py` re-exports `BaseConnector` and `TelegramConnector` only, with no discovery and no dotenv loading, so importing the package still imports telethon. No ingestion module imports it.
+- **`tests/old tests/`:** the 16 files the §D.5 grep found are deleted. The other 10 do not import a deleted module and stay.
+- **Docs:** `insight_core/docs/connector-tools-guide.md`, which documented the tool registry, is deleted. `CONNECTOR_DEVELOPMENT_GUIDE.md` gets an "obsolete" banner. `test_topic_modeler` no longer tells you to run `connector_test.py`.
+- **Tests:** `ConnectorRemovalTests` in `test_source_kinds.py` has four tests. `test_importing_ingestion_does_not_import_connectors_or_telethon` imports every `ingestion` module and `source_fetch_service`. The other three check that the deleted files are gone, that `connectors/__init__` defines nothing and exports exactly the two names, and that no `.py` under `backend/` matches the §D.5 names. The test writes the names as split strings, so the literal grep still returns nothing. The first test was green before the deletion, because B4 had already cut every ingestion path off the connectors. The other three were red.
+
 ### B6. Source health and cadence API
 **Files:**
 - edit: `services/operations_service.py`: `get_source_health()` is rewritten (new row shape + summary), and `overview.source_health` becomes `{summary, rows}`

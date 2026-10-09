@@ -1,5 +1,9 @@
 # I.N.S.I.G.H.T. Connector Development Guide v2.3
 
+> **Obsolete since Mark IX (slice B5).** The connector package and the tool registry are gone;
+> new fetch strategies are source kinds behind `insight_core/ingestion/kinds/base.py`
+> (see `plan/INSIGHT_mark_ix_plan.md` §D). Kept for history only.
+
 ## 🎯 Building Battle-Hardened Intelligence Connectors
 
 This guide provides comprehensive instructions for developing new connectors for the I.N.S.I.G.H.T. platform. All connectors must follow The Citadel standards for bulletproof error handling and reliability.

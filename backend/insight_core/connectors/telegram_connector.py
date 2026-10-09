@@ -5,7 +5,6 @@ from typing import List, Dict, Any, Union
 from telethon.sync import TelegramClient
 from telethon.errors import FloodWaitError, ChannelInvalidError, ChannelPrivateError, UsernameInvalidError, UsernameNotOccupiedError, RPCError
 from .base_connector import BaseConnector
-from .tool_registry import expose_tool
 
 class TelegramConnector(BaseConnector):
     """
@@ -203,31 +202,6 @@ class TelegramConnector(BaseConnector):
         
         return logical_posts
     
-    @expose_tool(
-        name="fetch_recent_posts",
-        description="Fetch the most recent posts from a Telegram channel with flexible limit options",
-        parameters={
-            "source_identifier": {
-                "type": "str", 
-                "description": "Channel username (with or without @)", 
-                "required": True
-            },
-            "limit": {
-                "type": "Union[int, str]", 
-                "description": "Number of posts (1-1000), negative for message ID start (-123), or '-all' for entire channel", 
-                "required": True
-            }
-        },
-        category="telegram",
-        examples=[
-            "fetch_recent_posts('durov', 10)",
-            "fetch_recent_posts('@telegram', 50)",
-            "fetch_recent_posts('breaking_news', -456)",
-            "fetch_recent_posts('important_channel', '-all')"
-        ],
-        returns="List of posts in unified format with platform, source, url, content, date, media_urls",
-        notes="Use '-all' carefully on large channels. Negative numbers start from specific message ID."
-    )
     async def fetch_posts(self, source_identifier: str, limit: Union[int, str]) -> List[Dict[str, Any]]:
         """
         UNIFIED API: Single method for all Telegram fetching needs.

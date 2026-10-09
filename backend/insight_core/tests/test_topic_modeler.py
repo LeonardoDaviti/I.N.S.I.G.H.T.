@@ -206,9 +206,8 @@ class TopicModelerTest:
         
         if len(all_posts) == 0:
             logger.warning("⚠️  No posts found for testing. Please add some posts first.")
-            logger.info("You can run the following to add posts:")
-            logger.info("  - cd backend/insight_core/tests")
-            logger.info("  - python connector_test.py")
+            logger.info("You can add posts with an ingestion run:")
+            logger.info("  - python -m insight_core.scripts.safe_ingest --force")
             return False
         
         # Display sample posts
