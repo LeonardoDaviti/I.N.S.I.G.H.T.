@@ -1,0 +1,112 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Route, Routes } from 'react-router-dom';
+
+import ReaderPage from './ReaderPage';
+import { feedItem, feedPage } from '../components/reader/fixtures';
+import { makeFakeApi } from '../test/fakeApi';
+import { renderWithProviders } from '../test/render';
+import { healthResponse } from '../components/ops/fixtures';
+import { feedCursorFor } from '../lib/feedContext';
+import { resetStoredChoices } from '../hooks/useShortcutPreference';
+import type { Api } from '../services/api';
+
+const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+
+function base(methods: Partial<Record<keyof Api, unknown>>) {
+  return makeFakeApi({
+    getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
+    getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([])),
+    getPostDetail: vi.fn().mockResolvedValue({ success: true, post: { id: 'x' } }),
+    ...methods,
+  });
+}
+
+function render(api: Api) {
+  return renderWithProviders(
+    <Routes>
+      <Route path="/" element={<ReaderPage />} />
+    </Routes>,
+    { api },
+  );
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  resetStoredChoices();
+});
+
+describe('ReaderPage', () => {
+  it('opens on the unread main feed', async () => {
+    const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })]));
+    render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }) }));
+    await screen.findAllByRole('article');
+    expect(getFeed).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all', filter: 'unread' }));
+    expect(screen.getByRole('radio', { name: 'Unread' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('a rising unread count shows the "N new posts" pill; the list only changes when it is clicked', async () => {
+    const user = userEvent.setup();
+    const getFeed = vi.fn()
+      .mockResolvedValueOnce(feedPage([feedItem({ id: ID(1), title: 'Old post' })]))
+      .mockResolvedValueOnce(feedPage([feedItem({ id: ID(2), title: 'Brand new post' }), feedItem({ id: ID(1), title: 'Old post' })]));
+    const getUnreadCounts = vi.fn()
+      .mockResolvedValueOnce({ total: 10, by_source: {}, by_folder: {} })
+      .mockResolvedValue({ total: 13, by_source: {}, by_folder: {} });
+    const { queryClient } = render(base({ getFeed, getUnreadCounts }));
+    await screen.findByText('Old post');
+    await waitFor(() => expect(getUnreadCounts).toHaveBeenCalledTimes(1));
+
+    // A finished ingestion run invalidates only ['unread-counts'] (useIngestionRun).
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['unread-counts'] }); });
+
+    const pill = await screen.findByRole('button', { name: /3 new posts/ });
+    expect(screen.queryByText('Brand new post')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(getFeed).toHaveBeenCalledTimes(1);
+
+    await user.click(pill);
+    expect(await screen.findByText('Brand new post')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new posts/ })).not.toBeInTheDocument();
+  });
+
+  it('Shift+A asks first, marks read through the selection, and the toast Undo restores them', async () => {
+    const user = userEvent.setup();
+    const items = [feedItem({ id: ID(1), title: 'One' }), feedItem({ id: ID(2), title: 'Two' }), feedItem({ id: ID(3), title: 'Three' })];
+    const markReadThrough = vi.fn().mockResolvedValue({ success: true, updated: 2, ids: [ID(1), ID(2)] });
+    const setPostsRead = vi.fn().mockResolvedValue({ success: true, updated: 2 });
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage(items)),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 3, by_source: {}, by_folder: {} }),
+      markReadThrough,
+      setPostsRead,
+    }));
+    await screen.findAllByRole('article');
+    await user.keyboard('jj');
+    await user.keyboard('{Shift>}A{/Shift}');
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('2 posts');
+    expect(markReadThrough).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Mark read' }));
+
+    expect(markReadThrough).toHaveBeenCalledWith('all', feedCursorFor(items[1]), feedCursorFor(items[0]));
+    expect(await screen.findByText('Marked 2 posts as read', { selector: '[data-title]' })).toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById('reader-live-region')).toHaveTextContent('Marked 2 posts as read'));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1), ID(2)], false));
+  });
+
+  it('the filter switch changes the query; window focus does not refetch the feed', async () => {
+    const user = userEvent.setup();
+    const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })]));
+    render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }) }));
+    await screen.findAllByRole('article');
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('radio', { name: 'Starred' }));
+    await waitFor(() => expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'starred' })));
+  });
+});

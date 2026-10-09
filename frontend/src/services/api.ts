@@ -247,6 +247,40 @@ export interface ReaderState {
   first_opened_at?: string | null;
   last_opened_at?: string | null;
   total_read_seconds?: number;
+  /** Mark IX projection (post_reader_state): set on first open or mark read. */
+  read_at?: string | null;
+  starred_at?: string | null;
+}
+
+// ---- Reader (Mark IX, B7: /api/feed*) ----
+
+export type FeedFilter = 'all' | 'unread' | 'starred';
+export type FeedView = 'stream' | 'by_source';
+
+export interface FeedItem {
+  id: string; title: string; excerpt: string; url: string;   // title already falls back to the excerpt
+  source_id: string; source_display_name: string; platform: string;
+  sort_at: string; published_at: string | null; read_at: string | null; starred_at: string | null;
+  reading_minutes: number | null; duration_seconds: number | null;
+  media_thumb: string | null;
+}
+export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
+export interface FeedGroup {
+  source_id: string; source_display_name: string; platform: string;
+  newest_sort_at: string; count: number; items: FeedItem[];   // items <= 3
+}
+export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_cursor: string | null; }
+export interface MarkReadResult { success: true; updated: number; ids: string[]; }
+export interface UnreadCounts { total: number; by_source: Record<string, number>; by_folder: Record<string, number>; }
+
+export interface FeedParams {
+  /** `all`, `folder:<uuid>` or `source:<uuid>`. */
+  scope: string;
+  filter: FeedFilter;
+  cursor?: string | null;
+  limit?: number;
+  days?: number;
+  signal?: AbortSignal;
 }
 
 export interface SourceStats {
@@ -1832,6 +1866,61 @@ class ApiService {
     );
     if (!response.success) throw new Error(response.error || 'Failed to update the main-digest setting');
     return response as { success: true; source_id: string; in_main_digest: boolean };
+  }
+
+  // ---- Reader (Mark IX). These throw ApiError on failure (§4 error contract). ----
+
+  private feedQuery(params: FeedParams, view: FeedView): string {
+    const qs = new URLSearchParams({ scope: params.scope, filter: params.filter, view });
+    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.days) qs.set('days', String(params.days));
+    return `/api/feed?${qs.toString()}`;
+  }
+
+  /** One newest-first page of the stream view. */
+  async getFeed(params: FeedParams): Promise<FeedPage> {
+    return this.makeRequest<FeedPage>(this.feedQuery(params, 'stream'), { signal: params.signal });
+  }
+
+  /** One page of the by-source view: one group per source, at most 3 items each. */
+  async getFeedGroups(params: FeedParams): Promise<FeedGroupsPage> {
+    return this.makeRequest<FeedGroupsPage>(this.feedQuery(params, 'by_source'), { signal: params.signal });
+  }
+
+  /** Unread counts within the unread window (30 days): total, per source, per folder. */
+  async getUnreadCounts(): Promise<UnreadCounts> {
+    return this.makeRequest<UnreadCounts>('/api/feed/unread-counts');
+  }
+
+  async setPostRead(postId: string, read: boolean): Promise<{ success: true; post_id: string; updated: number }> {
+    return this.makeRequest(`/api/posts/item/${encodeURIComponent(postId)}/read`, {
+      method: 'PUT',
+      body: JSON.stringify({ read }),
+    });
+  }
+
+  /** Batch read/unread (at most 500 ids); the mark-through Undo uses it. */
+  async setPostsRead(ids: string[], read: boolean): Promise<{ success: true; updated: number }> {
+    return this.makeRequest('/api/feed/read', { method: 'PUT', body: JSON.stringify({ ids, read }) });
+  }
+
+  /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
+  async markReadThrough(scope: string, through: string, newest: string): Promise<MarkReadResult> {
+    return this.makeRequest<MarkReadResult>('/api/feed/mark-read', {
+      method: 'POST',
+      body: JSON.stringify({ scope, through_cursor: through, newest_cursor: newest }),
+    });
+  }
+
+  /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
+  async setPostStarred(postId: string, starred: boolean): Promise<PostInteractionResponse> {
+    const response = await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${encodeURIComponent(postId)}/favorite`, {
+      method: 'POST',
+      body: JSON.stringify({ favorited: starred }),
+    });
+    if (response && response.success === false) throw new Error(response.error || 'Could not update the star');
+    return response;
   }
 
   async getIngestionLogs(log = 'application', lines = 200): Promise<LogTailResponse> {
