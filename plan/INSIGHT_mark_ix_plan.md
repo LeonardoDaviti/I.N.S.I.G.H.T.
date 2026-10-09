@@ -1884,3 +1884,28 @@ That makes 11 slices in total (B1–B8 and F1–F3). Every slice ends with the f
 2. **Default feed view on `/`: `stream`.** `/` stays `stream` by default, with `by_source` as a toggle. The four arXiv RSS feeds (`cs.AI`, `cs.CL`, `cs.LG`, `physics.optics`) default to `in_main_digest=false`, so they leave the main feed but stay enabled and readable through their track. This lands in B7 as migration `0021_arxiv_out_of_main_digest.sql` plus the `sources.json` key.
 3. **Telegram MTProto is in Mark IX.** Not a stub: a real `telegram_mtproto` kind with a session lifecycle on the `SourceKind` seam (opened and closed around a run), non-interactive authorisation (the server never prompts on stdin; with no valid session the kind is unavailable with a clear reason), a politeness profile with flood-wait handling, live fetch and archive pages. The 12 bare-handle Telegram sources become fetchable once a session exists. This is slice B8, built from `connectors/telegram_connector.py`.
 4. **Feed search is deferred** to the analysis version. `/` stays unbound and `/api/feed` gets no `q=`.
+
+## 9. Scope change: reading-only Mark IX (owner decision, 2026-10-10)
+
+The owner does not want any of the current processing steps for now: "a single place where I have all my sources and a single-paced reading experience". Everything that processes posts gets hidden behind one setting, **`INSIGHT_ANALYSIS=off`**, which is the default.
+
+- **Kept (ingestion and reading, not processing):**
+  - fetching with cadence and backoff, and save-time dedupe;
+  - source health;
+  - read, unread and starred state;
+  - **tracks** (folders), as reader filters and for "fetch this track".
+- **Information architecture: three places.**
+  - `feed`: every source, one reading flow. The rail holds tracks and sources.
+  - `post`: content only, with open original, star and copy.
+  - `sources`: the list, add, tracks, health and cadence, plus an **ingestion tab** (run, scheduler, history). Ingestion is no longer a separate page.
+- **Hidden when off:**
+  - pages and nav for briefings (daily, topics, weekly, vertical), track briefings and the milestones rail, experts, stories and inbox;
+  - on the post page: the summary, the intelligence inspector, notes and chat, and story/related posts.
+- **Switched off in the backend when off:**
+  - entity and event enrichment at ingest (the `Enricher` step);
+  - the scheduler's daily work: Gemini expert briefings and the daily briefing. No Gemini client is created.
+  - Analysis API routes stay but are unused.
+  - Cadence refresh stays, because it belongs to ingestion.
+- **Data:** nothing is deleted. Briefings, topics, entities and events stay in the database for the analysis version.
+- **Code:** hidden, not deleted. Deletion is decided in the analysis-version spec (grilling round 1, Q2–Q7, is parked until then).
+- **Process:** nothing is built until the owner says go.
