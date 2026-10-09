@@ -25,6 +25,7 @@ import sys
 
 from insight_core.ingestion.kinds.telegram_session import (
     SESSION_LOCK_KEY,
+    normalise_session_path,
     telegram_credentials,
     telegram_session_path,
 )
@@ -93,7 +94,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="session file (default: TELEGRAM_SESSION_PATH or the config/telegram default)")
     parser.add_argument("--check", action="store_true", help="only report whether the session is authorised")
     args = parser.parse_args(argv)
-    return asyncio.run(login(args.session_path or telegram_session_path(), check_only=args.check))
+    # Normalised as the fetch path does, so the printed path is the file Telethon writes.
+    session_path = normalise_session_path(args.session_path) if args.session_path else telegram_session_path()
+    return asyncio.run(login(session_path, check_only=args.check))
 
 
 if __name__ == "__main__":

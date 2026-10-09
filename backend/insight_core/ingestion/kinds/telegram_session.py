@@ -29,10 +29,23 @@ SESSION_LOCK_KEY = "insight.telegram_session"
 LOGIN_HINT = "run scripts/telegram_login"
 
 
+SESSION_SUFFIX = ".session"
+
+
+def normalise_session_path(path: str) -> str:
+    """The file Telethon actually uses: SQLiteSession appends ".session" to a bare name.
+
+    The login script, the client factory and the availability probe all go through this,
+    so `TELEGRAM_SESSION_PATH=/x/insight` is checked as the /x/insight.session it writes.
+    """
+    path = path.strip()
+    return path if path.endswith(SESSION_SUFFIX) else path + SESSION_SUFFIX
+
+
 def telegram_session_path(env: Optional[Mapping[str, str]] = None) -> str:
     """TELEGRAM_SESSION_PATH, default inside the bind-mounted config/ (survives rebuilds)."""
     env = os.environ if env is None else env
-    return (env.get("TELEGRAM_SESSION_PATH") or "").strip() or DEFAULT_SESSION_PATH
+    return normalise_session_path((env.get("TELEGRAM_SESSION_PATH") or "").strip() or DEFAULT_SESSION_PATH)
 
 
 def telegram_credentials(env: Optional[Mapping[str, str]] = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
@@ -153,7 +166,7 @@ class TelethonClientFactory:
             api_id, api_hash, reason = telegram_credentials()
             if reason:
                 raise KindUnavailable(reason)
-        path = self.session_path or telegram_session_path()
+        path = normalise_session_path(self.session_path) if self.session_path else telegram_session_path()
         if not os.path.exists(path):
             raise KindUnavailable(f"no Telegram session at {path}; {LOGIN_HINT}")
 

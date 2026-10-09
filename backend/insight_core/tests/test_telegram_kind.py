@@ -447,6 +447,25 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(telegram_session_path({}), "/app/insight_core/config/telegram/insight.session")
         self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": "/tmp/x.session"}), "/tmp/x.session")
 
+    def test_the_session_path_gets_the_suffix_telethon_adds(self):
+        # Telethon's SQLiteSession appends ".session" to a bare name, so the login script
+        # writes /tmp/x.session; the existence checks must look there too.
+        self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": "/tmp/x"}), "/tmp/x.session")
+        self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": " /tmp/x "}), "/tmp/x.session")
+        env = {**self.ENV, "TELEGRAM_SESSION_PATH": "/tmp/x"}
+        availability = availability_from_env(env, exists=lambda p: p == "/tmp/x.session")
+        self.assertTrue(availability.telegram_credentials)
+        self.assertIsNone(availability.telegram_reason)
+
+    def test_the_login_script_and_the_factory_use_the_normalised_path(self):
+        from insight_core.ingestion.kinds.telegram_session import normalise_session_path
+        self.assertEqual(normalise_session_path("/tmp/x"), "/tmp/x.session")
+        self.assertEqual(normalise_session_path("/tmp/x.session"), "/tmp/x.session")
+        factory = TelethonClientFactory(api_id=12345, api_hash="abc", session_path="/tmp/insight-no-such-session")
+        with self.assertRaises(KindUnavailable) as ctx:
+            factory.create()
+        self.assertIn("/tmp/insight-no-such-session.session", str(ctx.exception))
+
     def test_the_ytdlp_switch_is_still_read(self):
         self.assertFalse(availability_from_env({"INSIGHT_YTDLP_ENABLED": "0"}).ytdlp_enabled)
         self.assertTrue(availability_from_env({}).ytdlp_enabled)
