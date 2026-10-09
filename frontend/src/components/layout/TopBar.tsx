@@ -1,0 +1,104 @@
+import { Fragment, useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { Command, Menu } from 'lucide-react';
+import ThemeToggle from '../ThemeToggle';
+import Kbd from '../ui/Kbd';
+import { iconButtonClass } from '../ui/styles';
+import { cn } from '../../lib/utils';
+import { NAV_ITEMS, activeNavKey } from './navigation';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/**
+ * The one top bar (design doc §9): the inverted INSIGHT wordmark on the left,
+ * the lowercase slash nav and the ⌘K switcher on the right. A translucent
+ * material over the black page; its hairline appears only once content scrolls
+ * beneath it (apple §12: no divider where nothing overlaps).
+ */
+export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void }) {
+  const { pathname } = useLocation();
+  const current = activeNavKey(pathname);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 2);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return (
+    <header
+      data-scrolled={scrolled || undefined}
+      className={cn(
+        'material sticky top-0 z-40 h-[var(--topbar-h)] border-b',
+        scrolled ? 'border-line' : 'border-transparent',
+      )}
+    >
+      <div className="flex h-full items-center gap-4 px-4 sm:px-6 lg:px-8">
+        <Link
+          to="/"
+          aria-label="INSIGHT, go to feed"
+          className="wordmark shrink-0 rounded-[1px] text-[0.9375rem] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg"
+        >
+          INSIGHT
+        </Link>
+
+        <nav aria-label="Primary" className="ml-auto hidden min-w-0 sm:block">
+          <ul className="flex items-center gap-1.5 text-[0.875rem]">
+            {NAV_ITEMS.map((item, index) => {
+              const isCurrent = item.key === current;
+              return (
+                <Fragment key={item.key}>
+                  {index > 0 ? (
+                    <li aria-hidden="true" className="select-none text-fg-3">
+                      /
+                    </li>
+                  ) : null}
+                  <li>
+                    <Link
+                      to={item.to}
+                      aria-current={isCurrent ? 'page' : undefined}
+                      className={cn(
+                        'rounded-sm underline decoration-1 underline-offset-[0.22em] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg',
+                        isCurrent
+                          ? 'font-semibold text-fg decoration-fg'
+                          : 'text-fg-2 decoration-fg-3/60 hover:text-fg hover:decoration-fg',
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  </li>
+                </Fragment>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:ml-2">
+          <button
+            type="button"
+            onClick={onOpenSwitcher}
+            aria-label="Open quick switcher"
+            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
+            className={cn(
+              'hidden min-h-[2rem] items-center gap-2 rounded-md border border-line px-2.5 text-[0.8125rem] text-fg-2 sm:inline-flex',
+              'transition-[transform,border-color,color] duration-[120ms] ease-out hover:border-line-strong hover:text-fg active:scale-[0.97] motion-reduce:transition-none',
+              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg',
+            )}
+          >
+            <span>go to</span>
+            <Kbd className="gap-0.5">
+              {isMac ? <Command aria-hidden="true" className="h-3 w-3" /> : 'Ctrl'}
+              {isMac ? 'K' : '+K'}
+            </Kbd>
+          </button>
+          <button type="button" onClick={onOpenSwitcher} aria-label="Open menu" className={cn(iconButtonClass, 'sm:hidden')}>
+            <Menu aria-hidden="true" />
+          </button>
+          <ThemeToggle />
+        </div>
+      </div>
+    </header>
+  );
+}
