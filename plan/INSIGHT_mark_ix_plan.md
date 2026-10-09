@@ -1560,6 +1560,16 @@ Rules:
 - `TEST_DATABASE_URL=$T ./run-tests.sh insight_core.tests.test_operations_service`
 - `MIGRATE=1 TEST_DATABASE_URL=$T ./run-tests.sh`
 
+**As built (2026-10-09) — deviations from the text above, all keeping its intent:**
+- **One status per row, disjoint buckets.** Each `SourceHealthRow` gains `status` (`error`, `backoff`, `unavailable`, `due`, `deferred`, `disabled`) and `decision_detail` (the decision's human text). `unavailable` = `skip_unavailable`; `backoff` = `skip_backoff`; `error` = failing (`consecutive_failures > 0`) with its retry due now; `due` = any other fetching decision; `deferred` = `skip_not_due`. The summary counts enabled sources only, so its five buckets add up to the enabled count (live DB on 2026-10-09: 63 + 15 = 78 enabled). The sort is that order, then most failures, then soonest `next_due_at`, then name.
+- **Disabled sources** are listed (the table shows every source) with `decision: "skip_disabled"`, `would_fetch_now: false`, `next_due_at: null`, which is what the runner's defensive path decides. They are not in the summary.
+- **"Errors" outside the table** (`overview.stats.sources_in_error`, `/api/status` `source_health_summary.errors`) count failing sources: `errors + backoff`. With a 1h backoff base, most failing sources sit in backoff, and the "N source errors" chip should still count them. `source_health_summary.monitored` is the enabled count.
+- **Where the code lives.** The write is `FetchStateRepository.set_cadence_override` (the repo already owns the cadence columns). `load_schedule_view(cur, source_ids=None)` gained a scope (the PUT returns one fresh row) and merges `settings` with the platform defaults, like the runner's catalog, so `max_posts_per_fetch` and with it the backlog guard agree. The archive catalog is built in `insight_api_bridge.get_archive_catalog`, not `main.py`; `kind` comes from the bridge's one `KindRegistry` (shared with `OperationsService`), and `backlog_posts` uses the E1 rule (`operations_service.backlog_posts`).
+- **`OperationsService` seams:** `kinds`, `availability` and `clock` constructor keywords (the default registry is built lazily); `_load_schedule_view` / `_write_cadence_override` are the DB seams. Its unused `sources_service` is gone.
+- **Error contract.** Both routes follow §4: 400 for an out-of-range or non-finite `override_hours`, 404 for an unknown source, 500 with a generic `detail` otherwise. An omitted `override_hours` means null (clear).
+- **Frontend gap until F2:** `IngestionControl.tsx` still calls `.slice` on `operationsOverview.source_health`, which is now `{summary, rows}`, and `api.ts` still types it as an array. F2 owns both files.
+
+
 ### B7. Reader backend: read state, feed and unread counts
 **Files:**
 - new: `db/migrations/0020_reader_state.sql`, `db/repo_reader.py` (`feed`, `feed_by_source`, bounded `mark_read_through`), `services/reader_service.py`

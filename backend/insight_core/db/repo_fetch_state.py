@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
 
 from psycopg import Cursor
 
+from insight_core.db.repo_sources import SourcesRepository
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus, Trigger
 
 if TYPE_CHECKING:
@@ -291,11 +292,23 @@ class FetchStateRepository:
         )
         return cur.rowcount or 0
 
-    def load_schedule_view(self, cur: Cursor) -> List[Dict[str, Any]]:
+    def load_schedule_view(
+        self, cur: Cursor, source_ids: Optional[Sequence[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Every source with its cadence columns, post count, folders and fetch state.
 
-        For GET /api/sources/health (B6): feed each row to cadence_stats(row, row["state"]).
+        For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
+        `settings` is merged with the platform defaults exactly as the runner's source
+        catalog merges it, so max_posts_per_fetch (and with it the backlog guard) agrees.
+        `source_ids` scopes the view (the cadence PUT returns one fresh row); None = all.
         """
+        params: Dict[str, Any] = {}
+        where = ""
+        if source_ids is not None:
+            params["ids"] = [str(s) for s in source_ids]
+            if not params["ids"]:
+                return []
+            where = "WHERE s.id = ANY(%(ids)s::uuid[])"
         state_columns = ", ".join(f"st.{c}" for c in _COLUMNS)
         cur.execute(
             f"""
@@ -312,9 +325,12 @@ class FetchStateRepository:
                    {state_columns}
             FROM sources s
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
+            {where}
             ORDER BY s.platform, s.handle_or_url
-            """
+            """,
+            params,
         )
+        defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
             state_values = r[13:]
@@ -325,7 +341,7 @@ class FetchStateRepository:
                     "handle_or_url": r[2],
                     "enabled": r[3],
                     "in_main_digest": r[4],
-                    "settings": r[5] or {},
+                    "settings": defaults.merge_with_defaults(r[1], r[5] or {}),
                     "mean_gap_seconds": r[6],
                     "cadence_sample_size": r[7],
                     "cadence_tier": r[8],
@@ -337,3 +353,14 @@ class FetchStateRepository:
                 }
             )
         return rows
+
+    def set_cadence_override(self, cur: Cursor, source_id: str, hours: Optional[float]) -> bool:
+        """Write sources.fetch_interval_hours_override (None clears it). False if no such source.
+
+        Range validation is the route's job; the column's CHECK (> 0) is the last line.
+        """
+        cur.execute(
+            "UPDATE sources SET fetch_interval_hours_override = %s, updated_at = now() WHERE id = %s",
+            (None if hours is None else float(hours), str(source_id)),
+        )
+        return (cur.rowcount or 0) > 0

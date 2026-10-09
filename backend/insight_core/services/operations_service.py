@@ -5,14 +5,24 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import psycopg
 
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
+from insight_core.ingestion.schedule import (
+    BACKOFF_DORMANT_AFTER,
+    Availability,
+    DecisionKind,
+    FetchDecision,
+    availability_from_env,
+    cadence_stats,
+    decide_fetch,
+)
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.services.sources_service import SourcesService
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -45,6 +55,109 @@ def job_label(job_type: Optional[str]) -> str:
 INGEST_TICK_MINUTES_MIN = 15
 INGEST_TICK_MINUTES_MAX = 24 * 60
 
+# Source health (spec §F.4). Every source lands in exactly one status; the summary counts
+# the enabled ones, so its buckets add up to the number of enabled sources.
+HEALTH_STATUS_ORDER = ("error", "backoff", "unavailable", "due", "deferred", "disabled")
+OVERVIEW_HEALTH_ROWS = 8
+EMPTY_SOURCE_HEALTH: Dict[str, Any] = {
+    "summary": {"due_now": 0, "deferred": 0, "backoff": 0, "unavailable": 0, "errors": 0},
+    "rows": [],
+}
+CADENCE_OVERRIDE_MIN_HOURS = 1.0
+CADENCE_OVERRIDE_MAX_HOURS = 2160.0   # 90 days
+
+
+def backlog_posts(available_posts: Any, stored_posts: Any) -> Optional[int]:
+    """E1: max(available - stored, 0) when the available count is a known int, else None.
+
+    Never falls back to the archive plan's remaining_posts, which is a requested target.
+    """
+    if isinstance(available_posts, bool) or not isinstance(available_posts, int):
+        return None
+    return max(available_posts - int(stored_posts or 0), 0)
+
+
+def health_status(enabled: bool, decision: FetchDecision, consecutive_failures: int) -> str:
+    if not enabled:
+        return "disabled"
+    if decision.kind == DecisionKind.SKIP_UNAVAILABLE:
+        return "unavailable"
+    if decision.kind == DecisionKind.SKIP_BACKOFF:
+        return "backoff"
+    if consecutive_failures > 0:
+        return "error"          # failing, and its retry is due now
+    return "due" if decision.fetch else "deferred"
+
+
+def health_row(source: Dict[str, Any], kind: Any, availability: Availability, now: datetime) -> Dict[str, Any]:
+    """One SourceHealthRow: the schedule view row + decide_fetch(force=False)."""
+    state: Optional[FetchStateRow] = source.get("state")
+    stats = cadence_stats(source, state)
+    decision = decide_fetch(stats, kind.profile, now, force=False, availability=availability)
+    enabled = bool(source.get("enabled"))
+    if not enabled:
+        # As the runner's defensive path: a disabled source is never picked by a cycle
+        # (fetch-now still works on it).
+        decision = replace(decision, kind=DecisionKind.SKIP_DISABLED, fetch=False,
+                           next_due_at=None, detail="Source is disabled")
+    settings = source.get("settings") or {}
+    archive = settings.get("archive") or {}
+    failures = stats.consecutive_failures
+    stored = int(source.get("post_count") or 0)
+    return {
+        "source_id": source["id"],
+        "display_name": settings.get("display_name") or source.get("handle_or_url"),
+        "platform": source.get("platform"),
+        "kind": kind.name,
+        "enabled": enabled,
+        "in_main_digest": bool(source.get("in_main_digest", True)),
+        "folders": list(source.get("folders") or []),
+        "stored_posts": stored,
+        "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
+        "tier": stats.tier.value,
+        "mean_gap_hours": stats.mean_gap.total_seconds() / 3600 if stats.mean_gap is not None else None,
+        "interval_hours": decision.interval.total_seconds() / 3600,
+        "interval_basis": decision.interval_basis,
+        "override_hours": stats.override_hours,
+        "next_due_at": _iso(decision.next_due_at),
+        "would_fetch_now": decision.fetch,
+        "decision": decision.kind.value,
+        "decision_detail": decision.detail,
+        "status": health_status(enabled, decision, failures),
+        "last_attempt_at": _iso(state.last_attempt_at if state else None),
+        "last_success_at": _iso(state.last_success_at if state else None),
+        "last_outcome": state.last_outcome if state else None,
+        "last_fetched_posts": state.last_fetched_posts if state else None,
+        "last_error": state.last_error if state else None,
+        "last_error_at": _iso(state.last_error_at if state else None),
+        "consecutive_failures": failures,
+        "next_retry_at": _iso(stats.next_retry_at),
+        "dormant": failures >= BACKOFF_DORMANT_AFTER,
+    }
+
+
+def _health_sort_key(row: Dict[str, Any]) -> tuple:
+    status = row["status"]
+    rank = HEALTH_STATUS_ORDER.index(status) if status in HEALTH_STATUS_ORDER else len(HEALTH_STATUS_ORDER)
+    # ISO-8601 UTC strings sort chronologically; no due time sorts last within a status.
+    return (rank, -row["consecutive_failures"], row["next_due_at"] or "~", str(row["display_name"]).lower())
+
+
+def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = {"due_now": 0, "deferred": 0, "backoff": 0, "unavailable": 0, "errors": 0}
+    bucket = {"due": "due_now", "deferred": "deferred", "backoff": "backoff",
+              "unavailable": "unavailable", "error": "errors"}
+    for row in rows:
+        key = bucket.get(row["status"])
+        if key:
+            summary[key] += 1
+    return summary
+
+
+def sources_failing(summary: Dict[str, int]) -> int:
+    """Sources whose last fetches failed: retrying now (errors) or waiting (backoff)."""
+    return int(summary.get("errors", 0)) + int(summary.get("backoff", 0))
+
 
 class OperationsService:
     """Manage operational configuration and runtime telemetry."""
@@ -52,10 +165,21 @@ class OperationsService:
     SETTINGS_KEY_SCHEDULER = "scheduler_config"
     SETTINGS_KEY_SCHEDULER_STATE = "scheduler_state"
 
-    def __init__(self, db_url: str):
+    def __init__(
+        self,
+        db_url: str,
+        *,
+        kinds: Any = None,
+        availability: Optional[Callable[[], Availability]] = None,
+        clock: Optional[Callable[[], datetime]] = None,
+    ):
         self.db_url = db_url
         self.logger = get_component_logger("operations_service")
-        self.sources_service = SourcesService(db_url)
+        # Health seams: the kind registry (built lazily: the default one constructs
+        # YouTubeService), the availability probe and the clock.
+        self._kinds = kinds
+        self.availability = availability or availability_from_env
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def get_scheduler_config(self) -> Dict[str, Any]:
         defaults = self._default_scheduler_config()
@@ -405,7 +529,8 @@ class OperationsService:
         # enough history for the alerts panel to still catch a stale failure.
         # The scheduler writes ~4-6 rows per cycle, so 50 covers ~8-10 cycles.
         jobs = self.list_recent_jobs(50)
-        source_health = self.get_source_health()
+        health = self.get_source_health()
+        summary = health["summary"]
         counts = self.get_database_counts()
         alerts = [
             {
@@ -425,12 +550,12 @@ class OperationsService:
             "success": True,
             "scheduler": self.get_scheduler_config(),
             "jobs": jobs,
-            "source_health": source_health,
+            "source_health": {"summary": summary, "rows": health["rows"][:OVERVIEW_HEALTH_ROWS]},
             "alerts": alerts,
             "stats": {
                 "recent_failures": len([job for job in jobs if job["status"] == "failed"]),
-                "sources_in_error": len([source for source in source_health if source["status"] == "error"]),
-                "sources_monitored": len(source_health),
+                "sources_in_error": sources_failing(summary),
+                "sources_monitored": len(health["rows"]),
                 **counts,
             },
         }
@@ -482,52 +607,70 @@ class OperationsService:
             "posts_last_24h": int(row[3] or 0),
         }
 
-    def get_source_health(self) -> List[Dict[str, Any]]:
-        """Per-source health in the Mark VIII row shape, read from source_fetch_state.
+    # ------------------------------------------------------------------ source health
 
-        B6 replaces this with the schedule-aware SourceHealthRow (decide_fetch per row);
-        until then the shape stays put so the Operations panel keeps working.
+    def get_source_health(self) -> Dict[str, Any]:
+        """SourcesHealthResponse (spec §F.4): one schedule-aware row per source plus a summary.
+
+        Every row is cadence_stats(source, state) -> decide_fetch(..., force=False) with the
+        source's resolved kind and the process availability, exactly as the runner decides,
+        so the table and the next run cannot disagree. Rows are sorted worst first.
         """
-        sources = self.sources_service.get_all_sources_with_settings()
-        states = self._load_fetch_states([source["id"] for source in sources])
-        health_rows: List[Dict[str, Any]] = []
-        for source in sources:
-            settings = source.get("settings") or {}
-            archive = settings.get("archive", {})
-            state = states.get(source["id"])
-            last_outcome = state.last_outcome if state else None
-            status = last_outcome or ("healthy" if archive.get("stored_posts") else "unknown")
-            if state and last_outcome in ("error", "unavailable"):
-                message = state.last_error
-            elif state and state.last_fetched_posts is not None:
-                message = f"Fetched {state.last_fetched_posts} posts"
-            else:
-                message = None
-            health_rows.append(
-                {
-                    "source_id": source["id"],
-                    "display_name": settings.get("display_name") or source["handle_or_url"],
-                    "platform": source["platform"],
-                    "enabled": source["enabled"],
-                    "stored_posts": source.get("post_count", 0),
-                    "archive_status": archive.get("status"),
-                    "status": status,
-                    "last_checked_at": _iso(state.last_attempt_at if state else None)
-                    or archive.get("last_live_fetch_at"),
-                    "last_success_at": _iso(state.last_success_at if state else None)
-                    or archive.get("last_live_fetch_at"),
-                    "last_error_at": _iso(state.last_error_at if state else None),
-                    "last_message": message,
-                }
-            )
+        now = self.clock()
+        rows = self._health_rows(self._load_schedule_view(), now)
+        return {
+            "success": True,
+            "generated_at": now.isoformat(),
+            "rows": rows,
+            "summary": summarize_health(rows),
+        }
 
-        order = {"error": 0, "unavailable": 1, "running": 1, "empty": 2, "healthy": 2, "unknown": 3}
-        health_rows.sort(key=lambda row: (order.get(row["status"], 9), row["display_name"].lower()))
-        return health_rows
+    def get_source_health_row(self, source_id: str) -> Optional[Dict[str, Any]]:
+        rows = self._health_rows(self._load_schedule_view([source_id]), self.clock())
+        return rows[0] if rows else None
 
-    def _load_fetch_states(self, source_ids: List[str]) -> Dict[str, FetchStateRow]:
+    def set_cadence_override(self, source_id: str, hours: Optional[float]) -> Dict[str, Any]:
+        """Write sources.fetch_interval_hours_override and return the source's fresh row.
+
+        The range (None or [1, 2160]) is validated by the route. LookupError if no source.
+        """
+        if not self._write_cadence_override(source_id, hours):
+            raise LookupError(f"Source {source_id} not found")
+        row = self.get_source_health_row(source_id)
+        if row is None:
+            raise LookupError(f"Source {source_id} not found")
+        return row
+
+    def _health_rows(self, view: List[Dict[str, Any]], now: datetime) -> List[Dict[str, Any]]:
+        availability = self.availability()
+        kinds = self.kinds
+        rows = [health_row(source, kinds.resolve(source), availability, now) for source in view]
+        rows.sort(key=_health_sort_key)
+        return rows
+
+    @property
+    def kinds(self) -> Any:
+        if self._kinds is None:
+            from insight_core.ingestion.http import KindHttp
+            from insight_core.ingestion.kinds import KindRegistry
+            from insight_core.services.youtube_service import YouTubeService
+
+            self._kinds = KindRegistry.default(KindHttp(), YouTubeService(self.db_url))
+        return self._kinds
+
+    def _load_schedule_view(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
-            return FetchStateRepository().load(cur, source_ids)
+            return FetchStateRepository().load_schedule_view(cur, source_ids)
+
+    def _write_cadence_override(self, source_id: str, hours: Optional[float]) -> bool:
+        try:
+            uuid.UUID(str(source_id))
+        except (TypeError, ValueError):
+            return False
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            written = FetchStateRepository().set_cadence_override(cur, source_id, hours)
+            conn.commit()
+            return written
 
     def _default_scheduler_config(self) -> Dict[str, Any]:
         return self._normalize_scheduler_config(

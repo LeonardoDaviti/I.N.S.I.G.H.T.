@@ -1,16 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from insight_core.db.repo_fetch_state import FetchStateRow
 from insight_core.services.operations_service import OperationsService
-
-
-class _FakeSources:
-    def __init__(self, sources):
-        self.sources = sources
-
-    def get_all_sources_with_settings(self):
-        return self.sources
 
 
 class OperationsServiceTests(unittest.TestCase):
@@ -58,10 +49,14 @@ class OperationsServiceTests(unittest.TestCase):
                 "source_id": None,
             },
         ]
-        self.service.get_source_health = lambda: [  # type: ignore[method-assign]
-            {"source_id": "source-1", "display_name": "PewDiePie", "status": "error"},
-            {"source_id": "source-2", "display_name": "karpathy", "status": "healthy"},
-        ]
+        self.service.get_source_health = lambda: {  # type: ignore[method-assign]
+            "success": True,
+            "rows": [
+                {"source_id": "source-1", "display_name": "PewDiePie", "status": "error"},
+                {"source_id": "source-2", "display_name": "karpathy", "status": "deferred"},
+            ],
+            "summary": {"due_now": 0, "deferred": 1, "backoff": 0, "unavailable": 0, "errors": 1},
+        }
         self.service.get_database_counts = lambda: {  # type: ignore[method-assign]
             "total_posts": 140,
             "total_topics": 12,
@@ -74,6 +69,9 @@ class OperationsServiceTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["stats"]["recent_failures"], 1)
         self.assertEqual(result["stats"]["sources_in_error"], 1)
+        self.assertEqual(result["stats"]["sources_monitored"], 2)
+        self.assertEqual(result["source_health"]["summary"]["errors"], 1)
+        self.assertEqual([r["source_id"] for r in result["source_health"]["rows"]], ["source-1", "source-2"])
         self.assertEqual(result["stats"]["total_posts"], 140)
         self.assertEqual(len(result["alerts"]), 1)
         self.assertEqual(result["alerts"][0]["title"], "fetch_source_now")
@@ -96,36 +94,7 @@ class OperationsServiceTests(unittest.TestCase):
         self.assertEqual(preview["posts"]["sample_ids"], ["post-1", "post-2"])
 
 
-    def test_source_health_reads_the_fetch_state_table(self):
-        at = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
-        self.service.sources_service = _FakeSources([
-            {"id": "ok", "handle_or_url": "https://ok", "platform": "rss", "enabled": True,
-             "post_count": 4, "settings": {"display_name": "Ok", "archive": {"stored_posts": 4}}},
-            {"id": "bad", "handle_or_url": "https://bad", "platform": "rss", "enabled": True,
-             "post_count": 0, "settings": {"display_name": "Bad", "archive": {}}},
-            {"id": "new", "handle_or_url": "https://new", "platform": "rss", "enabled": True,
-             "post_count": 0, "settings": {"archive": {}}},
-        ])
-        self.service._load_fetch_states = lambda ids: {  # type: ignore[method-assign]
-            "ok": FetchStateRow(source_id="ok", last_attempt_at=at, last_success_at=at,
-                                last_outcome="empty", last_fetched_posts=0),
-            "bad": FetchStateRow(source_id="bad", last_attempt_at=at, last_outcome="error",
-                                 last_error="HTTP 503", last_error_at=at, consecutive_failures=2),
-        }
-
-        rows = self.service.get_source_health()
-
-        self.assertEqual([r["source_id"] for r in rows], ["bad", "ok", "new"], "errors sort first")
-        bad, ok, new = rows
-        self.assertEqual(bad["status"], "error")
-        self.assertEqual(bad["last_message"], "HTTP 503")
-        self.assertEqual(bad["last_error_at"], at.isoformat())
-        self.assertEqual(ok["status"], "empty")
-        self.assertEqual(ok["last_success_at"], at.isoformat())
-        self.assertEqual(ok["last_message"], "Fetched 0 posts")
-        self.assertEqual(new["status"], "unknown")
-        self.assertEqual(new["display_name"], "https://new")
-        self.assertIsNone(new["last_checked_at"])
+    # The schedule-aware get_source_health is covered by test_source_health.py.
 
 
 if __name__ == "__main__":

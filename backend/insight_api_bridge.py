@@ -16,7 +16,12 @@ from insight_core.services.evidence_foundation_service import EvidenceFoundation
 from insight_core.services.inbox_service import InboxService
 from insight_core.services.analyst_actions_service import AnalystActionsService
 from insight_core.services.system_logs_service import SystemLogsService
-from insight_core.services.operations_service import OperationsService
+from insight_core.services.operations_service import (
+    EMPTY_SOURCE_HEALTH,
+    OperationsService,
+    backlog_posts,
+    sources_failing,
+)
 from insight_core.ingestion import FetchRequest, SourceSelector, Trigger, run_ingestion
 from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.ports import JobProgressSink
@@ -48,7 +53,9 @@ class InsightApiBridge:
         self.event_memory_service = EventMemoryService(self.db)
         self.evidence_service = EvidenceFoundationService(self.db)
         self.system_logs_service = SystemLogsService()
-        self.operations_service = OperationsService(self.db)
+        # One kind registry for the health table and the archive: the same resolution the
+        # runner uses (KindRegistry.default), built once.
+        self.operations_service = OperationsService(self.db, kinds=self.source_fetch_service.kinds)
         self.post_detail_service = PostDetailService(self.db)
         self.explainability_service = ExplainabilityService(self.db)
         self.reader_service = ReaderService(self.db)
@@ -620,7 +627,7 @@ class InsightApiBridge:
         freshness = self.operations_service.get_corpus_freshness()
         scheduler = self.operations_service.get_scheduler_config()
         jobs = self.operations_service.list_recent_jobs(20)
-        source_health = self.operations_service.get_source_health()
+        health_summary = self.operations_service.get_source_health()["summary"]
         all_sources = self.sources_service.get_all_sources()
         folders = self.folders_service.list_folders()
 
@@ -667,8 +674,9 @@ class InsightApiBridge:
                 for j in jobs
             ],
             "source_health_summary": {
-                "monitored": len(source_health),
-                "errors": len([s for s in source_health if s.get("status") == "error"]),
+                "monitored": sum(health_summary.values()),
+                # Failing sources: retrying now or waiting in backoff.
+                "errors": sources_failing(health_summary),
             },
         }
 
@@ -823,19 +831,27 @@ class InsightApiBridge:
     def get_archive_catalog(self) -> Dict[str, Any]:
         try:
             sources = self.sources_service.get_all_sources_with_settings()
+            kinds = self.source_fetch_service.kinds
             catalog = []
             for source in sources:
                 if not source.get("enabled"):
                     continue
                 archive = (source.get("settings") or {}).get("archive", {})
+                stored = int(archive.get("stored_posts") or source.get("post_count") or 0)
                 catalog.append(
                     {
                         "source_id": source["id"],
                         "display_name": (source.get("settings") or {}).get("display_name") or source["handle_or_url"],
                         "platform": source["platform"],
+                        "kind": kinds.resolve(source).name,
                         "enabled": bool(source.get("enabled")),
-                        "stored_posts": int(archive.get("stored_posts") or source.get("post_count") or 0),
+                        "stored_posts": stored,
                         "available_posts": archive.get("available_posts"),
+                        # E1: the backlog is available - stored, or None when unknown; the
+                        # plan's remaining_posts is a requested target, never aliased to it.
+                        "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
+                        "remaining_posts": archive.get("remaining_posts"),
+                        "estimated_seconds": archive.get("estimated_seconds"),
                         "archive_status": archive.get("status") or "not_archived",
                         "resume_ready": bool(archive.get("resume_ready")),
                         "source_type": archive.get("source_type"),
@@ -1311,7 +1327,15 @@ class InsightApiBridge:
         try:
             return self.operations_service.get_operations_overview()
         except Exception as e:
-            return {"success": False, "error": str(e), "jobs": [], "source_health": [], "alerts": []}
+            return {"success": False, "error": str(e), "jobs": [], "source_health": EMPTY_SOURCE_HEALTH, "alerts": []}
+
+    def get_sources_health(self) -> Dict[str, Any]:
+        """SourcesHealthResponse. New-endpoint contract: errors propagate to the route."""
+        return self.operations_service.get_source_health()
+
+    def set_cadence_override(self, source_id: str, hours: float | None) -> Dict[str, Any]:
+        """Write the cadence override; LookupError for an unknown source."""
+        return {"success": True, "row": self.operations_service.set_cadence_override(source_id, hours)}
 
     def get_operation_job(self, job_id: str) -> Dict[str, Any]:
         try:

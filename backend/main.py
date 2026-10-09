@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import asyncio
 import uuid
@@ -12,6 +13,11 @@ from pydantic import BaseModel
 from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
+from insight_core.services.operations_service import (
+    CADENCE_OVERRIDE_MAX_HOURS,
+    CADENCE_OVERRIDE_MIN_HOURS,
+    EMPTY_SOURCE_HEALTH,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -149,6 +155,10 @@ class YouTubeProgressRequest(BaseModel):
 
 class LiveFetchRequest(BaseModel):
     limit: int | None = None
+
+
+class CadenceOverrideRequest(BaseModel):
+    override_hours: float | None = None   # null clears the override
 
 
 class IngestionRunRequest(BaseModel):
@@ -522,7 +532,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 def _server_error(what: str) -> HTTPException:
     # The exception is logged, never echoed: driver messages can carry DSNs and SQL.
-    logger.exception("Reader endpoint failed: %s", what)
+    logger.exception("Endpoint failed: %s", what)
     return HTTPException(status_code=500, detail=f"Could not {what}. Check the backend logs.")
 
 
@@ -1656,6 +1666,35 @@ async def fetch_source_now(source_id: str, request: LiveFetchRequest, background
                                  message=f"Fetch source {source_id}", source_id=source_id)
 
 
+@app.get("/api/sources/health")
+async def get_sources_health():
+    """SourcesHealthResponse: every source's schedule (decide_fetch preview) + a summary."""
+    try:
+        return api_bridge.get_sources_health()
+    except Exception:
+        raise _server_error("load source health")
+
+
+@app.put("/api/sources/{source_id}/cadence")
+async def set_source_cadence(source_id: str, request: CadenceOverrideRequest):
+    """Set (or clear, with null) a source's fetch interval override, in hours [1, 2160]."""
+    hours = request.override_hours
+    if hours is not None and not (
+        math.isfinite(hours) and CADENCE_OVERRIDE_MIN_HOURS <= hours <= CADENCE_OVERRIDE_MAX_HOURS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"override_hours must be null or between {CADENCE_OVERRIDE_MIN_HOURS:g} "
+                   f"and {CADENCE_OVERRIDE_MAX_HOURS:g}",
+        )
+    try:
+        return api_bridge.set_cadence_override(source_id, hours)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        raise _server_error("set the cadence override")
+
+
 # Briefing generation endpoints
 
 
@@ -2035,7 +2074,7 @@ async def get_operations_overview():
         return api_bridge.get_operations_overview()
     except Exception as e:
         logger.exception("Failed to fetch operations overview")
-        return {"success": False, "error": str(e), "jobs": [], "source_health": [], "alerts": []}
+        return {"success": False, "error": str(e), "jobs": [], "source_health": EMPTY_SOURCE_HEALTH, "alerts": []}
 
 
 @app.get("/api/operations/jobs/{job_id}")

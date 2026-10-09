@@ -223,6 +223,30 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertFalse(row["enabled"])
         self.assertIsNone(view[bare]["state"])
 
+    def test_schedule_view_can_be_scoped_and_merges_platform_defaults(self):
+        other = insert_scratch_source(self.cur)
+        view = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertEqual([r["id"] for r in view], [self.source])
+        self.assertNotIn(other, [r["id"] for r in view])
+        # The same merged settings the runner's catalog hands to cadence_stats.
+        self.assertIn("max_posts_per_fetch", view[0]["settings"])
+        self.assertIn("archive", view[0]["settings"])
+        self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[]), [])
+
+    # set_cadence_override --------------------------------------------------------------
+
+    def test_set_cadence_override_writes_and_clears_the_column(self):
+        self.assertTrue(self.repo.set_cadence_override(self.cur, self.source, 12.5))
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertEqual(row["fetch_interval_hours_override"], 12.5)
+
+        self.assertTrue(self.repo.set_cadence_override(self.cur, self.source, None))
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertIsNone(row["fetch_interval_hours_override"])
+
+        missing = "00000000-0000-4000-8000-000000000000"
+        self.assertFalse(self.repo.set_cadence_override(self.cur, missing, 4))
+
 
 if __name__ == "__main__":
     unittest.main()
