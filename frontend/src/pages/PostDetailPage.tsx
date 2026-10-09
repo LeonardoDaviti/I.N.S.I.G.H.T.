@@ -18,6 +18,7 @@ import {
   Chip,
   Sheet,
   SheetContent,
+  Skeleton,
   Tabs,
   TabsContent,
   TabsList,
@@ -25,7 +26,9 @@ import {
   Textarea,
 } from '../components/ui';
 import { EmptyState, LoadingState, Notice } from '../components/states';
-import { useApi } from '../services/ApiContext';
+import { useDevFixtureApi } from '../components/analysis/useDevFixtureApi';
+import DevDataSwitch from '../components/ops/DevDataSwitch';
+import { POST_FIXTURE_NAMES, postFixtureApi } from './PostDetailPage.fixtures';
 import { writeToClipboard } from '../lib/clipboard';
 import { formatCount, middleTruncate, plural } from '../lib/format';
 import type {
@@ -474,9 +477,13 @@ function buildYouTubeTranscriptBlocks(
   });
 }
 
+/** The page frame, shared by the loading skeleton and the loaded post. */
+const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
+const GRID_CLASS = 'grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center';
+
 export default function PostDetailPage() {
   const navigate = useNavigate();
-  const api = useApi();
+  const { api } = useDevFixtureApi(postFixtureApi);
   const location = useLocation();
   const { postId } = useParams();
   const [post, setPost] = useState<Post | null>(null);
@@ -690,7 +697,7 @@ export default function PostDetailPage() {
     return () => {
       active = false;
     };
-  }, [postId]);
+  }, [postId, api]);
 
   useEffect(() => {
     void loadTimeline(false);
@@ -1012,21 +1019,53 @@ export default function PostDetailPage() {
   );
 
   if (loading) {
+    // The same container, grid and column as the loaded page, so React swaps only
+    // the children on arrival: no width or padding jump (CLS) on a cold load.
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
-        <LoadingState label="Loading post" rows={4} />
+      <div className={PAGE_CLASS}>
+        <div className={GRID_CLASS}>
+          <div className="min-w-0" role="status" aria-busy="true" aria-live="polite">
+            <span className="sr-only">Loading post</span>
+            <div aria-hidden="true">
+              <div className="mb-5 min-h-[2rem]" />
+              <div className="mb-8">
+                <Skeleton className="h-3 w-48" />
+                <Skeleton className="mt-4 h-7 w-11/12" />
+                <Skeleton className="mt-2 h-7 w-2/3" />
+                <div className="mt-5 flex gap-2">
+                  <Skeleton className="h-8 w-28" />
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-8 w-24" />
+                </div>
+              </div>
+              <Skeleton className="mb-10 h-12 w-full" />
+              <div className="max-w-[68ch] space-y-3">
+                {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
+                  <Skeleton key={index} className={`h-3.5 ${width}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <DevDataSwitch options={POST_FIXTURE_NAMES} />
       </div>
     );
   }
 
   if (!post) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
-        <EmptyState
-          title="Post not found"
-          description={error || 'This post does not exist in the database.'}
-          action={{ label: 'Back to the feed', onClick: () => navigate('/') }}
-        />
+      <div className={PAGE_CLASS}>
+        <div className={GRID_CLASS}>
+          <div className="min-w-0">
+            <div className="mb-5 min-h-[2rem]" aria-hidden="true" />
+            <EmptyState
+              title="Post not found"
+              description={error || 'This post does not exist in the database.'}
+              action={{ label: 'Back to the feed', onClick: () => navigate('/') }}
+            />
+          </div>
+        </div>
+        <DevDataSwitch options={POST_FIXTURE_NAMES} />
       </div>
     );
   }
@@ -1034,8 +1073,8 @@ export default function PostDetailPage() {
   const hasReadingStats = readerState && (readerState.open_count || readerState.total_read_seconds || readerState.first_opened_at);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8">
-      <div className="grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center">
+    <div className={PAGE_CLASS}>
+      <div className={GRID_CLASS}>
         <div className="min-w-0">
           <Button variant="ghost" size="sm" onClick={goBack} className="-ml-2.5 mb-5">
             <ArrowLeft aria-hidden="true" />
@@ -1647,6 +1686,7 @@ export default function PostDetailPage() {
           </SheetContent>
         </Sheet>
       )}
+      <DevDataSwitch options={POST_FIXTURE_NAMES} />
     </div>
   );
 }

@@ -144,23 +144,42 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
               {children}
             </code>
           ),
-          pre: ({ children }) => (
-            <pre className="my-[1.25em] max-w-full overflow-x-auto rounded-md border border-line bg-surface p-[1em] text-[0.85em] leading-[1.6] [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-[1em] [&>code]:[overflow-wrap:normal]">
-              {children}
-            </pre>
-          ),
-          img: ({ src, alt, title }) => (
-            <img
-              src={typeof src === 'string' ? src : undefined}
-              alt={alt ?? ''}
-              title={title}
-              loading="lazy"
-              decoding="async"
-              // A dead image link would leave a broken-image frame in the text.
-              onError={(event) => { event.currentTarget.hidden = true; }}
-              className="my-[1.25em] h-auto max-w-full rounded-md border border-line"
-            />
-          ),
+          // Only real code (a fence, `pre > code`) keeps its lines and scrolls sideways.
+          // A <pre> of bare text is prose (GitHub commit bodies): it wraps, or a 390px
+          // screen would cut it off.
+          pre: ({ children, node }) => {
+            const isCode = Boolean(node?.children.some((child) => child.type === 'element' && child.tagName === 'code'));
+            const flow = isCode
+              ? 'overflow-x-auto [&>code]:[overflow-wrap:normal]'
+              : 'whitespace-pre-wrap [overflow-wrap:anywhere] [&>code]:whitespace-pre-wrap';
+            return (
+              <pre className={`my-[1.25em] max-w-full rounded-md border border-line bg-surface p-[1em] text-[0.85em] leading-[1.6] [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-[1em] ${flow}`}>
+                {children}
+              </pre>
+            );
+          },
+          img: ({ src, alt, title, width, height }) => {
+            const w = Number(width);
+            const h = Number(height);
+            const sized = w > 0 && h > 0;
+            return (
+              <img
+                src={typeof src === 'string' ? src : undefined}
+                alt={alt ?? ''}
+                title={title}
+                width={sized ? w : undefined}
+                height={sized ? h : undefined}
+                loading="lazy"
+                decoding="async"
+                // Feed images rarely carry a size: until one loads it holds a 16:10
+                // frame, so the text below does not jump down when it arrives.
+                onLoad={(event) => { event.currentTarget.dataset.loaded = ''; }}
+                // A dead image link would leave a broken-image frame in the text.
+                onError={(event) => { event.currentTarget.hidden = true; }}
+                className={`my-[1.25em] h-auto max-w-full rounded-md border border-line ${sized ? '' : 'aspect-[16/10] w-full bg-raised object-contain data-[loaded]:aspect-auto data-[loaded]:w-auto data-[loaded]:bg-transparent'}`}
+              />
+            );
+          },
           table: ({ children }) => (
             <div className="my-[1.25em] max-w-full overflow-x-auto rounded-md border border-line">
               <table className="min-w-full border-collapse text-[0.875em] tabular-nums">

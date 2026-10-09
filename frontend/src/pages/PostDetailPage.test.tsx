@@ -228,6 +228,22 @@ describe('MarkdownRenderer', () => {
     expect(pre.textContent).toContain('const a = 1;');
   });
 
+  it('wraps a <pre> of bare prose (GitHub commit bodies) instead of cutting it off', () => {
+    const { container } = rtlRender(<MarkdownRenderer content={"<pre style='white-space:pre-wrap;width:81ex'>Update the skill (#1930)\n\n* bump every example</pre>"} />);
+    const pre = container.querySelector('pre')!;
+    expect(pre.className).toContain('whitespace-pre-wrap');
+    expect(pre.className).not.toContain('overflow-x-auto');
+    expect(pre.getAttribute('style')).toBeNull();
+  });
+
+  it('holds a frame for an unsized image until it loads', () => {
+    const { container } = rtlRender(<MarkdownRenderer content={'<p>a</p><img src="/x.webp" alt="x"><img src="/y.webp" alt="y" width="400" height="300">'} />);
+    const [unsized, sized] = Array.from(container.querySelectorAll('img'));
+    expect(unsized.className).toContain('aspect-[16/10]');
+    expect(sized.className).not.toContain('aspect-[16/10]');
+    expect(sized.getAttribute('width')).toBe('400');
+  });
+
   it('lets each paragraph take its own direction, so Arabic or Hebrew reads right to left', () => {
     const { container } = rtlRender(<MarkdownRenderer content={'<p>hello</p><p dir="rtl">مرحبا بالعالم</p>'} />);
     for (const paragraph of container.querySelectorAll('p')) {
