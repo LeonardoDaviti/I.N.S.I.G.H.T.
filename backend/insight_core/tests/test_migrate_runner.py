@@ -305,5 +305,48 @@ class ReaderMigrationTests(unittest.TestCase):
             conn.close()
 
 
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class MediaUrlEntitiesMigrationTests(unittest.TestCase):
+    """0023 decodes the HTML entities older ingests left in posts.media_urls."""
+
+    @requires_test_db
+    def test_0023_unescapes_media_urls(self):
+        sql = (MIGRATIONS_DIR / "0023_media_url_entities.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            source = insert_scratch_source(cur)
+            cases = {
+                "amp": ["https://preview.redd.it/a.jpg?w=1&amp;s=x", "https://x.invalid/b.png"],
+                "numeric": ["https://i0.wp.com/a.jpg?a=1&#038;b=2&#38;c=3"],
+                "double": ["https://x.invalid/a.jpg?a=1&amp;#038;b=2"],
+                "clean": ["https://x.invalid/a.jpg?a=1&b=2"],
+                "mixed": ["https://x.invalid/a.jpg?a=1&amp;b=2", 7],
+                "empty": [],
+            }
+            ids = {}
+            for name, urls in cases.items():
+                cur.execute("INSERT INTO posts (source_id, url, title, content, media_urls) "
+                            "VALUES (%s, %s, 't', 'c', %s::jsonb) RETURNING id",
+                            (source, f"https://test.invalid/mark-ix/0023/{name}", json.dumps(urls)))
+                ids[name] = cur.fetchone()[0]
+
+            cur.execute(sql)
+            cur.execute(sql)  # idempotent
+
+            cur.execute("SELECT id, media_urls FROM posts WHERE id = ANY(%s)", (list(ids.values()),))
+            got = dict(cur.fetchall())
+            self.assertEqual(got[ids["amp"]], ["https://preview.redd.it/a.jpg?w=1&s=x", "https://x.invalid/b.png"],
+                             "order kept")
+            self.assertEqual(got[ids["numeric"]], ["https://i0.wp.com/a.jpg?a=1&b=2&c=3"])
+            self.assertEqual(got[ids["double"]], ["https://x.invalid/a.jpg?a=1&b=2"])
+            self.assertEqual(got[ids["clean"]], cases["clean"])
+            self.assertEqual(got[ids["mixed"]], ["https://x.invalid/a.jpg?a=1&b=2", 7], "non-strings survive as-is")
+            self.assertEqual(got[ids["empty"]], [])
+        finally:
+            conn.rollback()
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

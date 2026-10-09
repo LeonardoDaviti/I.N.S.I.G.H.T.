@@ -14,6 +14,7 @@ from insight_core.db.repo_reader import ReaderRepository
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.utils.media import post_media
 
 
 class PostDetailService:
@@ -95,6 +96,7 @@ class PostDetailService:
             return None
 
         source_settings = row[32] or {}
+        media = post_media(row[9], row[2])
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -106,6 +108,8 @@ class PostDetailService:
             "content": row[7],
             "content_html": row[8],
             "media_urls": row[9] or [],
+            "images": media["images"],
+            "video": media["video"],
             "categories": row[10] or [],
             "metadata": row[11] or {},
             "lang": row[12],

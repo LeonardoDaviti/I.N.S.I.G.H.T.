@@ -325,6 +325,21 @@ class ReaderRepositoryTests(unittest.TestCase):
         for key in ("url", "source_display_name", "sort_at", "published_at", "read_at", "starred_at"):
             self.assertIn(key, item)
 
+    def test_media_thumb_is_an_image(self):
+        source = self._source(platform="youtube")
+        video = self._post(source, self.now - timedelta(hours=1), media_urls=[
+            "https://www.youtube.com/watch?v=rHCpgtc5nzs", "https://i.ytimg.com/vi/rHCpgtc5nzs/3.jpg"])
+        clip = self._post(source, self.now - timedelta(hours=2), media_urls=[
+            "https://tg.i-c-a.su/media/c/1/clip.mp4", "https://preview.redd.it/a.jpeg?width=640&amp;s=abc"])
+        link = self._post(source, self.now - timedelta(hours=3), media_urls=["https://example.com/article"])
+
+        items, _ = self._page(FeedScope("source", source))
+        thumbs = {i["id"]: i["media_thumb"] for i in items}
+
+        self.assertEqual(thumbs[video], "https://i.ytimg.com/vi/rHCpgtc5nzs/hqdefault.jpg")
+        self.assertEqual(thumbs[clip], "https://preview.redd.it/a.jpeg?width=640&s=abc", "first image, unescaped")
+        self.assertIsNone(thumbs[link], "a link is not a thumbnail")
+
     def test_reading_minutes_for_text_posts(self):
         source = self._source()
         self._post(source, self.now - timedelta(hours=1), content="x" * 2300)

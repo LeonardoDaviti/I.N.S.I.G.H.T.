@@ -70,6 +70,27 @@ class PostDetailReaderStateTests(unittest.TestCase):
         self.assertFalse(state["is_favorited"])
         self.assertIsNone(state["read_at"], "starring is not reading")
 
+    def test_detail_lists_clean_images_and_the_video(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE posts SET url = %s, media_urls = %s::jsonb WHERE id = %s",
+                ("https://www.youtube.com/watch?v=rHCpgtc5nzs",
+                 '["https://www.youtube.com/watch?v=rHCpgtc5nzs", "https://i.ytimg.com/vi/rHCpgtc5nzs/3.jpg",'
+                 ' "https://tg.i-c-a.su/media/c/1/clip.mp4", "https://preview.redd.it/a.jpg?w=1&amp;s=x",'
+                 ' "https://x.invalid/b.png"]',
+                 self.post_id),
+            )
+            conn.commit()
+        post = self.service.get_post_by_id(self.post_id)
+        self.assertEqual(post["images"], [{"url": "https://preview.redd.it/a.jpg?w=1&s=x"},
+                                          {"url": "https://x.invalid/b.png"}])
+        self.assertEqual(post["video"], {"provider": "youtube", "id": "rHCpgtc5nzs"})
+
+    def test_detail_without_media(self):
+        post = self.service.get_post_by_id(self.post_id)
+        self.assertEqual(post["images"], [])
+        self.assertIsNone(post["video"])
+
     def test_reader_state_of_an_untouched_post(self):
         state = self.service.get_post_reader_state(self.post_id)
         self.assertFalse(state["is_favorited"])

@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.utils.media import feed_thumb
+
 FeedFilter = Literal["all", "unread", "starred"]
 FeedView = Literal["stream", "by_source"]
 FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "starred")
@@ -128,7 +130,7 @@ _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, 4000), p.url, p.source_id,
     COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
-    length(p.content), p.metadata->>'duration_seconds', p.media_urls->>0
+    length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]')
 """
 
 
@@ -157,7 +159,7 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "starred_at": row[10],
         "reading_minutes": None if is_video or not content_length else math.ceil(content_length / CHARS_PER_READING_MINUTE),
         "duration_seconds": duration_seconds if is_video else None,
-        "media_thumb": row[13],
+        "media_thumb": feed_thumb(row[13], row[3]),
     }
 
 

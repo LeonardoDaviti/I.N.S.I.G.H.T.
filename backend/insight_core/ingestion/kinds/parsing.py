@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
+from insight_core.utils.media import clean_url
+
 TELEGRAM_BASE_URL = "https://telegram.local"
 IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
 
@@ -93,11 +95,16 @@ def normalize_feed_urls(value: Any) -> Any:
     return normalize_telegram_resources(value)
 
 
+def normalize_media_url(value: Any) -> Optional[str]:
+    """A media URL as stored: HTML entities decoded (an `&amp;` breaks signed CDN URLs)."""
+    return normalize_feed_urls(clean_url(value))
+
+
 def extract_html_image_urls(html_text: str) -> List[str]:
     media_urls: List[str] = []
     seen = set()
     for image_url in IMG_SRC_RE.findall(html_text or ""):
-        normalized = normalize_feed_urls(image_url)
+        normalized = normalize_media_url(image_url)
         if normalized and normalized not in seen:
             seen.add(normalized)
             media_urls.append(normalized)
@@ -208,17 +215,17 @@ def _extract_xml_media_urls(node: ET.Element, content_html: str) -> List[str]:
         if name in {"enclosure", "content"}:
             media_url = child.attrib.get("url") or child.attrib.get("href")
             if media_url:
-                media_urls.append(normalize_feed_urls(media_url))
+                media_urls.append(normalize_media_url(media_url))
 
         if name == "link":
             rel = child.attrib.get("rel")
             media_type = child.attrib.get("type", "")
             href = child.attrib.get("href")
             if href and (rel == "enclosure" or media_type.startswith("image/") or media_type.startswith("video/")):
-                media_urls.append(normalize_feed_urls(href))
+                media_urls.append(normalize_media_url(href))
 
     for image_url in IMG_SRC_RE.findall(content_html or ""):
-        media_urls.append(normalize_feed_urls(image_url))
+        media_urls.append(normalize_media_url(image_url))
 
     deduped = []
     seen = set()
