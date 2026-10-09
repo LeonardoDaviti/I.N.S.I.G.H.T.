@@ -108,7 +108,8 @@ describe('DailyBriefing (Mark IX)', () => {
     renderAt('/briefing');
 
     const warning = await screen.findByTestId('stale-warning');
-    expect(warning.querySelector('[data-status="failing"]')).not.toBeNull();
+    expect(warning).toHaveAttribute('data-state', 'stopped');
+    expect(warning).toHaveTextContent(/stopped/);
     expect(warning).toHaveTextContent(/Nothing fetched for \d+d\./);
     expect(within(warning).getByRole('link', { name: 'Open ingestion' })).toHaveAttribute('href', '/ingestion');
   });
@@ -124,6 +125,9 @@ describe('DailyBriefing (Mark IX)', () => {
     const tabs = await screen.findByRole('tablist', { name: 'Briefing kinds' });
     expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['daily', 'topics', 'weekly']);
     expect(screen.getByRole('link', { name: 'vertical' })).toHaveAttribute('href', '/briefing/vertical');
+    // Everything the top bar files under "briefings" is in the section's own row.
+    expect(screen.getByRole('link', { name: 'stories' })).toHaveAttribute('href', '/stories');
+    expect(screen.getByRole('link', { name: 'inbox' })).toHaveAttribute('href', '/inbox');
     await screen.findByRole('heading', { name: /Posts of the day/ });
     expect(screen.getByRole('button', { name: 'Generate briefing' })).toBeInTheDocument();
 
@@ -176,12 +180,17 @@ describe('DailyBriefing (Mark IX)', () => {
 
     renderAt('/briefing?mode=db-posts&date=2026-09-29');
 
-    // A missing title falls back to the platform, never an empty heading.
-    const title = await screen.findByRole('button', { name: 'Reddit post' });
-    expect(title).toHaveAttribute('aria-expanded', 'false');
+    // A missing title falls back to the platform, never an empty heading; it links to the post.
+    const title = await screen.findByRole('link', { name: 'Reddit post' });
+    expect(title).toHaveAttribute('href', '/posts/p1');
+    const entry = screen.getByTestId('post-entry');
+    // The source name is the only meta: no platform word.
+    expect(entry).not.toHaveTextContent(/\breddit\b/);
+    const preview = within(entry).getByRole('button', { name: 'preview' });
+    expect(preview).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('Hidden body')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'preview' }));
-    expect(title).toHaveAttribute('aria-expanded', 'true');
+    await user.click(preview);
+    expect(within(entry).getByRole('button', { name: 'hide' })).toHaveAttribute('aria-expanded', 'true');
     expect(await screen.findByText('Hidden body')).toBeInTheDocument();
   });
 });

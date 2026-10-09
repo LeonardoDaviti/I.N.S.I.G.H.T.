@@ -45,6 +45,7 @@ import {
 } from '../components/ui';
 import type { Status } from '../components/ui';
 import { Notice } from '../components/states';
+import IngestionStatusNotice from '../components/ops/IngestionStatusNotice';
 
 type LogLevel = 'info' | 'success' | 'error';
 
@@ -343,9 +344,9 @@ export default function IngestionControl() {
   const [schedulerModalOpen, setSchedulerModalOpen] = useState(false);
 
   const { run: runIngestion, isRunning: isIngestionRunning } = useIngestionRun();
-
   // Every source's row, so the summary can count by last attempt (the overview carries only the worst few).
   const healthQuery = useSourcesHealth();
+
   // A ?job= link (from an ingestion toast) selects that mission.
   useEffect(() => {
     const jobParam = searchParams.get('job');
@@ -1351,7 +1352,7 @@ export default function IngestionControl() {
       />
 
       <div className="space-y-3">
-        {staleWarning ? <Notice tone="warning" title="Automatic ingestion is not running" message={staleWarning} /> : null}
+        {staleWarning ? <IngestionStatusNotice state="stopped" message={staleWarning} /> : null}
         {error ? <Notice tone="error" title={error} action={{ label: 'Dismiss', onClick: () => setError(null) }} /> : null}
       </div>
 

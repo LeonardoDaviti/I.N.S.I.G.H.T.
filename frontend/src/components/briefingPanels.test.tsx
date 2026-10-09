@@ -145,11 +145,43 @@ describe('VerticalBriefingPage', () => {
   });
 
   it('reports a failed load as an error notice', async () => {
-    vi.spyOn(apiService, 'getSourcesWithSettings').mockResolvedValue({ success: true, sources: [{ id: 's1', platform: 'reddit', handle_or_url: 'r/LocalLLaMA' }] } as never);
-    vi.spyOn(apiService, 'getVerticalBriefing').mockResolvedValue({ success: false, error: 'No stored posts found' } as never);
+    vi.spyOn(apiService, 'getSourcesWithSettings').mockResolvedValue({ success: true, sources: [{ id: 's1', platform: 'reddit', handle_or_url: 'r/LocalLLaMA', post_count: 3 }] } as never);
+    vi.spyOn(apiService, 'getVerticalBriefing').mockResolvedValue({ success: false, error: 'Database unavailable' } as never);
     wrap(<VerticalBriefingPage />, '/briefing/vertical?sourceId=s1');
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('No stored posts found');
+    expect(alert).toHaveTextContent('Database unavailable');
     expect(screen.getByText('Nothing to read for this source yet.')).toBeInTheDocument();
+  });
+
+  it('opens on the source with the most posts and names an empty source without its id', async () => {
+    vi.spyOn(apiService, 'getSourcesWithSettings').mockResolvedValue({
+      success: true,
+      sources: [
+        { id: '90550612-a19e-4ff3-bc91-1c93a534cf99', platform: 'reddit', handle_or_url: 'r/LocalLLaMA', post_count: 0, settings: {} },
+        { id: 's-big', platform: 'rss', handle_or_url: 'https://arxiv.org/rss/cs.LG', post_count: 1005, settings: { display_name: 'arXiv cs.LG' } },
+      ],
+    } as never);
+    const load = vi.spyOn(apiService, 'getVerticalBriefing').mockResolvedValue({ success: true, briefing: 'Big source text.', tracks: [], posts: {} } as never);
+    const { container } = wrap(<VerticalBriefingPage />, '/briefing/vertical');
+    await screen.findByText('Big source text.');
+    expect(load).toHaveBeenCalledWith('s-big', undefined, undefined);
+
+    // An empty source: one empty state, no request, no error, no UUID.
+    load.mockClear();
+    await userEvent.setup().selectOptions(screen.getByLabelText('Source'), '90550612-a19e-4ff3-bc91-1c93a534cf99');
+    expect(await screen.findByText('Nothing stored for r/LocalLLaMA yet')).toBeInTheDocument();
+    expect(load).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tracks were generated/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open ingestion' })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/90550612/);
+  });
+
+  it('treats the API "no stored posts" error as the empty state', async () => {
+    vi.spyOn(apiService, 'getSourcesWithSettings').mockResolvedValue({ success: true, sources: [{ id: 's1', platform: 'reddit', handle_or_url: 'r/LocalLLaMA' }] } as never);
+    vi.spyOn(apiService, 'getVerticalBriefing').mockResolvedValue({ success: false, error: 'No stored posts found for source s1' } as never);
+    wrap(<VerticalBriefingPage />, '/briefing/vertical?sourceId=s1');
+    expect(await screen.findByText('Nothing stored for r/LocalLLaMA yet')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import { Button, Chip, Field, Page, PageHeader, Select, Skeleton, TextLink } from '../components/ui';
-import { Notice } from '../components/states';
+import { EmptyState, Notice } from '../components/states';
 import { apiService } from '../services/api';
 import type { SourceWithSettings, VerticalBriefingResponse, VerticalBriefingTrack } from '../services/api';
 import { formatCount, plural } from '../lib/format';
@@ -23,6 +23,21 @@ import { cn } from '../lib/utils';
 /** "project_thread" -> "project thread". */
 function kindLabel(kind?: string | null): string {
   return (kind || 'track').replace(/_/g, ' ').toLowerCase();
+}
+
+/** The source to open on: the one with the most stored posts, so the page never
+ *  opens on an empty source when another has something to read. */
+function defaultSourceId(sources: SourceWithSettings[]): string {
+  let best: SourceWithSettings | null = null;
+  for (const source of sources) {
+    if (!best || (source.post_count ?? 0) > (best.post_count ?? 0)) best = source;
+  }
+  return best?.id ?? '';
+}
+
+/** The API names an empty source by its UUID ("No stored posts found for source …"). */
+function isNoPostsError(message: string | null | undefined): boolean {
+  return /no stored posts/i.test(message || '');
 }
 
 /** Supporting posts beyond this many fold behind a "show all" button, so a
@@ -173,6 +188,7 @@ function TrackItem({
 }
 
 export default function VerticalBriefingPage() {
+  const navigate = useNavigate();
   const { sourceId: sourceIdParam } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -189,6 +205,7 @@ export default function VerticalBriefingPage() {
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noPosts, setNoPosts] = useState(false);
 
   const selectedSource = useMemo(
     () => sources.find((source) => source.id === selectedSourceId) || sources[0] || null,
@@ -226,9 +243,10 @@ export default function VerticalBriefingPage() {
 
     const nextSources = response.sources || [];
     setSources(nextSources);
-    if (!selectedSourceId && nextSources[0]) {
-      setSelectedSourceId(nextSources[0].id);
-      syncSearchParams({ sourceId: nextSources[0].id, start: initialStart || null, end: initialEnd || null });
+    const fallback = defaultSourceId(nextSources);
+    if (!selectedSourceId && fallback) {
+      setSelectedSourceId(fallback);
+      syncSearchParams({ sourceId: fallback, start: initialStart || null, end: initialEnd || null });
     }
     setLoadingSources(false);
   };
@@ -241,6 +259,14 @@ export default function VerticalBriefingPage() {
     }
 
     setError(null);
+    setNoPosts(false);
+    // A source with nothing stored has nothing to brief: say so, skip the request.
+    const known = sources.find((source) => source.id === sourceId);
+    if (known && known.post_count === 0) {
+      setBriefing(null);
+      setNoPosts(true);
+      return;
+    }
     if (refresh) {
       setRefreshing(true);
     } else {
@@ -252,7 +278,11 @@ export default function VerticalBriefingPage() {
       : await apiService.getVerticalBriefing(sourceId, startDate || undefined, endDate || undefined);
 
     if (!response.success) {
-      setError(response.error || 'Failed to load vertical briefing');
+      if (isNoPostsError(response.error)) {
+        setNoPosts(true);
+      } else {
+        setError(response.error || 'Failed to load vertical briefing');
+      }
       setBriefing(null);
     } else {
       setBriefing(response);
@@ -303,13 +333,13 @@ export default function VerticalBriefingPage() {
         }
         actions={
           <>
-            <Button variant="secondary" onClick={() => void loadBriefing(false)} disabled={busy || !selectedSourceId}>
+            <Button variant="secondary" onClick={() => void loadBriefing(false)} disabled={busy || !selectedSourceId || noPosts}>
               {loadingBriefing ? 'Loading…' : 'Reload'}
             </Button>
             <Button
               variant="primary"
               onClick={() => void loadBriefing(true)}
-              disabled={busy || !selectedSourceId}
+              disabled={busy || !selectedSourceId || noPosts}
               title="Rebuild the cached briefing for this source"
             >
               {refreshing ? 'Rebuilding…' : 'Rebuild'}
@@ -330,7 +360,8 @@ export default function VerticalBriefingPage() {
             <option value="">Select a source</option>
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
-                {readableSourceName(source.settings?.display_name, source.handle_or_url) || source.id}
+                {readableSourceName(source.settings?.display_name, source.handle_or_url) || source.handle_or_url || source.platform}
+                {` (${formatCount(source.post_count ?? 0)})`}
               </option>
             ))}
           </Select>
@@ -355,70 +386,77 @@ export default function VerticalBriefingPage() {
 
       {error ? <Notice tone="error" title="The briefing did not load" message={error} className="mb-8" /> : null}
 
-      <div className="grid gap-x-12 gap-y-10 xl:grid-cols-[minmax(0,68ch)_minmax(0,1fr)]">
-        <article aria-labelledby="vertical-briefing-title" aria-busy={busy || undefined} className="min-w-0">
-          <p className="text-[0.8125rem] tabular-nums text-fg-3">{windowLabel}</p>
-          <h2
-            id="vertical-briefing-title"
-            className="mt-1 break-words text-[1.375rem] font-semibold leading-[1.25] tracking-[-0.02em] text-fg [overflow-wrap:anywhere]"
-          >
-            {sourceName}
-          </h2>
-          <div className="mt-5">
-            {briefingText ? (
-              <div className={cn('min-w-0 break-words text-[1.0625rem] leading-[1.7] text-fg [overflow-wrap:anywhere]', busy && 'opacity-50')}>
-                <MarkdownRenderer content={briefingText} />
-              </div>
-            ) : loadingBriefing ? (
-              <div role="status" aria-busy="true" className="space-y-2.5">
-                <span className="sr-only">Loading the briefing</span>
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-11/12" />
-                <Skeleton className="h-3 w-4/5" />
-                <Skeleton className="h-3 w-2/3" />
-              </div>
-            ) : (
-              <Quiet>
-                {error
-                  ? 'Nothing to read for this source yet.'
-                  : 'Select a source to read its briefing across the full stored history.'}
-              </Quiet>
-            )}
-          </div>
-          {briefing ? (
-            <p className="mt-6 border-t border-line pt-3 text-[0.75rem] tabular-nums text-fg-3">
-              scope {briefing.scope_type || 'source'} · variant {briefing.variant || 'default'}
-              {briefing.subject_key ? <> · {briefing.subject_key}</> : null}
-            </p>
-          ) : null}
-        </article>
+      {noPosts ? (
+        <EmptyState
+          title={`Nothing stored for ${sourceName} yet`}
+          description="A vertical briefing reads a source's stored posts. This one has none, so there is nothing to brief until ingestion fetches it."
+          action={{ label: 'Open ingestion', onClick: () => navigate('/ingestion') }}
+        />
+      ) : (
+        <div className="grid gap-x-12 gap-y-10 xl:grid-cols-[minmax(0,68ch)_minmax(0,1fr)]">
+          <article aria-labelledby="vertical-briefing-title" aria-busy={busy || undefined} className="min-w-0">
+            <p className="text-[0.8125rem] tabular-nums text-fg-3">{windowLabel}</p>
+            <h2
+              id="vertical-briefing-title"
+              className="mt-1 break-words text-[1.375rem] font-semibold leading-[1.25] tracking-[-0.02em] text-fg [overflow-wrap:anywhere]"
+            >
+              {sourceName}
+            </h2>
+            <div className="mt-5">
+              {briefingText ? (
+                <div className={cn('min-w-0 break-words text-[1.0625rem] leading-[1.7] text-fg [overflow-wrap:anywhere]', busy && 'opacity-50')}>
+                  <MarkdownRenderer content={briefingText} />
+                </div>
+              ) : loadingBriefing ? (
+                <div role="status" aria-busy="true" className="space-y-2.5">
+                  <span className="sr-only">Loading the briefing</span>
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-11/12" />
+                  <Skeleton className="h-3 w-4/5" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+              ) : (
+                <Quiet>
+                  {error
+                    ? 'Nothing to read for this source yet.'
+                    : 'Select a source to read its briefing across the full stored history.'}
+                </Quiet>
+              )}
+            </div>
+            {briefing ? (
+              <p className="mt-6 border-t border-line pt-3 text-[0.75rem] tabular-nums text-fg-3">
+                scope {briefing.scope_type || 'source'} · variant {briefing.variant || 'default'}
+              </p>
+            ) : null}
+          </article>
 
-        <section aria-labelledby="vertical-tracks-title" className="min-w-0">
-          <h2 id="vertical-tracks-title" className="text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">
-            Tracks <span className="font-normal tabular-nums text-fg-3">{formatCount(tracks.length)}</span>
-          </h2>
-          <p className="mt-0.5 text-[0.8125rem] text-fg-2">Repeated posts collapsed into threads, themes and one-off updates.</p>
-          <div className="mt-3">
-            {tracks.length ? (
-              <ol className="list-none border-t border-line">
-                {tracks.map((track, index) => (
-                  <TrackItem key={track.id || index} track={track} index={index} postsById={postsById} />
-                ))}
-              </ol>
-            ) : loadingBriefing ? (
-              <div role="status" aria-busy="true" className="space-y-3 border-t border-line pt-4">
-                <span className="sr-only">Loading tracks</span>
-                <Skeleton className="h-3 w-2/3" />
-                <Skeleton className="h-3 w-1/2" />
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed border-line-strong px-4 py-3 text-[0.875rem] text-fg-2">
-                No tracks were generated for this window.
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
+          <section aria-labelledby="vertical-tracks-title" className="min-w-0">
+            <h2 id="vertical-tracks-title" className="text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">
+              Tracks <span className="font-normal tabular-nums text-fg-3">{formatCount(tracks.length)}</span>
+            </h2>
+            <p className="mt-0.5 text-[0.8125rem] text-fg-2">Repeated posts collapsed into threads, themes and one-off updates.</p>
+            <div className="mt-3">
+              {tracks.length ? (
+                <ol className="list-none border-t border-line">
+                  {tracks.map((track, index) => (
+                    <TrackItem key={track.id || index} track={track} index={index} postsById={postsById} />
+                  ))}
+                </ol>
+              ) : loadingBriefing ? (
+                <div role="status" aria-busy="true" className="space-y-3 border-t border-line pt-4">
+                  <span className="sr-only">Loading tracks</span>
+                  <Skeleton className="h-3 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ) : (
+                <div className="rounded-md border border-line px-4 py-3 text-[0.875rem] text-fg-2">
+                  No tracks were generated for this window.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </Page>
   );
 }

@@ -6,7 +6,8 @@ import { apiService } from '../services/api';
 import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings, SystemStatusResponse } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
-import { Button, Chip, Input, Page, StatusGlyph, StatusIcon, Tabs, TabsContent, TabsList, TabsTrigger, TextLink, iconButtonClass, tabTriggerClass } from '../components/ui';
+import IngestionStatusNotice from '../components/ops/IngestionStatusNotice';
+import { Button, Chip, Input, Page, Row, StatusGlyph, StatusIcon, Tabs, TabsContent, TabsList, TabsTrigger, iconButtonClass, tabTriggerClass } from '../components/ui';
 import { EmptyState, LoadingState, Notice, FOCUS_RING } from '../components/states';
 import { getPlatformLabel, getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
 import { writeToClipboard } from '../lib/clipboard';
@@ -178,7 +179,6 @@ function PostEntry({
   showDate?: boolean | 'none';
   showThumbnails?: boolean;
 }) {
-  const platform = (post.platform || 'unknown').toLowerCase();
   const title = post.title || `${getPlatformLabel(post.platform)} post`;
   const source = readableSourceName(post.source_display_name, post.source);
   const date = postDateLabels(post);
@@ -207,20 +207,18 @@ function PostEntry({
           >
             <span className="line-clamp-3 break-words font-semibold leading-[1.4] text-fg [overflow-wrap:anywhere]">{title}</span>
           </button>
-          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[0.8125rem] text-fg-3">
-            <span className="whitespace-nowrap">{platform}</span>
+          {/* Source name only (the platform word was noise); one line that never
+              wraps: the source truncates, the date keeps its width (break-ui #9). */}
+          <div className="mt-0.5 flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] text-fg-3">
             {source ? (
-              <>
-                <MetaSep />
-                <span className="min-w-0 max-w-full truncate" title={source}>
-                  {source}
-                </span>
-              </>
+              <span className="min-w-0 truncate" title={source}>
+                {source}
+              </span>
             ) : null}
             {showDate !== 'none' && (post.date || post.published_at) ? (
               <span className={cn('contents', showDate === true && 'sm:hidden')}>
-                <MetaSep />
-                <span className="whitespace-nowrap tabular-nums" title={date.full}>
+                {source ? <MetaSep /> : null}
+                <span className="shrink-0 whitespace-nowrap tabular-nums" title={date.full}>
                   {date.short}
                 </span>
               </span>
@@ -273,6 +271,143 @@ function PostEntry({
       </div>
       {expanded ? (
         <div className={cn('pb-5', showDate === true ? 'sm:pl-[5.5rem]' : number !== undefined ? 'pl-9' : '')}>
+          {body ? <Reading content={body} size="small" className="text-fg-2" /> : <p className="text-[0.875rem] text-fg-3">This post has no text.</p>}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** A quiet text action that only underlines on hover (the row's actions are secondary to its title). */
+const QUIET_ACTION = cn(
+  'relative z-[1] inline-flex items-center gap-1 whitespace-nowrap rounded-sm text-fg-3 hover:text-fg coarse:min-h-[2.75rem]',
+  'underline-offset-[0.2em] hover:underline',
+  FOCUS_RING,
+);
+
+/**
+ * One post in a plain post list (posts of the day, one source): the shared
+ * smol-style Row. A muted date (or time) column, the bold title linking to the
+ * post (the link covers the whole row), the source name as the only meta, and
+ * preview / original / copy revealed on hover or focus (always on touch).
+ */
+function PostRow({
+  post,
+  to,
+  linkState,
+  timeOnly = false,
+  expanded,
+  onToggle,
+  copied,
+  onCopy,
+}: {
+  post: Post;
+  to?: string;
+  linkState?: unknown;
+  /** A list of one day: the column shows the time, not the same date on every row. */
+  timeOnly?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  copied?: boolean;
+  onCopy?: () => void;
+}) {
+  const title = post.title || `${getPlatformLabel(post.platform)} post`;
+  const source = readableSourceName(post.source_display_name, post.source);
+  const date = postDateLabels(post);
+  const raw = post.date || post.published_at || null;
+  const parsed = raw ? new Date(raw) : null;
+  const time =
+    parsed && !Number.isNaN(parsed.getTime())
+      ? parsed.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+      : '—';
+  const column = timeOnly ? time : date.short;
+  const body = expanded ? getRenderablePostContent(post) : '';
+
+  return (
+    <li data-testid="post-entry" data-expanded={expanded || undefined} className="group/post">
+      <Row
+        className={cn(
+          'relative transition-[border-color,background-color] duration-[120ms] ease-out motion-reduce:transition-none',
+          'hover:border-line-strong focus-within:border-line-strong',
+          expanded && 'rounded-b-none border-line-strong',
+          // Below sm the date column folds into the meta line, so the title keeps its width.
+          'max-sm:[&>div:first-child]:hidden',
+        )}
+        meta={<span title={date.full}>{column}</span>}
+        title={
+          to ? (
+            <Link
+              to={to}
+              state={linkState}
+              className={cn(
+                'rounded-sm after:absolute after:inset-0 after:rounded-md after:content-[""]',
+                'focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-fg',
+              )}
+            >
+              {title}
+            </Link>
+          ) : (
+            title
+          )
+        }
+        description={
+          <span className="flex min-w-0 flex-wrap items-center gap-x-3 text-fg-3">
+            <span className="flex min-w-[min(100%,9rem)] flex-1 flex-nowrap items-center gap-x-1.5">
+              {source ? (
+                <span className="min-w-0 truncate" title={source}>
+                  {source}
+                </span>
+              ) : null}
+              {raw ? (
+                <span className="contents sm:hidden">
+                  {source ? <MetaSep /> : null}
+                  <span className="shrink-0 whitespace-nowrap tabular-nums" title={date.full}>
+                    {column}
+                  </span>
+                </span>
+              ) : null}
+            </span>
+            <span
+              className={cn(
+                'flex shrink-0 items-center gap-x-3 transition-opacity duration-[120ms] ease-out motion-reduce:transition-none',
+                'opacity-0 group-hover/post:opacity-100 group-focus-within/post:opacity-100 group-data-[expanded]/post:opacity-100 coarse:opacity-100',
+                // Narrow and fine-pointed: hidden actions take no room from the source name.
+                'max-sm:hidden max-sm:group-hover/post:flex max-sm:group-focus-within/post:flex max-sm:group-data-[expanded]/post:flex coarse:!flex',
+              )}
+            >
+              <button type="button" onClick={onToggle} aria-expanded={expanded} className={QUIET_ACTION}>
+                {expanded ? 'hide' : 'preview'}
+              </button>
+              {post.url ? (
+                <a
+                  href={post.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={QUIET_ACTION}
+                  aria-label={`Open the original of ${title} in a new tab`}
+                >
+                  original
+                  <ExternalLink aria-hidden="true" className="h-3 w-3" />
+                </a>
+              ) : null}
+              {onCopy ? (
+                <button type="button" onClick={onCopy} className={QUIET_ACTION} aria-label={copied ? 'Copied to clipboard' : 'Copy post text'}>
+                  {copied ? (
+                    <>
+                      <Check aria-hidden="true" className="h-3 w-3" />
+                      copied
+                    </>
+                  ) : (
+                    'copy'
+                  )}
+                </button>
+              ) : null}
+            </span>
+          </span>
+        }
+      />
+      {expanded ? (
+        <div className="rounded-b-md border border-t-0 border-line-strong px-4 pb-5 pt-3 sm:pl-[7.5rem]">
           {body ? <Reading content={body} size="small" className="text-fg-2" /> : <p className="text-[0.875rem] text-fg-3">This post has no text.</p>}
         </div>
       ) : null}
@@ -1477,20 +1612,19 @@ export default function DailyBriefing() {
   const statusLine = systemStatus ? (
     <div className="mt-4 space-y-2">
       {/* A stopped ingestion is the one thing on this page that must be loud
-          (lead review #11): an inverted "×" chip and a sentence, not grey meta. */}
+          (lead review #11): the shared ingestion notice, a solid box and a sentence. */}
       {stale && (
-        <div
-          role="status"
-          data-testid="stale-warning"
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-fg px-3 py-2 text-[0.875rem]"
-        >
-          <StatusGlyph status="failing" label="stale" />
-          <span className="font-semibold text-fg">Nothing fetched for {formatRelativeTime(lastFetch).replace(/ ago$/, '')}.</span>
-          <span className="text-fg-2">
-            Ingestion is not running, so briefings stop at posts from {formatIssueShort(systemStatus.corpus?.latest_post_at)}.
-          </span>
-          <TextLink to="/ingestion">Open ingestion</TextLink>
-        </div>
+        <IngestionStatusNotice
+          state="stopped"
+          testId="stale-warning"
+          linkToIngestion
+          message={
+            <>
+              Nothing fetched for {formatRelativeTime(lastFetch).replace(/ ago$/, '')}. Briefings stop at posts from{' '}
+              {formatIssueShort(systemStatus.corpus?.latest_post_at)}.
+            </>
+          }
+        />
       )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3" aria-label="System status">
         {systemStatus.success ? (
@@ -1643,19 +1777,19 @@ export default function DailyBriefing() {
         <LoadingState label="Loading posts" rows={5} />
       ) : displayedPosts.length > 0 ? (
         <>
-          <ol className="border-y border-line">
+          <ol className="space-y-2">
             {displayedPosts.map((post, index) => {
               const key = post.id || `post:${index}`;
               const isExpanded = postsExpanded[key] ?? false;
               return (
-                <PostEntry
+                <PostRow
                   key={key}
                   post={post}
-                  showDate={isDatePosts ? 'none' : true}
-                  showThumbnails
+                  to={post.id ? `/posts/${encodeURIComponent(post.id)}` : undefined}
+                  linkState={{ returnTo: currentReturnUrl() }}
+                  timeOnly={isDatePosts}
                   expanded={isExpanded}
                   onToggle={() => setPostsExpanded((prev) => ({ ...prev, [key]: !isExpanded }))}
-                  onOpen={post.id ? () => openPostDetail(post.id as string) : undefined}
                   copied={Boolean(copied[key])}
                   onCopy={() => void handleCopyPost(post, key)}
                 />
@@ -1964,6 +2098,14 @@ export default function DailyBriefing() {
           </TabsList>
           <Link to="/briefing/vertical" className={tabTriggerClass}>
             vertical
+          </Link>
+          {/* Stories and the analyst inbox live under "briefings" in the top bar,
+              so the section's own tab row names them too. */}
+          <Link to="/stories" className={tabTriggerClass}>
+            stories
+          </Link>
+          <Link to="/inbox" className={tabTriggerClass}>
+            inbox
           </Link>
         </div>
 
