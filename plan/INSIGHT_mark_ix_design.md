@@ -207,22 +207,29 @@ in place by its owning slice.
 
 - [x] **App shell** — TopBar, ⌘K, theme toggle in the bar (no floating toggle), dark default.
 - [x] **Hub** — deleted; `/` = reader.
-- [ ] **Reader `/`, `/read/*`** — drop its own wordmark and "All tools" link (the top bar has them); rail and toolbar
+- [x] **Reader `/`, `/read/*`** (851acea, 6c2890d) — drop its own wordmark and "All tools" link (the top bar has them); rail and toolbar
       sticky under the top bar (`top: var(--topbar-h)`); items as `Row`-like articles; unread = dot + weight 600.
-- [ ] **Post `/posts/:id`** — `PageHeader` + 68ch reading column; actions as ghost buttons; summary in `<details>`.
+- [x] **Post `/posts/:id`** (be501fc, 5e2dc9c) — `PageHeader` + 68ch reading column; actions as ghost buttons; summary in `<details>`.
       Replace the yellow `<mark>` highlight classes and the `bg-[rgba(253,224,71,…)]` chip with the
       `--text-highlight-bg` tint (index.css currently neutralises them globally); make the reading column
       `min-w-0` and give `<pre>` its own `overflow-x: auto` so a long code line never widens the card past the viewport.
-- [ ] **Sources `/settings/sources`** — `PageHeader` with one primary "Add source"; underline `Tabs`; health table
+- [x] **Sources `/settings/sources`** (1f3b2d2, df5bc3d) — `PageHeader` with one primary "Add source"; underline `Tabs`; health table
       on the `Table` primitive with `StatusGlyph`; filter chips = `FilterChip`; "Fetch now" = secondary `sm`.
-- [ ] **Ingestion `/ingestion`** — `PageHeader`; Run cycle = primary; run report as `Notice` + `Table`; the active
+- [x] **Ingestion `/ingestion`** (1f3b2d2, 83ac384) — `PageHeader`; Run cycle = primary; run report as `Notice` + `Table`; the active
       tab uses the underline `Tabs` primitive instead of `indigo/cyan` + arbitrary glow classes.
-- [ ] **Briefing `/briefing`** — remove its private sidebar header/wordmark; list as `Row`s with date column.
-- [ ] **Stories, Inbox, Vertical briefing** — remove "Back to hub", eyebrow pills, marketing hero copy, `app-panel`
+- [x] **Briefing `/briefing`** (0d36b65, 83ac384) — remove its private sidebar header/wordmark; list as `Row`s with date column.
+- [x] **Stories, Inbox, Vertical briefing** (72feabb, 88d44d7) — remove "Back to hub", eyebrow pills, marketing hero copy, `app-panel`
       bubbles → `Row`/`Table`; drop the `shadow-[…rgba()]` selected-card glows (neutralised globally for now).
-- [ ] **Briefing** also drops the colour emoji (📊 📅) and the "I.N.S.I.G.H.T. INTELLIGENCE NETWORK" wordmark.
-- [ ] **Tracks `/tracks`, `/tracks/:id`** — `PageHeader`; track list as `Row`s with unread counts.
+- [x] **Briefing** also drops the colour emoji (📊 📅) and the "I.N.S.I.G.H.T. INTELLIGENCE NETWORK" wordmark.
+- [x] **Tracks `/tracks`, `/tracks/:id`** (72feabb, 87c0f3d) — `PageHeader`; track list as `Row`s with unread counts.
 - [ ] Every list: worst/empty/one/huge fixtures; 375px; 200% zoom; light theme parity.
+
+Status (2026-10-10): every page above is restyled; the commit hashes name the slices that did it.
+The last item stays open. The restyled lists have worst/empty/one/huge fixtures behind the dev-only
+`?data=` switch, but the 375px, 200% zoom and light-theme passes have not been recorded page by
+page. Under §9 of the spec, the briefing, stories, inbox, vertical-briefing and expert
+pages will be hidden when `INSIGHT_ANALYSIS=off`, so those passes matter most for feed, post,
+sources and tracks.
 
 ## Lead review of the live preview (2026-10-10 00:55) — binding for page, polish and fix agents
 

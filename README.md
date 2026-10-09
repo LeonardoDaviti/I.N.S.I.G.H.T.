@@ -5,7 +5,9 @@ I.N.S.I.G.H.T. is a source-ingestion and briefing system for controlled informat
 ## What It Does
 
 - Stores sources, posts, archive status, and briefings in PostgreSQL.
-- Supports Telegram RSS, Nitter RSS, Reddit, and YouTube channels.
+- Supports RSS/Atom feeds, Telegram RSS, Telegram channels over MTProto, Nitter RSS, Reddit, and YouTube channels.
+- Fetches every source through one ingestion entry point, on a per-source cadence with backoff for failing sources.
+- Gives you one reader over all sources (`/`): unread, starred and read state, tracks (folders) as filters.
 - Uses the same post storage path for archive and live ingestion.
 - Generates daily briefings from already-ingested posts.
 - Persists briefings in the database as markdown.
@@ -18,7 +20,9 @@ The runtime source of truth is the database pointed to by `DATABASE_URL`.
 Important tables:
 
 - `sources`: configured sources and per-source settings.
+- `source_fetch_state`: per-source fetch schedule state (last attempt and outcome, failures, next retry).
 - `posts`: all archived and live-ingested posts.
+- `post_reader_state`: read and starred state per post.
 - `briefings`: saved markdown briefing outputs.
 - `youtube_watch_progress`: saved YouTube watch state.
 
@@ -48,6 +52,7 @@ This lets you keep editing `sources.json` manually without losing DB-backed beha
 ## Supported Source Types
 
 - Telegram RSS via `https://telegram.local/rss/{username}/{page}`
+- Telegram channels by bare handle, over MTProto (needs a session, see below)
 - Nitter RSS via `https://nitter.local/{username}/rss`
 - Reddit via `r/{subreddit}` or Reddit subreddit URLs
 - YouTube via channel ID, `@handle`, `/channel/...`, or feed URL
@@ -55,7 +60,7 @@ This lets you keep editing `sources.json` manually without losing DB-backed beha
 Notes:
 
 - RSS-based Telegram sources do not require Telegram API credentials.
-- Raw `telegram` connector sources do require `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+- Bare-handle Telegram sources need `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and a session file. Create it once with `docker compose exec ingestion python -m insight_core.scripts.telegram_login` (see `backend/insight_core/scripts/README.md`). Until then those sources show as unavailable, not failing.
 - Self-hosted `.local` HTTPS feeds are fetched with TLS verification disabled automatically. You can also set `RSS_SKIP_TLS_VERIFY_HOSTS` for additional internal hosts.
 
 Archive behavior:
@@ -72,16 +77,14 @@ The recommended production layout is the included `docker-compose.yml`:
 - `postgres`: PostgreSQL 15 (`pgvector/pgvector:pg15`)
 - `backend`: FastAPI API server
 - `frontend`: built static frontend behind Nginx
-- `ingestion`: long-running scheduler for safe ingestion and daily briefing generation
+- `ingestion`: long-running scheduler (`scripts/run_scheduler.py`)
 
-Scheduler defaults:
+The scheduler has two clocks:
 
-- ingestion every `20` hours
-- `safe-ingest` skips sources fetched within the last `20` hours
-- daily briefing generation enabled by default
-- topic briefing generation disabled by default
-- archive is never run automatically; archive remains a manual API action only
-- backend and ingestion share a persistent `insight_logs` volume so the frontend can inspect recent runtime logs from the Ingestion Control screen
+- the ingestion tick, every `ingest_tick_minutes` (default `60`, floor `15`, env `INSIGHT_INGEST_TICK_MINUTES`). Each tick is one ingestion run over all enabled sources, and each source's cadence decides whether it is due, so a tick fetches only the sources whose interval has passed or whose backoff has expired. A failing source retries on a backoff ladder (`INSIGHT_BACKOFF_*` in `.env.example`).
+- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs`, refresh source cadence, sync `sources.json -> DB`, scheduled experts, and the daily briefing (topic briefing off by default).
+
+Archive is never run automatically; it is a manual action only. Backend and ingestion share a persistent `insight_logs` volume, so the ingestion page can show recent runtime logs.
 
 ## Quick Start
 
@@ -129,23 +132,20 @@ What happens automatically on startup:
 
 - PostgreSQL starts and persists data in `postgres_data`
 - backend runs migrations, syncs `sources.json -> DB`, and starts the API
-- ingestion runs migrations, syncs `sources.json -> DB`, performs a scheduler cycle immediately, then sleeps until the next 20-hour cycle
-- daily briefings are generated automatically after ingestion when enabled
+- ingestion runs migrations, syncs `sources.json -> DB`, runs its first tick immediately, then ticks every `ingest_tick_minutes`
+- daily work (including the daily briefing, when enabled) runs when `interval_hours` have passed since it last ran; the first tick after a deploy does not trigger an extra briefing
 - source changes made in the API are exported back into `sources.json`
 
-Frontend operational pages:
+Frontend pages (every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher):
 
-- `/briefing`: daily briefing view and source browser
-- `/ingestion`: manual ingestion, single-source fetch, archive control, registry sync, scheduler control, mission feed, source health, and recent runtime logs
-- `/posts/:postId`: single-post intelligence workspace with original content, AI summary, notes, and chat
-- `/settings/sources`: source registry editing
+- `/`, `/read/:scopeKind/:scopeId`: the reader. Unread / starred / all, stream or by source, keyboard shortcuts (`?` lists them).
+- `/posts/:postId`: the reading view of one post, with prev/next in feed order.
+- `/tracks`, `/tracks/:trackId`: tracks (folders of sources), with "Fetch this track".
+- `/settings/sources`: the source list, add/edit, and the health and cadence table (`?tab=health`).
+- `/ingestion`: Run cycle, single-source fetch, archive control, scheduler settings, run history and logs.
+- `/briefing`, `/stories`, `/inbox`: the analysis pages (briefings, stories, inbox).
 
-Frontend runtime features:
-
-- theme toggle with light/dark Obsidian-inspired gold palette
-- per-post detail button from briefing and topic views
-- single-post notes persisted in PostgreSQL
-- single-post AI summary cache persisted in PostgreSQL
+The UI is monochrome, dark by default, with a theme toggle in the top bar. The design language is `plan/INSIGHT_mark_ix_design.md`.
 
 ## Ports
 
@@ -208,23 +208,19 @@ Local logs are written under `./logs` when you run the project from the repo roo
 
 ## Manual Operations
 
-If you add a source and do not want to wait for the next 20-hour cycle:
+A new source is due on the next tick (at most `ingest_tick_minutes` away). To fetch it now:
 
 1. Open `/settings/sources` and add the source.
-2. Open `/ingestion`.
-3. Use `Fetch Source Now` for that source.
-4. If you want a backfill, use `Plan Archive` or `Run Archive`.
-5. If you want a new briefing immediately, run `Generate Daily` for the target date.
+2. Use `Fetch now` on its row in the health table (`/settings/sources?tab=health`), or on `/ingestion`.
+3. If you want a backfill, use `Plan Archive` or `Run Archive` on `/ingestion`.
 
-The Ingestion Control page also exposes:
+`/ingestion` also has:
 
-- `Run Full Ingestion`
-- `Run Safe Ingestion`
-- `Sync JSON -> DB`
-- `Sync DB -> JSON`
-- scheduler interval and briefing toggles
-- recent job history, alerts, and per-source health
-- live tail of shared backend/scheduler logs
+- `Run due sources`: one ingestion run over all enabled sources that fetches only the due ones, exactly as the next tick would. Ticking `Force all` ignores cadence and backoff and fetches every source, after a confirmation.
+- scheduler settings: tick minutes, daily-work interval and the briefing toggles
+- run history with a readable run report per job, and a live tail of the backend and scheduler logs
+
+From the command line: `docker compose exec ingestion python -m insight_core.scripts.safe_ingest [--force] [--folder ID] [--source ID]` runs the same ingestion and prints the run report as JSON.
 
 ## Updating On Server
 
@@ -277,8 +273,23 @@ Returned API fields include:
 
 ## Useful API Endpoints
 
-- `POST /api/ingest-posts`
-- `POST /api/safe-ingest-posts`
+Ingestion runs are background jobs: these return `202` with a `job_id`, and `GET /api/operations/jobs/{job_id}` carries the run report when the job finishes.
+
+- `POST /api/ingestion/run` (`{"force": false}`)
+- `POST /api/sources/{source_id}/fetch-now`
+- `POST /api/folders/{folder_id}/ingest`
+
+Reader and sources:
+
+- `GET /api/feed` (`scope`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days`)
+- `GET /api/feed/unread-counts`
+- `PUT /api/feed/read`, `POST /api/feed/mark-read`
+- `GET /api/sources/health`
+- `PUT /api/sources/{source_id}/cadence`
+- `GET /api/operations/scheduler`, `PUT /api/operations/scheduler`
+
+Briefings, archive and tools:
+
 - `POST /api/daily`
 - `POST /api/daily/topics`
 - `GET /api/archive/{source_id}/status`
@@ -305,6 +316,10 @@ References:
 
 - `https://github.com/xtrime-ru/TelegramRSS`
 - `https://github.com/sekai-soft/guide-nitter-self-hosting`
+
+## Tests
+
+Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so it defaults to the scratch database `insight_test`, never the live `insight`; override with `TEST_DATABASE_URL`. `MIGRATE=1` applies pending migrations to that database first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
 ## Notes
 

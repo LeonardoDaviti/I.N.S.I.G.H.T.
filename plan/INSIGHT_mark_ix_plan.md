@@ -260,6 +260,7 @@ class InspectionRefresher(Protocol):
 7. **Record outcomes.** `FetchStateStore.record_outcomes(outcomes, trigger=..., now=..., backoff=lambda n: backoff_delay(n, rand=self.rand))` writes all outcomes in one connection and transaction. Per row it is one atomic UPSERT that computes the new `consecutive_failures` in SQL (`RETURNING`), and the store then applies `backoff(new_count)` to set `next_retry_at` (§C.3). A healthy or empty outcome resets `consecutive_failures` and sets `last_success_at = now`. This is what fixes staleness (§C).
 8. **Save.** All fetched posts go through `PostSaver.save(drafts)` → `SaveBatchResult` (§B), via `asyncio.to_thread`. There is one save batch per run. Each draft carries its `source_id`.
    - A source whose posts *all* failed to save gets a `SourceFailure(stage="save")`. Its fetch outcome stays as it was: the fetch itself worked.
+   - **As built (review fix, 2026-10-10):** outcomes are recorded *after* the save, so step 7 runs after step 8. A source with a `stage="save"` failure (every post failed, or the whole batch raised) is recorded as an `ERROR` outcome with the error `save: <reason>`. Nothing it fetched reached the database, so recording it healthy would reset its failures and push its next fetch a whole cadence away, and the posts could rotate out of the feed meanwhile. A source where only some posts failed stays healthy.
 9. **Enrich.** `Enricher.run(result.inserted_ids)` is chunked and runs in `to_thread`. Failing chunks are counted, not raised.
 10. **Refresh inspections.** For each source with ≥ 1 fetched post the runner calls `inspections.refresh(source, kind, fetched_posts)`. `DbInspectionRefresher` owns the whole step: the Mark VIII due rule (global `ARCHIVE_INSPECT_INTERVAL_HOURS`, not kind-specific), `kind.inspect` under the same `gates.slot` (the duplicate gate code goes away), and `ArchiveMetadataWriter.record(source_id, kind, data, mode="live")`. Failures are logged and counted, never raised.
 11. **Build the report.** The `RunReport` is built. `progress.event(phase, data)` is called at each phase (`decided`, `fetched`, `saved`, `enriched`, `inspected`); the caller finishes the job with `report.to_payload()`.
@@ -1805,7 +1806,7 @@ Rules:
   - `src/pages/ReaderPage.tsx`
 - edit:
   - `src/App.tsx`: `/` → ReaderPage, `/read/:scopeKind/:scopeId?`, `/hub` → Index; the global `ThemeToggle` is hidden on reader routes (the rail/toolbar hosts it)
-  - `src/pages/Index.tsx`: retitled "All tools", the brochure copy and the duplicate card removed
+  - `src/pages/Index.tsx`: retitled "All tools", the brochure copy and the duplicate card removed (superseded: the hub was deleted, see "As built (F3)" below)
   - `src/services/api.ts`: `getFeed`, `getFeedGroups`, `getUnreadCounts`, `setPostRead`, `setPostsRead`, `markReadThrough`, plus the `FeedItem`/`FeedPage`/`FeedGroup`/`FeedGroupsPage`/`MarkReadResult`/`UnreadCounts` types and `ReaderState.read_at`
   - `src/pages/PostDetailPage.tsx`: load via `usePost` (react-query); timeline lazy on expand; prev/next from `?ctx=` with next-page fetch at the end and a "Back to feed" fallback without context; shortcuts; reading column + typography; original content first; the summary collapsible; the action bar wraps; the marketing copy removed
   - `src/pages/TrackPage.tsx`: read state on cards; "Read" passes `?ctx=`
@@ -1837,6 +1838,11 @@ Rules:
 - typecheck, test, lint (touched files) and build are green.
 
 **Commands:** `cd frontend && npm run typecheck && npm test && npx eslint src/components/reader src/hooks src/pages/ReaderPage.tsx src/pages/PostDetailPage.tsx && npm run build`
+
+**As built (F3, 2026-10-10). Deviations from the text above:**
+- **No hub.** The owner found the Mark VIII hub unfriendly, so it was deleted instead of retitled "All tools" (168c09c). `src/pages/Index.tsx` is gone and `/hub` redirects to `/`. Every route renders inside one shell (`components/layout/AppShell`, `TopBar`, `QuickSwitcher`): the wordmark, the slash nav, the theme toggle and a Cmd/Ctrl+K switcher. The reader therefore has no wordmark, "All tools" link or theme toggle of its own, which also replaces the "ThemeToggle hidden on reader routes" item. `/tracks` names the tracks page (`/experts` stays as an alias).
+- **Restyle.** F3 shipped with the monochrome design language (`plan/INSIGHT_mark_ix_design.md`, the lead review of the live preview): rows with a date column and day headers, read and star side by side, `sourceLabel()` for URL-named sources, and filter/view/density as slash-separated words.
+- **Not done here, deferred to §9:** `DailyBriefing.tsx` still has its "All posts" mode and N+1 loader, and the post page's story timeline is not lazy on expand. Both pages or panels are hidden when `INSIGHT_ANALYSIS=off`, so they are left for that slice.
 
 ---
 
