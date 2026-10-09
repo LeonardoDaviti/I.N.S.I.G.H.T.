@@ -24,21 +24,6 @@ const SIZE_STYLES = {
   },
 };
 
-function platformTone(platform: string) {
-  switch (platform) {
-    case 'reddit':
-      return 'border-orange-200 bg-orange-50 text-orange-700';
-    case 'rss':
-      return 'border-indigo-200 bg-indigo-50 text-indigo-700';
-    case 'telegram':
-      return 'border-sky-200 bg-sky-50 text-sky-700';
-    case 'youtube':
-      return 'border-rose-200 bg-rose-50 text-rose-700';
-    default:
-      return 'border-slate-200 bg-slate-100 text-slate-600';
-  }
-}
-
 function PlatformGlyph({ platform, className }: { platform: string; className: string }) {
   switch (platform) {
     case 'reddit':
@@ -63,20 +48,19 @@ export default function SourceAvatar({
   const model = getSourceAvatarModel(source);
   const [imageBroken, setImageBroken] = useState(false);
   const styles = SIZE_STYLES[size];
-  const tone = platformTone(model.platformKey);
   const showImage = mode === 'source' && Boolean(model.faviconUrl) && !imageBroken;
   const showGlyph = mode === 'platform';
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center rounded-full border font-semibold uppercase tracking-[0.12em] ${styles.frame} ${tone} ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-raised font-semibold text-fg-2 ${styles.frame} ${className}`}
       aria-hidden="true"
     >
       {showImage ? (
         <img
           src={model.faviconUrl!}
           alt=""
-          className="h-full w-full rounded-full object-cover"
+          className="h-full w-full rounded-full object-cover grayscale"
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setImageBroken(true)}

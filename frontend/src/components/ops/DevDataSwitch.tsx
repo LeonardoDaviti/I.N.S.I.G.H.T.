@@ -19,7 +19,7 @@ export default function DevDataSwitch({ options }: { options: readonly string[] 
     <div
       role="group"
       aria-label="Demo data (dev only)"
-      className="fixed bottom-3 left-1/2 z-40 flex -translate-x-1/2 gap-0.5 rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-0.5 font-sans text-xs shadow-sm"
+      className="fixed bottom-3 left-1/2 z-40 flex -translate-x-1/2 gap-0.5 rounded-md border border-line-strong bg-raised p-0.5 font-sans text-[0.75rem] shadow-overlay"
     >
       {['live', ...options].map((value) => (
         <button
@@ -27,7 +27,7 @@ export default function DevDataSwitch({ options }: { options: readonly string[] 
           type="button"
           aria-pressed={current === value}
           onClick={() => choose(value)}
-          className={`whitespace-nowrap rounded-full px-2.5 py-1 ${current === value ? 'bg-[var(--background-primary)] text-[var(--text-normal)] shadow-sm' : 'text-[var(--text-muted)]'}`}
+          className={`whitespace-nowrap rounded-sm px-2.5 py-1 ${current === value ? 'bg-inverse text-inverse-fg' : 'text-fg-2 hover:text-fg'}`}
         >
           {value === 'live' ? 'Live' : value === 'worst' ? 'Worst case' : value.charAt(0).toUpperCase() + value.slice(1)}
         </button>

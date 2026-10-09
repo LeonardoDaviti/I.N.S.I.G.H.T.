@@ -6,7 +6,7 @@ import type { SourceHealthRow } from '../../services/api';
 import { replaceHealthRow } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
 import { formatHours, intervalLabel, parseOverrideHours, tierLabel } from '../../lib/sourceSchedule';
-import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
+import { Button, Input } from '../ui';
 
 /**
  * Edit one source's fetch interval override (spec §F.4): hours in [1, 2160], or
@@ -55,23 +55,21 @@ export default function CadenceOverrideEditor({
   };
 
   const errorText = validationError ?? (mutation.error ? errorMessage(mutation.error) : null);
-  const button = `inline-flex min-h-[44px] items-center justify-center rounded-lg px-3 text-sm font-medium disabled:opacity-60 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
   const tierText = row.tier === 'unknown'
     ? 'probation (daily until 3 dated posts)'
     : `${tierLabel(row.tier).toLowerCase()} tier${row.mean_gap_hours !== null ? `, a post every ${formatHours(row.mean_gap_hours)} on average` : ''}`;
 
   return (
     <form onSubmit={onSubmit} noValidate className={`min-w-0 ${className}`} aria-label={`Cadence override for ${row.display_name}`}>
-      <label htmlFor={inputId} className="block text-sm font-medium text-[var(--text-normal)]">
+      <label htmlFor={inputId} className="block text-[0.8125rem] font-medium text-fg">
         Override (hours)
       </label>
-      <p id={hintId} className="mt-0.5 text-xs text-[var(--text-muted)]">
+      <p id={hintId} className="mt-0.5 text-[0.75rem] text-fg-2">
         Now {intervalLabel(row)}; {tierText}. Leave empty to follow the tier. 1 to 2160 hours (90 days).
       </p>
       <div className="mt-2 flex flex-wrap items-start gap-2">
-        <input
+        <Input
           id={inputId}
-          type="text"
           inputMode="decimal"
           autoComplete="off"
           value={text}
@@ -79,39 +77,24 @@ export default function CadenceOverrideEditor({
           placeholder="tier"
           aria-invalid={validationError ? 'true' : 'false'}
           aria-describedby={`${hintId}${errorText ? ` ${errorId}` : ''}`}
-          className={`min-h-[44px] w-28 rounded-lg border bg-[var(--background-primary)] px-3 text-sm tabular-nums text-[var(--text-normal)] ${FOCUS_RING} ${
-            validationError ? 'border-[var(--text-error)]' : 'border-[var(--background-modifier-border)]'
-          }`}
+          className="w-28 tabular-nums"
         />
-        <button
-          type="submit"
-          disabled={mutation.isPending}
-          className={`${button} bg-[var(--interactive-accent)] text-[var(--text-on-accent)] hover:bg-[var(--interactive-accent-hover)]`}
-        >
+        <Button type="submit" variant="secondary" disabled={mutation.isPending}>
           {mutation.isPending ? 'Saving…' : 'Save override'}
-        </button>
+        </Button>
         {row.override_hours !== null ? (
-          <button
-            type="button"
-            disabled={mutation.isPending}
-            onClick={() => { setText(''); setSubmitted(false); save(null); }}
-            className={`${button} border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] text-[var(--text-normal)] hover:bg-[var(--background-secondary-alt)]`}
-          >
+          <Button variant="secondary" disabled={mutation.isPending} onClick={() => { setText(''); setSubmitted(false); save(null); }}>
             Use tier
-          </button>
+          </Button>
         ) : null}
         {onCancel ? (
-          <button
-            type="button"
-            onClick={onCancel}
-            className={`${button} text-[var(--text-muted)] hover:text-[var(--text-normal)]`}
-          >
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         ) : null}
       </div>
       {errorText ? (
-        <p id={errorId} role="alert" className="mt-1.5 break-words text-xs text-[var(--text-error)]">{errorText}</p>
+        <p id={errorId} role="alert" className="mt-1.5 break-words text-[0.75rem] font-semibold text-fg"><span aria-hidden="true">× </span>{errorText}</p>
       ) : null}
     </form>
   );

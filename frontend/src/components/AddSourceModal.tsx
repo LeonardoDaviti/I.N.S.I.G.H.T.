@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Plus } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus } from 'lucide-react';
 import type { SourceState } from '../types';
 import { apiService } from '../services/api';
-import { FilterChip } from './ui';
+import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
 
 interface Template {
   id: string;
@@ -201,27 +201,12 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
   const [isResolvingChannel, setIsResolvingChannel] = useState(false);
   const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(null);
   
-  const modalRef = useRef<HTMLDivElement>(null);
   const youtubeLookupValue = selectedTemplate?.id === 'youtube-handle'
     ? (templateVariable.trim() ? selectedTemplate.buildHandle(templateVariable.trim()) : '')
     : (platform === 'youtube' ? handleOrUrl.trim() : '');
 
   // Get templates for this platform
   const availableTemplates = TEMPLATES.filter(t => t.platform === platform);
-
-  // Handle click outside to close
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [onClose]);
 
   // Update URL when template variable changes
   useEffect(() => {
@@ -301,29 +286,19 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div ref={modalRef} className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 sticky top-0 bg-white">
-          <h2 className="text-lg font-semibold text-gray-900">Add New Source</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const hint = 'mt-1 text-[0.75rem] text-fg-3';
+  const label = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
 
-        {/* Content */}
-        <div className="p-4 space-y-4">
-          {/* Templates Section */}
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent title="Add source" className="w-[min(32rem,calc(100vw-2rem))]">
+        <form
+          className="mt-4 space-y-5"
+          onSubmit={(event) => { event.preventDefault(); if (handleOrUrl.trim()) handleAdd(); }}
+        >
           {availableTemplates.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Templates
-              </label>
+              <span className={label}>Start from a template</span>
               <div className="flex flex-wrap gap-2">
                 {availableTemplates.map((template) => (
                   <FilterChip
@@ -338,163 +313,120 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
             </div>
           )}
 
-          {/* Template Variable Input */}
           {selectedTemplate && (
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-              <label htmlFor="template-var" className="block text-sm font-medium text-blue-900 mb-1">
+            <div className="rounded-md border border-line bg-surface p-3">
+              <label htmlFor="template-var" className={label}>
                 {(selectedTemplate.variableLabel || selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1))} (for {selectedTemplate.name})
               </label>
-              <input
+              <Input
                 id="template-var"
-                type="text"
                 value={templateVariable}
                 onChange={(e) => setTemplateVariable(e.target.value)}
-                placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}...`}
-                className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}…`}
               />
-              <p className="text-xs text-blue-700 mt-1 break-all">
+              <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
                 → {selectedTemplate.buildHandle(templateVariable || `{${selectedTemplate.variableName}}`)}
               </p>
-              {selectedTemplate.helperText && (
-                <p className="text-xs text-blue-700/80 mt-1">
-                  {selectedTemplate.helperText}
-                </p>
-              )}
+              {selectedTemplate.helperText && <p className={hint}>{selectedTemplate.helperText}</p>}
               {platform === 'youtube' && youtubeLookupValue && (
-                <p className="text-xs mt-2 text-red-700">
+                <p className="mt-2 text-[0.75rem] text-fg-2">
                   {isResolvingChannel
-                    ? 'Resolving channel title...'
+                    ? 'Resolving channel title…'
                     : resolvedChannelName
                       ? `Resolved channel: ${resolvedChannelName}`
-                      : 'Could not resolve channel title yet. The handle will still work as a source.'}
+                      : 'Could not resolve the channel title yet. The handle still works as a source.'}
                 </p>
               )}
             </div>
           )}
 
-          {/* Divider */}
           {availableTemplates.length > 0 && (
-            <div className="flex items-center gap-3">
-              <div className="flex-1 border-t border-gray-300"></div>
-              <span className="text-xs text-gray-500 uppercase">or enter manually</span>
-              <div className="flex-1 border-t border-gray-300"></div>
+            <div className="flex items-center gap-3" aria-hidden="true">
+              <div className="flex-1 border-t border-line" />
+              <span className="text-[0.75rem] text-fg-3">or enter it yourself</span>
+              <div className="flex-1 border-t border-line" />
             </div>
           )}
 
-          {/* Handle or URL */}
           <div>
-            <label htmlFor="handle_or_url" className="block text-sm font-medium text-gray-700 mb-1">
-              Handle or URL
-            </label>
-            <input
+            <label htmlFor="handle_or_url" className={label}>Feed URL or handle</label>
+            <Input
               id="handle_or_url"
-              type="text"
               value={handleOrUrl}
               onChange={(e) => setHandleOrUrl(e.target.value)}
-              placeholder="Enter source URL or handle"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              placeholder="https://example.com/feed.xml"
               disabled={!!selectedTemplate && !!templateVariable}
+              autoComplete="off"
             />
           </div>
 
-          {/* Display Name */}
           <div>
-            <label htmlFor="display_name" className="block text-sm font-medium text-gray-700 mb-1">
-              Display Name
-            </label>
-            <input
+            <label htmlFor="display_name" className={label}>Name</label>
+            <Input
               id="display_name"
-              type="text"
               value={displayName}
               onChange={(e) => {
                 setDisplayName(e.target.value);
-                setDisplayNameManuallyEdited(true); // Mark as manually edited
+                setDisplayNameManuallyEdited(true);
               }}
-              placeholder="Leave empty to use URL/handle"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              placeholder="Optional; derived from the URL when empty"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Optional: Friendly name for this source
-            </p>
           </div>
 
-          {/* Fetch Delay */}
-          <div>
-            <label htmlFor="fetch_delay" className="block text-sm font-medium text-gray-700 mb-1">
-              Fetch Delay (seconds)
-            </label>
-            <input
-              id="fetch_delay"
-              type="number"
-              min="0"
-              max="60"
-              value={fetchDelay}
-              onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Time to wait after fetching from this source
-            </p>
-          </div>
+          <details className="group">
+            <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Advanced</summary>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
+                <Input
+                  id="fetch_delay"
+                  type="number"
+                  min="0"
+                  max="60"
+                  value={fetchDelay}
+                  onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
+                  className="tabular-nums"
+                />
+                <p className={hint}>Wait after fetching this source.</p>
+              </div>
+              <div>
+                <label htmlFor="priority" className={label}>Priority</label>
+                <Input
+                  id="priority"
+                  type="number"
+                  min="1"
+                  max="9999"
+                  value={priority}
+                  onChange={(e) => setPriority(parseInt(e.target.value) || 999)}
+                  className="tabular-nums"
+                />
+                <p className={hint}>Lower is fetched first.</p>
+              </div>
+              <div>
+                <label htmlFor="max_posts" className={label}>Max posts per fetch</label>
+                <Input
+                  id="max_posts"
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={maxPosts}
+                  onChange={(e) => setMaxPosts(parseInt(e.target.value) || 50)}
+                  className="tabular-nums"
+                  disabled
+                />
+                <p className={hint}>Not enforced yet.</p>
+              </div>
+            </div>
+          </details>
 
-          {/* Priority */}
-          <div>
-            <label htmlFor="priority" className="block text-sm font-medium text-gray-700 mb-1">
-              Priority
-            </label>
-            <input
-              id="priority"
-              type="number"
-              min="1"
-              max="9999"
-              value={priority}
-              onChange={(e) => setPriority(parseInt(e.target.value) || 999)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Lower number = higher priority (fetched first)
-            </p>
-          </div>
-
-          {/* Max Posts Per Fetch */}
-          <div>
-            <label htmlFor="max_posts" className="block text-sm font-medium text-gray-700 mb-1">
-              Max Posts Per Fetch
-            </label>
-            <input
-              id="max_posts"
-              type="number"
-              min="1"
-              max="200"
-              value={maxPosts}
-              onChange={(e) => setMaxPosts(parseInt(e.target.value) || 50)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-              disabled
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Not enforced yet
-            </p>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-200 bg-gray-50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleAdd}
-            disabled={!handleOrUrl.trim()}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Add Source
-          </button>
-        </div>
-      </div>
-    </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={!handleOrUrl.trim()}>
+              <Plus aria-hidden="true" /> Add source
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

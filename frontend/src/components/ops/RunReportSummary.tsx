@@ -1,12 +1,15 @@
 import type { RunReport } from '../../services/api';
 import { summarizeRunReport, type RunReportTone } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
+import { StatusIcon } from '../ui';
+import type { Status } from '../ui';
 
-const TONE_CLASS: Record<RunReportTone, string> = {
-  status: 'border-[var(--background-modifier-border)] bg-[var(--background-secondary)]',
-  completion: 'border-[var(--background-modifier-border)] bg-[var(--background-primary)]',
-  warning: 'border-[var(--background-modifier-border)] bg-[var(--text-highlight-bg)]',
-  error: 'border-[var(--text-error)] bg-[var(--background-primary)]',
+/** Monochrome tone (design doc §8): border style and a glyph, never hue. */
+const TONE: Record<RunReportTone, { box: string; glyph: Status }> = {
+  status: { box: 'border-line', glyph: 'running' },
+  completion: { box: 'border-line-strong', glyph: 'ok' },
+  warning: { box: 'border-dashed border-line-strong', glyph: 'backoff' },
+  error: { box: 'border-fg', glyph: 'failing' },
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -19,9 +22,9 @@ const STAGE_LABELS: Record<string, string> = {
 
 function Count({ label, value, emphasis = false }: { label: string; value: number; emphasis?: boolean }) {
   return (
-    <li className="min-w-0 rounded-lg bg-[var(--background-secondary)] px-3 py-2">
-      <div className="text-xs text-[var(--text-muted)]">{label}</div>
-      <div className={`tabular-nums ${emphasis ? 'text-lg font-semibold text-[var(--text-normal)]' : 'text-base font-medium text-[var(--text-normal)]'}`}>
+    <li className="min-w-0 border-l border-line pl-3">
+      <div className="text-[0.75rem] text-fg-3">{label}</div>
+      <div className={`tabular-nums text-fg ${emphasis ? 'text-[1.0625rem] font-semibold' : 'text-[0.9375rem]'}`}>
         {formatCount(value)}
       </div>
     </li>
@@ -59,22 +62,28 @@ export default function RunReportSummary({
     <section
       data-tone={summary.tone}
       aria-label="Run report"
-      className={`min-w-0 rounded-xl border p-4 text-sm ${TONE_CLASS[summary.tone]} ${className}`}
+      className={`min-w-0 rounded-md border bg-bg p-4 text-[0.875rem] ${TONE[summary.tone].box} ${className}`}
     >
-      {title ? <p className="break-words text-xs text-[var(--text-muted)]">{title}</p> : null}
+      {title ? <p className="break-words text-[0.75rem] text-fg-3">{title}</p> : null}
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h3 className={`break-words text-base font-semibold tracking-[-0.01em] ${summary.tone === 'error' ? 'text-[var(--text-error)]' : 'text-[var(--text-normal)]'}`}>
+        <h3 className="flex min-w-0 items-center gap-2 break-words text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">
+          <span
+            aria-hidden="true"
+            className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm ${summary.tone === 'error' ? 'bg-inverse text-inverse-fg' : ''}`}
+          >
+            <StatusIcon status={TONE[summary.tone].glyph} />
+          </span>
           {summary.headline}
         </h3>
-        {duration ? <span className="shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{duration}</span> : null}
+        {duration ? <span className="shrink-0 text-[0.75rem] tabular-nums text-fg-3">{duration}</span> : null}
       </div>
       {summary.lines.length ? (
-        <ul className="mt-1 space-y-0.5 text-[var(--text-muted)]">
+        <ul className="mt-1 space-y-0.5 text-fg-2">
           {summary.lines.map((line) => <li key={line} className="break-words">{line}</li>)}
         </ul>
       ) : null}
 
-      <ul aria-label="Run counts" className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <ul aria-label="Run counts" className="mt-4 grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
         <Count label="New posts" value={report.posts_inserted} emphasis />
         <Count label="Updated" value={report.posts_updated} />
         <Count label="Fetched posts" value={report.posts_fetched} />
@@ -85,17 +94,18 @@ export default function RunReportSummary({
 
       {report.failures.length ? (
         <div className="mt-3">
-          <h4 className="text-xs font-medium text-[var(--text-muted)]">Failed sources</h4>
-          <ul aria-label="Failed sources" className="mt-1 space-y-1.5">
+          <h4 className="text-[0.75rem] font-medium text-fg-3">Failed sources</h4>
+          <ul aria-label="Failed sources" className="mt-1 divide-y divide-line border-y border-line">
             {report.failures.map((failure, index) => (
-              <li key={`${failure.source_id}-${index}`} className="min-w-0 rounded-lg bg-[var(--background-secondary)] px-3 py-2">
+              <li key={`${failure.source_id}-${index}`} className="min-w-0 py-2">
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <span className="min-w-0 flex-1 truncate font-medium text-[var(--text-normal)]" title={failure.display_name}>
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg" title={failure.display_name}>
                     {failure.display_name}
                   </span>
-                  <span className="shrink-0 text-xs text-[var(--text-muted)]">{STAGE_LABELS[failure.stage] ?? failure.stage}</span>
+                  <span className="shrink-0 text-[0.75rem] text-fg-3">{STAGE_LABELS[failure.stage] ?? failure.stage}</span>
                 </div>
-                <p className="mt-0.5 line-clamp-2 text-xs text-[var(--text-error)] [overflow-wrap:anywhere]" title={failure.error || undefined}>
+                <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]" title={failure.error || undefined}>
+                  <span aria-hidden="true" className="mr-1 font-semibold text-fg">×</span>
                   {failure.error || 'No error message'}
                 </p>
               </li>
@@ -105,21 +115,21 @@ export default function RunReportSummary({
       ) : null}
 
       {report.post_failures.length ? (
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
+        <p className="mt-2 text-[0.75rem] text-fg-2">
           {formatCount(report.post_failures.length)} post{report.post_failures.length === 1 ? '' : 's'} could not be saved; see the raw report.
         </p>
       ) : null}
 
       {topSources.length ? (
         <div className="mt-3">
-          <h4 className="text-xs font-medium text-[var(--text-muted)]">New posts by source</h4>
-          <ul aria-label="New posts by source" className="mt-1 divide-y divide-[var(--background-modifier-border)]">
+          <h4 className="text-[0.75rem] font-medium text-fg-3">New posts by source</h4>
+          <ul aria-label="New posts by source" className="mt-1 divide-y divide-line">
             {topSources.map((source) => (
               <li key={source.source_id} className="flex min-w-0 items-baseline gap-3 py-1">
-                <span className="min-w-0 flex-1 truncate text-[var(--text-normal)]" title={source.display_name}>
+                <span className="min-w-0 flex-1 truncate text-fg" title={source.display_name}>
                   {source.display_name}
                 </span>
-                <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{formatCount(source.inserted)}</span>
+                <span className="shrink-0 tabular-nums text-fg-2">{formatCount(source.inserted)}</span>
               </li>
             ))}
           </ul>
@@ -127,8 +137,8 @@ export default function RunReportSummary({
       ) : null}
 
       <details className="mt-3">
-        <summary className="cursor-pointer select-none text-xs text-[var(--text-muted)] hover:text-[var(--text-normal)]">Raw report</summary>
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--background-secondary)] p-3 text-xs leading-5 text-[var(--text-normal)] [overflow-wrap:anywhere]">
+        <summary className="cursor-pointer select-none text-[0.75rem] text-fg-3 hover:text-fg">Raw report</summary>
+        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface p-3 font-mono text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
           {JSON.stringify(report, null, 2)}
         </pre>
       </details>

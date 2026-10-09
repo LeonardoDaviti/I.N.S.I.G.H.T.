@@ -1,9 +1,9 @@
 import { useId, useState } from 'react';
-import { Loader2, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 
 import type { RunReport } from '../../services/api';
 import { useIngestionRun } from '../../hooks/useIngestionRun';
-import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
+import { Button } from '../ui';
 import ConfirmDialog from './ConfirmDialog';
 
 /**
@@ -40,32 +40,26 @@ export default function RunCycleButton({
 
   return (
     <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${className}`}>
-      <button
-        type="button"
+      <Button
+        variant={force ? 'danger' : 'primary'}
+        size={compact ? 'sm' : 'md'}
         onClick={onClick}
         disabled={running}
         aria-busy={running}
-        className={`inline-flex min-h-[44px] items-center gap-2 rounded-lg px-4 text-sm font-medium disabled:opacity-60 ${PRESS_FEEDBACK} ${FOCUS_RING} ${
-          force
-            ? 'border border-[var(--text-error)] bg-[var(--background-primary)] text-[var(--text-error)] hover:bg-[var(--background-secondary)]'
-            : 'bg-[var(--interactive-accent)] text-[var(--text-on-accent)] hover:bg-[var(--interactive-accent-hover)]'
-        } ${compact ? 'min-h-[40px] px-3' : ''}`}
       >
-        {running
-          ? <Loader2 aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" />
-          : <Play aria-hidden="true" className="h-4 w-4" />}
+        {running ? null : <Play aria-hidden="true" />}
         {label}
-      </button>
-      <label htmlFor={forceId} className="inline-flex min-h-[44px] cursor-pointer select-none items-center gap-2 text-sm text-[var(--text-muted)]">
+      </Button>
+      <label htmlFor={forceId} className="inline-flex min-h-[2.25rem] cursor-pointer select-none items-center gap-2 text-[0.8125rem] text-fg-2 coarse:min-h-[2.75rem]">
         <input
           id={forceId}
           type="checkbox"
           checked={force}
           onChange={(event) => setForce(event.target.checked)}
           disabled={running}
-          className="h-4 w-4 accent-[var(--interactive-accent)]"
+          className="h-4 w-4 accent-[rgb(var(--text))]"
         />
-        Force all (ignore cadence &amp; backoff)
+        Force all (ignore cadence and backoff)
       </label>
       <ConfirmDialog
         open={confirming}

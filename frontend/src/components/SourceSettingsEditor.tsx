@@ -1,12 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { X, Save, AlertCircle } from 'lucide-react';
 import { apiService } from '../services/api';
 import type { SourceWithSettings, Folder } from '../services/api';
 import { useApi } from '../services/ApiContext';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { errorMessage } from '../lib/apiError';
 import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
+import { Button, FilterChip, Input, Sheet, SheetContent } from './ui';
+import { Notice } from './states';
+import { sourceLabel } from '../lib/format';
+import { getPlatformLabel } from '../lib/sourcePresentation';
 
 interface SourceSettingsEditorProps {
   source: SourceWithSettings;
@@ -60,7 +63,6 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
 
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const modalRef = useRef<HTMLDivElement>(null);
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [memberFolderIds, setMemberFolderIds] = useState<Set<string>>(new Set());
@@ -101,20 +103,6 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
     }
   };
 
-  // Handle click outside to close
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [onClose]);
-
   const handleSave = async () => {
     if (!('value' in fetchDelay) || !('value' in priority)) return;
     setIsSaving(true);
@@ -144,67 +132,57 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div ref={modalRef} className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Source Settings</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const label = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
+  const hint = (bad: boolean) => `mt-1 text-[0.75rem] ${bad ? 'font-semibold text-fg' : 'text-fg-3'}`;
+  const name = sourceLabel(source.settings.display_name, source.handle_or_url);
 
-        {/* Content */}
-        <div className="p-4 space-y-4">
-          {/* Source Info */}
-          <div className="bg-gray-50 p-3 rounded-md border border-gray-200">
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Source</div>
-            <div className="text-sm font-medium text-gray-900">{source.handle_or_url}</div>
-            <div className="text-xs text-gray-500 mt-1">{source.platform.toUpperCase()}</div>
+  return (
+    <Sheet open onOpenChange={(open) => { if (!open && !isSaving) onClose(); }}>
+      <SheetContent
+        title={name}
+        description={(
+          <span className="block min-w-0 [overflow-wrap:anywhere]">
+            {getPlatformLabel(source.platform)} · {source.handle_or_url}
+          </span>
+        )}
+        className="w-[min(32rem,100vw)]"
+      >
+        {/* A div, not a form: the cadence editor below is its own form and forms cannot nest. */}
+        <div className="space-y-6">
+          <div>
+            <label htmlFor="display_name" className={label}>Name</label>
+            <Input
+              id="display_name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={sourceLabel(source.handle_or_url)}
+            />
+            <p className={hint(false)}>Leave empty to derive it from the URL.</p>
           </div>
 
-          {/* Folders */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Folders</label>
+          <fieldset>
+            <legend className={label}>Tracks</legend>
             {foldersLoading ? (
-              <div className="text-xs text-gray-400">Loading folders…</div>
+              <p className="text-[0.75rem] text-fg-3">Loading tracks…</p>
             ) : folders.length === 0 ? (
-              <div className="text-xs text-gray-400">No folders yet. Create one on the Sources page.</div>
+              <p className="text-[0.75rem] text-fg-3">No tracks yet. Create one on the Sources page.</p>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {folders.map((f) => {
-                  const active = memberFolderIds.has(f.id);
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => toggleFolder(f.id)}
-                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                        active
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
-                      }`}
-                    >
-                      {active ? '✓ ' : '+ '}{f.name}
-                    </button>
-                  );
-                })}
+                {folders.map((f) => (
+                  <FilterChip key={f.id} selected={memberFolderIds.has(f.id)} onClick={() => toggleFolder(f.id)}>
+                    {f.name}
+                  </FilterChip>
+                ))}
               </div>
             )}
-            <p className="text-xs text-gray-500 mt-1">Click a folder to add/remove this source. Saves instantly.</p>
-          </div>
+            <p className={hint(false)}>Select a track to add this source to it. Saves instantly.</p>
+          </fieldset>
 
-          {/* Main feed */}
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <div id="main_digest_label" className="text-sm font-medium text-gray-700">In the main feed and digest</div>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Off keeps it fetched and readable through its tracks, but out of Home and the daily briefing. Saves instantly.
+              <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
+              <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                Off keeps it fetched and readable through its tracks, but out of the feed and the daily briefing. Saves instantly.
               </p>
             </div>
             <button
@@ -214,139 +192,73 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
               aria-labelledby="main_digest_label"
               disabled={mainDigest === null || savingDigest}
               onClick={() => void toggleMainDigest()}
-              className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors duration-150 disabled:opacity-50 ${mainDigest ? 'bg-[var(--interactive-accent)]' : 'bg-[var(--background-modifier-border)]'}`}
+              className={`relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-[120ms] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg disabled:opacity-40 motion-reduce:transition-none ${mainDigest ? 'border-inverse bg-inverse' : 'border-line-strong'}`}
             >
-              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-150 ease-out motion-reduce:transition-none ${mainDigest ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              <span
+                aria-hidden="true"
+                className={`absolute h-3.5 w-3.5 rounded-full transition-transform duration-[120ms] ease-out motion-reduce:transition-none ${mainDigest ? 'translate-x-[1.125rem] bg-inverse-fg' : 'translate-x-[0.1875rem] bg-fg-3'}`}
+              />
             </button>
           </div>
 
-          {/* Cadence */}
-          <div className="rounded-md border border-gray-200 p-3">
+          <div className="rounded-md border border-line p-3">
             {healthRow ? (
               <CadenceOverrideEditor row={healthRow} />
             ) : (
-              <p className="text-xs text-gray-500">
+              <p className="text-[0.75rem] text-fg-3">
                 {health.isError ? `Cadence unavailable: ${errorMessage(health.error)}` : 'Loading cadence…'}
               </p>
             )}
           </div>
 
-          {/* Display Name */}
-          <div>
-            <label htmlFor="display_name" className="block text-sm font-medium text-gray-700 mb-1">
-              Display Name
-            </label>
-            <input
-              id="display_name"
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder={source.handle_or_url}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Leave empty to use the default URL/handle
-            </p>
-          </div>
-
-          {/* Fetch Delay */}
-          <div>
-            <label htmlFor="fetch_delay" className="block text-sm font-medium text-gray-700 mb-1">
-              Fetch Delay (seconds)
-            </label>
-            <input
-              id="fetch_delay"
-              type="text"
-              inputMode="numeric"
-              value={fetchDelayText}
-              onChange={(e) => setFetchDelayText(e.target.value)}
-              aria-invalid={'error' in fetchDelay}
-              aria-describedby="fetch_delay_help"
-              className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm tabular-nums ${'error' in fetchDelay ? 'border-[var(--text-error)]' : 'border-gray-300'}`}
-            />
-            <p id="fetch_delay_help" className={`text-xs mt-1 ${'error' in fetchDelay ? 'text-[var(--text-error)]' : 'text-gray-500'}`}>
-              {'error' in fetchDelay ? fetchDelay.error : 'Time to wait after fetching from this source (0 to 60 seconds)'}
-            </p>
-          </div>
-
-          {/* Priority */}
-          <div>
-            <label htmlFor="priority" className="block text-sm font-medium text-gray-700 mb-1">
-              Priority
-            </label>
-            <input
-              id="priority"
-              type="text"
-              inputMode="numeric"
-              value={priorityText}
-              onChange={(e) => setPriorityText(e.target.value)}
-              aria-invalid={'error' in priority}
-              aria-describedby="priority_help"
-              className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm tabular-nums ${'error' in priority ? 'border-[var(--text-error)]' : 'border-gray-300'}`}
-            />
-            <p id="priority_help" className={`text-xs mt-1 ${'error' in priority ? 'text-[var(--text-error)]' : 'text-gray-500'}`}>
-              {'error' in priority ? priority.error : 'Lower number = higher priority (fetched first), 1 to 9999'}
-            </p>
-          </div>
-
-          {/* Max Posts Per Fetch */}
-          <div>
-            <label htmlFor="max_posts" className="block text-sm font-medium text-gray-700 mb-1">
-              Max Posts Per Fetch
-            </label>
-            <input
-              id="max_posts"
-              type="number"
-              min="1"
-              max="200"
-              value={maxPostsPerFetch}
-              readOnly
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-              disabled
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              ⚠️ Not enforced (future feature)
-            </p>
-          </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-800">{error}</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
+              <Input
+                id="fetch_delay"
+                inputMode="numeric"
+                value={fetchDelayText}
+                onChange={(e) => setFetchDelayText(e.target.value)}
+                aria-invalid={'error' in fetchDelay}
+                aria-describedby="fetch_delay_help"
+                className="tabular-nums"
+              />
+              <p id="fetch_delay_help" className={hint('error' in fetchDelay)}>
+                {'error' in fetchDelay ? `× ${fetchDelay.error}` : '0 to 60 seconds after each fetch.'}
+              </p>
             </div>
-          )}
-        </div>
+            <div>
+              <label htmlFor="priority" className={label}>Priority</label>
+              <Input
+                id="priority"
+                inputMode="numeric"
+                value={priorityText}
+                onChange={(e) => setPriorityText(e.target.value)}
+                aria-invalid={'error' in priority}
+                aria-describedby="priority_help"
+                className="tabular-nums"
+              />
+              <p id="priority_help" className={hint('error' in priority)}>
+                {'error' in priority ? `× ${priority.error}` : '1 to 9999; lower is fetched first.'}
+              </p>
+            </div>
+            <div>
+              <label htmlFor="max_posts" className={label}>Max posts per fetch</label>
+              <Input id="max_posts" type="number" value={maxPostsPerFetch} readOnly disabled className="tabular-nums" />
+              <p className={hint(false)}>Not enforced yet.</p>
+            </div>
+          </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-200 bg-gray-50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-            disabled={isSaving}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving || !formValid}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {isSaving ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                Save Settings
-              </>
-            )}
-          </button>
+          {error ? <Notice tone="error" title={error} /> : null}
+
+          <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
+            <Button variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
+            <Button variant="primary" onClick={() => void handleSave()} disabled={isSaving || !formValid}>
+              {isSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
-

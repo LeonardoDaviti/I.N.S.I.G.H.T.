@@ -1,20 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  AlertCircle,
-  Archive,
-  Calendar,
-  CheckCircle2,
-  ChevronLeft,
-  Clock3,
-  Loader2,
-  RefreshCw,
-  Search,
-  ScrollText,
-  Settings,
-  X,
-  Zap,
-} from 'lucide-react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { RefreshCw, Settings } from 'lucide-react';
 import { apiService } from '../services/api';
 import type {
   ArchiveCatalogEntry,
@@ -35,13 +21,29 @@ import {
 import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHealth } from '../lib/operationsOverview';
 import { asRunReport } from '../lib/runReport';
 import { localDateISO } from '../lib/dates';
-import { formatCount } from '../lib/format';
+import { formatCount, plural, sourceLabel } from '../lib/format';
 import { HEALTH_STATUS_LABELS } from '../lib/sourceSchedule';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import RunCycleButton from '../components/ops/RunCycleButton';
 import RunReportSummary from '../components/ops/RunReportSummary';
 import { getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
 import SourceAvatar from '../components/SourceAvatar';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  Input,
+  Page,
+  PageHeader,
+  Select,
+  StatusGlyph,
+  StatusIcon,
+  TextLink,
+  tabTriggerClass,
+} from '../components/ui';
+import type { Status } from '../components/ui';
+import { Notice } from '../components/states';
 
 type LogLevel = 'info' | 'success' | 'error';
 
@@ -88,15 +90,45 @@ function sourceMatchesQuery(source: Pick<SourceWithSettings, 'id' | 'platform' |
   ].some((value) => value.toLowerCase().includes(term));
 }
 
-function levelClasses(level: LogLevel) {
-  switch (level) {
-    case 'success':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-800';
-    case 'error':
-      return 'border-rose-200 bg-rose-50 text-rose-800';
-    default:
-      return 'border-slate-200 bg-slate-50 text-slate-700';
+const LOG_LEVEL_GLYPH: Record<LogLevel, Status> = {
+  info: 'scheduled',
+  success: 'ok',
+  error: 'failing',
+};
+
+/** Job status -> monochrome glyph (design doc §8). */
+function jobGlyph(status?: string | null): Status {
+  if (status === 'failed') return 'failing';
+  if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
+  return 'ok';
+}
+
+/** Archive status -> glyph + word: archived is full, partial is half, nothing is a ring. */
+function archiveGlyph(status?: string | null): { status: Status; label: string } {
+  if (status === 'archived') return { status: 'ok', label: 'archived' };
+  if (status === 'partial') return { status: 'due', label: 'partial' };
+  return { status: 'scheduled', label: 'not archived' };
+}
+
+/** Lowercase tab words (design doc §4: lowercase is the voice of tabs). */
+const TAB_WORDS: Record<string, string> = {
+  main: 'overview',
+  archive: 'archive',
+  missions: 'jobs',
+  logs: 'logs',
+};
+
+/** A scheduler that has not ticked for two tick intervals (or ever) is stalled. */
+function schedulerStaleness(state: SchedulerState | null, tickMinutes: number, nowMs: number): string | null {
+  if (state === null) return null;
+  const last = state.last_tick_at ? new Date(state.last_tick_at).getTime() : NaN;
+  if (Number.isNaN(last)) {
+    return 'The scheduler has not recorded a tick. Nothing is fetched automatically until the ingestion service runs.';
   }
+  if (nowMs - last > Math.max(2 * tickMinutes, 90) * 60_000) {
+    return `The scheduler last ticked ${formatTimeRemaining(nowMs - last).replace(/ \d+s$/, '')} ago. Automatic fetching looks stalled; check the ingestion service.`;
+  }
+  return null;
 }
 
 function formatJson(data: Record<string, any> | null) {
@@ -152,17 +184,6 @@ function extractEstimatedTokens(payload?: Record<string, any> | null) {
   return formatEstimatedTokens(payload?.estimated_tokens ?? payload?.token_usage?.estimated_tokens);
 }
 
-function archiveDotClasses(status?: string | null) {
-  switch (status) {
-    case 'archived':
-      return 'bg-emerald-500';
-    case 'partial':
-      return 'bg-amber-500';
-    default:
-      return 'bg-rose-500';
-  }
-}
-
 function formatArchiveRatio(entry?: ArchiveCatalogEntry | null) {
   if (!entry) return '0/?';
   const available = typeof entry.available_posts === 'number' ? entry.available_posts.toLocaleString() : '?';
@@ -211,104 +232,75 @@ function SchedulerSettingsModal({
   onTickChange: (value: number) => void;
   onToggle: (key: keyof SchedulerConfig, checked: boolean) => void;
 }) {
-  if (!open || !schedulerConfig) {
+  if (!schedulerConfig) {
     return null;
   }
+  const label = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-8 backdrop-blur-sm">
-      <div className="app-panel w-full max-w-xl overflow-hidden">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-indigo-200 bg-indigo-50 text-indigo-700">
-              <Clock3 className="h-5 w-5" />
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent title="Scheduler" description="How often the scheduler looks for due sources and writes briefings.">
+        <form className="mt-5 space-y-5" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="scheduler-tick" className={label}>Check for due sources every (minutes)</label>
+              <Input
+                id="scheduler-tick"
+                type="number"
+                min={15}
+                step={5}
+                value={schedulerConfig.ingest_tick_minutes ?? 60}
+                onChange={(e) => onTickChange(Math.max(15, Number(e.target.value) || 15))}
+                className="tabular-nums"
+              />
+              <p className="mt-1 text-[0.75rem] text-fg-3">At least 15. Each source still waits for its own cadence.</p>
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Scheduler Control</h2>
+              <label htmlFor="scheduler-interval" className={label}>Write briefings every (hours)</label>
+              <Input
+                id="scheduler-interval"
+                type="number"
+                min={0.25}
+                step={0.25}
+                value={schedulerConfig.interval_hours}
+                onChange={(e) => onIntervalChange(Math.max(0.25, Number(e.target.value) || 0.25))}
+                className="tabular-nums"
+              />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
-            aria-label="Close scheduler settings"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
 
-        <div className="space-y-4 px-5 py-4">
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Briefing interval (hours)
-            </label>
-            <input
-              type="number"
-              min={0.25}
-              step={0.25}
-              value={schedulerConfig.interval_hours}
-              onChange={(e) => onIntervalChange(Math.max(0.25, Number(e.target.value) || 0.25))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Ingestion tick (minutes, at least 15)
-            </label>
-            <input
-              type="number"
-              min={15}
-              step={5}
-              value={schedulerConfig.ingest_tick_minutes ?? 60}
-              onChange={(e) => onTickChange(Math.max(15, Number(e.target.value) || 15))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            />
-            <p className="mt-1 text-xs text-slate-500">How often the scheduler looks for due sources. Each source still waits for its own cadence.</p>
-          </div>
-
-          <div className="grid gap-3">
+          <fieldset className="divide-y divide-line rounded-md border border-line">
+            <legend className="sr-only">Each cycle</legend>
             {[
               ['sync_sources_each_cycle', 'Sync sources.json every cycle'],
-              ['generate_daily_briefing', 'Generate daily briefing'],
-              ['generate_topic_briefing', 'Generate topic briefing'],
-            ].map(([key, label]) => (
-              <label key={key} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                <span>{label}</span>
+              ['generate_daily_briefing', 'Write the daily briefing'],
+              ['generate_topic_briefing', 'Write the topic briefing'],
+            ].map(([key, text]) => (
+              <label key={key} className="flex min-h-[2.75rem] cursor-pointer items-center justify-between gap-3 px-3 text-[0.875rem] text-fg">
+                <span>{text}</span>
                 <input
                   type="checkbox"
+                  className="h-4 w-4 accent-[rgb(var(--text))]"
                   checked={Boolean(schedulerConfig[key as keyof SchedulerConfig])}
                   onChange={(e) => onToggle(key as keyof SchedulerConfig, e.target.checked)}
                 />
               </label>
             ))}
-          </div>
-        </div>
+          </fieldset>
 
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={savingScheduler || !schedulerDirty}
-            className="rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {savingScheduler ? 'Saving…' : 'Save Scheduler'}
-          </button>
-        </div>
-      </div>
-    </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={savingScheduler || !schedulerDirty}>
+              {savingScheduler ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 export default function IngestionControl() {
-  const navigate = useNavigate();
   const { tab: tabParam } = useParams();
   const [searchParams] = useSearchParams();
   const activeTab = normalizeIngestionTab(tabParam);
@@ -702,967 +694,667 @@ export default function IngestionControl() {
     return true;
   };
 
-  const renderImmediateActionsSection = () => (
-    <section className="app-panel p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-slate-900">Immediate Actions</h2>
-        <button
-          type="button"
-          onClick={() => loadSources()}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${loadingSources ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
-      </div>
+  const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
+  const fieldLabel = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
+  const hint = 'mt-1 text-[0.75rem] text-fg-3';
+  const busy = runningAction !== null;
+  const sourceOptionLabel = (source: SourceWithSettings) => `${sourceLabel(source.settings?.display_name, source.handle_or_url)} · ${source.platform}`;
+  const sourceHealth = normalizeSourceHealth(operationsOverview?.source_health);
+  const stats = operationsOverview?.stats ?? {};
+  const staleWarning = schedulerStaleness(schedulerState, Number(schedulerConfig?.ingest_tick_minutes ?? 60), nowMs);
 
-      <div>
-        <RunCycleButton
-          onReport={(report) => {
-            setCycleReport(report);
-            appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Run finished: ${report.status}`);
-            void loadOperationsOverview({ silent: true });
-            void loadSchedulerState();
-          }}
-        />
-        <p className="mt-2 text-xs text-slate-500">
-          Fetches the sources that are due now, exactly as the next scheduler tick would. Each source keeps its own cadence and backoff.
-        </p>
-      </div>
+  const onCycleReport = (report: RunReport) => {
+    setCycleReport(report);
+    appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Run finished: ${report.status}`);
+    void loadOperationsOverview({ silent: true });
+    void loadSchedulerState();
+  };
 
-      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-        <div className="flex items-center gap-2">
-          <Zap className="h-4 w-4 text-amber-600" />
-          <div className="text-sm font-semibold text-slate-900">Fetch A Single Source Now</div>
+  const renderStatusSection = () => (
+    <section aria-labelledby="ingest-status" className="space-y-4">
+      <h2 id="ingest-status" className={sectionTitle}>Status</h2>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-4">
+        {[
+          ['Sources', stats.sources_monitored ?? sources.length],
+          ['Enabled', stats.enabled_sources ?? enabledSources.length],
+          ['Posts', stats.total_posts],
+          ['Topics', stats.total_topics],
+          ['Briefings', stats.total_briefings],
+          ['Failed jobs (recent)', stats.recent_failures],
+        ].map(([term, value]) => (
+          <div key={String(term)} className="min-w-0 border-l border-line pl-3">
+            <dt className="text-[0.75rem] text-fg-3">{term}</dt>
+            <dd className="text-[1.0625rem] font-semibold tabular-nums text-fg">{formatCount(typeof value === 'number' ? value : null)}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="space-y-2 border-t border-line pt-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[0.875rem] font-semibold text-fg">Source health</h3>
+          <TextLink to="/settings/sources?tab=health" className="text-[0.8125rem]">All sources</TextLink>
         </div>
-
-        <div className="mt-3 grid gap-3 md:grid-cols-[1.6fr_0.8fr_auto] md:items-end">
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Source
-            </label>
-            <select
-              value={selectedSourceId}
-              onChange={(e) => setSelectedSourceId(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            >
-              {enabledSources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {getSourceDisplayName(source)} · {source.platform}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Live Fetch Limit
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={liveFetchLimit}
-              onChange={(e) => setLiveFetchLimit(Math.max(1, Number(e.target.value) || 1))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={async () => {
-              if (!selectedSourceId) return;
-              const report = await runIngestion({
-                kind: 'source',
-                id: selectedSourceId,
-                name: selectedSource ? getSourceDisplayName(selectedSource) : undefined,
-                limit: liveFetchLimit,
-              });
-              if (report) {
-                setSourceFetchReport(report);
-                appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Fetch finished: ${report.status}`);
-                await loadSources({ silent: true });
-                await loadOperationsOverview({ silent: true });
-              }
-            }}
-            disabled={!selectedSourceId || isIngestionRunning({ kind: 'source', id: selectedSourceId })}
-            className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {selectedSourceId && isIngestionRunning({ kind: 'source', id: selectedSourceId }) ? 'Fetching…' : 'Fetch Source Now'}
-          </button>
-        </div>
-
-        {selectedSource && (
-          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
-            <div className="font-semibold text-slate-900">
-              {getSourceDisplayName(selectedSource)}
-            </div>
-            <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-600">
-              <span>Platform: {selectedSource.platform}</span>
-              <span>Enabled: {selectedSource.enabled ? 'yes' : 'no'}</span>
-              <span>Stored posts: {selectedSource.post_count}</span>
-              <span>Priority: {selectedSource.settings.priority ?? 999}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <button
-          type="button"
-          onClick={() => runAction(
-            'sync-json-to-db',
-            'Source registry sync JSON -> DB started',
-            () => apiService.syncSources('json-to-db'),
-            () => undefined,
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          Sync JSON → DB
-        </button>
-        <button
-          type="button"
-          onClick={() => runAction(
-            'sync-db-to-json',
-            'Source registry sync DB -> JSON started',
-            () => apiService.syncSources('db-to-json'),
-            () => undefined,
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          Sync DB → JSON
-        </button>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
-        <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Briefing Date
-          </label>
-          <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            />
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => runAction(
-            'briefing',
-            `Daily briefing requested for ${selectedDate}`,
-            () => apiService.generateBriefing(selectedDate),
-            (result) => setBriefingResult(result),
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {runningAction === 'briefing' ? 'Generating…' : 'Generate Daily'}
-        </button>
-        <button
-          type="button"
-          onClick={() => runAction(
-            'topic-briefing',
-            `Topic briefing requested for ${selectedDate}`,
-            () => apiService.generateBriefingWithTopics(selectedDate),
-            (result) => setTopicBriefingResult(result),
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {runningAction === 'topic-briefing' ? 'Generating…' : 'Generate Topics'}
-        </button>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        <div className="text-sm font-semibold text-slate-900">Recent Responses</div>
-        {cycleReport || sourceFetchReport ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {cycleReport ? <RunReportSummary report={cycleReport} title="Run cycle" /> : null}
-            {sourceFetchReport ? <RunReportSummary report={sourceFetchReport} title="Single source" /> : null}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500">No run in this session yet. Run reports show up here and in Missions.</p>
-        )}
-        {briefingResult || topicBriefingResult ? (
-          <details className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <summary className="cursor-pointer text-sm font-medium text-slate-900">Briefing responses (raw)</summary>
-            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
-              {formatJson({
-                daily: briefingResult,
-                topics: topicBriefingResult,
-              })}
-            </pre>
-          </details>
+        <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-[0.8125rem] tabular-nums text-fg-2">
+          <li className="inline-flex items-center gap-1.5 font-semibold text-fg"><StatusIcon status="due" />{formatCount(sourceHealth.summary.due_now)} due</li>
+          <li className="inline-flex items-center gap-1.5"><StatusIcon status="scheduled" />{formatCount(sourceHealth.summary.deferred)} scheduled</li>
+          <li>
+            <Link to="/settings/sources?tab=health&status=error" className="rounded-sm hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg">
+              {sourceHealth.summary.errors + sourceHealth.summary.backoff > 0 ? (
+                <StatusGlyph status="failing" label={`${formatCount(sourceHealth.summary.errors + sourceHealth.summary.backoff)} failing`} />
+              ) : (
+                <span className="inline-flex items-center gap-1.5"><StatusIcon status="ok" />0 failing</span>
+              )}
+            </Link>
+          </li>
+          <li className="inline-flex items-center gap-1.5"><StatusIcon status="unavailable" />{formatCount(sourceHealth.summary.unavailable)} unavailable</li>
+        </ul>
+        {sourceHealth.rows.length ? (
+          <ul className="divide-y divide-line border-y border-line">
+            {sourceHealth.rows.map((row) => (
+              <li key={row.source_id} className="flex min-w-0 items-start justify-between gap-3 py-2 text-[0.8125rem]">
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-fg" title={row.display_name}>{sourceLabel(row.display_name || row.source_id)}</div>
+                  <div className="truncate text-[0.75rem] text-fg-3" title={row.last_error || row.decision_detail || undefined}>
+                    {row.platform} · {plural(row.stored_posts, 'post')}
+                    {row.last_error ? ` · ${row.last_error}` : row.decision_detail ? ` · ${row.decision_detail}` : ''}
+                  </div>
+                </div>
+                <StatusGlyph
+                  status={row.status === 'error' ? 'failing' : row.status === 'deferred' ? 'scheduled' : row.status}
+                  label={HEALTH_STATUS_LABELS[row.status] ?? row.status}
+                />
+              </li>
+            ))}
+          </ul>
         ) : null}
       </div>
     </section>
   );
 
-  const renderArchiveControlSection = () => (
-    <section className="app-panel p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <Archive className="h-5 w-5 text-amber-600" />
-        <h2 className="text-base font-semibold text-slate-900">Archive Control</h2>
-      </div>
-
-      <div className="mb-4">
-        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-          Search Source
-        </label>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="search"
-            value={archiveSourceQuery}
-            onChange={(e) => setArchiveSourceQuery(e.target.value)}
-            placeholder="Search source"
-            className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-          />
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr_0.8fr]">
-        <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Source
-          </label>
-          <select
-            value={selectedSourceId}
-            onChange={(e) => setSelectedSourceId(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-          >
-            {filteredEnabledSources.length > 0 ? filteredEnabledSources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {getSourceDisplayName(source)} · {source.platform}
-              </option>
-            )) : (
-              <option value="" disabled>No matching sources</option>
-            )}
-          </select>
-        </div>
-        <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Desired Posts
-          </label>
-          <input
-            type="number"
-            min={1}
-            value={desiredPosts}
-            onChange={(e) => setDesiredPosts(Math.max(1, Number(e.target.value) || 1))}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-          />
-        </div>
-        <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 md:mt-7">
-          <span>Resume from checkpoint</span>
-          <input
-            type="checkbox"
-            checked={archiveResume}
-            onChange={(e) => setArchiveResume(e.target.checked)}
-          />
-        </label>
-      </div>
-
-      {selectedSource && (
-        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-          <div className="font-semibold text-slate-900">{getSourceDisplayName(selectedSource)}</div>
-          <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-600">
-            <span>Platform: {selectedSource.platform}</span>
-            <span>Enabled: {selectedSource.enabled ? 'yes' : 'no'}</span>
-            <span>Stored posts: {selectedSource.post_count}</span>
-            {selectedArchiveEntry?.archive_status && <span>Archive status: {selectedArchiveEntry.archive_status}</span>}
-            {selectedArchiveEntry?.resume_ready ? <span>Resume ready</span> : <span>No checkpoint</span>}
-            {selectedArchiveEntry?.kind && <span>Kind: {selectedArchiveEntry.kind}</span>}
-            {formatBacklog(selectedArchiveEntry) && <span className="tabular-nums">{formatBacklog(selectedArchiveEntry)}</span>}
+  const renderImmediateActionsSection = () => (
+    <div className="space-y-10">
+      <section aria-labelledby="ingest-last-run" className="space-y-3">
+        <h2 id="ingest-last-run" className={sectionTitle}>Last run</h2>
+        {cycleReport || sourceFetchReport ? (
+          <div className="space-y-3">
+            {cycleReport ? <RunReportSummary report={cycleReport} title="Run cycle" /> : null}
+            {sourceFetchReport ? <RunReportSummary report={sourceFetchReport} title="Single source" /> : null}
           </div>
-        </div>
-      )}
-
-      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-        <div className="text-sm font-semibold text-slate-900">Rate Limit Control</div>
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Page Delay
-            </label>
-            <input
-              type="number"
-              min={0}
-              value={archivePageDelay}
-              onChange={(e) => setArchivePageDelay(Math.max(0, Number(e.target.value) || 0))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-            />
-          </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Batch Size
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={archiveBatchSize}
-              onChange={(e) => setArchiveBatchSize(Math.max(1, Number(e.target.value) || 1))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-            />
-          </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Batch Cooldown
-            </label>
-            <input
-              type="number"
-              min={0}
-              value={archiveBatchCooldown}
-              onChange={(e) => setArchiveBatchCooldown(Math.max(0, Number(e.target.value) || 0))}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={() => selectedSourceId && runAction(
-            'archive-status',
-            'Archive status requested',
-            () => apiService.getArchiveStatus(selectedSourceId),
-            (result) => setArchiveResult(result),
-          )}
-          disabled={!selectedSourceId || runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          Status
-        </button>
-        <button
-          type="button"
-          onClick={() => selectedSourceId && runAction(
-            'archive-plan',
-            'Archive plan requested',
-            () => apiService.planArchive(selectedSourceId, desiredPosts, {
-              resume: archiveResume,
-              pageDelaySeconds: archivePageDelay,
-              batchSize: archiveBatchSize,
-              batchCooldownSeconds: archiveBatchCooldown,
-            }),
-            (result) => setArchiveResult(result),
-          )}
-          disabled={!selectedSourceId || runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          Plan Archive
-        </button>
-        <button
-          type="button"
-          onClick={() => selectedSourceId && runAction(
-            'archive-run',
-            archiveResume ? 'Archive resume started' : 'Archive run started',
-            () => apiService.runArchive(selectedSourceId, desiredPosts, {
-              resume: archiveResume,
-              pageDelaySeconds: archivePageDelay,
-              batchSize: archiveBatchSize,
-              batchCooldownSeconds: archiveBatchCooldown,
-            }),
-            (result) => setArchiveResult(result),
-          )}
-          disabled={!selectedSourceId || runningAction !== null}
-          className="rounded-2xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
-        >
-          {runningAction === 'archive-run' ? 'Archiving…' : archiveResume ? 'Continue Archive' : 'Run Archive'}
-        </button>
-        <button
-          type="button"
-          onClick={() => selectedSourceId && runAction(
-            'archive-run-fresh',
-            'Fresh archive run started',
-            () => apiService.runArchive(selectedSourceId, desiredPosts, {
-              resume: false,
-              pageDelaySeconds: archivePageDelay,
-              batchSize: archiveBatchSize,
-              batchCooldownSeconds: archiveBatchCooldown,
-            }),
-            (result) => setArchiveResult(result),
-          )}
-          disabled={!selectedSourceId || runningAction !== null}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {runningAction === 'archive-run-fresh' ? 'Starting…' : 'Start Fresh'}
-        </button>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Archive Result</div>
-        {archiveResult ? (
-          <>
-            <p className={`mt-1 break-words ${archiveResult.success === false ? 'text-rose-700' : 'text-slate-800'}`}>
-              {archiveResult.success === false
-                ? archiveResult.error || archiveResult.detail || 'The archive request failed'
-                : archiveResult.message || (archiveResult.status ? `Archive ${String(archiveResult.status)}` : 'Done')}
-            </p>
-            <details className="mt-2">
-              <summary className="cursor-pointer text-xs text-slate-500">Raw response</summary>
-              <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
-                {formatJson(archiveResult as Record<string, any>)}
-              </pre>
-            </details>
-          </>
         ) : (
-          <p className="mt-1 text-slate-500">Nothing run in this session yet.</p>
+          <p className="text-[0.875rem] text-fg-2">
+            Nothing run in this session. <span className="text-fg">Run due sources</span> fetches what is due now, exactly as the next
+            scheduler tick would; each source keeps its own cadence and backoff. Past runs are under{' '}
+            <TextLink to={getIngestionTabHref('missions')}>jobs</TextLink>.
+          </p>
         )}
-      </div>
-
-      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div className="text-sm font-semibold text-slate-900">Archive Catalog</div>
-          {loadingArchiveCatalog ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : null}
-        </div>
-        <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-          {filteredArchiveCatalog.map((entry) => {
-            const isSelected = entry.source_id === selectedSourceId;
-            return (
-              <button
-                key={entry.source_id}
-                type="button"
-                onClick={() => setSelectedSourceId(entry.source_id)}
-                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${
-                  isSelected
-                    ? 'border-amber-300 bg-amber-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <SourceAvatar
-                    source={{
-                      id: entry.source_id,
-                      platform: entry.platform,
-                      display_name: entry.display_name,
-                    }}
-                  />
-                  <span className={`h-2.5 w-2.5 rounded-full ${archiveDotClasses(entry.archive_status)}`} />
-                  <div>
-                    <div className="font-medium text-slate-900">
-                      {getSourceDisplayName({
-                        id: entry.source_id,
-                        platform: entry.platform,
-                        display_name: entry.display_name,
-                      })}
-                    </div>
-                    <div className="text-xs tabular-nums text-slate-500">
-                      {entry.platform} · {formatArchiveRatio(entry)}
-                      {formatBacklog(entry) ? ` · ${formatBacklog(entry)}` : ''}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                  <div>{entry.archive_status || 'not_archived'}</div>
-                  <div>{entry.resume_ready ? 'resume ready' : 'fresh only'}</div>
-                </div>
-              </button>
-            );
-          })}
-          {filteredArchiveCatalog.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
-              No matching archive sources.
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-
-  const renderSystemSnapshotSection = () => (
-    <section className="app-panel p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <Settings className="h-5 w-5 text-indigo-600" />
-        <h2 className="text-base font-semibold text-slate-900">System Snapshots</h2>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sources</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">{sources.length}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Enabled Sources</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            {operationsOverview?.stats?.enabled_sources ?? enabledSources.length}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Total Posts</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            {operationsOverview?.stats?.total_posts ?? 0}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Topics Count</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            {operationsOverview?.stats?.total_topics ?? 0}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Briefings Count</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            {operationsOverview?.stats?.total_briefings ?? 0}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Selected Source</div>
-          <div className="mt-2 break-words text-sm font-medium text-slate-900">
-            {selectedSource ? getSourceDisplayName(selectedSource) : 'None'}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent Failures</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            {operationsOverview?.stats?.recent_failures ?? 0}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-
-  const renderMissionFeedSection = () => (
-    <section className="app-panel p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          <h2 className="text-base font-semibold text-slate-900">Mission Feed</h2>
-        </div>
-        {loadingOverview && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
-      </div>
-
-      {visibleMissionAlerts.length > 0 && (
-        <div className="mb-4 grid gap-3 xl:grid-cols-2">
-          {visibleMissionAlerts.map((alert) => (
-            <div
-              key={alert.id}
-              className="flex items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
-            >
-              <div className="min-w-0">
-                <div className="font-semibold">{alert.title}</div>
-                <div className="mt-1 break-words">{alert.message}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDismissedAlertIds((prev) => [...prev, alert.id])}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-white/70 text-rose-600 transition hover:bg-white hover:text-rose-800"
-                aria-label={`Dismiss ${alert.title}`}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="grid gap-4 2xl:grid-cols-[minmax(20rem,0.92fr)_minmax(0,1.08fr)]">
-          <div className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/80 p-3">
-            <div className="mb-3 flex items-center justify-between gap-3 px-2">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent Missions</div>
-              </div>
-            <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              {(operationsOverview?.jobs || []).length} tracked
-            </div>
-          </div>
-
-          <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-1">
-            {(operationsOverview?.jobs || []).map((job) => {
-              const estimatedTokens = extractEstimatedTokens(job.payload);
-              const isSelected = selectedJobId === job.id;
-              return (
-                <button
-                  key={job.id}
-                  type="button"
-                  onClick={() => setSelectedJobId(job.id)}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
-                    isSelected
-                      ? 'border-indigo-300 bg-indigo-50 shadow-sm ring-1 ring-indigo-100'
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 break-words font-semibold text-slate-900">
-                      {jobLabel(job)}
-                      {job.source_display_name ? ` · ${job.source_display_name}` : ''}
-                    </div>
-                    <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
-                      job.status === 'failed'
-                        ? 'bg-rose-100 text-rose-700'
-                        : job.status === 'running'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-emerald-100 text-emerald-700'
-                    }`}>
-                      {job.status}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">{job.message || 'No message'}</div>
-                  {typeof job.progress === 'number' && job.progress > 0 ? (
-                    <div className="mt-3">
-                      <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, job.progress)}%` }} />
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                    {formatJobTimestamp(job.started_at) && <span>Started {formatJobTimestamp(job.started_at)}</span>}
-                    {formatJobTimestamp(job.finished_at) && <span>Finished {formatJobTimestamp(job.finished_at)}</span>}
-                    {formatJobDuration(job.started_at, job.finished_at) && <span>Duration {formatJobDuration(job.started_at, job.finished_at)}</span>}
-                    {estimatedTokens && <span>Estimated tokens {estimatedTokens}</span>}
-                    {job.event_count ? <span>Events {job.event_count}</span> : null}
-                  </div>
-                </button>
-              );
-            })}
-            {(operationsOverview?.jobs || []).length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                No missions recorded yet. Run an ingest, fetch, or briefing to populate the feed.
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-          <div className="min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Mission Detail</div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">
-                {selectedJob ? jobLabel(selectedJob) : 'Select a mission'}
-              </div>
-            </div>
-            {loadingSelectedJob ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : null}
-          </div>
-
-          {selectedJob ? (
-            <div className="space-y-4">
-              {(() => {
-                const missionEvents = Array.isArray(selectedJob.payload?.events) ? selectedJob.payload?.events : [];
-                return (
-                  <>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Source</div>
-                        <div className="mt-2 font-medium text-slate-900">{selectedJob.source_display_name || 'Global job'}</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Status</div>
-                        <div className="mt-2 font-medium text-slate-900">{selectedJob.status}</div>
-                      </div>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Started</div>
-                        <div className="mt-2 font-medium text-slate-900">{formatJobTimestamp(selectedJob.started_at) || 'Unknown'}</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Finished</div>
-                        <div className="mt-2 font-medium text-slate-900">{formatJobTimestamp(selectedJob.finished_at) || 'Still running'}</div>
-                      </div>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Duration</div>
-                        <div className="mt-2 font-medium text-slate-900">{formatJobDuration(selectedJob.started_at, selectedJob.finished_at) || 'In progress'}</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Estimated Tokens</div>
-                        <div className="mt-2 font-medium text-slate-900">{extractEstimatedTokens(selectedJob.payload) || 'n/a'}</div>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                      <div className="text-xs uppercase tracking-[0.14em] text-slate-400">Progress</div>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, Number(selectedJob.progress || 0))}%` }} />
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500">{Math.round(Number(selectedJob.progress || 0))}% complete</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Mission Log</div>
-                      <div className="max-h-[16rem] space-y-3 overflow-y-auto pr-1 text-xs leading-6">
-                        {missionEvents.length ? missionEvents.map((event: any, index: number) => (
-                          <div key={`${event.at || 'event'}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-2">
-                            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                              <span>{event.level || 'info'}</span>
-                              <span>{formatJobTimestamp(event.at) || event.at || 'Unknown time'}</span>
-                            </div>
-                            <div className="mt-2 text-slate-100">{event.message || 'No message'}</div>
-                            {typeof event.progress === 'number' ? (
-                              <div className="mt-1 text-slate-400">Progress: {Math.round(Number(event.progress))}%</div>
-                            ) : null}
-                          </div>
-                        )) : (
-                          <div className="text-slate-400">No mission events were recorded for this job.</div>
-                        )}
-                      </div>
-                    </div>
-                    {(() => {
-                      const report = selectedJob.job_type === 'ingestion_run' ? asRunReport(selectedJob.payload) : null;
-                      return report ? <RunReportSummary report={report} /> : null;
-                    })()}
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Payload (raw)</summary>
-                      <pre className="mt-2 max-h-[14rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
-                        {formatJson(selectedJob.payload || null)}
-                      </pre>
-                    </details>
-                  </>
-                );
-              })()}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-              Choose a mission from the feed to inspect its progress, payload, and full mission log.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {(() => {
-        const health = normalizeSourceHealth(operationsOverview?.source_health);
-        const { summary } = health;
-        return (
-          <div className="mt-4 space-y-2">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Source Health</div>
-              <Link to="/settings/sources?tab=health" className="text-sm text-indigo-700 hover:underline">
-                All sources in Settings → Sources → Health
-              </Link>
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs tabular-nums text-slate-600">
-              <span>{formatCount(summary.due_now)} due</span>
-              <span>· {formatCount(summary.deferred)} scheduled</span>
-              <Link to="/settings/sources?tab=health&status=error" className="hover:underline">· {formatCount(summary.errors + summary.backoff)} failing</Link>
-              <span>· {formatCount(summary.unavailable)} unavailable</span>
-            </div>
-            {health.rows.map((source) => (
-              <div key={source.source_id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-slate-900" title={source.display_name}>{source.display_name}</div>
-                  <div className="truncate text-xs text-slate-500" title={source.last_error || source.decision_detail || undefined}>
-                    {source.platform} · {formatCount(source.stored_posts)} stored posts
-                    {source.last_error ? ` · ${source.last_error}` : source.decision_detail ? ` · ${source.decision_detail}` : ''}
-                  </div>
-                </div>
-                <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
-                  source.status === 'error' || source.status === 'backoff'
-                    ? 'bg-rose-100 text-rose-700'
-                    : source.status === 'due'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-slate-100 text-slate-700'
-                }`}>
-                  {HEALTH_STATUS_LABELS[source.status] ?? source.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        );
-      })()}
-    </section>
-  );
-
-  const renderLogsSection = () => (
-    <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
-      <section className="app-panel p-4">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <ScrollText className="h-5 w-5 text-slate-700" />
-            <h2 className="text-base font-semibold text-slate-900">Runtime Log Tail</h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => loadLogTail(selectedLogName)}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${loadingLogs ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-
-        <div className="mb-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Log File
-          </label>
-          <select
-            value={selectedLogName}
-            onChange={(e) => setSelectedLogName(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-          >
-            {availableLogs.map((logOption) => (
-              <option key={logOption} value={logOption}>
-                {LOG_LABELS[logOption] || logOption}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-          <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.14em] text-slate-400">
-            <span>{LOG_LABELS[selectedLogName] || selectedLogName}</span>
-            <span>{logTail?.exists ? 'available' : 'not created yet'}</span>
-          </div>
-          <pre className="mt-3 max-h-[24rem] overflow-auto whitespace-pre-wrap text-xs leading-6">
-            {loadingLogs && !logTail
-              ? 'Loading logs...'
-              : logTail?.lines?.length
-                ? logTail.lines.join('\n')
-                : 'No lines available for this log yet.'}
-          </pre>
-        </div>
       </section>
 
-      <section className="app-panel p-4">
-        <div className="mb-4 flex items-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          <h2 className="text-base font-semibold text-slate-900">Session Log</h2>
-        </div>
+      <section aria-labelledby="ingest-one" className="space-y-3">
+        <h2 id="ingest-one" className={sectionTitle}>Fetch one source</h2>
+        <form
+          className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto] sm:items-end"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!selectedSourceId) return;
+            const report = await runIngestion({
+              kind: 'source',
+              id: selectedSourceId,
+              name: selectedSource ? sourceLabel(selectedSource.settings?.display_name, selectedSource.handle_or_url) : undefined,
+              limit: liveFetchLimit,
+            });
+            if (report) {
+              setSourceFetchReport(report);
+              appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Fetch finished: ${report.status}`);
+              await loadSources({ silent: true });
+              await loadOperationsOverview({ silent: true });
+            }
+          }}
+        >
+          <div className="min-w-0">
+            <label htmlFor="fetch-source" className={fieldLabel}>Source</label>
+            <Select id="fetch-source" value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)} className="w-full">
+              {enabledSources.map((source) => (
+                <option key={source.id} value={source.id}>{sourceOptionLabel(source)}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="fetch-limit" className={fieldLabel}>Post limit</label>
+            <Input
+              id="fetch-limit"
+              type="number"
+              min={1}
+              value={liveFetchLimit}
+              onChange={(e) => setLiveFetchLimit(Math.max(1, Number(e.target.value) || 1))}
+              className="tabular-nums"
+            />
+          </div>
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={!selectedSourceId || isIngestionRunning({ kind: 'source', id: selectedSourceId })}
+          >
+            {selectedSourceId && isIngestionRunning({ kind: 'source', id: selectedSourceId }) ? 'Fetching…' : 'Fetch now'}
+          </Button>
+        </form>
+        {selectedSource ? (
+          <p className="text-[0.75rem] tabular-nums text-fg-3">
+            {plural(selectedSource.post_count, 'stored post')} · priority {selectedSource.settings.priority ?? 999} · ignores cadence and backoff
+          </p>
+        ) : loadingSources ? <p className={hint}>Loading sources…</p> : null}
+      </section>
 
-        <div className="max-h-[30rem] space-y-3 overflow-y-auto pr-1">
-          {logs.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-              No manual actions yet.
-            </div>
-          ) : (
-            logs.map((entry) => (
-              <div key={entry.id} className={`rounded-2xl border px-4 py-3 ${levelClasses(entry.level)}`}>
-                <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.14em]">
-                  <span>{entry.level}</span>
-                  <span>{entry.at}</span>
-                </div>
-                <div className="mt-2 text-sm font-medium">{entry.message}</div>
-              </div>
-            ))
-          )}
+      <section aria-labelledby="ingest-briefings" className="space-y-3">
+        <h2 id="ingest-briefings" className={sectionTitle}>Write a briefing</h2>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-full sm:w-auto">
+            <label htmlFor="briefing-date" className={fieldLabel}>Date</label>
+            <Input id="briefing-date" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="tabular-nums sm:w-44" />
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => runAction(
+              'briefing',
+              `Daily briefing requested for ${selectedDate}`,
+              () => apiService.generateBriefing(selectedDate),
+              (result) => setBriefingResult(result),
+            )}
+            disabled={busy}
+          >
+            {runningAction === 'briefing' ? 'Writing…' : 'Daily briefing'}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => runAction(
+              'topic-briefing',
+              `Topic briefing requested for ${selectedDate}`,
+              () => apiService.generateBriefingWithTopics(selectedDate),
+              (result) => setTopicBriefingResult(result),
+            )}
+            disabled={busy}
+          >
+            {runningAction === 'topic-briefing' ? 'Writing…' : 'Topic briefing'}
+          </Button>
+        </div>
+        {briefingResult || topicBriefingResult ? (
+          <details className="rounded-md border border-line px-3 py-2">
+            <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Briefing responses (raw)</summary>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+              {formatJson({ daily: briefingResult, topics: topicBriefingResult })}
+            </pre>
+          </details>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="ingest-registry" className="space-y-3">
+        <h2 id="ingest-registry" className={sectionTitle}>Source registry</h2>
+        <p className="text-[0.8125rem] text-fg-2">Copy the source list between <code className="font-mono text-[0.75rem]">sources.json</code> and the database.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => runAction('sync-json-to-db', 'Source registry sync JSON -> DB started', () => apiService.syncSources('json-to-db'), () => undefined)}
+            disabled={busy}
+          >
+            {runningAction === 'sync-json-to-db' ? 'Syncing…' : 'JSON → database'}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => runAction('sync-db-to-json', 'Source registry sync DB -> JSON started', () => apiService.syncSources('db-to-json'), () => undefined)}
+            disabled={busy}
+          >
+            {runningAction === 'sync-db-to-json' ? 'Syncing…' : 'Database → JSON'}
+          </Button>
         </div>
       </section>
     </div>
   );
 
-  return (
-    <>
-      <div className="app-shell min-h-screen">
-        <div className="mx-auto max-w-[88rem] px-5 py-5 space-y-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <button
-                type="button"
-                onClick={() => navigate('/briefing')}
-                className="mb-3 inline-flex items-center text-sm text-slate-600 transition-colors hover:text-slate-900"
-              >
-                <ChevronLeft className="mr-1 h-4 w-4" /> Back to Briefing
-              </button>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Ingestion Control</h1>
-            </div>
-            <div className="app-panel max-w-sm px-4 py-3.5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Scheduler</div>
-                  <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
-                    <Clock3 className="h-4 w-4 text-indigo-600" />
-                    {schedulerConfig
-                      ? `Checks for due sources every ${formatCount(Number(schedulerConfig.ingest_tick_minutes ?? 60))} min`
-                      : 'Loading...'}
-                  </div>
-                  <div className="mt-1 text-xs tabular-nums text-slate-500">
-                    {schedulerState === null
-                      ? 'Reading scheduler status...'
-                      : schedulerNextRunAt
-                        ? schedulerCountdown === 'due now'
-                          ? 'Next ingestion tick is due now'
-                          : `Next ingestion tick in ${schedulerCountdown}`
-                        : 'The countdown appears after the scheduler records its first tick.'}
-                  </div>
-                  {schedulerConfig ? (
-                    <div className="mt-0.5 text-xs text-slate-500">Briefings every {schedulerConfig.interval_hours}h</div>
-                  ) : null}
-                </div>
-                {schedulerConfig && (
-                  <button
-                    type="button"
-                    onClick={() => setSchedulerModalOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-                  >
-                    <Settings className="h-4 w-4" />
-                    Settings
-                  </button>
-                )}
-              </div>
-              <RunCycleButton
-                compact
-                className="mt-3"
-                onReport={(report) => {
-                  setCycleReport(report);
-                  appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Run finished: ${report.status}`);
-                  void loadOperationsOverview({ silent: true });
-                  void loadSchedulerState();
-                }}
-              />
-            </div>
+  const archiveOptions = {
+    resume: archiveResume,
+    pageDelaySeconds: archivePageDelay,
+    batchSize: archiveBatchSize,
+    batchCooldownSeconds: archiveBatchCooldown,
+  };
+
+  const renderArchiveControlSection = () => (
+    <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+      <section aria-labelledby="archive-run" className="min-w-0 space-y-5">
+        <h2 id="archive-run" className={sectionTitle}>Archive one source</h2>
+        <p className="-mt-3 text-[0.8125rem] text-fg-2">Walk back through a source&rsquo;s history, in batches, until it holds the posts you ask for.</p>
+
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+          <div className="min-w-0">
+            <label htmlFor="archive-source" className={fieldLabel}>Source</label>
+            <Select id="archive-source" value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)} className="w-full">
+              {filteredEnabledSources.length > 0 ? filteredEnabledSources.map((source) => (
+                <option key={source.id} value={source.id}>{sourceOptionLabel(source)}</option>
+              )) : (
+                <option value="" disabled>No matching sources</option>
+              )}
+            </Select>
           </div>
+          <div>
+            <label htmlFor="archive-desired" className={fieldLabel}>Posts wanted</label>
+            <Input
+              id="archive-desired"
+              type="number"
+              min={1}
+              value={desiredPosts}
+              onChange={(e) => setDesiredPosts(Math.max(1, Number(e.target.value) || 1))}
+              className="tabular-nums"
+            />
+          </div>
+        </div>
 
-          {error && (
-            <div className="flex items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-              <div className="flex min-w-0 items-start gap-3">
-                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
-                <div className="min-w-0 break-words">{error}</div>
+        {selectedSource ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.75rem] tabular-nums text-fg-3">
+            {selectedArchiveEntry ? <StatusGlyph {...archiveGlyph(selectedArchiveEntry.archive_status)} /> : null}
+            <span>{plural(selectedSource.post_count, 'stored post')}</span>
+            <span>{selectedArchiveEntry?.resume_ready ? 'checkpoint saved' : 'no checkpoint'}</span>
+            {selectedArchiveEntry?.kind ? <span>kind {selectedArchiveEntry.kind}</span> : null}
+            {formatBacklog(selectedArchiveEntry) ? <span>{formatBacklog(selectedArchiveEntry)}</span> : null}
+          </div>
+        ) : null}
+
+        <label className="flex min-h-[2.25rem] cursor-pointer items-center gap-2 text-[0.875rem] text-fg">
+          <input type="checkbox" className="h-4 w-4 accent-[rgb(var(--text))]" checked={archiveResume} onChange={(e) => setArchiveResume(e.target.checked)} />
+          Resume from the saved checkpoint
+        </label>
+
+        <details className="rounded-md border border-line px-3 py-2">
+          <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Rate limits</summary>
+          <div className="mt-3 grid gap-3 pb-1 sm:grid-cols-3">
+            {([
+              ['archive-delay', 'Page delay (s)', archivePageDelay, 0, setArchivePageDelay],
+              ['archive-batch', 'Batch size', archiveBatchSize, 1, setArchiveBatchSize],
+              ['archive-cooldown', 'Batch cooldown (s)', archiveBatchCooldown, 0, setArchiveBatchCooldown],
+            ] as const).map(([id, text, value, min, set]) => (
+              <div key={id}>
+                <label htmlFor={id} className={fieldLabel}>{text}</label>
+                <Input
+                  id={id}
+                  type="number"
+                  min={min}
+                  value={value}
+                  onChange={(e) => set(Math.max(min, Number(e.target.value) || min))}
+                  className="tabular-nums"
+                />
               </div>
-              <button
-                type="button"
-                onClick={() => setError(null)}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-white/70 text-rose-600 transition hover:bg-white hover:text-rose-800"
-                aria-label="Dismiss error"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          )}
+            ))}
+          </div>
+        </details>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {INGESTION_TABS.map((tab) => {
-              const isActive = tab.key === activeTab;
-              const iconClass = 'h-4 w-4';
-              let icon = <Zap className={iconClass} />;
-              if (tab.key === 'archive') icon = <Archive className={iconClass} />;
-              if (tab.key === 'missions') icon = <CheckCircle2 className={iconClass} />;
-              if (tab.key === 'logs') icon = <ScrollText className={iconClass} />;
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            onClick={() => selectedSourceId && runAction(
+              'archive-run',
+              archiveResume ? 'Archive resume started' : 'Archive run started',
+              () => apiService.runArchive(selectedSourceId, desiredPosts, archiveOptions),
+              (result) => setArchiveResult(result),
+            )}
+            disabled={!selectedSourceId || busy}
+          >
+            {runningAction === 'archive-run' ? 'Archiving…' : archiveResume ? 'Continue archive' : 'Run archive'}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => selectedSourceId && runAction(
+              'archive-plan',
+              'Archive plan requested',
+              () => apiService.planArchive(selectedSourceId, desiredPosts, archiveOptions),
+              (result) => setArchiveResult(result),
+            )}
+            disabled={!selectedSourceId || busy}
+          >
+            Plan
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => selectedSourceId && runAction(
+              'archive-status',
+              'Archive status requested',
+              () => apiService.getArchiveStatus(selectedSourceId),
+              (result) => setArchiveResult(result),
+            )}
+            disabled={!selectedSourceId || busy}
+          >
+            Status
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => selectedSourceId && runAction(
+              'archive-run-fresh',
+              'Fresh archive run started',
+              () => apiService.runArchive(selectedSourceId, desiredPosts, { ...archiveOptions, resume: false }),
+              (result) => setArchiveResult(result),
+            )}
+            disabled={!selectedSourceId || busy}
+          >
+            {runningAction === 'archive-run-fresh' ? 'Starting…' : 'Start fresh'}
+          </Button>
+        </div>
 
-              return (
-                <Link
-                  key={tab.key}
-                  to={getIngestionTabHref(tab.key)}
-                  className={`app-panel group flex items-center gap-3 p-3.5 transition ${
-                    isActive
-                      ? 'border-indigo-300 bg-indigo-50/70 shadow-[0_20px_40px_rgba(79,70,229,0.10)]'
-                      : 'hover:border-cyan-300 hover:bg-cyan-50/50 hover:shadow-[0_12px_30px_rgba(34,211,238,0.12)]'
+        {archiveResult ? (
+          <Notice
+            tone={archiveResult.success === false ? 'error' : 'completion'}
+            title={archiveResult.success === false
+              ? archiveResult.error || archiveResult.detail || 'The archive request failed'
+              : archiveResult.message || (archiveResult.status ? `Archive ${String(archiveResult.status)}` : 'Done')}
+          >
+            <details className="mt-2">
+              <summary className="cursor-pointer select-none text-[0.75rem] text-fg-3 hover:text-fg">Raw response</summary>
+              <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap font-mono text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+                {formatJson(archiveResult as Record<string, any>)}
+              </pre>
+            </details>
+          </Notice>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="archive-catalog" className="min-w-0 space-y-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 id="archive-catalog" className={sectionTitle}>Catalog</h2>
+          {loadingArchiveCatalog ? <span className="text-[0.75rem] text-fg-3">Refreshing…</span> : null}
+        </div>
+        <label htmlFor="archive-search" className="sr-only">Search sources</label>
+        <Input
+          id="archive-search"
+          type="search"
+          value={archiveSourceQuery}
+          onChange={(e) => setArchiveSourceQuery(e.target.value)}
+          placeholder="Search sources"
+        />
+        <ul className="max-h-[32rem] space-y-1.5 overflow-y-auto">
+          {filteredArchiveCatalog.map((entry) => {
+            const isSelected = entry.source_id === selectedSourceId;
+            const name = sourceLabel(entry.display_name || entry.source_id);
+            const glyph = archiveGlyph(entry.archive_status);
+            return (
+              <li key={entry.source_id}>
+                <button
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => setSelectedSourceId(entry.source_id)}
+                  className={`flex w-full min-w-0 items-center gap-3 rounded-md border px-3 py-2 text-left text-[0.8125rem] transition-[transform,border-color,background-color] duration-[120ms] ease-out active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg motion-reduce:transition-none ${
+                    isSelected ? 'border-fg bg-raised' : 'border-line bg-surface hover:border-line-strong'
                   }`}
                 >
-                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border transition ${
-                    isActive
-                      ? 'border-indigo-200 bg-white text-indigo-700'
-                      : 'border-slate-200 bg-slate-50 text-slate-600 group-hover:border-cyan-200 group-hover:bg-white group-hover:text-cyan-700'
-                  }`}>
-                    {icon}
+                  <SourceAvatar source={{ id: entry.source_id, platform: entry.platform, display_name: entry.display_name }} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold text-fg" title={entry.display_name ?? undefined}>{name}</div>
+                    <div className="truncate text-[0.75rem] tabular-nums text-fg-3">
+                      {entry.platform} · {formatArchiveRatio(entry)}
+                      {formatBacklog(entry) ? ` · ${formatBacklog(entry)}` : ''}
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900">{tab.label}</div>
-                  </div>
-                </Link>
-              );
-            })}
+                  <StatusGlyph status={glyph.status} label={glyph.label} hideLabel className="sm:hidden" />
+                  <StatusGlyph status={glyph.status} label={glyph.label} className="max-sm:hidden" />
+                </button>
+              </li>
+            );
+          })}
+          {filteredArchiveCatalog.length === 0 ? (
+            <li className="rounded-md border border-dashed border-line px-3 py-6 text-center text-[0.8125rem] text-fg-3">
+              {loadingArchiveCatalog ? 'Loading the catalog…' : 'No matching sources.'}
+            </li>
+          ) : null}
+        </ul>
+      </section>
+    </div>
+  );
+
+  const renderMissionFeedSection = () => {
+    const jobs = operationsOverview?.jobs || [];
+    const missionEvents = selectedJob && Array.isArray(selectedJob.payload?.events) ? selectedJob.payload?.events : [];
+    const report = selectedJob?.job_type === 'ingestion_run' ? asRunReport(selectedJob.payload) : null;
+    return (
+      <div className="space-y-6">
+        {visibleMissionAlerts.length > 0 ? (
+          <div className="space-y-2">
+            {visibleMissionAlerts.map((alert) => (
+              <Notice
+                key={alert.id}
+                tone={alert.severity === 'high' || alert.severity === 'critical' ? 'error' : 'warning'}
+                title={(alert as { label?: string }).label || alert.title}
+                message={alert.message}
+                action={{ label: 'Dismiss', onClick: () => setDismissedAlertIds((prev) => [...prev, alert.id]) }}
+              />
+            ))}
           </div>
+        ) : null}
 
-          {activeTab === 'main' && (
-            <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-              <div>{renderImmediateActionsSection()}</div>
-              <div>{renderSystemSnapshotSection()}</div>
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+          <section aria-labelledby="jobs-recent" className="min-w-0 space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 id="jobs-recent" className={sectionTitle}>Recent jobs</h2>
+              <span className="text-[0.75rem] tabular-nums text-fg-3">
+                {loadingOverview && !jobs.length ? 'Loading…' : plural(jobs.length, 'job')}
+              </span>
             </div>
-          )}
+            <ul className="max-h-[36rem] space-y-1.5 overflow-y-auto">
+              {jobs.map((job) => {
+                const isSelected = selectedJobId === job.id;
+                const started = formatJobTimestamp(job.started_at);
+                const duration = formatJobDuration(job.started_at, job.finished_at);
+                return (
+                  <li key={job.id}>
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => setSelectedJobId(job.id)}
+                      className={`w-full min-w-0 rounded-md border px-3 py-2.5 text-left text-[0.8125rem] transition-[transform,border-color,background-color] duration-[120ms] ease-out active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg motion-reduce:transition-none ${
+                        isSelected ? 'border-fg bg-raised' : 'border-line bg-surface hover:border-line-strong'
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0 break-words font-semibold text-fg [overflow-wrap:anywhere]">
+                          {jobLabel(job)}
+                          {job.source_display_name ? <span className="font-normal text-fg-2"> · {sourceLabel(job.source_display_name)}</span> : null}
+                        </div>
+                        <StatusGlyph status={jobGlyph(job.status)} label={job.status} />
+                      </div>
+                      {job.message ? <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p> : null}
+                      {job.status === 'running' && typeof job.progress === 'number' && job.progress > 0 ? (
+                        <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-raised" role="progressbar" aria-valuenow={Math.round(job.progress)} aria-valuemin={0} aria-valuemax={100}>
+                          <div className="h-full bg-fg" style={{ width: `${Math.min(100, job.progress)}%` }} />
+                        </div>
+                      ) : null}
+                      <div className="mt-1 flex flex-wrap gap-x-3 text-[0.75rem] tabular-nums text-fg-3">
+                        {started ? <span>{started}</span> : null}
+                        {duration ? <span>{duration}</span> : null}
+                        {job.event_count ? <span>{plural(job.event_count, 'event')}</span> : null}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+              {jobs.length === 0 && !loadingOverview ? (
+                <li className="rounded-md border border-dashed border-line px-3 py-8 text-center text-[0.8125rem] text-fg-3">
+                  No jobs yet. Run due sources, fetch a source or write a briefing and it shows up here.
+                </li>
+              ) : null}
+            </ul>
+          </section>
 
-          {activeTab === 'archive' && renderArchiveControlSection()}
-          {activeTab === 'missions' && renderMissionFeedSection()}
-          {activeTab === 'logs' && renderLogsSection()}
+          <section aria-labelledby="jobs-detail" className="min-w-0 space-y-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 id="jobs-detail" className={sectionTitle}>{selectedJob ? jobLabel(selectedJob) : 'Job detail'}</h2>
+              {loadingSelectedJob ? <span className="text-[0.75rem] text-fg-3">Loading…</span> : null}
+            </div>
+            {selectedJob ? (
+              <>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3">
+                  {[
+                    ['Status', <StatusGlyph key="s" status={jobGlyph(selectedJob.status)} label={selectedJob.status} />],
+                    ['Source', selectedJob.source_display_name ? sourceLabel(selectedJob.source_display_name) : 'All sources'],
+                    ['Started', formatJobTimestamp(selectedJob.started_at) || '—'],
+                    ['Finished', formatJobTimestamp(selectedJob.finished_at) || 'still running'],
+                    ['Duration', formatJobDuration(selectedJob.started_at, selectedJob.finished_at) || '—'],
+                    ['Estimated tokens', extractEstimatedTokens(selectedJob.payload) || '—'],
+                  ].map(([term, value]) => (
+                    <div key={String(term)} className="min-w-0 border-l border-line pl-3">
+                      <dt className="text-[0.75rem] text-fg-3">{term}</dt>
+                      <dd className="break-words text-[0.8125rem] tabular-nums text-fg [overflow-wrap:anywhere]">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {selectedJob.status === 'running' ? (
+                  <div>
+                    <div className="h-0.5 overflow-hidden rounded-full bg-raised">
+                      <div className="h-full bg-fg" style={{ width: `${Math.min(100, Number(selectedJob.progress || 0))}%` }} />
+                    </div>
+                    <p className="mt-1 text-[0.75rem] tabular-nums text-fg-3">{Math.round(Number(selectedJob.progress || 0))}% complete</p>
+                  </div>
+                ) : null}
+                {report ? <RunReportSummary report={report} /> : null}
+                <div>
+                  <h3 className="mb-2 text-[0.875rem] font-semibold text-fg">Events</h3>
+                  {missionEvents.length ? (
+                    <ol className="max-h-[18rem] divide-y divide-line overflow-y-auto rounded-md border border-line bg-surface font-mono text-[0.75rem] leading-5">
+                      {missionEvents.map((event: any, index: number) => (
+                        <li key={`${event.at || 'event'}-${index}`} className="flex min-w-0 gap-3 px-3 py-1.5">
+                          <span className="shrink-0 tabular-nums text-fg-3">{formatJobTimestamp(event.at) || '—'}</span>
+                          <span className={`shrink-0 ${event.level === 'error' ? 'font-semibold text-fg' : 'text-fg-3'}`}>
+                            {event.level === 'error' ? '× error' : event.level || 'info'}
+                          </span>
+                          <span className="min-w-0 break-words text-fg-2 [overflow-wrap:anywhere]">
+                            {event.message || 'No message'}
+                            {typeof event.progress === 'number' ? ` (${Math.round(Number(event.progress))}%)` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="text-[0.8125rem] text-fg-3">No events were recorded for this job.</p>
+                  )}
+                </div>
+                <details className="rounded-md border border-line px-3 py-2">
+                  <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Payload (raw)</summary>
+                  <pre className="mt-2 max-h-[14rem] overflow-auto whitespace-pre-wrap font-mono text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+                    {formatJson(selectedJob.payload || null)}
+                  </pre>
+                </details>
+              </>
+            ) : (
+              <p className="rounded-md border border-dashed border-line px-3 py-10 text-center text-[0.8125rem] text-fg-3">
+                Choose a job to see its events, report and payload.
+              </p>
+            )}
+          </section>
         </div>
+      </div>
+    );
+  };
+
+  const renderLogsSection = () => (
+    <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+      <section aria-labelledby="logs-tail" className="min-w-0 space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 id="logs-tail" className={sectionTitle}>Log tail</h2>
+          <div className="flex items-center gap-2">
+            <label htmlFor="log-file" className="sr-only">Log file</label>
+            <Select id="log-file" value={selectedLogName} onChange={(e) => setSelectedLogName(e.target.value)}>
+              {availableLogs.map((logOption) => (
+                <option key={logOption} value={logOption}>{LOG_LABELS[logOption] || logOption}</option>
+              ))}
+            </Select>
+            <Button variant="ghost" size="icon" onClick={() => loadLogTail(selectedLogName)} aria-label="Refresh the log" title="Refresh">
+              <RefreshCw aria-hidden="true" className={loadingLogs ? 'motion-safe:animate-spin' : undefined} />
+            </Button>
+          </div>
+        </div>
+        <p className="text-[0.75rem] text-fg-3">
+          {LOG_LABELS[selectedLogName] || selectedLogName} · {logTail?.exists ? `last ${plural(logTail?.lines?.length ?? 0, 'line')}` : 'not created yet'}
+        </p>
+        <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-surface p-3 font-mono text-[0.75rem] leading-5 text-fg-2 [overflow-wrap:anywhere]">
+          {loadingLogs && !logTail
+            ? 'Loading logs…'
+            : logTail?.lines?.length
+              ? logTail.lines.join('\n')
+              : 'No lines in this log yet.'}
+        </pre>
+      </section>
+
+      <section aria-labelledby="logs-session" className="min-w-0 space-y-3">
+        <h2 id="logs-session" className={sectionTitle}>This session</h2>
+        {logs.length === 0 ? (
+          <p className="text-[0.8125rem] text-fg-3">Actions you take on this page are listed here.</p>
+        ) : (
+          <ol className="max-h-[32rem] divide-y divide-line overflow-y-auto border-y border-line">
+            {logs.map((entry) => (
+              <li key={entry.id} className="flex min-w-0 items-start gap-2 py-2 text-[0.8125rem]">
+                <StatusIcon status={LOG_LEVEL_GLYPH[entry.level]} className="mt-[0.3rem]" />
+                <span className="sr-only">{entry.level}:</span>
+                <span className={`min-w-0 flex-1 break-words [overflow-wrap:anywhere] ${entry.level === 'error' ? 'font-semibold text-fg' : 'text-fg-2'}`}>
+                  {entry.message}
+                </span>
+                <span className="shrink-0 text-[0.75rem] tabular-nums text-fg-3">{entry.at}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </div>
+  );
+
+  const schedulerMeta = (() => {
+    const parts: string[] = [];
+    if (schedulerConfig) parts.push(`checks for due sources every ${formatCount(Number(schedulerConfig.ingest_tick_minutes ?? 60))} min`);
+    if (schedulerNextRunAt && schedulerCountdown) {
+      parts.push(schedulerCountdown === 'due now' ? 'next tick due now' : `next tick in ${schedulerCountdown}`);
+    }
+    if (schedulerConfig) parts.push(`briefings every ${schedulerConfig.interval_hours}h`);
+    const text = parts.join(' · ');
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Reading the scheduler…';
+  })();
+
+  return (
+    <Page width="wide">
+      <PageHeader
+        title="Ingestion"
+        meta={schedulerMeta}
+        actions={(
+          <>
+            <RunCycleButton onReport={onCycleReport} />
+            {schedulerConfig ? (
+              <Button variant="ghost" onClick={() => setSchedulerModalOpen(true)}>
+                <Settings aria-hidden="true" /> Scheduler
+              </Button>
+            ) : null}
+          </>
+        )}
+      />
+
+      <div className="space-y-3">
+        {staleWarning ? <Notice tone="warning" title="Automatic ingestion is not running" message={staleWarning} /> : null}
+        {error ? <Notice tone="error" title={error} action={{ label: 'Dismiss', onClick: () => setError(null) }} /> : null}
+      </div>
+
+      <nav aria-label="Ingestion views" className={`flex max-w-full items-end gap-5 overflow-x-auto border-b border-line ${staleWarning || error ? 'mt-6' : ''}`}>
+        {INGESTION_TABS.map((tab) => (
+          <Link
+            key={tab.key}
+            to={getIngestionTabHref(tab.key)}
+            aria-current={tab.key === activeTab ? 'page' : undefined}
+            className={tabTriggerClass}
+          >
+            {TAB_WORDS[tab.key] ?? tab.label.toLowerCase()}
+          </Link>
+        ))}
+      </nav>
+
+      <div className="pt-8">
+        {activeTab === 'main' && (
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+            <div className="min-w-0 lg:order-1">{renderImmediateActionsSection()}</div>
+            <aside className="min-w-0 lg:order-2">{renderStatusSection()}</aside>
+          </div>
+        )}
+        {activeTab === 'archive' && renderArchiveControlSection()}
+        {activeTab === 'missions' && renderMissionFeedSection()}
+        {activeTab === 'logs' && renderLogsSection()}
       </div>
 
       <SchedulerSettingsModal
@@ -1679,26 +1371,17 @@ export default function IngestionControl() {
         }}
         onIntervalChange={(value) => {
           setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({
-            ...prev,
-            interval_hours: value,
-          }) : prev);
+          setSchedulerConfig((prev) => prev ? ({ ...prev, interval_hours: value }) : prev);
         }}
         onTickChange={(value) => {
           setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({
-            ...prev,
-            ingest_tick_minutes: value,
-          }) : prev);
+          setSchedulerConfig((prev) => prev ? ({ ...prev, ingest_tick_minutes: value }) : prev);
         }}
         onToggle={(key, checked) => {
           setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({
-            ...prev,
-            [key]: checked,
-          }) as SchedulerConfig : prev);
+          setSchedulerConfig((prev) => prev ? ({ ...prev, [key]: checked }) as SchedulerConfig : prev);
         }}
       />
-    </>
+    </Page>
   );
 }
