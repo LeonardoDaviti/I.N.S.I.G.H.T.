@@ -56,6 +56,9 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
 
   const unreadSources = Object.entries(counts?.by_source ?? {})
     .filter(([, count]) => count > 0)
+    // A source the directory cannot name (deleted, or not in the health rows) has no
+    // useful row here: "Unknown source 12,847" is noise. Its posts stay in All posts.
+    .filter(([sourceId]) => health.isPending || sourceNames.has(sourceId))
     .sort((a, b) => b[1] - a[1] || (sourceNames.get(a[0]) ?? '').localeCompare(sourceNames.get(b[0]) ?? ''));
   const shownSources = showAllSources ? unreadSources : unreadSources.slice(0, SOURCES_SHOWN);
 
@@ -108,7 +111,7 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
           {shownSources.map(([sourceId, count]) => {
             const sourceScope = `source:${sourceId}`;
             const raw = sourceNames.get(sourceId);
-            const name = raw ? sourceLabel(raw) : health.isPending ? 'Loading…' : 'Unknown source';
+            const name = raw ? sourceLabel(raw) : 'Loading…';
             return (
               <RailLink
                 key={sourceId}

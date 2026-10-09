@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
@@ -165,5 +165,7 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta }: {
     }
   }, [api, applyRead, dryRun, onUnreadDelta, queryClient, refreshCounts]);
 
-  return { setRead, setStarred, markReadThrough, markUnread };
+  // A stable object: the list's toggle handlers depend on it, and a new one per
+  // render would re-render every memoised row on each key press.
+  return useMemo(() => ({ setRead, setStarred, markReadThrough, markUnread }), [setRead, setStarred, markReadThrough, markUnread]);
 }

@@ -33,7 +33,7 @@ export default function FeedGroup({ group, density, selectedId, tabbableId, item
         <h2 id={headingId} className="min-w-0 truncate text-[0.9375rem] font-semibold tracking-[-0.011em] text-fg" title={group.source_display_name}>
           <Link to={sourceHref} className="rounded-sm underline decoration-fg-3/60 decoration-1 underline-offset-[0.22em] hover:decoration-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg">{middleTruncate(name, 56)}</Link>
         </h2>
-        <span className="shrink-0 whitespace-nowrap text-[0.8125rem] text-fg-3 tabular-nums">{plural(group.count, 'post')}</span>
+        <span className="shrink-0 whitespace-nowrap text-[0.8125rem] text-fg-3 tabular-nums">{plural(Math.max(group.count, group.items.length), 'post')}</span>
       </header>
       <div className={`flex flex-col ${density === 'compact' ? 'gap-1' : 'gap-2'}`}>
         {group.items.map((item) => (

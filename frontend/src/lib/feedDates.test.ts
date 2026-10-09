@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { feedDateLabel, feedDayHeading, feedDayKey } from './feedDates.ts';
+import { feedDateLabel, feedDayHeading, feedDayKey, feedFullTime, feedTimeLabel } from './feedDates.ts';
 
 const NOW = new Date('2026-10-10T12:00:00Z');
 const TZ = 'UTC';
@@ -30,4 +30,27 @@ test('feedDayKey: follows the local day, not the UTC day', () => {
   // 23:30 UTC on the 9th is already the 10th in Berlin (UTC+2).
   assert.equal(feedDayKey('2026-10-09T23:30:00Z', 'Europe/Berlin'), feedDayKey('2026-10-10T10:00:00Z', 'Europe/Berlin'));
   assert.notEqual(feedDayKey('2026-10-09T23:30:00Z', 'UTC'), feedDayKey('2026-10-10T10:00:00Z', 'UTC'));
+});
+
+test('feedDayKey: the cache keys on the time zone too', () => {
+  const at = '2026-10-09T23:30:00Z';
+  assert.equal(feedDayKey(at, 'UTC'), '2026-Oct-9');
+  assert.equal(feedDayKey(at, 'Europe/Berlin'), '2026-Oct-10');
+  assert.equal(feedDayKey(at, 'UTC'), '2026-Oct-9');
+  assert.equal(feedDayKey(new Date(at), 'UTC'), '2026-Oct-9');
+  assert.equal(feedDayKey(null), 'unknown');
+});
+
+test('feedTimeLabel: a 24-hour clock in the given zone; empty when undated', () => {
+  assert.equal(feedTimeLabel('2026-10-09T23:30:00Z', 'UTC'), '23:30');
+  assert.equal(feedTimeLabel('2026-10-09T23:30:00Z', 'Europe/Berlin'), '01:30');
+  assert.equal(feedTimeLabel('2026-10-10T07:05:00Z', 'UTC'), '07:05');
+  assert.equal(feedTimeLabel(undefined, 'UTC'), '');
+});
+
+test('feedFullTime: names the date and the time; empty when undated', () => {
+  const label = feedFullTime('2026-10-09T23:30:00Z', 'UTC');
+  assert.match(label, /2026/);
+  assert.match(label, /11:30|23:30/);
+  assert.equal(feedFullTime('not a date', 'UTC'), '');
 });

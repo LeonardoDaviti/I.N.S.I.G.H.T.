@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, RefreshCw, ExternalLink, Loader2, Zap } from 'lucide-react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { Loader2, RefreshCw, Zap } from 'lucide-react';
 import { apiService, type Folder, type Post } from '../services/api';
 import { useIngestionRun } from '../hooks/useIngestionRun';
-import { EmptyState } from '../components/states';
+import { EmptyState, ErrorState, LoadingState } from '../components/states';
+import { Button, Chip, Page, PageHeader, Row } from '../components/ui';
+import BackLink from '../components/ui/BackLink';
+import SlashChoice from '../components/reader/SlashChoice';
 import { sourceLabel } from '../lib/sourceLabel';
-import { feedDateLabel } from '../lib/feedDates';
+import { feedDateLabel, feedFullTime } from '../lib/feedDates';
+import { formatCount, middleTruncate, plural } from '../lib/format';
 import MilestonesRail from '../components/MilestonesRail';
 import TrackBriefingPanel from '../components/TrackBriefingPanel';
 
 const PAGE_SIZE = 25;
+
+type WindowValue = '7' | '30' | 'all';
+const WINDOWS: ReadonlyArray<{ value: WindowValue; label: string }> = [
+  { value: '7', label: '7d' },
+  { value: '30', label: '30d' },
+  { value: 'all', label: 'all' },
+];
 
 /** First media_urls entry that actually looks like an image. */
 function thumbnailOf(post: Post): string | null {
@@ -24,7 +35,6 @@ function thumbnailOf(post: Post): string | null {
 
 export default function TrackPage() {
   const { trackId = '' } = useParams();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [folder, setFolder] = useState<Folder | null>(null);
@@ -94,190 +104,168 @@ export default function TrackPage() {
     if (report && report.posts_inserted > 0) await load();
   };
 
-  return (
-    <div className="app-shell min-h-screen bg-gray-50">
-      <div className="max-w-3xl lg:max-w-6xl mx-auto p-6">
-        <button
-          onClick={() => navigate('/experts')}
-          className="mb-3 inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
-        >
-          <ChevronLeft className="w-4 h-4 mr-1" /> Back to Tracks
-        </button>
+  const windowValue: WindowValue = days === 7 ? '7' : days === 30 ? '30' : 'all';
+  const meta = [
+    plural(sourceCount, 'source'),
+    plural(total, 'post'),
+    folder?.exclude_from_main_digest ? 'hidden from the main digest' : null,
+  ].filter(Boolean).join(' · ');
 
-        <div className="flex items-start justify-between gap-4 mb-1">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-gray-900">{folder?.name || 'Track'}</h1>
-              {isTrack && (
-                <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium">
-                  Track
-                </span>
-              )}
-            </div>
-            {folder?.description && <p className="text-sm text-gray-600 mt-1">{folder.description}</p>}
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <button
+  return (
+    <Page width="wide" className="pt-6 sm:pt-8">
+      <BackLink to="/tracks" label="tracks" />
+
+      <PageHeader
+        title={(
+          <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="[overflow-wrap:anywhere]">{folder?.name || 'Track'}</span>
+            {isTrack ? <Chip className="relative -top-px">track</Chip> : null}
+          </span>
+        )}
+        meta={(
+          <>
+            {loading && !folder ? 'Loading…' : meta}
+            {folder?.description ? (
+              <span className="mt-2 block max-w-prose break-words text-[0.875rem] [overflow-wrap:anywhere]">{folder.description}</span>
+            ) : null}
+          </>
+        )}
+        actions={(
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-label="Refresh"
+              title="Refresh this list"
+            >
+              <RefreshCw aria-hidden="true" className={loading ? 'motion-safe:animate-spin' : ''} />
+            </Button>
+            <Button
+              variant="primary"
               onClick={() => void fetchTrack()}
               disabled={fetchingTrack || !trackId}
               aria-busy={fetchingTrack}
               title="Fetch every enabled source in this track now (ignores cadence and backoff)"
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md bg-[var(--interactive-accent)] px-3 py-1.5 text-sm font-medium text-[var(--text-on-accent)] transition-transform duration-[120ms] ease-out hover:bg-[var(--interactive-accent-hover)] active:scale-[0.97] disabled:opacity-60 motion-reduce:transition-none"
             >
               {fetchingTrack
-                ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
-                : <Zap className="h-3.5 w-3.5" aria-hidden="true" />}
+                ? <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />
+                : <Zap aria-hidden="true" />}
               {fetchingTrack ? 'Fetching…' : 'Fetch this track'}
-            </button>
-            <button
-              onClick={() => void load()}
-              disabled={loading}
-              className="inline-flex min-h-[36px] items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-4">
-          <span>{sourceCount} sources</span>
-          <span>·</span>
-          <span>{total} posts</span>
-          {folder?.exclude_from_main_digest && (
-            <>
-              <span>·</span>
-              <span className="text-amber-700">hidden from main digest</span>
-            </>
-          )}
-          <span className="ml-auto inline-flex items-center gap-1">
-            {[
-              { label: '7d', value: 7 },
-              { label: '30d', value: 30 },
-              { label: 'All', value: undefined },
-            ].map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => setWindow(opt.value)}
-                className={`px-2 py-0.5 rounded ${
-                  days === opt.value ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </span>
-        </div>
-
-        {error && (
-          <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3">{error}</div>
+            </Button>
+          </>
         )}
+      />
 
-        {/* Two columns from lg up: reading feed left, milestones rail right.
-            The rail is LAST in the DOM, so on mobile it stacks below the feed. */}
-        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-6 lg:items-start">
-          <div className="min-w-0">
-            <TrackBriefingPanel folderId={trackId} className="mb-4" />
+      {/* Two columns from lg up: reading feed left, milestones rail right.
+          The rail is LAST in the DOM, so on mobile it stacks below the feed. */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-10">
+        <div className="min-w-0">
+          <TrackBriefingPanel folderId={trackId} className="mb-6" />
 
-            {loading && posts.length === 0 && (
-              <div className="space-y-3">
-                {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse rounded-xl border border-gray-200 bg-white p-4">
-                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2" />
-                    <div className="h-3 bg-gray-100 rounded w-1/3" />
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="text-[0.8125rem] lowercase text-fg-3">posts</h2>
+            <SlashChoice
+              label="Time window"
+              value={windowValue}
+              options={WINDOWS}
+              onChange={(value) => setWindow(value === 'all' ? undefined : Number(value))}
+              className="-mr-1"
+            />
+          </div>
 
-            {!loading && posts.length === 0 && !error && (
-              <EmptyState
-                title="Nothing collected yet"
-                description={
-                  sourceCount === 0
-                    ? 'This track has no sources yet. Add some from Settings → Sources.'
-                    : `This track has ${sourceCount} source${sourceCount === 1 ? '' : 's'} but no posts${days ? ` in the last ${days} days` : ''}. New sources are collected on the next ingestion tick, or fetch them now.`
-                }
-                action={
-                  sourceCount === 0
-                    ? { label: 'Add a source', href: '/settings/sources' }
-                    : { label: fetchingTrack ? 'Fetching…' : 'Fetch this track', onClick: () => void fetchTrack(), disabled: fetchingTrack }
-                }
-              />
-            )}
+          {error ? (
+            <ErrorState title="Could not load this track" error={error} onRetry={() => void load()} className="mb-4" />
+          ) : null}
 
-            <div className="space-y-3">
-              {posts.map((post) => {
+          {loading && posts.length === 0 ? <LoadingState label="Loading posts" rows={4} /> : null}
+
+          {!loading && posts.length === 0 && !error ? (
+            <EmptyState
+              title="Nothing collected yet"
+              description={
+                sourceCount === 0
+                  ? 'This track has no sources yet. Add some from Settings → Sources.'
+                  : `This track has ${plural(sourceCount, 'source')} but no posts${days ? ` in the last ${days} days` : ''}. New sources are collected on the next ingestion tick, or fetch them now.`
+              }
+              action={
+                sourceCount === 0
+                  ? { label: 'Add a source', href: '/settings/sources' }
+                  : { label: fetchingTrack ? 'Fetching…' : 'Fetch this track', onClick: () => void fetchTrack(), disabled: fetchingTrack }
+              }
+            />
+          ) : null}
+
+          {posts.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {posts.map((post, index) => {
                 const thumb = thumbnailOf(post);
+                const source = sourceLabel(post.source_display_name);
                 return (
-                  <article
-                    key={post.id}
-                    className="rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition"
-                  >
-                    <div className="flex gap-3">
-                      {thumb && (
-                        <img
-                          src={thumb}
-                          alt=""
-                          loading="lazy"
-                          className="w-24 h-16 object-cover rounded-md shrink-0 bg-gray-100"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <h2 className="font-semibold text-gray-900 leading-snug">
-                          {post.title || '(untitled)'}
-                        </h2>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                          <span className="px-1.5 py-0.5 rounded bg-gray-100">{post.platform}</span>
-                          <span className="truncate max-w-[16rem]" title={post.source_display_name ?? undefined}>{sourceLabel(post.source_display_name)}</span>
-                          <span>·</span>
-                          <span>{post.published_at ? feedDateLabel(post.published_at) : ''}</span>
-                        </div>
-                        <div className="mt-2 flex items-center gap-3 text-sm">
-                          <button
-                            onClick={() => navigate(`/posts/${post.id}`)}
-                            className="text-blue-600 hover:text-blue-800"
-                          >
-                            Read
-                          </button>
-                          {post.url && (
-                            <a
-                              href={post.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
-                            >
-                              Source <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </article>
+                  <Row
+                    key={post.id ?? post.url ?? `idx:${index}`}
+                    to={post.id ? `/posts/${post.id}` : undefined}
+                    href={post.id ? undefined : post.url ?? undefined}
+                    meta={(
+                      <time dateTime={post.published_at ?? undefined} title={post.published_at ? feedFullTime(post.published_at) : undefined}>
+                        {post.published_at ? feedDateLabel(post.published_at) : '—'}
+                      </time>
+                    )}
+                    title={<span dir="auto">{post.title?.trim() || 'Untitled post'}</span>}
+                    description={(
+                      <span className="flex min-w-0 items-center gap-1.5 text-fg-3">
+                        <span className="min-w-0 truncate" title={post.source_display_name ?? undefined}>{middleTruncate(source, 56)}</span>
+                        {post.platform ? (
+                          <>
+                            <span aria-hidden="true">/</span>
+                            <span className="shrink-0 lowercase">{post.platform}</span>
+                          </>
+                        ) : null}
+                      </span>
+                    )}
+                    trailing={thumb ? <Thumb src={thumb} /> : undefined}
+                    // The reader's date column width: Row's default 5.5rem costs a
+                    // phone title a third of its line.
+                    className="gap-3 px-3 sm:gap-4 sm:px-4 [&>div:first-child]:w-[3.25rem] sm:[&>div:first-child]:w-[4.25rem]"
+                  />
                 );
               })}
             </div>
+          ) : null}
 
-            {posts.length > 0 && posts.length < total && (
-              <button
-                onClick={() => void load({ append: true })}
-                disabled={loadingMore}
-                className="mt-4 w-full py-2 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loadingMore ? 'Loading…' : `Load ${Math.min(PAGE_SIZE, total - posts.length)} more`}
-              </button>
-            )}
-          </div>
+          {posts.length > 0 && posts.length < total ? (
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={() => void load({ append: true })}
+              disabled={loadingMore}
+              className="mt-4 w-full"
+            >
+              {loadingMore ? 'Loading…' : `Load ${formatCount(Math.min(PAGE_SIZE, total - posts.length))} more`}
+            </Button>
+          ) : posts.length > 0 ? (
+            <p className="py-6 text-center text-[0.8125rem] text-fg-3">You’ve reached the end.</p>
+          ) : null}
+        </div>
 
-          {/* A long rail must not trap the page: it scrolls inside itself when it
-              outgrows the viewport. */}
-          <div className="mt-6 lg:mt-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
-            <MilestonesRail folderId={trackId} />
-          </div>
+        {/* A long rail must not trap the page: it scrolls inside itself when it
+            outgrows the viewport. */}
+        <div className="mt-10 lg:sticky lg:top-6 lg:mt-0 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+          <MilestonesRail folderId={trackId} />
         </div>
       </div>
-    </div>
+    </Page>
+  );
+}
+
+/** A small grayscale preview; it removes itself when the image fails. Hidden on phones. */
+function Thumb({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <span className="hidden aspect-video w-20 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">
+      <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover grayscale" />
+    </span>
   );
 }

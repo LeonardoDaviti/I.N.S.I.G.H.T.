@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -39,6 +39,7 @@ export interface FeedListProps {
 }
 
 const UNDO_MS = 5_000;
+const PREFETCH_DELAY_MS = 150;
 
 /**
  * The reader list (spec §F.3, §F.5, §F.6): renders the feed in either view, owns
@@ -47,7 +48,7 @@ const UNDO_MS = 5_000;
  * and infinite loading (an IntersectionObserver sentinel plus a visible "Load
  * more" button). Results are announced in the page's live region.
  */
-export default function FeedList({
+function FeedList({
   scope, filter, view, density, fixture = null, emptyTitle, emptyDescription, emptyAction,
   onFetch, helpOpen, onHelpOpenChange, onUnreadDelta,
 }: FeedListProps) {
@@ -63,7 +64,25 @@ export default function FeedList({
   const [confirm, setConfirm] = useState<{ through: FeedItemData; count: number } | null>(null);
 
   const { items, groups, entries } = feed;
-  const ids = useMemo(() => items.map((item) => item.id), [items]);
+  // A read or star patch replaces `items` but not its ids: key the ids on their
+  // joined value so the selection reducer is not re-synced (and the list not
+  // re-rendered once more) on every toggle.
+  const idsKey = useMemo(() => items.map((item) => item.id).join('\n'), [items]);
+  const ids = useMemo(() => (idsKey ? idsKey.split('\n') : []), [idsKey]);
+  // Day headers for the stream: the index of each day's first row and its heading,
+  // computed once per items array instead of twice per row per render.
+  const dayHeadings = useMemo(() => {
+    const headings = new Map<number, string>();
+    let previous: string | null = null;
+    items.forEach((item, index) => {
+      const day = feedDayKey(item.sort_at);
+      if (day !== previous) headings.set(index, feedDayHeading(item.sort_at));
+      previous = day;
+    });
+    return headings;
+  }, [items]);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const pageCursorById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.pageCursor])), [entries]);
 
@@ -112,14 +131,15 @@ export default function FeedList({
       toast('Mark read up to here works in the Stream view.');
       return;
     }
-    const end = items.findIndex((candidate) => candidate.id === item.id);
-    const count = items.slice(0, end + 1).filter((candidate) => !candidate.read_at).length;
+    const loaded = itemsRef.current;
+    const end = loaded.findIndex((candidate) => candidate.id === item.id);
+    const count = loaded.slice(0, end + 1).filter((candidate) => !candidate.read_at).length;
     if (!count) {
       announce('Nothing unread up to here.');
       return;
     }
     setConfirm({ through: item, count });
-  }, [announce, items, view]);
+  }, [announce, view]);
 
   const confirmMarkThrough = useCallback(async () => {
     const pending = confirm;
@@ -207,12 +227,17 @@ export default function FeedList({
   }, { enabled: !confirm && !help, singleKeys: shortcutsOn });
 
   // Prefetch the selected post and the one after it, so `o` opens from cache.
+  // Debounced: a held j passes through rows faster than they could be read, and
+  // fetching each of them would only churn the network and the query cache.
   const selectedId = nav.selectedId;
   useEffect(() => {
-    if (fixture || !selectedId) return;
-    prefetch(selectedId);
-    const index = ids.indexOf(selectedId);
-    if (index >= 0 && index + 1 < ids.length) prefetch(ids[index + 1]);
+    if (fixture || !selectedId) return undefined;
+    const timer = window.setTimeout(() => {
+      prefetch(selectedId);
+      const index = ids.indexOf(selectedId);
+      if (index >= 0 && index + 1 < ids.length) prefetch(ids[index + 1]);
+    }, PREFETCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
   }, [fixture, ids, prefetch, selectedId]);
 
   // ---- infinite loading ----
@@ -261,13 +286,12 @@ export default function FeedList({
               <FeedGroup key={group.source_id} group={group} tabbableId={tabbableId} itemHref={itemHref} {...shared} />
             ))
             : items.map((item, index) => {
-              const day = feedDayKey(item.sort_at);
-              const newDay = index === 0 || day !== feedDayKey(items[index - 1].sort_at);
+              const heading = dayHeadings.get(index);
               return (
                 <Fragment key={item.id}>
-                  {newDay ? (
+                  {heading ? (
                     <h2 className={`px-1 pb-0.5 text-[0.8125rem] font-semibold tracking-[-0.006em] text-fg-2 ${index === 0 ? '' : 'pt-5'}`}>
-                      {feedDayHeading(item.sort_at)}
+                      {heading}
                     </h2>
                   ) : null}
                   <FeedItem
@@ -276,6 +300,7 @@ export default function FeedList({
                     tabbable={item.id === tabbableId}
                     href={itemHref(item)}
                     onMarkThrough={askMarkThrough}
+                    dateColumn="time"
                     {...shared}
                   />
                 </Fragment>
@@ -328,3 +353,6 @@ export default function FeedList({
     </>
   );
 }
+
+/** Memoised: a counts refetch re-renders the reader page, not the whole list. */
+export default memo(FeedList);

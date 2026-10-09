@@ -48,10 +48,20 @@ function selectedIntent(state: NavState, kind: 'open' | 'toggleRead' | 'toggleSt
   return { ...state, intent: { kind, id: state.selectedId } };
 }
 
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export function feedNavigation(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'sync': {
       const ids = action.ids;
+      // Same ids and the same paging: nothing to do. Returning the same object
+      // lets the caller skip a render (a read/star patch re-syncs an equal list).
+      if (!state.pendingAdvance && !state.intent && state.hasMore === action.hasMore && sameIds(state.ids, ids)) return state;
       let next: NavState = { ...state, ids, hasMore: action.hasMore, intent: null };
       if (state.selectedId && !ids.includes(state.selectedId)) {
         // The selected item left the list: take whatever now sits where it was.

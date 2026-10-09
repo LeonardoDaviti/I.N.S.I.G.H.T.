@@ -1,10 +1,10 @@
-import { memo, useState, type MouseEvent } from 'react';
+import { memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCheck, Circle, CircleCheck, PlayCircle, Star } from 'lucide-react';
 
 import type { FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
-import { feedDateLabel } from '../../lib/feedDates';
+import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/feedDates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
@@ -54,6 +54,12 @@ export interface FeedItemProps {
   onToggleStar: (item: FeedItemData) => void;
   /** Shown on the selected row only: mark read from the top down to here. */
   onMarkThrough?: (item: FeedItemData) => void;
+  /**
+   * What the left column shows. `date` ("Sep 29", relative inside 24h) when the
+   * row stands alone; `time` ("14:05") when it already sits under a day header,
+   * so the column does not repeat the header on every row.
+   */
+  dateColumn?: 'date' | 'time';
   now?: Date;
 }
 
@@ -65,7 +71,7 @@ export interface FeedItemProps {
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, now,
+  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, dateColumn = 'date', now,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -85,8 +91,15 @@ function FeedItem({
     onSelect(item.id);
   };
 
-  const timeLabel = feedDateLabel(time, now);
-  const fullTime = new Date(time).toLocaleString();
+  // Relative labels only move by the minute, so a re-render inside the same
+  // minute reuses the label (and the formatters are cached in feedDates).
+  const minute = Math.floor((now ? now.getTime() : Date.now()) / 60_000);
+  const timeLabel = useMemo(
+    () => (dateColumn === 'time' ? feedTimeLabel(time) : feedDateLabel(time, now ?? new Date())),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `minute` stands in for `now`.
+    [dateColumn, minute, time],
+  );
+  const fullTime = useMemo(() => feedFullTime(time), [time]);
   const source = sourceLabel(item.source_display_name);
   // On a real pointer the actions wait for hover or focus; on touch, and on the
   // selected row, they stay visible (lead review #1).
@@ -110,12 +123,13 @@ function FeedItem({
       <time
         dateTime={time}
         title={fullTime}
-        className="w-[3.25rem] shrink-0 text-[0.75rem] leading-6 tabular-nums text-fg-3 sm:w-[4.25rem] sm:whitespace-nowrap sm:text-[0.8125rem]"
+        className={`shrink-0 text-[0.75rem] leading-6 tabular-nums text-fg-3 sm:whitespace-nowrap sm:text-[0.8125rem] ${dateColumn === 'time' ? 'w-[2.25rem] sm:w-[2.75rem]' : 'w-[3.25rem] sm:w-[4.25rem]'}`}
       >
         {timeLabel}
       </time>
       <div className={`min-w-0 flex-1 ${compact ? 'sm:flex sm:items-baseline sm:gap-3' : ''}`}>
         <h3
+          dir="auto"
           className={`line-clamp-2 min-w-0 text-[0.9375rem] leading-6 tracking-[-0.011em] [overflow-wrap:anywhere] ${compact ? 'sm:flex-1' : ''} ${isRead ? 'font-normal text-fg-2' : 'font-semibold text-fg'}`}
         >
           <Link

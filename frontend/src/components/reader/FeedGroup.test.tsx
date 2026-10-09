@@ -55,4 +55,19 @@ describe('FeedGroup', () => {
     renderGroup(group(12_847));
     expect(screen.getByRole('link', { name: '12,844 more from cs.CL' })).toBeInTheDocument();
   });
+
+  it('never claims fewer posts than it shows (a stale count of 0 above 3 posts)', () => {
+    renderGroup(group(0, 3));
+    expect(screen.getByText('3 posts')).toBeInTheDocument();
+    expect(screen.queryByText('0 posts')).not.toBeInTheDocument();
+  });
+
+  it('keeps the date column (no day header above a group)', () => {
+    const data = group(3, 1);
+    const old = new Date(Date.now() - 12 * 24 * 3_600_000);
+    data.items[0] = { ...data.items[0], sort_at: old.toISOString(), published_at: old.toISOString() };
+    renderGroup(data);
+    const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    expect(within(screen.getByRole('article')).getByText(shortDate)).toBeInTheDocument();
+  });
 });

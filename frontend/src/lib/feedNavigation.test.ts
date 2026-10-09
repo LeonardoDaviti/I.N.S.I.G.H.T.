@@ -91,3 +91,19 @@ test('select picks an id that is in the list and ignores unknown ids', () => {
   assert.equal(feedNavigation(state, { type: 'select', id: 'b' }).selectedId, 'b');
   assert.equal(feedNavigation(state, { type: 'select', id: 'zzz' }).selectedId, null);
 });
+
+test('sync with equal ids and paging returns the same state (no re-render)', () => {
+  const state = feedNavigation(initialNavState(['a', 'b'], true), { type: 'select', id: 'b' });
+  const same = feedNavigation(state, { type: 'sync', ids: ['a', 'b'], hasMore: true });
+  assert.equal(same, state);
+  assert.notEqual(feedNavigation(state, { type: 'sync', ids: ['a', 'b'], hasMore: false }), state);
+  assert.notEqual(feedNavigation(state, { type: 'sync', ids: ['a', 'c'], hasMore: true }), state);
+});
+
+test('sync never replays a pending intent, even when the ids are equal', () => {
+  const moved = feedNavigation(initialNavState(['a', 'b'], false), { type: 'next' });
+  assert.deepEqual(moved.intent, { kind: 'focus', id: 'a' });
+  const synced = feedNavigation(moved, { type: 'sync', ids: ['a', 'b'], hasMore: false });
+  assert.equal(synced.intent, null);
+  assert.equal(synced.selectedId, 'a');
+});

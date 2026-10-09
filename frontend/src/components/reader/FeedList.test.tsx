@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 describe('FeedList', () => {
-  it('shows a date column ("Sep 29"; relative only inside 24h), day headers and derived source names', async () => {
+  it('under day headers the row shows its time of day, not the header date again; source names are derived', async () => {
     const now = Date.now();
     const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000).toISOString();
     const old = new Date(now - 12 * 24 * 3_600_000);
@@ -65,11 +65,15 @@ describe('FeedList', () => {
       ])),
     });
     const [fresh, oldOne] = await screen.findAllByRole('article');
-    expect(within(fresh).getByText('2h ago')).toBeInTheDocument();
+    const clock = (date: Date) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+    expect(within(fresh).getByText(clock(new Date(iso(2))))).toBeInTheDocument();
+    expect(within(oldOne).getByText(clock(old))).toBeInTheDocument();
     const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    expect(within(oldOne).getByText(shortDate)).toBeInTheDocument();
-    expect(screen.queryByText(/\d+d ago/)).not.toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(2);
+    expect(within(oldOne).queryByText(shortDate)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+[hd] ago/)).not.toBeInTheDocument();
+    const headings = screen.getAllByRole('heading', { level: 2 });
+    expect(headings).toHaveLength(2);
+    expect(headings[1]).toHaveTextContent(shortDate);
     expect(screen.getByText('anthropics/claude-code')).toBeInTheDocument();
     expect(screen.getByText('arXiv cs.CL')).toBeInTheDocument();
     expect(screen.queryByText(/github\.com|rss\.arxiv/)).not.toBeInTheDocument();

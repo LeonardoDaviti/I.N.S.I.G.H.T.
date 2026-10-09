@@ -1,42 +1,10 @@
-import { Fragment, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 
 import type { FeedFilter, FeedView } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
-
-/**
- * A radio group drawn as the top bar's language: lowercase words separated by
- * slashes, the current one bold and underlined. No pills, no fills.
- */
-function SlashChoice<T extends string>({ label, value, options, onChange }: {
-  label: string;
-  value: T;
-  options: ReadonlyArray<{ value: T; label: string }>;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div role="radiogroup" aria-label={label} className="inline-flex shrink-0 items-center gap-1.5 text-[0.875rem]">
-      {options.map((option, index) => {
-        const active = option.value === value;
-        return (
-          <Fragment key={option.value}>
-            {index > 0 ? <span aria-hidden="true" className="select-none text-fg-3">/</span> : null}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => onChange(option.value)}
-              className={`inline-flex min-h-[2rem] items-center whitespace-nowrap rounded-sm lowercase underline decoration-1 underline-offset-[0.22em] coarse:min-h-[2.75rem] ${active ? 'font-semibold text-fg decoration-fg' : 'text-fg-2 decoration-transparent hover:text-fg hover:decoration-fg-3'} ${FOCUS_RING}`}
-            >
-              {option.label}
-            </button>
-          </Fragment>
-        );
-      })}
-    </div>
-  );
-}
+import SlashChoice from './SlashChoice';
 
 const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'unread', label: 'Unread' },
@@ -120,7 +88,7 @@ export default function FeedToolbar({
           </div>
         </div>
         {subtitle ? <p className="-mt-1 text-[0.8125rem] tabular-nums text-fg-3 sm:hidden">{subtitle}</p> : null}
-        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1">
+        <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
           <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
           <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />
           <div className="hidden md:block"><SlashChoice label="Density" value={density} options={DENSITIES} onChange={onDensityChange} /></div>

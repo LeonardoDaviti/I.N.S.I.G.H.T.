@@ -96,21 +96,22 @@ function Reader({ scope }: { scope: string }) {
   }, [dataName, filter, view]);
 
   // ---- fetch this scope ----
-  const ingestion = useIngestionRun();
+  const { run: runIngestion, isRunning } = useIngestionRun();
   const target: IngestionTarget = useMemo(() => {
     if (scope === 'all') return { kind: 'all' };
     const [kind, id] = scope.split(':');
     return kind === 'folder' ? { kind: 'folder', id, name: title } : { kind: 'source', id, name: title };
   }, [scope, title]);
   const fetchLabel = scope === 'all' ? 'Fetch due sources' : scope.startsWith('folder:') ? 'Fetch this track' : 'Fetch this source';
+  const fetching = isRunning(target);
   const fetchScope = useCallback(() => {
     if (fixture) {
       toast('Demo data is showing; fetching is off. Switch to Live first.');
       return;
     }
-    if (ingestion.isRunning(target)) return;
-    void ingestion.run(target);
-  }, [fixture, ingestion, target]);
+    if (isRunning(target)) return;
+    void runIngestion(target);
+  }, [fixture, isRunning, runIngestion, target]);
 
   const showNewPosts = useCallback(() => {
     void queryClient.resetQueries({ queryKey: currentKey, exact: true });
@@ -119,25 +120,21 @@ function Reader({ scope }: { scope: string }) {
   }, [currentKey, newPosts, queryClient, scopeCount]);
 
   // ---- empty state, per filter and scope ----
-  let emptyTitle: string;
-  let emptyDescription: string | undefined;
-  let emptyAction: EmptyStateAction | undefined;
-  if (filter === 'unread') {
-    emptyTitle = 'You’re all caught up';
-    emptyDescription = 'Nothing unread from the last 30 days.';
-    emptyAction = { label: 'Show all', onClick: () => setParam('filter', 'all') };
-  } else if (filter === 'starred') {
-    emptyTitle = 'No starred posts';
-    emptyDescription = 'Press s on a post, or its star button, to keep it here.';
-    emptyAction = { label: 'Show all', onClick: () => setParam('filter', 'all') };
-  } else if (scope === 'all') {
-    emptyTitle = 'No posts yet';
-    emptyDescription = 'Add a source and fetch it to start reading.';
-    emptyAction = { label: 'Add a source', href: '/settings/sources' };
-  } else {
-    emptyTitle = 'No posts here yet';
-    emptyAction = { label: fetchLabel, onClick: fetchScope, disabled: ingestion.isRunning(target) };
-  }
+  // Memoised with the handlers below: FeedList is memo()ised, so a counts refetch
+  // or a read patch re-renders the toolbar and the rail, not every row.
+  const showAll = useCallback(() => setParam('filter', 'all'), [setParam]);
+  const empty = useMemo((): { title: string; description?: string; action?: EmptyStateAction } => {
+    if (filter === 'unread') {
+      return { title: 'You’re all caught up', description: 'Nothing unread from the last 30 days.', action: { label: 'Show all', onClick: showAll } };
+    }
+    if (filter === 'starred') {
+      return { title: 'No starred posts', description: 'Press s on a post, or its star button, to keep it here.', action: { label: 'Show all', onClick: showAll } };
+    }
+    if (scope === 'all') {
+      return { title: 'No posts yet', description: 'Add a source and fetch it to start reading.', action: { label: 'Add a source', href: '/settings/sources' } };
+    }
+    return { title: 'No posts here yet', action: { label: fetchLabel, onClick: fetchScope, disabled: fetching } };
+  }, [fetchLabel, fetchScope, fetching, filter, scope, showAll]);
 
   const subtitle = scopeCount !== null ? `${formatCount(scopeCount)} unread` : null;
 
@@ -163,7 +160,7 @@ function Reader({ scope }: { scope: string }) {
             density={density}
             onDensityChange={setDensity}
             onFetch={fetchScope}
-            fetching={ingestion.isRunning(target)}
+            fetching={fetching}
             fetchLabel={fetchLabel}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
@@ -176,9 +173,9 @@ function Reader({ scope }: { scope: string }) {
               view={view}
               density={density}
               fixture={fixture}
-              emptyTitle={emptyTitle}
-              emptyDescription={emptyDescription}
-              emptyAction={emptyAction}
+              emptyTitle={empty.title}
+              emptyDescription={empty.description}
+              emptyAction={empty.action}
               onFetch={fetchScope}
               helpOpen={helpOpen}
               onHelpOpenChange={setHelpOpen}

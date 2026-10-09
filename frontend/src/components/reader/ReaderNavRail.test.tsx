@@ -13,10 +13,14 @@ import { resetStoredChoices } from '../../hooks/useShortcutPreference';
 const FOLDER = 'f8571844-1065-4d96-85b5-1dfd9dc7b111';
 const SOURCE = '0a5e90ae-2533-4a31-bf0a-cafd414fc0ce';
 
-function setup(route = '/', sourceName = 'Simon Willison’s Weblog') {
+function setup(
+  route = '/',
+  sourceName = 'Simon Willison’s Weblog',
+  counts: object = { total: 12_847, by_source: { [SOURCE]: 7 }, by_folder: { [FOLDER]: 5 } },
+) {
   const api = makeFakeApi({
     getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ source_id: SOURCE })])),
-    getUnreadCounts: vi.fn().mockResolvedValue({ total: 12_847, by_source: { [SOURCE]: 7 }, by_folder: { [FOLDER]: 5 } }),
+    getUnreadCounts: vi.fn().mockResolvedValue(counts),
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [{ id: FOLDER, name: 'Agentic News', sort_order: 1 }] }),
     getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([healthRow({ source_id: SOURCE, display_name: sourceName })])),
     getPostDetail: vi.fn().mockResolvedValue({ success: true, post: { id: 'x' } }),
@@ -77,6 +81,14 @@ describe('ReaderNavRail', () => {
     const rail = await screen.findByRole('navigation', { name: 'Feeds' });
     expect(await within(rail).findByRole('link', { name: /^arXiv cs\.AI/ })).toBeInTheDocument();
     expect(within(rail).queryByText(/rss\.arxiv\.org/)).not.toBeInTheDocument();
+  });
+
+  it('hides an unread source the directory cannot name instead of "Unknown source"', async () => {
+    setup('/', 'Simon Willison’s Weblog', { total: 9, by_source: { [SOURCE]: 7, 'gone-source': 2 }, by_folder: {} });
+    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    expect(await within(rail).findByRole('link', { name: /Simon Willison’s Weblog.*7 unread/ })).toBeInTheDocument();
+    expect(within(rail).queryByText(/Unknown source/)).not.toBeInTheDocument();
+    expect(within(rail).queryByRole('link', { name: /2 unread/ })).not.toBeInTheDocument();
   });
 
   it('has no settings link (the top bar owns sources)', async () => {
