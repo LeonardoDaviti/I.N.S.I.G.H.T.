@@ -1643,6 +1643,8 @@ Rules:
 **Commands:** `cd frontend && npm install && npm run typecheck && npm test && npm run build`
 
 ### F2. Ingestion operations UI: run report, Run cycle, health table, fetch buttons
+
+> **Design gate:** before you write UI code, load the `apple-design`, `emil-design-eng` and `break-ui` skills with the Skill tool and meet §F.7. Acceptance includes worst-case fixtures and the dev-only `?data=` switch for every new list or row component.
 **Depends on B4 (for API shapes) and B6.** Priority: **after F3** (reader value first). When F2 and F3 are both in flight, F3 lands first and F2 rebases.
 - The components and pure libs can be written in parallel with B4–B6 against fixture JSON, because they touch disjoint frontend files.
 - The `api.ts` method changes ship after B6 is merged.
@@ -1686,6 +1688,8 @@ Rules:
 **Commands:** `cd frontend && npm run typecheck && npm test && npx eslint src/components/ops src/lib src/pages/SourcesConfig.tsx src/pages/TrackPage.tsx && npm run build`
 
 ### F3. Reader-first home: feed, unread, keyboard, reading view, prev/next
+
+> **Design gate:** before you write UI code, load the `apple-design`, `emil-design-eng` and `break-ui` skills with the Skill tool and meet §F.7. Acceptance includes worst-case fixtures and the dev-only `?data=` switch for every new list or row component.
 **Depends on B7.** Priority: right after F1; it lands before F2.
 - The pure libs (`feedNavigation`, `feedContext`) and the components can be built in parallel with B4–B7 against fixtures.
 - Wiring them to `api.ts` waits for B7.
