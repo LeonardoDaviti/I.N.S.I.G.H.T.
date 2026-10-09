@@ -91,7 +91,7 @@ You should see the Daily Briefing page with three buttons:
 **Solution:** Run ingestion script:
 ```bash
 cd /home/man/Documents/I.N.S.I.G.H.T.
-python backend/insight_core/scripts/ingest.py
+(cd backend && python -m insight_core.scripts.safe_ingest --force)
 ```
 
 ### "Invalid date format"

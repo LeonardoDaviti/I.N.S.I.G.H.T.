@@ -6,10 +6,12 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
+from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -147,7 +149,10 @@ class YouTubeProgressRequest(BaseModel):
 
 class LiveFetchRequest(BaseModel):
     limit: int | None = None
-    asyncMode: bool | None = False
+
+
+class IngestionRunRequest(BaseModel):
+    force: bool | None = False
 
 
 class SchedulerConfigRequest(BaseModel):
@@ -155,6 +160,7 @@ class SchedulerConfigRequest(BaseModel):
     syncSourcesEachCycle: bool | None = None
     generateDailyBriefing: bool | None = None
     generateTopicBriefing: bool | None = None
+    ingestTickMinutes: float | None = None
 
 
 class PostNotesRequest(BaseModel):
@@ -277,6 +283,44 @@ def _accepted_job_response(job_id: str, job_type: str, *, message: str | None = 
         "status": "running",
         "message": message or f"{job_type} started",
     }
+
+def _accept_ingestion_run(
+    background_tasks: BackgroundTasks,
+    request: FetchRequest,
+    run,
+    *args,
+    message: str,
+    source_id: str | None = None,
+) -> JSONResponse:
+    """Start an ingestion_run job and run it in the background (spec §A.5).
+
+    Async-only: when the job cannot be tracked the run does not happen (503) - a manual
+    fetch must never run synchronously inside the request again.
+    """
+    job_id = api_bridge._start_job_safe(
+        "ingestion_run",
+        trigger="manual",
+        source_id=source_id,
+        message=message,
+        payload={"selector": request.selector.as_dict(), "force": request.force, "limit": request.limit},
+    )
+    if not job_id:
+        return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    background_tasks.add_task(_run_async_job_background, "ingestion_run", run, *args, job_id=job_id)
+    return JSONResponse(
+        status_code=202,
+        content={"success": True, "accepted": True, "job_id": job_id, "job_type": "ingestion_run",
+                 "status": "running", "message": message},
+    )
+
+
+def _unavailable_or(result: Any) -> Any:
+    """409 for an archive request on a kind this process cannot fetch (E7)."""
+    if isinstance(result, dict) and result.get("unavailable"):
+        return JSONResponse(status_code=409, content={"success": False, "detail": result.get("error"),
+                                                      "error": result.get("error")})
+    return result
+
 
 @app.get("/")
 async def root():
@@ -1177,40 +1221,15 @@ async def add_folder_source(folder_id: str, body: dict):
 
 @app.post("/api/folders/{folder_id}/ingest")
 async def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
-    """Fetch every source in a folder/track now.
+    """Fetch every enabled source in a folder/track now (forced). Body: {limit?: int}.
 
-    Body: {limit?: int, delaySeconds?: number, asyncMode?: bool}
-    Sources are fetched sequentially with a pause between them, so a large track does not
-    trip per-host rate limits. Use asyncMode for tracks with many sources - a 54-source
-    track takes minutes and will exceed a normal HTTP timeout.
+    Returns 202 with the ingestion_run job; poll /api/operations/jobs/{id} for the run report.
+    Politeness comes from the source kinds' profiles and the host floors, not a delay knob.
     """
-    payload = body or {}
-    limit = payload.get("limit")
-    delay_seconds = payload.get("delaySeconds")
-    try:
-        if payload.get("asyncMode"):
-            job_id = api_bridge._start_job_safe(
-                "folder_ingest",
-                trigger="manual",
-                message=f"Ingest folder {folder_id}",
-                payload={"folder_id": folder_id},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "folder_ingest",
-                    api_bridge.ingest_folder_now,
-                    folder_id,
-                    limit,
-                    delay_seconds,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "folder_ingest", message="Folder ingestion started")
-        logger.info(f"\U0001F4E5 Ingesting all sources in folder {folder_id}")
-        return await api_bridge.ingest_folder_now(folder_id, limit, delay_seconds)
-    except Exception as e:
-        logger.exception("Failed to ingest folder")
-        return {"success": False, "error": str(e)}
+    limit = (body or {}).get("limit")
+    request = FetchRequest(SourceSelector.folder(folder_id), Trigger.MANUAL, force=True, limit=limit)
+    return _accept_ingestion_run(background_tasks, request, api_bridge.ingest_folder_now, folder_id, limit,
+                                 message=f"Fetch track {folder_id}")
 
 
 @app.get("/api/folders/{folder_id}/posts")
@@ -1594,7 +1613,7 @@ async def plan_archive(source_id: str, request: ArchiveRequest):
     """Estimate archive effort for a source."""
     try:
         logger.info(f"🧭 Planning archive for source: {source_id}")
-        return await api_bridge.get_archive_plan(
+        return _unavailable_or(await api_bridge.get_archive_plan(
             source_id,
             request.desiredPosts,
             resume=bool(request.resume),
@@ -1603,7 +1622,7 @@ async def plan_archive(source_id: str, request: ArchiveRequest):
                 "batch_size": request.batchSize,
                 "batch_cooldown_seconds": request.batchCooldownSeconds,
             },
-        )
+        ))
     except Exception as e:
         logger.exception(f"Failed to plan archive for {source_id}")
         return {"success": False, "error": str(e)}
@@ -1614,7 +1633,7 @@ async def run_archive(source_id: str, request: ArchiveRequest):
     """Run an archive job for a single source."""
     try:
         logger.info(f"📦 Running archive for source: {source_id}")
-        return await api_bridge.run_archive(
+        return _unavailable_or(await api_bridge.run_archive(
             source_id,
             request.desiredPosts,
             resume=bool(request.resume),
@@ -1623,7 +1642,7 @@ async def run_archive(source_id: str, request: ArchiveRequest):
                 "batch_size": request.batchSize,
                 "batch_cooldown_seconds": request.batchCooldownSeconds,
             },
-        )
+        ))
     except Exception as e:
         logger.exception(f"Failed to run archive for {source_id}")
         return {"success": False, "error": str(e)}
@@ -1631,30 +1650,10 @@ async def run_archive(source_id: str, request: ArchiveRequest):
 
 @app.post("/api/sources/{source_id}/fetch-now")
 async def fetch_source_now(source_id: str, request: LiveFetchRequest, background_tasks: BackgroundTasks):
-    """Fetch the latest posts for a single source immediately."""
-    try:
-        logger.info(f"⚡ Fetching source immediately: {source_id}")
-        if request.asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "fetch_source_now",
-                trigger="manual",
-                source_id=source_id,
-                payload={"limit": request.limit},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "fetch_source_now",
-                    api_bridge.fetch_source_now,
-                    source_id,
-                    request.limit,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "fetch_source_now", message="Source fetch started")
-        return await api_bridge.fetch_source_now(source_id, request.limit)
-    except Exception as e:
-        logger.exception(f"Failed to fetch source immediately: {source_id}")
-        return {"success": False, "error": str(e), "source_id": source_id}
+    """Fetch one source now (forced, even when disabled). 202 + ingestion_run job."""
+    fetch = FetchRequest(SourceSelector.source(source_id), Trigger.MANUAL, force=True, limit=request.limit)
+    return _accept_ingestion_run(background_tasks, fetch, api_bridge.fetch_source_now, source_id, request.limit,
+                                 message=f"Fetch source {source_id}", source_id=source_id)
 
 
 # Briefing generation endpoints
@@ -2006,43 +2005,13 @@ async def get_status():
 
 # ============= INGESTION ENDPOINTS =============
 
-@app.post("/api/ingest-posts")
-async def ingest_posts():
-    """Ingest posts from all sources."""
-    try:
-        logger.info("🚀 Ingesting posts from all sources")
-        result = await api_bridge.ingest_posts()
-
-        if isinstance(result, dict) and "success" in result:
-            return result
-
-        if result is None:
-            return {
-                "success": False, 
-                "error": "Failed to ingest posts"
-            }
-        
-    except Exception as e:
-        logger.exception("Failed to ingest posts")
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/safe-ingest-posts")
-async def safe_ingest_posts():
-    """Ingest posts from all sources that need updating."""
-    try:
-        logger.info("🚀 Ingesting posts from all sources that need updating")
-        result = await api_bridge.safe_ingest_posts()
-        if isinstance(result, dict) and "success" in result:
-            return result
-
-        if result is None:
-            return {
-                "success": False, 
-                "error": "Failed to ingest posts"
-            }
-    except Exception as e:
-        logger.exception("Failed to ingest posts from all sources that need updating")
-        return {"success": False, "error": str(e)}
+@app.post("/api/ingestion/run")
+async def run_ingestion_cycle(background_tasks: BackgroundTasks, request: IngestionRunRequest | None = None):
+    """The manual "Run cycle": every enabled source; due ones only unless force. 202 + job."""
+    force = bool(request.force) if request else False
+    fetch = FetchRequest(SourceSelector.all(), Trigger.MANUAL, force=force)
+    return _accept_ingestion_run(background_tasks, fetch, api_bridge.run_ingestion_cycle, force,
+                                 message="Forced ingestion cycle" if force else "Ingestion cycle")
 
 
 @app.get("/api/ingestion/logs")
@@ -2102,7 +2071,13 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
             payload["generate_daily_briefing"] = request.generateDailyBriefing
         if request.generateTopicBriefing is not None:
             payload["generate_topic_briefing"] = request.generateTopicBriefing
+        if request.ingestTickMinutes is not None:
+            if request.ingestTickMinutes < 15:
+                raise HTTPException(status_code=400, detail="ingestTickMinutes must be at least 15")
+            payload["ingest_tick_minutes"] = request.ingestTickMinutes
         return api_bridge.update_scheduler_config(payload)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to update scheduler config")
         return {"success": False, "error": str(e)}

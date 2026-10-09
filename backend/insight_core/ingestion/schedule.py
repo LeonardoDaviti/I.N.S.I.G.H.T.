@@ -1,8 +1,7 @@
 """The fetch schedule: one pure answer to "should this source be fetched now?".
 
 Pure: no DB, no clock, no environment reads except in availability_from_env and the
-backoff constants. Every caller - the ingest cycle, the source health API, and (B4) the
-ingestion runner - builds its CadenceStats with cadence_stats() and asks decide_fetch(),
+backoff constants. Every caller - the ingestion runner and the source health API - builds its CadenceStats with cadence_stats() and asks decide_fetch(),
 so the UI and the runner cannot disagree about when a source is due.
 
 Spec: plan/INSIGHT_mark_ix_plan.md §C.2.
@@ -234,7 +233,7 @@ def backoff_delay(consecutive_failures: int, *, rand: Callable[[], float] = rand
     return min(raw, cap) * (0.85 + 0.15 * rand())
 
 
-def _unavailable_reason(profile: PolitenessProfile, availability: Availability) -> str | None:
+def unavailable_reason(profile: PolitenessProfile, availability: Availability) -> str | None:
     if profile.requires == "ytdlp" and not availability.ytdlp_enabled:
         return "yt-dlp disabled (INSIGHT_YTDLP_ENABLED=0)"
     if profile.requires == "telegram_creds" and not availability.telegram_credentials:
@@ -254,13 +253,8 @@ def decide_fetch(
     force: bool,
     availability: Availability,
     requested_limit: int | None = None,
-    ignore_backoff: bool = False,
 ) -> FetchDecision:
-    """Rules, in order: unavailable, force, error state, new source, due check (§C.2).
-
-    `ignore_backoff` skips the error-state rule only (B1-B3 manual cycle semantics);
-    it is deleted in B4 once `force` exists on every manual path.
-    """
+    """Rules, in order: unavailable, force, error state, new source, due check (§C.2)."""
     interval, basis = fetch_interval(stats, profile)
     post_limit = max(requested_limit or stats.max_posts_per_fetch, profile.min_posts_per_fetch)
     retry_at = stats.next_retry_at
@@ -278,7 +272,7 @@ def decide_fetch(
         )
 
     # 1. Unavailable - even when forced, and never counted as backoff.
-    reason = _unavailable_reason(profile, availability)
+    reason = unavailable_reason(profile, availability)
     if reason is not None:
         return decision(DecisionKind.SKIP_UNAVAILABLE, None, f"Unavailable: {reason}")
 
@@ -287,7 +281,7 @@ def decide_fetch(
         return decision(DecisionKind.FETCH_FORCED, now, "Forced fetch")
 
     # 3. Error state: the ladder applies regardless of tier.
-    if not ignore_backoff and stats.consecutive_failures > 0 and retry_at is not None:
+    if stats.consecutive_failures > 0 and retry_at is not None:
         if now < retry_at:
             return decision(
                 DecisionKind.SKIP_BACKOFF,

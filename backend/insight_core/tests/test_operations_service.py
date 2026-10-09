@@ -130,3 +130,20 @@ class OperationsServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SchedulerConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.service = OperationsService("postgresql:///unused")
+
+    def test_ingest_tick_minutes_defaults_to_an_hour_with_a_15_minute_floor(self):
+        self.assertEqual(self.service._normalize_scheduler_config({})["ingest_tick_minutes"], 60)
+        self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 5})["ingest_tick_minutes"], 15)
+        self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 30})["ingest_tick_minutes"], 30)
+
+    def test_job_labels_cover_the_new_and_legacy_ingestion_types(self):
+        from insight_core.services.operations_service import job_label
+
+        self.assertEqual(job_label("ingestion_run"), "Ingestion run")
+        self.assertEqual(job_label("safe_ingest"), "Ingestion cycle (legacy)")
+        self.assertEqual(job_label("folder_ingest"), "Track fetch (legacy)")

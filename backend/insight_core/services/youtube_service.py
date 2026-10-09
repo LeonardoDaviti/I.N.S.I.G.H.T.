@@ -89,7 +89,7 @@ class YouTubeService:
             )
         except Exception as exc:
             # Every caller of inspect_channel swallows this into a warning about the fetch
-            # (record_live_fetch does), so the only symptom of a channel scan failing is
+            # (DbInspectionRefresher does), so the only symptom of a channel scan failing is
             # available_posts / first_post_date frozen at their old values with nothing said.
             # Name the consequence here, at the only place that knows what was lost.
             self.logger.error(

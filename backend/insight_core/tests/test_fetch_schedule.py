@@ -148,13 +148,10 @@ class DecideFetchTests(unittest.TestCase):
         d = decide(stats(last_success_at=NOW - timedelta(minutes=5)), force=True)
         self.assertEqual(d.kind, DecisionKind.FETCH_FORCED)
 
-    def test_ignore_backoff_skips_only_the_error_rule(self):
-        in_backoff = dict(consecutive_failures=5, next_retry_at=NOW + 4 * H)
-        fresh = decide(stats(**in_backoff, last_success_at=NOW - 2 * H), ignore_backoff=True)
-        self.assertEqual(fresh.kind, DecisionKind.SKIP_NOT_DUE)
-
-        stale = decide(stats(**in_backoff, last_success_at=NOW - 25 * H), ignore_backoff=True)
-        self.assertEqual(stale.kind, DecisionKind.FETCH_DUE)
+    def test_ignore_backoff_is_gone(self):
+        """B4: force superseded the interim ignore_backoff argument."""
+        with self.assertRaises(TypeError):
+            decide(stats(), ignore_backoff=True)
 
     def test_force_never_beats_ytdlp_off(self):
         """Regression: the manual paths used to bypass the yt-dlp switch."""

@@ -118,7 +118,7 @@ python backend/insight_core/tests/test_generate_topics.py 2025-11-16
    - Ensure pgvector extension is installed
 
 3. **Posts:**
-   - Run `ingest.py` first to fetch posts
+   - Run `python -m insight_core.scripts.safe_ingest` first to fetch posts
 
 ## Database Schema
 
@@ -164,7 +164,7 @@ CREATE TABLE topic_connections (
 
 ```bash
 # 1. Ingest posts
-python backend/insight_core/scripts/ingest.py
+(cd backend && python -m insight_core.scripts.safe_ingest --force)
 
 # 2. Generate topics
 python backend/insight_core/scripts/generate_topics.py 2025-11-16

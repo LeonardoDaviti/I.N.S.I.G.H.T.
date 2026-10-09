@@ -1,5 +1,4 @@
 # backend/insight_api_bridge.py
-import asyncio
 from insight_core.db.ensure_db import ensure_database
 
 from insight_core.services.sources_service import SourcesService
@@ -18,8 +17,9 @@ from insight_core.services.inbox_service import InboxService
 from insight_core.services.analyst_actions_service import AnalystActionsService
 from insight_core.services.system_logs_service import SystemLogsService
 from insight_core.services.operations_service import OperationsService
-from insight_core.ingestion.ports import DbFetchStateStore
-from insight_core.ingestion.types import FetchOutcome
+from insight_core.ingestion import FetchRequest, SourceSelector, Trigger, run_ingestion
+from insight_core.ingestion.kinds.base import KindUnavailable
+from insight_core.ingestion.ports import JobProgressSink
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.reader_service import ReaderService
 from insight_core.services.explainability_service import ExplainabilityService
@@ -27,8 +27,6 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.services.story_timeline_service import StoryTimelineService
 from insight_core.services.youtube_service import YouTubeService
 
-from insight_core.scripts.ingest import ingest_posts
-from insight_core.scripts.safe_ingest import safe_ingest_posts
 
 from datetime import datetime, date
 
@@ -51,7 +49,6 @@ class InsightApiBridge:
         self.evidence_service = EvidenceFoundationService(self.db)
         self.system_logs_service = SystemLogsService()
         self.operations_service = OperationsService(self.db)
-        self.fetch_state = DbFetchStateStore(self.db)
         self.post_detail_service = PostDetailService(self.db)
         self.explainability_service = ExplainabilityService(self.db)
         self.reader_service = ReaderService(self.db)
@@ -89,16 +86,6 @@ class InsightApiBridge:
             return
         try:
             self.operations_service.append_job_event(job_id, **kwargs)
-        except Exception:
-            return
-
-    def _record_fetch_outcome_safe(self, source_id: str, *, fetched: int = 0, error: str | None = None) -> None:
-        """Record a manual live fetch in source_fetch_state (healthy/empty/error). Never raises."""
-        try:
-            self.fetch_state.record_outcome(
-                FetchOutcome.from_fetch(source_id, fetched=fetched, error=error, duration_s=0.0),
-                trigger="manual",
-            )
         except Exception:
             return
 
@@ -326,104 +313,11 @@ class InsightApiBridge:
             return {"success": False, "error": str(e), "folder": None}
 
     async def ingest_folder_now(
-        self,
-        folder_id: str,
-        limit: int | None = None,
-        delay_seconds: float | None = None,
-        *,
-        job_id: str | None = None,
+        self, folder_id: str, limit: int | None = None, *, job_id: str | None = None
     ) -> Dict[str, Any]:
-        """Fetch every source in a folder/track immediately, sequentially.
-
-        Sequential with a per-source pause on purpose: a track can hold dozens of feeds
-        and Reddit in particular rate-limits hard (429s even at 20-60s spacing), so
-        hammering them in parallel makes healthy sources look dead. Reports created vs
-        fetched separately - fetched counts say nothing about whether anything is new.
-        """
-        folder = self.folders_service.get_folder(folder_id)
-        if not folder:
-            return {"success": False, "error": f"Folder {folder_id} not found"}
-
-        source_ids = self.folders_service.list_source_ids(folder_id)
-        if not source_ids:
-            return {"success": False, "error": "Folder has no sources", "folder": folder}
-
-        job_id = job_id or self._start_job_safe(
-            "folder_ingest",
-            trigger="manual",
-            message=f"Ingest {len(source_ids)} sources in {folder['name']}",
-            payload={"folder_id": folder_id, "sources": len(source_ids)},
-        )
-
-        created = fetched = 0
-        results: List[Dict[str, Any]] = []
-        failures: List[Dict[str, Any]] = []
-
-        for index, source_id in enumerate(source_ids):
-            try:
-                result = await self.source_fetch_service.ingest_source_now(source_id, limit)
-                created += int(result.get("posts_inserted") or 0)
-                fetched += int(result.get("posts_fetched") or 0)
-                results.append(
-                    {
-                        "source_id": source_id,
-                        "display_name": (result.get("source") or {}).get("display_name"),
-                        "posts_fetched": result.get("posts_fetched"),
-                        "posts_inserted": result.get("posts_inserted"),
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001
-                failures.append({"source_id": source_id, "error": str(exc)[:200]})
-
-            self._append_job_event_safe(
-                job_id,
-                message=f"{index + 1}/{len(source_ids)} sources processed",
-                level="info",
-                progress=round((index + 1) / len(source_ids) * 100, 2),
-            )
-
-            if index < len(source_ids) - 1:
-                pause = delay_seconds
-                if pause is None:
-                    source = self.sources_service.get_source_with_settings(source_id) or {}
-                    settings = source.get("settings") or {}
-                    pause = float(settings.get("fetch_delay_seconds") or 2)
-                    # Reddit 429s aggressively; give it a floor regardless of source config.
-                    if "reddit.com" in str(source.get("handle_or_url") or ""):
-                        pause = max(pause, 8.0)
-                await asyncio.sleep(max(0.0, float(pause)))
-
-        summary = (
-            f"{created} new posts from {len(source_ids) - len(failures)}/{len(source_ids)} sources"
-            if not failures
-            else f"{created} new posts; {len(failures)} of {len(source_ids)} sources failed"
-        )
-        self._finish_job_safe(
-            job_id,
-            status="success" if not failures else "failed",
-            message=summary,
-            payload={
-                "folder_id": folder_id,
-                "posts_created": created,
-                "posts_fetched": fetched,
-                "sources_attempted": len(source_ids),
-                "sources_failed": len(failures),
-                "failures": failures[:20],
-            },
-            compact=True,
-        )
-        return {
-            "success": not failures,
-            "folder": folder,
-            "posts_created": created,
-            "posts_fetched": fetched,
-            "posts_duplicate": fetched - created,
-            "sources_attempted": len(source_ids),
-            "sources_failed": len(failures),
-            "failures": failures[:20],
-            "per_source": results,
-            "error": summary if failures else None,
-        }
+        """Fetch every enabled source in a folder/track now (forced), through the ingestion runner."""
+        request = FetchRequest(SourceSelector.folder(folder_id), Trigger.MANUAL, force=True, limit=limit)
+        return await self.run_ingestion_job(request, job_id=job_id)
 
     def get_folder_posts(
         self, folder_id: str, limit: int = 50, offset: int = 0, since_days: int | None = None
@@ -976,6 +870,8 @@ class InsightApiBridge:
                 "success": True,
                 "archive": plan,
             }
+        except KindUnavailable as e:
+            return {"success": False, "error": e.reason, "unavailable": True}
         except Exception as e:
             return {
                 "success": False,
@@ -1031,6 +927,10 @@ class InsightApiBridge:
                 payload=result,
             )
             return result
+        except KindUnavailable as e:
+            self._finish_job_safe(job_id, status="failed", message=f"Unavailable: {e.reason}",
+                                  payload={"source_id": source_id, "unavailable": True})
+            return {"success": False, "error": e.reason, "unavailable": True, "source_id": source_id}
         except Exception as e:
             self._finish_job_safe(
                 job_id,
@@ -1070,36 +970,28 @@ class InsightApiBridge:
             }
 
     async def fetch_source_now(self, source_id: str, limit: int | None = None, *, job_id: str | None = None) -> Dict[str, Any]:
-        """Fetch the latest posts for a single source immediately."""
-        job_id = job_id or self._start_job_safe(
-            "fetch_source_now",
-            trigger="manual",
-            source_id=source_id,
-            payload={"limit": limit},
-        )
+        """Fetch one source now (forced, even when disabled), through the ingestion runner."""
+        request = FetchRequest(SourceSelector.source(source_id), Trigger.MANUAL, force=True, limit=limit)
+        return await self.run_ingestion_job(request, job_id=job_id)
+
+    async def run_ingestion_cycle(self, force: bool = False, *, job_id: str | None = None) -> Dict[str, Any]:
+        """The manual "Run cycle": every enabled source, due ones only unless forced."""
+        request = FetchRequest(SourceSelector.all(), Trigger.MANUAL, force=bool(force))
+        return await self.run_ingestion_job(request, job_id=job_id)
+
+    async def run_ingestion_job(self, request: FetchRequest, *, job_id: str | None = None) -> Dict[str, Any]:
+        """run_ingestion with job progress; the job is finished in every case. Returns the report payload."""
+        status, message, payload = "failed", "Ingestion run did not finish", {}
         try:
-            result = await self.source_fetch_service.ingest_source_now(source_id, limit)
-            self._record_fetch_outcome_safe(source_id, fetched=int(result.get("posts_fetched") or 0))
-            self._finish_job_safe(
-                job_id,
-                status="success",
-                message=f"Fetched {result.get('posts_fetched', 0)} posts",
-                payload=result,
-            )
-            return result
+            report = await run_ingestion(request, progress=JobProgressSink(self.operations_service, job_id))
+            status, message, payload = report.job_status, report.summary_line(), report.to_payload()
+            return payload
         except Exception as e:
-            self._record_fetch_outcome_safe(source_id, error=str(e))
-            self._finish_job_safe(
-                job_id,
-                status="failed",
-                message=str(e),
-                payload={"source_id": source_id},
-            )
-            return {
-                "success": False,
-                "error": str(e),
-                "source_id": source_id,
-            }
+            message = f"Ingestion run failed: {e}"
+            payload = {"success": False, "error": str(e), "selector": request.selector.as_dict()}
+            return payload
+        finally:
+            self._finish_job_safe(job_id, status=status, message=message, payload=payload, compact=True)
 
     def get_ingestion_logs(self, log_name: str = "application", lines: int = 200) -> Dict[str, Any]:
         """Return recent shared log lines for ingestion/backend operations."""
@@ -1398,51 +1290,14 @@ class InsightApiBridge:
 
     # ============= INGESTION =============
 
-    async def ingest_posts(self):
-        """Ingest posts from all sources."""
-        job_id = self._start_job_safe("ingest_all", trigger="manual")
-        try:
-            result = await ingest_posts(trigger="manual")
-            self._finish_job_safe(
-                job_id,
-                status="success" if result.get("success") else "failed",
-                message=result.get("error") or f"Ingested {result.get('posts_ingested', 0)} posts",
-                payload=result,
-            )
-            return result
-        except Exception as e:
-            self._finish_job_safe(job_id, status="failed", message=str(e))
-            return {
-                "success": False,
-                "error": str(e),
-                "posts_ingested": 0,
-                "sources_ingested": 0,
-            }
-
-    async def safe_ingest_posts(self):
-        """Ingest posts from all sources that need updating."""
-        job_id = self._start_job_safe("safe_ingest", trigger="manual")
-        try:
-            result = await safe_ingest_posts(trigger="manual")
-            self._finish_job_safe(
-                job_id,
-                status="success" if result.get("success") else "failed",
-                message=result.get("error") or f"Ingested {result.get('posts_ingested', 0)} posts",
-                payload=result,
-            )
-            return result
-        except Exception as e:
-            self._finish_job_safe(job_id, status="failed", message=str(e))
-            return {
-                "success": False,
-                "error": str(e),
-                "posts_ingested": 0,
-                "sources_ingested": 0,
-            }
-
     def get_scheduler_config(self) -> Dict[str, Any]:
         try:
-            return {"success": True, "scheduler": self.operations_service.get_scheduler_config()}
+            scheduler = self.operations_service.get_scheduler_config()
+            try:
+                scheduler["state"] = self.operations_service.get_scheduler_state()
+            except Exception:
+                scheduler["state"] = {}
+            return {"success": True, "scheduler": scheduler}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

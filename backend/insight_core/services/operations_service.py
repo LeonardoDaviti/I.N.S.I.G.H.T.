@@ -19,10 +19,38 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
+# Human labels per job type. ingestion_run replaced safe_ingest, ingest_all,
+# fetch_source_now and folder_ingest in Mark IX; old rows keep their legacy labels.
+JOB_LABELS: Dict[str, str] = {
+    "ingestion_run": "Ingestion run",
+    "scheduler_cycle": "Daily work",
+    "archive_source": "Archive",
+    "daily_briefing": "Daily briefing",
+    "topic_briefing": "Topic briefing",
+    "expert_briefing": "Expert briefing",
+}
+LEGACY_JOB_LABELS: Dict[str, str] = {
+    "safe_ingest": "Ingestion cycle (legacy)",
+    "ingest_all": "Full ingest (legacy)",
+    "fetch_source_now": "Fetch now (legacy)",
+    "folder_ingest": "Track fetch (legacy)",
+}
+
+
+def job_label(job_type: Optional[str]) -> str:
+    job_type = job_type or ""
+    return JOB_LABELS.get(job_type) or LEGACY_JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
+
+
+INGEST_TICK_MINUTES_MIN = 15
+INGEST_TICK_MINUTES_MAX = 24 * 60
+
+
 class OperationsService:
     """Manage operational configuration and runtime telemetry."""
 
     SETTINGS_KEY_SCHEDULER = "scheduler_config"
+    SETTINGS_KEY_SCHEDULER_STATE = "scheduler_state"
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -59,6 +87,7 @@ class OperationsService:
             "sync_sources_each_cycle": merged["sync_sources_each_cycle"],
             "generate_daily_briefing": merged["generate_daily_briefing"],
             "generate_topic_briefing": merged["generate_topic_briefing"],
+            "ingest_tick_minutes": merged["ingest_tick_minutes"],
         }
 
         with psycopg.connect(self.db_url) as conn:
@@ -79,6 +108,43 @@ class OperationsService:
 
         merged["updated_at"] = updated_at.isoformat()
         return merged
+
+    # ------------------------------------------------------------------ scheduler state
+
+    def get_scheduler_state(self) -> Dict[str, Any]:
+        """{last_tick_at, next_tick_at, last_daily_work_at, next_daily_work_at} as ISO strings (or {})."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM system_settings WHERE key = %s", (self.SETTINGS_KEY_SCHEDULER_STATE,))
+                row = cur.fetchone()
+        return dict(row[0] or {}) if row else {}
+
+    def set_scheduler_state(self, state: Dict[str, Any]) -> None:
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO system_settings (key, value, updated_at)
+                    VALUES (%s, %s::jsonb, now())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+                    """,
+                    (self.SETTINGS_KEY_SCHEDULER_STATE, json.dumps(self._json_safe(state or {}))),
+                )
+            conn.commit()
+
+    def latest_successful_job_finished_at(self, job_type: str) -> Optional[datetime]:
+        """When the newest successful job of this type finished (seeds the daily-work gate)."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT max(finished_at) FROM job_runs
+                    WHERE job_type = %s AND status = 'success' AND finished_at IS NOT NULL
+                    """,
+                    (job_type,),
+                )
+                row = cur.fetchone()
+        return row[0] if row else None
 
     def start_job(
         self,
@@ -272,6 +338,7 @@ class OperationsService:
                 {
                     "id": str(row[0]),
                     "job_type": row[1],
+                    "job_label": job_label(row[1]),
                     "status": row[2],
                     "trigger": row[3],
                     "source_id": str(row[4]) if row[4] else None,
@@ -319,6 +386,7 @@ class OperationsService:
         return {
             "id": str(row[0]),
             "job_type": row[1],
+            "job_label": job_label(row[1]),
             "status": row[2],
             "trigger": row[3],
             "source_id": str(row[4]) if row[4] else None,
@@ -344,6 +412,7 @@ class OperationsService:
                 "id": job["id"],
                 "severity": "high",
                 "title": job["job_type"],
+                "label": job.get("job_label") or job_label(job["job_type"]),
                 "message": job.get("message") or "Job failed",
                 "started_at": job["started_at"],
                 "source_id": job.get("source_id"),
@@ -467,6 +536,7 @@ class OperationsService:
                 "sync_sources_each_cycle": os.getenv("INSIGHT_SYNC_SOURCES_EACH_CYCLE", "true").lower() == "true",
                 "generate_daily_briefing": os.getenv("INSIGHT_GENERATE_DAILY_BRIEFING", "true").lower() == "true",
                 "generate_topic_briefing": os.getenv("INSIGHT_GENERATE_TOPIC_BRIEFING", "false").lower() == "true",
+                "ingest_tick_minutes": float(os.getenv("INSIGHT_INGEST_TICK_MINUTES", "60")),
                 "updated_at": None,
             }
         )
@@ -474,11 +544,17 @@ class OperationsService:
     def _normalize_scheduler_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         interval_hours = float(config.get("interval_hours", 20))
         interval_hours = max(0.25, min(interval_hours, 168))
+        try:
+            tick = float(config.get("ingest_tick_minutes", 60))
+        except (TypeError, ValueError):
+            tick = 60.0
+        tick = max(INGEST_TICK_MINUTES_MIN, min(tick, INGEST_TICK_MINUTES_MAX))
         return {
             "interval_hours": interval_hours,
             "sync_sources_each_cycle": bool(config.get("sync_sources_each_cycle", True)),
             "generate_daily_briefing": bool(config.get("generate_daily_briefing", True)),
             "generate_topic_briefing": bool(config.get("generate_topic_briefing", False)),
+            "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
             "updated_at": config.get("updated_at"),
         }
 

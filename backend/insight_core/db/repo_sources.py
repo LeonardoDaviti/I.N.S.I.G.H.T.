@@ -179,6 +179,52 @@ class SourcesRepository:
         self.logger.debug(f"Retrieved {len(sources)} sources with post counts")
         return sources
     
+    _INGESTION_SELECT = """
+        SELECT s.id, s.platform, s.handle_or_url, s.enabled, s.in_main_digest, s.settings,
+               (SELECT count(*) FROM posts p WHERE p.source_id = s.id) AS post_count,
+               s.mean_gap_seconds, s.cadence_sample_size, s.cadence_tier,
+               s.fetch_interval_hours_override
+        FROM sources s
+    """
+
+    def load_for_ingestion(self, cur: Cursor, selector_kind: str, selector_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """The sources a fetch request targets, in one query (the ingestion SourceCatalog).
+
+        all / folder: enabled sources only (folder: its enabled members). source: that source
+        even when disabled - fetch-now on a disabled source is explicit. Settings come back
+        merged with the platform defaults; post_count and the cadence columns are the inputs
+        cadence_stats reads.
+        """
+        if selector_kind == "all":
+            cur.execute(self._INGESTION_SELECT + " WHERE s.enabled ORDER BY s.platform, s.handle_or_url")
+        elif selector_kind == "folder":
+            cur.execute(
+                self._INGESTION_SELECT
+                + " WHERE s.enabled AND s.id IN (SELECT source_id FROM source_folders WHERE folder_id = %s::uuid)"
+                + " ORDER BY s.platform, s.handle_or_url",
+                (selector_id,),
+            )
+        elif selector_kind == "source":
+            cur.execute(self._INGESTION_SELECT + " WHERE s.id = %s::uuid", (selector_id,))
+        else:
+            raise ValueError(f"Unknown source selector {selector_kind!r}")
+        return [
+            {
+                "id": str(row[0]),
+                "platform": row[1],
+                "handle_or_url": row[2],
+                "enabled": row[3],
+                "in_main_digest": row[4],
+                "settings": self.merge_with_defaults(row[1], row[5]),
+                "post_count": int(row[6] or 0),
+                "mean_gap_seconds": row[7],
+                "cadence_sample_size": row[8],
+                "cadence_tier": row[9],
+                "fetch_interval_hours_override": row[10],
+            }
+            for row in cur.fetchall()
+        ]
+
     def get_source_settings(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
         """
         Get settings for a source with defaults.
@@ -202,9 +248,13 @@ class SourcesRepository:
             self.logger.warning(f"Source {source_id} not found")
             return {}
         
-        platform = row[0]
-        source_settings = row[1] if row[1] else {}
+        merged = self.merge_with_defaults(row[0], row[1])
+        self.logger.debug(f"Merged settings for source {source_id}: {merged}")
+        return merged
 
+    def merge_with_defaults(self, platform: str, source_settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """A source's stored settings over its platform defaults (and the archive defaults)."""
+        source_settings = source_settings or {}
         defaults = {
             **self._platform_defaults(platform),
             "archive": {
@@ -223,10 +273,7 @@ class SourcesRepository:
             },
         }
 
-        merged = self._deep_merge_dicts(defaults, source_settings)
-
-        self.logger.debug(f"Merged settings for source {source_id}: {merged}")
-        return merged
+        return self._deep_merge_dicts(defaults, source_settings)
 
     def merge_source_settings(self, cur: Cursor, source_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

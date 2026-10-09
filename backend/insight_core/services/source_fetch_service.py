@@ -1,14 +1,12 @@
 """
-Archive planning and execution for DB-backed sources (Mark IX B3).
+Archive planning and execution for DB-backed sources (Mark IX).
 
-Fetching itself lives behind the source-kind seam (insight_core/ingestion/kinds): every
-fetch strategy is one SourceKind resolved by KindRegistry, which owns live fetch,
-inspection, archive pages and a politeness profile. This service keeps:
+Fetching lives behind the source-kind seam (insight_core/ingestion/kinds), and every live
+fetch goes through the ingestion runner (insight_core/ingestion). This service keeps:
 - plan_archive / archive_source: one loop over kind.archive_pages, paced by
-  kind.profile.rate_limit(persisted settings, request overrides)
-- the live-fetch delegates (classify_source, fetch_live_posts, inspect_source,
-  record_live_fetch, ingest_source_now) that safe_ingest, ingest.py and the bridge still
-  call until B4's ingestion runner replaces them
+  kind.profile.rate_limit(persisted settings, request overrides); every page is a save
+  batch followed by enrichment. An unavailable kind (yt-dlp off, no Telegram session)
+  raises KindUnavailable before any planning (the API answers 409).
 - fetch_reddit_comments_for_post for the post detail page
 
 settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWriter.
@@ -16,8 +14,6 @@ settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWrit
 from __future__ import annotations
 
 import asyncio
-import os
-from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import psycopg
@@ -27,8 +23,9 @@ from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, deriv
 from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import SourceKind, resume_counts
+from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resume_counts
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
+from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.entity_memory_service import EntityMemoryService
 from insight_core.services.event_memory_service import EventMemoryService
@@ -36,20 +33,20 @@ from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
 
-# How stale archive size metadata may get before a live fetch re-measures it. This is a
-# second full fetch of the source - a re-download for RSS, an unbounded channel dump for
-# YouTube - so it is the most expensive thing in a cycle that nobody is waiting on. What it
-# produces is available_posts, which drifts by a few items a day, and first_post_date, which
-# is the date of the oldest post and never changes. 0 restores the old every-cycle behaviour.
-ARCHIVE_INSPECT_INTERVAL_HOURS = float(os.getenv("INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS", "168"))
-
 ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
 
 
 class SourceFetchService:
     """Archive service for DB-backed sources; fetches go through the source kinds."""
 
-    def __init__(self, db_url: str, *, http: Optional[KindHttp] = None, kinds: Optional[KindRegistry] = None):
+    def __init__(
+        self,
+        db_url: str,
+        *,
+        http: Optional[KindHttp] = None,
+        kinds: Optional[KindRegistry] = None,
+        availability: Callable[[], Availability] = availability_from_env,
+    ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
         self.posts_service = PostsService(db_url)
@@ -62,23 +59,11 @@ class SourceFetchService:
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
         self.enricher = Enricher(self.memory_service, self.event_service)
+        self.availability = availability
 
     # ------------------------------------------------------------------ kinds
 
-    def resolve_kind(self, source: Dict[str, Any]) -> SourceKind:
-        return self.kinds.resolve(source)
-
-    def classify_source(self, source: Dict[str, Any]) -> str:
-        """The source's kind name (Mark VIII "strategy string"), persisted as settings.archive.source_type."""
-        return self.kinds.resolve(source).name
-
-    async def fetch_live_posts(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        """Fetch the latest posts for a source through its kind."""
-        return await self.kinds.resolve(source).fetch_latest(source, limit)
-
-    async def inspect_source(self, source: Dict[str, Any]) -> Dict[str, Any]:
-        """Inspect source capabilities and available archive metadata."""
-        kind = self.kinds.resolve(source)
+    async def _inspect(self, kind: SourceKind, source: Dict[str, Any]) -> Dict[str, Any]:
         inspection = await kind.inspect(source)
         source_settings = source.get("settings") or {}
         return {
@@ -103,7 +88,11 @@ class SourceFetchService:
             raise ValueError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
-        inspection = await self.inspect_source(source)
+        # E7: the archive honours the same availability switch as every live fetch.
+        reason = unavailable_reason(kind.profile, self.availability())
+        if reason is not None:
+            raise KindUnavailable(reason)
+        inspection = await self._inspect(kind, source)
         source_with_settings = self.sources_service.get_source_with_settings(source_id)
         current_archive = (source_with_settings.get("settings") or {}).get("archive", {})
         # Profile defaults <- the persisted rate limit <- this request's overrides.
@@ -247,98 +236,7 @@ class SourceFetchService:
         })
         return result
 
-    # ------------------------------------------------------------------ live fetch (until B4)
-
-    async def ingest_source_now(self, source_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
-        """Fetch the latest posts for a single source immediately."""
-        source = self.sources_service.get_source_by_id(source_id)
-        if not source:
-            raise ValueError(f"Source {source_id} not found")
-
-        source_settings = source.get("settings") or {}
-        target_limit = max(1, int(limit or source_settings.get("max_posts_per_fetch", 20) or 20))
-        display_name = source_settings.get("display_name") or source["handle_or_url"]
-        platform = source["platform"]
-
-        if platform in {"rss", "reddit", "youtube"}:
-            posts = await self.fetch_live_posts(source, target_limit)
-        else:
-            from insight_core.connectors import create_connector  # B8 replaces this with the MTProto kind
-
-            connector = create_connector(platform)
-            if connector is None:
-                raise ValueError(f"Connector unavailable or not configured for platform {platform}")
-
-            setup_connector = getattr(connector, "setup_connector", None)
-            if callable(setup_connector):
-                setup_connector()
-
-            await connector.connect()
-            try:
-                posts = await connector.fetch_posts(source["handle_or_url"], limit=target_limit)
-            finally:
-                await connector.disconnect()
-
-        saved = await self._save_and_enrich(source_id, posts)
-        if platform in {"rss", "reddit", "youtube"}:
-            await self.record_live_fetch(source_id, source, fetched_posts=len(posts))
-
-        post_stats = self.posts_service.get_source_post_stats(source_id)
-        return {
-            "success": True,
-            "source_id": source_id,
-            "source": {
-                "display_name": display_name,
-                "platform": platform,
-                "handle_or_url": source["handle_or_url"],
-            },
-            "fetched_limit": target_limit,
-            "posts_fetched": len(posts),
-            "posts_inserted": saved.inserted,
-            "posts_updated": saved.updated,
-            "stored_posts": post_stats["post_count"],
-        }
-
-    def _archive_inspection_due(self, source: Dict[str, Any]) -> bool:
-        """Has it been long enough to re-measure this source's archive size?"""
-        if ARCHIVE_INSPECT_INTERVAL_HOURS <= 0:
-            return True
-        last = ((source.get("settings") or {}).get("archive") or {}).get("last_inspected_at")
-        if not last:
-            return True
-        try:
-            at = datetime.fromisoformat(str(last))
-        except (TypeError, ValueError):
-            return True  # Unreadable timestamp: measure rather than skip forever.
-        if at.tzinfo is None:
-            at = at.replace(tzinfo=timezone.utc)
-        age_hours = (datetime.now(timezone.utc) - at).total_seconds() / 3600
-        return age_hours >= ARCHIVE_INSPECT_INTERVAL_HOURS
-
-    async def record_live_fetch(self, source_id: str, source: Dict[str, Any], fetched_posts: int) -> None:
-        """Refresh archive metadata after a live fetch.
-
-        Re-inspecting is a second full fetch of the source (a feed re-download, or an
-        unbounded yt-dlp channel dump), so it runs on its own cadence, tracked by
-        last_inspected_at - distinct from last_live_fetch_at, which updates every cycle
-        and so cannot gate anything. The cheap half (stored_posts, a COUNT) runs every
-        time, and the writer keeps the stored value for every key an inspection supplies.
-        """
-        kind = self.kinds.resolve(source)
-        inspection: Dict[str, Any] = {}
-        if self._archive_inspection_due(source):
-            try:
-                inspection = await self.inspect_source(source)
-                inspection["inspected"] = True
-            except Exception as exc:
-                # Record the cheap half anyway: returning here froze the stored post count
-                # on exactly the sources whose inspection fails.
-                self.logger.warning("Archive inspection failed for %s: %s", source_id, exc)
-                inspection = {}
-
-        inspection.setdefault("source_type", kind.name)
-        inspection["posts_fetched"] = fetched_posts
-        await self._record_archive_metadata(source_id, inspection, mode="live", kind=kind)
+    # ------------------------------------------------------------------ post detail
 
     async def fetch_reddit_comments_for_post(self, post_url: str, limit: int = 80) -> List[Dict[str, Any]]:
         """Fetch a Reddit post discussion thread on demand via the public JSON endpoint."""

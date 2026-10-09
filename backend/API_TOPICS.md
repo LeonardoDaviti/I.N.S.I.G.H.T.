@@ -448,7 +448,7 @@ curl http://localhost:8000/api/topics/{uuid}/posts
 
 ```bash
 # 1. Run ingestion
-python backend/insight_core/scripts/ingest.py
+(cd backend && python -m insight_core.scripts.safe_ingest --force)
 
 # 2. Generate topics
 python backend/insight_core/scripts/generate_topics.py 2025-11-16

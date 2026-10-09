@@ -4,73 +4,79 @@ Scripts for data ingestion and export operations.
 
 ---
 
-## 📥 safe_ingest.py - Safe Ingestion
+## 📥 Ingestion (Mark IX)
 
-Smart ingestion script that only fetches from sources that need updating. Perfect for development to avoid redundant API calls.
+Every fetch - the scheduler tick, the UI's "Run cycle", track fetch, fetch-now and the CLI -
+is one call to `insight_core.ingestion.run_ingestion(FetchRequest) -> RunReport`, so each
+applies the same policy: the yt-dlp switch, backoff, politeness gates, fetch-state
+recording, the save batch, enrichment and the archive-metadata (inspection) refresh.
+`scripts/ingest.py` and the `/api/ingest-posts` and `/api/safe-ingest-posts` routes are gone.
 
-### Usage
+### CLI: safe_ingest.py
 
 ```bash
-cd /home/man/Documents/I.N.S.I.G.H.T./backend
-python insight_core/scripts/safe_ingest.py
+cd backend
+python -m insight_core.scripts.safe_ingest            # all enabled sources, due ones only
+python -m insight_core.scripts.safe_ingest --force    # ignore cadence and backoff
+python -m insight_core.scripts.safe_ingest --folder <folder-id>   # one track's enabled sources
+python -m insight_core.scripts.safe_ingest --source <source-id>   # one source, even if disabled
 ```
 
-### How It Works
+It prints the run report as JSON and exits 1 when the run failed or was partial. `--force`
+never overrides unavailability: with `INSIGHT_YTDLP_ENABLED=0` YouTube stays skipped.
 
-Since Mark IX (B1) every source gets one decision from `ingestion.schedule.decide_fetch`,
-fed by the source's cadence columns and its row in `source_fetch_state`:
+### API
 
-1. **Unavailable** (yt-dlp switched off with `INSIGHT_YTDLP_ENABLED=0`) → ⏭️ SKIP, reported
-   as unavailable, never as backoff
-2. **In backoff** after consecutive errors (1h, 2h, 4h ... 24h; 7d once dormant) → ⏭️ SKIP.
-   A manual run ignores backoff, but still respects freshness
-3. **New source** (no successful fetch, 0 posts) → ✅ FETCH
-4. **Due**: the source's adaptive fetch interval has elapsed since its last *successful*
-   fetch (an empty fetch counts) → ✅ FETCH, otherwise ⏭️ SKIP
+- `POST /api/ingestion/run {force?: bool}` - the manual cycle
+- `POST /api/sources/{id}/fetch-now {limit?: int}` - one source, forced
+- `POST /api/folders/{id}/ingest {limit?: int}` - one track, forced
+
+Each answers `202 {job_id, job_type: "ingestion_run"}` and runs in the background; poll
+`GET /api/operations/jobs/{job_id}` for the run report (in the job payload). When the job
+cannot be tracked the answer is 503 and nothing runs. An archive plan or run on a kind the
+process cannot fetch (yt-dlp off) answers 409.
+
+### How a source is decided
+
+`ingestion.schedule.decide_fetch`, fed by the source's cadence columns and its row in
+`source_fetch_state`:
+
+1. **Unavailable** (yt-dlp switched off, no Telegram session) → skipped as unavailable,
+   never as backoff, even when forced
+2. **Forced** → fetched
+3. **In backoff** after consecutive errors (1h, 2h, 4h ... 24h; 7d once dormant) → skipped
+   until the retry time, then retried
+4. **New source** (no successful fetch, 0 posts) → fetched
+5. **Due**: the adaptive fetch interval has elapsed since the last *successful* fetch (an
+   empty fetch counts) → fetched, otherwise deferred
 
 The interval comes from the mean gap between the source's latest 20 posts (half the gap,
 clamped to 24h..21d; 24h probation while there are fewer than 3 dated posts; 168h minimum
 for yt-dlp), capped by a backlog guard so a fast feed is polled before it can overflow.
 `sources.fetch_interval_hours_override` replaces all of that for one source.
 
+### Scheduler (run_scheduler.py, the ingestion container)
+
+- **Ingestion tick** every `scheduler_config.ingest_tick_minutes` (default 60, minimum 15):
+  one run over all enabled sources; cadence makes it touch only the due ones. Two full runs
+  never overlap (a Postgres advisory run lock); a second one reports `skipped_busy`.
+- **Daily work** once `interval_hours` have passed since the last one: prune job_runs,
+  refresh source cadence, sync sources.json, experts, daily / topic briefings. The first
+  tick after a deploy seeds the gate from the last successful `scheduler_cycle` job.
+- The state (`last_tick_at`, `next_tick_at`, `last_daily_work_at`, `next_daily_work_at`) is in
+  `system_settings['scheduler_state']` and served by `GET /api/operations/scheduler`.
+
 ### Configuration
 
 - `INSIGHT_YTDLP_ENABLED` (default 1)
+- `INSIGHT_INGEST_TICK_MINUTES` (60, the default for `ingest_tick_minutes`),
+  `INSIGHT_INGEST_INTERVAL_HOURS` (20, the default daily-work interval)
 - `INSIGHT_BACKOFF_BASE_MINUTES` (60), `INSIGHT_BACKOFF_MAX_HOURS` (24),
   `INSIGHT_BACKOFF_DORMANT_AFTER` (10), `INSIGHT_BACKOFF_DORMANT_MAX_HOURS` (168)
-
-### Example Session
-
-```
-📊 Found 15 enabled sources
-✅ TechCrunch RSS: 📦 New source (0 posts)
-✅ Hacker News: 🔄 Stale data (26.3h old, 145 posts)
-⏭️  Reddit/Python: ⏭️ Recently fetched 2.5h ago (89 posts)
-⏭️  AI News Telegram: ⏭️ Recently fetched 1.2h ago (34 posts)
-============================================================
-📥 Sources to fetch: 2
-⏭️  Sources to skip:  13
-============================================================
-🔌 Connected to rss connector
-📥 [1] Fetching up to 50 posts from TechCrunch RSS
-✅ [1] TechCrunch RSS: fetched 23 posts
-✅ Ingested 23 posts from 2 sources
-```
-
-### When to Use
-
-- **Use `safe_ingest.py`**: During development, testing, or when you want to avoid hitting rate limits
-- **Use `ingest.py`**: For scheduled production runs or when you want to force-refresh all sources
-
-### Comparison with Regular Ingest
-
-| Feature | `ingest.py` | `safe_ingest.py` |
-|---------|-------------|------------------|
-| Fetches all enabled sources | ✅ Always | ⚠️ Only if needed |
-| Good for production | ✅ Yes | ✅ Yes |
-| Good for development | ⚠️ Redundant | ✅ Efficient |
-| Avoids rate limits | ❌ No | ✅ Yes |
-| Checks post history | ❌ No | ✅ Yes |
+- `INSIGHT_FETCH_MAX_CONCURRENCY` (8), `INSIGHT_YTDLP_CONCURRENCY` (2), `INSIGHT_YTDLP_MIN_INTERVAL` (3s)
+- `INSIGHT_SAVE_COMMIT_BATCH` (20), `INSIGHT_ENRICH_CHUNK_SIZE` (100)
+- `INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS` (168), `INSIGHT_REFRESH_ARCHIVE_METADATA` (1; 0 skips
+  the inspection refresh)
 
 ---
 
@@ -273,7 +279,7 @@ enabled = df[df['enabled'] == True]
 **Cause:** Database has no posts for the specified date.
 
 **Solutions:**
-1. Check if posts were ingested: `python insight_core/scripts/ingest.py`
+1. Check if posts were ingested: `python -m insight_core.scripts.safe_ingest --force`
 2. Verify date format is correct: `YYYY-MM-DD`
 3. Check database connection: logs in console
 

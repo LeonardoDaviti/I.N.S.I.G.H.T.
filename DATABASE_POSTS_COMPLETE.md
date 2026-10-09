@@ -163,7 +163,7 @@ npm run dev
 
 # Run ingestion (if no posts)
 cd /home/man/Documents/I.N.S.I.G.H.T.
-python backend/insight_core/scripts/ingest.py
+(cd backend && python -m insight_core.scripts.safe_ingest --force)
 ```
 
 ---
@@ -354,7 +354,7 @@ python backend/main.py
 cd frontend && npm run dev
 
 # Terminal 3: Ingestion (when needed)
-python backend/insight_core/scripts/ingest.py
+(cd backend && python -m insight_core.scripts.safe_ingest --force)
 
 # Test API directly
 curl "http://localhost:8000/api/posts/2025-10-30"

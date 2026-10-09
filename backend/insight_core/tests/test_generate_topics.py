@@ -62,7 +62,7 @@ class GenerateTopicsTest:
         if not posts:
             logger.warning(f"⚠️  No posts found for {target_date}")
             logger.info("You can run the ingest script to add posts:")
-            logger.info("  python backend/insight_core/scripts/ingest.py")
+            logger.info("  python -m insight_core.scripts.safe_ingest --force")
             return None
         
         logger.info(f"✅ Retrieved {len(posts)} posts")
