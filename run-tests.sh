@@ -28,17 +28,16 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   docker compose build backend
 fi
 
-# NOTE: several suites connect to DATABASE_URL and INSERT rows. Point TEST_DATABASE_URL
-# at a scratch database if you do not want them touching live data.
-DB_URL="${TEST_DATABASE_URL:-postgresql://insight:insight@postgres:5432/insight}"
+# Several suites connect to DATABASE_URL and INSERT rows, so the default is the scratch
+# `insight_test` database, never the live `insight` one. Override with TEST_DATABASE_URL.
+DB_URL="${TEST_DATABASE_URL:-postgresql://insight:insight@postgres:5432/insight_test}"
 
 if [ "$#" -eq 0 ]; then
   set -- discover -s insight_core/tests -p 'test_*.py'
 fi
 
 # MIGRATE=1 applies pending migrations to $DB_URL first, in the same image, so a slice that
-# adds a migration never runs its tests against an unmigrated schema. Against the live
-# `insight` DB this is exactly what the container start does anyway - take a backup first.
+# adds a migration never runs its tests against an unmigrated schema.
 if [ "${MIGRATE:-0}" = "1" ]; then
   echo "==> migrating ${DB_URL##*/}"
   docker run --rm \
