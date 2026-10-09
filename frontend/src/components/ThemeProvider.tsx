@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-type ThemeMode = 'theme-light' | 'theme-dark';
+export type ThemeMode = 'theme-light' | 'theme-dark';
+
+/** Dark (monochrome, black and white) is the default; light is the same system inverted. */
+export const DEFAULT_THEME: ThemeMode = 'theme-dark';
 
 type ThemeContextValue = {
   theme: ThemeMode;
@@ -9,17 +12,18 @@ type ThemeContextValue = {
   toggleTheme: () => void;
 };
 
-const STORAGE_KEY = 'insight.theme';
+export const THEME_STORAGE_KEY = 'insight.theme';
+const STORAGE_KEY = THEME_STORAGE_KEY;
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') {
-      return 'theme-light';
+      return DEFAULT_THEME;
     }
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return stored === 'theme-dark' ? 'theme-dark' : 'theme-light';
+    return stored === 'theme-light' || stored === 'theme-dark' ? stored : DEFAULT_THEME;
   });
 
   useEffect(() => {
@@ -29,6 +33,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (theme === 'theme-dark') {
       root.classList.add('dark');
     }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'theme-dark' ? '#121212' : '#ffffff');
     window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 

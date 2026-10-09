@@ -1,10 +1,21 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="theme-dark dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>INSIGHT Intelligence Platform</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%224%22 fill=%22%23f2f2f2%22/%3E%3Cpath d=%22M13 8h6v16h-6z%22 fill=%22%23121212%22/%3E%3C/svg%3E" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#121212" />
+    <title>INSIGHT</title>
+    <script>
+      // Apply the saved theme before first paint so light users never see a dark flash.
+      // Dark is the default (plan/INSIGHT_mark_ix_design.md); ThemeProvider takes over after mount.
+      try {
+        if (localStorage.getItem('insight.theme') === 'theme-light') {
+          document.documentElement.className = 'theme-light';
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
