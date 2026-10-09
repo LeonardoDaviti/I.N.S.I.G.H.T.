@@ -10,7 +10,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.ingestion import FetchRequest, RunReport, SourceSelector, Trigger
-from insight_core.scripts.run_scheduler import SchedulerState, tick
+from insight_core.scripts.run_scheduler import SchedulerState, tick, tracked_job
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 CONFIG = {"interval_hours": 20, "ingest_tick_minutes": 60}
@@ -129,6 +129,56 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         state = SchedulerState(NOW, NOW + timedelta(hours=1), NOW - timedelta(hours=3), NOW + timedelta(hours=17))
         self.assertEqual(SchedulerState.from_dict(state.as_dict()), state)
         self.assertEqual(SchedulerState.from_dict({"last_tick_at": "garbage"}), SchedulerState())
+
+
+class TrackedJobTests(unittest.IsolatedAsyncioTestCase):
+    """E5 for the daily-work jobs: a started job_runs row is finished in every case."""
+
+    async def test_a_result_finishes_the_job_with_its_status(self):
+        ops = FakeOps()
+
+        async def work():
+            return {"success": True, "posts_processed": 4}
+
+        result = await tracked_job(ops, "daily_briefing", {"date": "2026-10-09"}, work)
+        self.assertEqual(result, {"success": True, "posts_processed": 4})
+        self.assertEqual(ops.job_types(), ["daily_briefing"])
+        self.assertEqual(ops.started[0][1]["trigger"], "scheduler")
+        job_id, finished = ops.finished[0]
+        self.assertEqual(job_id, "job-1")
+        self.assertEqual(finished["status"], "success")
+        self.assertEqual(finished["message"], "Processed 4 posts")
+
+    async def test_an_unsuccessful_result_is_failed_with_its_error(self):
+        ops = FakeOps()
+
+        async def work():
+            return {"success": False, "error": "no posts"}
+
+        await tracked_job(ops, "topic_briefing", {}, work)
+        self.assertEqual(ops.finished[0][1]["status"], "failed")
+        self.assertEqual(ops.finished[0][1]["message"], "no posts")
+
+    async def test_an_exception_finishes_the_job_as_failed_and_propagates(self):
+        ops = FakeOps()
+
+        async def work():
+            raise RuntimeError("db down")
+
+        with self.assertRaises(RuntimeError):
+            await tracked_job(ops, "daily_briefing", {}, work)
+        self.assertEqual(len(ops.finished), 1)
+        self.assertEqual(ops.finished[0][1]["status"], "failed")
+        self.assertEqual(ops.finished[0][1]["message"], "db down")
+
+    async def test_an_exception_can_be_contained(self):
+        ops = FakeOps()
+
+        async def work():
+            raise RuntimeError("llm down")
+
+        self.assertIsNone(await tracked_job(ops, "expert_briefing", {}, work, reraise=False))
+        self.assertEqual(ops.finished[0][1]["status"], "failed")
 
 
 if __name__ == "__main__":

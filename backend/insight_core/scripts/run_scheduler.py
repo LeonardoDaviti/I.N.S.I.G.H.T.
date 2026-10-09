@@ -197,54 +197,63 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
         logger.info("sources.json -> DB sync result: %s", sync_result)
 
     # Scheduled experts: each enabled expert with a non-empty schedule runs every cycle.
+    # One failing expert is logged and contained; the briefings still run.
     experts_service = ExpertsService(db_url)
     for expert in experts_service.list_scheduled_experts():
-        expert_job_id = operations_service.start_job(
-            "expert_briefing",
-            trigger="scheduler",
-            payload={"expert_id": expert["id"], "expert_name": expert["name"]},
+        expert_result = await tracked_job(
+            operations_service, "expert_briefing",
+            {"expert_id": expert["id"], "expert_name": expert["name"]},
+            lambda expert_id=expert["id"]: experts_service.generate_expert_briefing(expert_id),
+            reraise=False,
         )
-        try:
-            expert_result = await experts_service.generate_expert_briefing(expert["id"])
-            operations_service.finish_job(
-                expert_job_id,
-                status="success" if expert_result.get("success") else "failed",
-                message=expert_result.get("error") or f"Processed {expert_result.get('posts_processed', 0)} posts",
-                payload=expert_result,
-                compact=True,
-            )
+        if expert_result is not None:
             logger.info("expert briefing '%s' result: success=%s", expert["name"], expert_result.get("success"))
-        except Exception as exc:
-            operations_service.finish_job(expert_job_id, status="failed", message=str(exc))
-            logger.exception("expert briefing '%s' failed", expert["name"])
 
     if not scheduler_config.get("generate_daily_briefing", True):
         return
 
     briefing_service = BriefingService(db_url)
     today = datetime.now(timezone.utc).date().isoformat()
-    daily_job_id = operations_service.start_job("daily_briefing", trigger="scheduler", payload={"date": today})
-    daily_result = await briefing_service.generate_daily_briefing(today, refresh=True)
-    operations_service.finish_job(
-        daily_job_id,
-        status="success" if daily_result.get("success") else "failed",
-        message=daily_result.get("error") or f"Processed {daily_result.get('posts_processed', 0)} posts",
-        payload=daily_result,
-        compact=True,
-    )
+    daily_result = await tracked_job(operations_service, "daily_briefing", {"date": today},
+                                     lambda: briefing_service.generate_daily_briefing(today, refresh=True))
     logger.info("daily briefing result for %s: success=%s", today, daily_result.get("success"))
 
     if scheduler_config.get("generate_topic_briefing", False):
-        topics_job_id = operations_service.start_job("topic_briefing", trigger="scheduler", payload={"date": today})
-        topics_result = await briefing_service.generate_daily_briefing_with_topics(today)
-        operations_service.finish_job(
-            topics_job_id,
-            status="success" if topics_result.get("success") else "failed",
-            message=topics_result.get("error") or f"Processed {topics_result.get('posts_processed', 0)} posts",
-            payload=topics_result,
-            compact=True,
-        )
+        topics_result = await tracked_job(operations_service, "topic_briefing", {"date": today},
+                                          lambda: briefing_service.generate_daily_briefing_with_topics(today))
         logger.info("topic briefing result for %s: success=%s", today, topics_result.get("success"))
+
+
+async def tracked_job(ops: Any, job_type: str, payload: Dict[str, Any],
+                      work: Callable[[], Awaitable[Dict[str, Any]]], *, reraise: bool = True
+                      ) -> Optional[Dict[str, Any]]:
+    """Run one daily-work step as a job_runs row that is finished in every case (E5).
+
+    The result's `success` decides success/failed. A raise finishes the job as failed, then
+    propagates (so the scheduler_cycle job fails too) unless reraise=False, which logs it and
+    returns None.
+    """
+    job_id = ops.start_job(job_type, trigger="scheduler", payload=payload)
+    try:
+        result = await work()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            ops.finish_job(job_id, status="failed", message=str(exc) or type(exc).__name__)
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not finish the %s job", job_type)
+        if reraise:
+            raise
+        logger.exception("%s failed", job_type)
+        return None
+    result = result or {}
+    ops.finish_job(
+        job_id,
+        status="success" if result.get("success") else "failed",
+        message=result.get("error") or f"Processed {result.get('posts_processed', 0)} posts",
+        payload=result,
+        compact=True,
+    )
+    return result
 
 
 async def main() -> None:
