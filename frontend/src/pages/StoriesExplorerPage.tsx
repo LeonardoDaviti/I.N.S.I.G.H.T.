@@ -1,191 +1,356 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  BookOpen,
-  ChevronRight,
-  Loader2,
-  RefreshCw,
-  Sparkles,
-} from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
-import { apiService } from '../services/api';
-import type { StoryCard, StoryDetail, StoryUpdateEntry } from '../services/api';
+import { Button, ExternalLink, FilterChip, Page, PageHeader, TextLink } from '../components/ui';
+import { EmptyState, ErrorState, LoadingState, Notice } from '../components/states';
+import DevDataSwitch from '../components/ops/DevDataSwitch';
+import { MetaList, Section, SelectRow, StateWord } from '../components/analysis/parts';
+import { dateTime, humanize, percent, shortDate } from '../components/analysis/format';
+import { useDevFixtureApi } from '../components/analysis/useDevFixtureApi';
+import { formatRelativeTime } from '../lib/dates';
+import { middleTruncate, plural } from '../lib/format';
+import type { Post, StoryCard, StoryDetail, StoryUpdateEntry } from '../services/api';
+import type { Status } from '../components/ui/styles';
+import { STORY_FIXTURE_NAMES, storiesFixtureApi } from './StoriesExplorerPage.fixtures';
 
-function formatDate(value?: string | null) {
-  if (!value) return 'Unknown';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+/**
+ * Stories (design doc §12): a master/detail view of the story graph. The list is
+ * smol-style rows (date column, bold title, one meta line); the detail is a
+ * reading column with the summary, a key/value list, the timeline and the posts.
+ * Status is a glyph plus a word, never a hue.
+ */
+
+const STATUS_OPTIONS = ['active', 'candidate', 'merged', 'archived', 'superseded'] as const;
+const KIND_OPTIONS = ['project_thread', 'recurring_theme', 'one_off_update'] as const;
+
+const STATUS_GLYPH: Record<string, Status> = {
+  active: 'ok',
+  candidate: 'due',
+  merged: 'read',
+  archived: 'disabled',
+  superseded: 'disabled',
+};
+
+function StoryStatus({ status }: { status?: string | null }) {
+  if (!status) return null;
+  const key = status.toLowerCase();
+  return <StateWord glyph={STATUS_GLYPH[key] ?? 'scheduled'} word={humanize(status)} strong={key === 'active'} />;
 }
 
-function formatShortDate(value?: string | null) {
-  if (!value) return 'Unknown';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString();
+function withExtra(options: readonly string[], current: string) {
+  return current && !options.includes(current) ? [...options, current] : [...options];
 }
 
-function formatScore(value?: number | null) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
-    return null;
-  }
-  return `${Math.round(Number(value) * 100)}%`;
-}
-
-function tone(kind?: string) {
-  switch ((kind || '').toLowerCase()) {
-    case 'project_thread':
-      return 'border-indigo-200 bg-indigo-50 text-indigo-700';
-    case 'recurring_theme':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'one_off_update':
-      return 'border-amber-200 bg-amber-50 text-amber-700';
-    default:
-      return 'border-slate-200 bg-slate-50 text-slate-700';
-  }
-}
-
-function stateTone(state?: string) {
-  switch ((state || '').toLowerCase()) {
-    case 'active':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'candidate':
-      return 'border-amber-200 bg-amber-50 text-amber-700';
-    case 'archived':
-    case 'superseded':
-      return 'border-slate-200 bg-slate-50 text-slate-500';
-    case 'merged':
-      return 'border-indigo-200 bg-indigo-50 text-indigo-700';
-    default:
-      return 'border-[var(--background-modifier-border)] bg-[var(--background-secondary)] text-[var(--text-muted)]';
-  }
-}
-
-function SectionCard({
-  title,
-  subtitle,
-  actions,
-  children,
+function FilterGroup({
+  label,
+  options,
+  value,
+  onChange,
 }: {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-  children: ReactNode;
+  label: string;
+  options: readonly string[];
+  value: string;
+  onChange: (next: string) => void;
 }) {
   return (
-    <section className="app-panel p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--text-normal)]">{title}</h2>
-          {subtitle && <p className="mt-1 text-sm text-[var(--text-muted)]">{subtitle}</p>}
+    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1.5">
+      <span className="mr-1 w-12 shrink-0 text-[0.75rem] font-medium text-fg-3">{label}</span>
+      <FilterChip selected={!value} onClick={() => onChange('')}>all</FilterChip>
+      {withExtra(options, value).map((option) => (
+        <FilterChip key={option} selected={value === option} onClick={() => onChange(value === option ? '' : option)}>
+          {humanize(option)}
+        </FilterChip>
+      ))}
+    </div>
+  );
+}
+
+/** One post, as a line: the title links to the reader's post view, the original opens in a new tab. */
+function PostLine({ post, extra }: { post: Post; extra?: string }) {
+  const title = post.title?.trim() || 'Untitled post';
+  const source = post.source_display_name || post.source || post.handle_or_url || 'unknown source';
+  return (
+    <li className="flex min-w-0 items-start gap-4 px-3 py-2.5">
+      <span className="w-[5.5rem] shrink-0 whitespace-nowrap pt-px text-[0.8125rem] tabular-nums text-fg-3">
+        {shortDate(post.published_at || post.date)}
+      </span>
+      <span className="min-w-0 flex-1">
+        {post.id ? (
+          <TextLink to={`/posts/${encodeURIComponent(post.id)}`} className="line-clamp-2 break-words font-medium [overflow-wrap:anywhere]">
+            {title}
+          </TextLink>
+        ) : (
+          <span className="line-clamp-2 break-words font-medium [overflow-wrap:anywhere]">{title}</span>
+        )}
+        <span className="mt-0.5 block text-[0.8125rem] text-fg-2">
+          <span title={source} className="break-words [overflow-wrap:anywhere]">{middleTruncate(source, 48)}</span>
+          {extra ? <span className="tabular-nums text-fg-3"> · {extra}</span> : null}
+        </span>
+      </span>
+      {post.url ? (
+        <ExternalLink href={post.url} title={post.url} className="shrink-0 whitespace-nowrap pt-px text-[0.8125rem] text-fg-2">
+          original ↗
+        </ExternalLink>
+      ) : null}
+    </li>
+  );
+}
+
+function PostList({ children }: { children: ReactNode }) {
+  return <ul className="divide-y divide-line rounded-md border border-line">{children}</ul>;
+}
+
+function TimelineEntry({ entry }: { entry: StoryUpdateEntry }) {
+  const importance = entry.importance_score !== undefined && entry.importance_score !== null ? percent(entry.importance_score) : null;
+  return (
+    <li>
+      <details className="group rounded-md border border-line open:border-line-strong">
+        <summary className="flex min-w-0 cursor-pointer list-none items-start gap-4 rounded-md px-4 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg [&::-webkit-details-marker]:hidden">
+          <span className="w-[5.5rem] shrink-0 whitespace-nowrap pt-px text-[0.8125rem] tabular-nums text-fg-3">{shortDate(entry.update_date)}</span>
+          <span className="min-w-0 flex-1">
+            <span className="line-clamp-2 break-words font-semibold text-fg [overflow-wrap:anywhere]">{entry.title?.trim() || 'Untitled update'}</span>
+            <span className="mt-0.5 block text-[0.75rem] tabular-nums text-fg-3">
+              {plural(entry.posts?.length ?? entry.post_count ?? 0, 'post')}
+              {importance ? ` · importance ${importance}` : ''}
+            </span>
+          </span>
+          <span aria-hidden="true" className="shrink-0 pt-px text-[0.8125rem] text-fg-3 group-open:hidden">show</span>
+          <span aria-hidden="true" className="hidden shrink-0 pt-px text-[0.8125rem] text-fg-3 group-open:inline">hide</span>
+        </summary>
+        <div className="space-y-3 px-4 pb-4">
+          {entry.summary ? (
+            <div className="prose prose-sm max-w-[68ch] break-words [overflow-wrap:anywhere]">
+              <MarkdownRenderer content={entry.summary} />
+            </div>
+          ) : null}
+          {entry.posts?.length ? (
+            <PostList>
+              {entry.posts.map((p) => <PostLine key={`${entry.id}-${p.post_id}`} post={p.post} />)}
+            </PostList>
+          ) : (
+            <p className="text-[0.8125rem] text-fg-3">No posts are attached to this update.</p>
+          )}
         </div>
-        {actions}
-      </div>
-      {children}
-    </section>
+      </details>
+    </li>
+  );
+}
+
+function StoryDetailView({
+  story,
+  timeline,
+  refreshing,
+  onRefresh,
+}: {
+  story: StoryDetail;
+  timeline: StoryUpdateEntry[];
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const anchor = story.anchor_post;
+  const byRole = story.posts_by_role || {};
+  const roles = Object.entries(byRole);
+  const posts = story.posts || [];
+  const entries = timeline.length ? timeline : story.timeline || [];
+  const anchorConfidence = story.anchor_confidence !== undefined && story.anchor_confidence !== null ? percent(story.anchor_confidence) : null;
+  const anchorSource = anchor ? anchor.source_display_name || anchor.handle_or_url || 'unknown source' : '';
+
+  return (
+    <article aria-labelledby="story-title" className="min-w-0 space-y-8">
+      <header className="space-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] text-fg-2">
+          <span>{humanize(story.story_kind, 'story')}</span>
+          <StoryStatus status={story.status} />
+        </div>
+        <h2 id="story-title" dir="auto" className="break-words text-[1.375rem] font-semibold leading-[1.25] tracking-[-0.02em] text-fg [overflow-wrap:anywhere]">
+          {story.canonical_title?.trim() || 'Untitled story'}
+        </h2>
+        <p className="text-[0.8125rem] tabular-nums text-fg-2">
+          updated {formatRelativeTime(story.updated_at || story.created_at || story.last_seen_at)}
+          {' · '}
+          {plural(story.post_count ?? 0, 'post')} · {plural(story.update_count ?? 0, 'update')}
+          {anchorConfidence ? ` · anchor ${anchorConfidence}` : ''}
+        </p>
+        <div className="flex flex-wrap gap-2 pt-2">
+          {story.anchor_post_id ? (
+            <Button asChild size="sm" variant="secondary">
+              <Link to={`/posts/${encodeURIComponent(story.anchor_post_id)}`}>Open anchor post</Link>
+            </Button>
+          ) : null}
+          <Button size="sm" variant="ghost" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw aria-hidden="true" />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        </div>
+      </header>
+
+      {story.canonical_summary ? (
+        <div className="prose max-w-[68ch] break-words [overflow-wrap:anywhere]">
+          <MarkdownRenderer content={story.canonical_summary} />
+        </div>
+      ) : (
+        <p className="text-[0.875rem] text-fg-3">No summary has been written for this story yet.</p>
+      )}
+
+      <MetaList
+        items={[
+          [
+            'Anchor post',
+            anchor ? (
+              <span className="block">
+                {anchor.id ? (
+                  <TextLink to={`/posts/${encodeURIComponent(anchor.id)}`}>{anchor.title?.trim() || 'Untitled anchor post'}</TextLink>
+                ) : (
+                  anchor.title?.trim() || 'Untitled anchor post'
+                )}
+                <span className="mt-0.5 block text-fg-2">
+                  <span title={anchorSource}>{middleTruncate(anchorSource, 48)}</span> · {shortDate(anchor.published_at)}
+                  {anchor.url ? (
+                    <>
+                      {' · '}
+                      <ExternalLink href={anchor.url} title={anchor.url} className="text-fg-2">original ↗</ExternalLink>
+                    </>
+                  ) : null}
+                </span>
+              </span>
+            ) : (
+              <span className="text-fg-3">none attached</span>
+            ),
+          ],
+          ['Created by', humanize(story.created_by_method, 'unknown')],
+          ['Resolution', story.resolution_version || 'unversioned'],
+          ['First seen', dateTime(story.first_seen_at)],
+          ['Last seen', dateTime(story.last_seen_at)],
+        ]}
+      />
+
+      <Section title="Timeline" meta={entries.length || undefined} id="story-timeline">
+        {entries.length ? (
+          <ol className="space-y-2">
+            {entries.map((entry) => <TimelineEntry key={entry.id} entry={entry} />)}
+          </ol>
+        ) : (
+          <p className="text-[0.875rem] text-fg-3">No timeline entries yet.</p>
+        )}
+      </Section>
+
+      <Section title="Posts" meta={(roles.reduce((n, [, list]) => n + list.length, 0) || posts.length) || undefined} id="story-posts">
+        {roles.length ? (
+          <div className="space-y-5">
+            {roles.map(([role, list]) => (
+              <div key={role}>
+                <h3 className="mb-2 text-[0.8125rem] font-semibold text-fg">
+                  {humanize(role)} <span className="font-normal tabular-nums text-fg-3">{list.length}</span>
+                </h3>
+                <PostList>
+                  {list.map((entry) => (
+                    <PostLine
+                      key={`${role}-${entry.post_id}`}
+                      post={entry.post}
+                      extra={`relevance ${percent(entry.relevance_score)} · anchor ${percent(entry.anchor_score)} · weight ${percent(entry.evidence_weight)}`}
+                    />
+                  ))}
+                </PostList>
+              </div>
+            ))}
+          </div>
+        ) : posts.length ? (
+          <PostList>
+            {posts.map((entry) => <PostLine key={`${entry.story_id}-${entry.post_id}`} post={entry.post} />)}
+          </PostList>
+        ) : (
+          <p className="text-[0.875rem] text-fg-3">No posts are attached to this story yet.</p>
+        )}
+      </Section>
+    </article>
   );
 }
 
 export default function StoriesExplorerPage() {
+  const { api } = useDevFixtureApi(storiesFixtureApi);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const detailRef = useRef<HTMLDivElement>(null);
 
-  const initialStoryId = searchParams.get('storyId') || '';
-  const initialStatus = searchParams.get('status') || '';
-  const initialKind = searchParams.get('storyKind') || '';
-
+  const [selectedStoryId, setSelectedStoryId] = useState(searchParams.get('storyId') || '');
+  const selectedRef = useRef(selectedStoryId);
+  selectedRef.current = selectedStoryId;
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
+  const [kindFilter, setKindFilter] = useState(searchParams.get('storyKind') || '');
   const [stories, setStories] = useState<StoryCard[]>([]);
   const [total, setTotal] = useState(0);
-  const [selectedStoryId, setSelectedStoryId] = useState(initialStoryId);
-  const [statusFilter, setStatusFilter] = useState(initialStatus);
-  const [kindFilter, setKindFilter] = useState(initialKind);
   const [storyDetail, setStoryDetail] = useState<StoryDetail | null>(null);
   const [timeline, setTimeline] = useState<StoryUpdateEntry[]>([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
-  const selectedStory = useMemo(
-    () => stories.find((story) => story.id === selectedStoryId) || storyDetail || null,
-    [stories, selectedStoryId, storyDetail],
+  const syncSearchParams = useCallback(
+    (patch: Record<string, string | null | undefined>) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          Object.entries(patch).forEach(([key, value]) => (value ? next.set(key, value) : next.delete(key)));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
   );
 
-  const syncSearchParams = (patch: Record<string, string | null | undefined>) => {
-    const next = new URLSearchParams(searchParams);
-    Object.entries(patch).forEach(([key, value]) => {
-      if (!value) {
-        next.delete(key);
-      } else {
-        next.set(key, value);
+  const loadStories = useCallback(
+    async (status: string, kind: string) => {
+      setLoadingList(true);
+      setListError(null);
+      const response = await api.getStories({ status: status || undefined, storyKind: kind || undefined, limit: 100, offset: 0 });
+      if (!response.success) {
+        setStories([]);
+        setTotal(0);
+        setListError(response.error || 'Failed to load stories');
+        setLoadingList(false);
+        return;
       }
-    });
-    setSearchParams(next, { replace: true });
-  };
-
-  const loadStories = async () => {
-    setLoadingList(true);
-    setError(null);
-
-    const response = await apiService.getStories({
-      status: statusFilter.trim() || undefined,
-      storyKind: kindFilter.trim() || undefined,
-      limit: 100,
-      offset: 0,
-    });
-
-    if (!response.success) {
-      setStories([]);
-      setTotal(0);
-      setError(response.error || 'Failed to load stories');
+      const next = response.stories || [];
+      setStories(next);
+      setTotal(response.total ?? next.length);
+      // Keep a selection that is still in the list (or a deep link); otherwise open the first story.
+      const current = selectedRef.current;
+      if (!next.some((s) => s.id === current) && next.length) {
+        setSelectedStoryId(next[0].id);
+        syncSearchParams({ storyId: next[0].id });
+      }
       setLoadingList(false);
-      return;
-    }
+    },
+    [api, syncSearchParams],
+  );
 
-    const nextStories = response.stories || [];
-    setStories(nextStories);
-    setTotal(response.total ?? nextStories.length);
-
-    if (!selectedStoryId && nextStories[0]) {
-      setSelectedStoryId(nextStories[0].id);
-      syncSearchParams({ storyId: nextStories[0].id });
-    }
-
-    setLoadingList(false);
-  };
-
-  const loadStoryDetail = async (storyId: string) => {
-    if (!storyId) {
-      setStoryDetail(null);
-      setTimeline([]);
-      return;
-    }
-
-    setError(null);
-    setLoadingDetail(true);
-    const [detailResponse, timelineResponse] = await Promise.all([
-      apiService.getStory(storyId),
-      apiService.getStoryTimeline(storyId),
-    ]);
-
-    const detail = detailResponse.story || timelineResponse.story || null;
-    if (!detail && !detailResponse.success && !timelineResponse.success) {
-      setStoryDetail(null);
-      setTimeline([]);
-      setError(detailResponse.error || timelineResponse.error || 'Failed to load story detail');
+  const loadStoryDetail = useCallback(
+    async (storyId: string) => {
+      setDetailError(null);
+      setLoadingDetail(true);
+      const [detailResponse, timelineResponse] = await Promise.all([api.getStory(storyId), api.getStoryTimeline(storyId)]);
+      const detail = detailResponse.story || timelineResponse.story || null;
+      if (!detail) {
+        setStoryDetail(null);
+        setTimeline([]);
+        setDetailError(detailResponse.error || timelineResponse.error || 'Failed to load the story');
+      } else {
+        setStoryDetail(detail as StoryDetail);
+        setTimeline(timelineResponse.timeline || (detail as StoryDetail).timeline || []);
+      }
       setLoadingDetail(false);
-      return;
-    }
-
-    setStoryDetail(detail);
-    setTimeline(timelineResponse.timeline || detail?.timeline || []);
-    setLoadingDetail(false);
-  };
+    },
+    [api],
+  );
 
   useEffect(() => {
-    void loadStories();
+    void loadStories(statusFilter, kindFilter);
+    // Filters reload explicitly through `changeFilter`; this is the first load (and a fixture switch).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadStories]);
 
   useEffect(() => {
     if (!selectedStoryId) {
@@ -194,441 +359,117 @@ export default function StoriesExplorerPage() {
       return;
     }
     void loadStoryDetail(selectedStoryId);
-  }, [selectedStoryId]);
+  }, [selectedStoryId, loadStoryDetail]);
+
+  const changeFilter = (kind: 'status' | 'storyKind', value: string) =>
+    changeFilters(kind === 'status' ? value : statusFilter, kind === 'storyKind' ? value : kindFilter);
+
+  const changeFilters = (nextStatus: string, nextKind: string) => {
+    setStatusFilter(nextStatus);
+    setKindFilter(nextKind);
+    syncSearchParams({ status: nextStatus || null, storyKind: nextKind || null });
+    void loadStories(nextStatus, nextKind);
+  };
 
   const selectStory = (storyId: string) => {
     setSelectedStoryId(storyId);
     syncSearchParams({ storyId });
+    // Stacked layout (below xl): bring the detail into view; in two columns it is already there.
+    if (typeof window !== 'undefined' && window.matchMedia && !window.matchMedia('(min-width: 1280px)').matches) {
+      detailRef.current?.scrollIntoView?.({ block: 'start' });
+    }
   };
 
-  const applyFilters = () => {
-    syncSearchParams({
-      status: statusFilter.trim() || null,
-      storyKind: kindFilter.trim() || null,
-      storyId: selectedStoryId || null,
-    });
-    void loadStories();
-  };
-
-  const refreshCurrentStory = () => {
-    if (!selectedStoryId) return;
-    void loadStoryDetail(selectedStoryId);
-  };
-
-  const detailPostsByRole = storyDetail?.posts_by_role || {};
-  const detailPosts = storyDetail?.posts || [];
-  const anchorPost = storyDetail?.anchor_post;
+  const filtered = Boolean(statusFilter || kindFilter);
+  const nothing = !listError && !loadingList && !stories.length;
+  const meta = useMemo(() => {
+    if (loadingList && !stories.length) return 'loading…';
+    const count = plural(total, 'story', 'stories');
+    return stories.length < total ? `${count} · showing the first ${stories.length}` : count;
+  }, [loadingList, stories.length, total]);
 
   return (
-    <div className="app-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="app-panel overflow-hidden">
-          <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
-            <div className="relative p-6 sm:p-8 lg:p-10">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(76,141,255,0.16),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(29,78,216,0.10),transparent_34%)]" />
-              <div className="relative space-y-5">
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] transition hover:text-[var(--text-normal)]"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Back to hub
-                </button>
-                <div className="inline-flex rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--text-faint)]">
-                  Story Explorer
-                </div>
-                <div className="space-y-3">
-                  <h1 className="text-3xl font-bold tracking-tight text-[var(--text-normal)] sm:text-4xl">
-                    Follow stories across posts, updates, and timelines.
-                  </h1>
-                  <p className="max-w-2xl text-sm leading-7 text-[var(--text-muted)] sm:text-base">
-                    This view turns the backend story graph into a readable workspace. Select a story to inspect its anchor, attached posts, update trail, and the timeline that ties the thread together.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" onClick={applyFilters} className="app-inline-button app-inline-button--primary">
-                    <Sparkles className="h-4 w-4" />
-                    Apply Filters
-                  </button>
-                  <button type="button" onClick={loadStories} className="app-inline-button">
-                    <RefreshCw className={`h-4 w-4 ${loadingList ? 'animate-spin' : ''}`} />
-                    Reload Stories
-                  </button>
-                  <Link to="/briefing" className="app-inline-button">
-                    <BookOpen className="h-4 w-4" />
-                    Open Daily Briefing
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-6 lg:border-l lg:border-t-0">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-faint)]">Stories loaded</div>
-                  <div className="mt-2 text-3xl font-bold text-[var(--text-normal)]">{total.toLocaleString()}</div>
-                  <div className="mt-1 text-sm text-[var(--text-muted)]">
-                    Browse every story candidate stored in the database.
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-faint)]">Selected story</div>
-                  <div className="mt-2 text-lg font-semibold text-[var(--text-normal)]">
-                    {selectedStory?.canonical_title || 'None selected'}
-                  </div>
-                  <div className="mt-1 text-sm text-[var(--text-muted)]">
-                    {selectedStory?.story_kind || 'Pick a story from the list to inspect it.'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {error && (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-            {error}
+    <Page width="wide">
+      <PageHeader
+        title="Stories"
+        meta={meta}
+        actions={
+          <Button variant="secondary" onClick={() => void loadStories(statusFilter, kindFilter)} disabled={loadingList}>
+            <RefreshCw aria-hidden="true" />
+            Reload
+          </Button>
+        }
+      >
+        {nothing && !filtered ? null : (
+          <div className="space-y-2">
+            <FilterGroup label="status" options={STATUS_OPTIONS} value={statusFilter} onChange={(v) => changeFilter('status', v)} />
+            <FilterGroup label="kind" options={KIND_OPTIONS} value={kindFilter} onChange={(v) => changeFilter('storyKind', v)} />
           </div>
         )}
+      </PageHeader>
 
-        <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-          <aside className="space-y-6">
-            <SectionCard title="Filters" subtitle="Narrow the story graph by status or kind.">
-              <div className="grid gap-3">
-                <label className="space-y-2 text-sm">
-                  <span className="text-[var(--text-muted)]">Status</span>
-                  <input
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    placeholder="active, archived, candidate..."
-                    className="workspace-editor py-3 font-sans"
-                  />
-                </label>
-                <label className="space-y-2 text-sm">
-                  <span className="text-[var(--text-muted)]">Story kind</span>
-                  <input
-                    value={kindFilter}
-                    onChange={(e) => setKindFilter(e.target.value)}
-                    placeholder="project_thread, recurring_theme..."
-                    className="workspace-editor py-3 font-sans"
-                  />
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={applyFilters} className="app-inline-button app-inline-button--primary">
-                    <RefreshCw className={`h-4 w-4 ${loadingList ? 'animate-spin' : ''}`} />
-                    Update list
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStatusFilter('');
-                      setKindFilter('');
-                      syncSearchParams({ status: null, storyKind: null });
-                      void loadStories();
-                    }}
-                    className="app-inline-button"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="text-xs text-[var(--text-faint)]">
-                  Leave either field blank to search across all values.
-                </div>
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              title={`Stories (${stories.length})`}
-              subtitle={loadingList ? 'Loading story index...' : 'Select a story to inspect. '}
-              actions={loadingList ? <Loader2 className="h-4 w-4 animate-spin text-[var(--text-faint)]" /> : null}
-            >
-              <div className="max-h-[38rem] space-y-2 overflow-y-auto pr-1">
-                {stories.length ? stories.map((story) => {
-                  const isSelected = story.id === selectedStoryId;
-                  return (
-                    <button
-                      key={story.id}
-                      type="button"
-                      onClick={() => selectStory(story.id)}
-                      className={`block w-full rounded-2xl border p-4 text-left transition ${
-                        isSelected
-                          ? 'border-[var(--accent-strong)] bg-[var(--text-highlight-bg)] shadow-[0_14px_30px_rgba(76,141,255,0.12)]'
-                          : 'border-[var(--background-modifier-border)] bg-[var(--background-primary)] hover:border-[var(--accent-strong)] hover:bg-[var(--background-primary-alt)]'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-[var(--text-normal)]">
-                            {story.canonical_title}
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <span className={`rounded-full border px-2 py-0.5 text-xs ${tone(story.story_kind)}`}>
-                              {story.story_kind || 'story'}
-                            </span>
-                            <span className={`rounded-full border px-2 py-0.5 text-xs ${stateTone(story.status)}`}>
-                              {story.status || 'unknown'}
-                            </span>
-                          </div>
-                        </div>
-                        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-faint)]" />
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
-                        <span>{story.post_count || 0} posts</span>
-                        <span>{story.update_count || 0} updates</span>
-                        {formatScore(story.anchor_confidence) && <span>anchor {formatScore(story.anchor_confidence)}</span>}
-                      </div>
-                      {story.canonical_summary && (
-                        <div className="mt-3 line-clamp-3 text-sm leading-6 text-[var(--text-muted)]">
-                          {story.canonical_summary}
-                        </div>
-                      )}
-                    </button>
-                  );
-                }) : (
-                  <div className="rounded-2xl border border-dashed border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4 text-sm text-[var(--text-muted)]">
-                    {loadingList ? 'Loading stories...' : 'No stories match the current filters.'}
-                  </div>
-                )}
-              </div>
-            </SectionCard>
-          </aside>
-
-          <main className="space-y-6">
-            <SectionCard
-              title={storyDetail?.canonical_title || 'Story detail'}
-              subtitle={storyDetail ? `Updated ${formatDate(storyDetail.updated_at || storyDetail.created_at)}` : 'Choose a story from the list.'}
-              actions={
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={refreshCurrentStory} className="app-inline-button">
-                    <RefreshCw className={`h-4 w-4 ${loadingDetail ? 'animate-spin' : ''}`} />
-                    Refresh Detail
-                  </button>
-                  {storyDetail?.anchor_post_id && (
-                    <Link to={`/posts/${encodeURIComponent(storyDetail.anchor_post_id)}`} className="app-inline-button">
-                      <BookOpen className="h-4 w-4" />
-                      Open Anchor Post
-                    </Link>
-                  )}
-                </div>
-              }
-            >
-              {loadingDetail && !storyDetail ? (
-                <div className="flex items-center gap-2 py-8 text-sm text-[var(--text-muted)]">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading story detail...
-                </div>
-              ) : storyDetail ? (
-                <div className="space-y-5">
-                  <div className="flex flex-wrap gap-2">
-                    <span className={`rounded-full border px-3 py-1 text-xs ${tone(storyDetail.story_kind)}`}>
-                      {storyDetail.story_kind || 'story'}
-                    </span>
-                    <span className={`rounded-full border px-3 py-1 text-xs ${stateTone(storyDetail.status)}`}>
-                      {storyDetail.status || 'unknown'}
-                    </span>
-                    {formatScore(storyDetail.anchor_confidence) && (
-                      <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
-                        Anchor {formatScore(storyDetail.anchor_confidence)}
-                      </span>
-                    )}
-                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
-                      {storyDetail.post_count || 0} posts
-                    </span>
-                    <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-3 py-1 text-xs text-[var(--text-muted)]">
-                      {storyDetail.update_count || 0} updates
-                    </span>
-                  </div>
-
-                  {storyDetail.canonical_summary ? (
-                    <div className="prose max-w-none">
-                      <MarkdownRenderer content={storyDetail.canonical_summary} />
-                    </div>
-                  ) : (
-                    <div className="text-sm text-[var(--text-muted)]">
-                      No canonical summary has been stored for this story yet.
-                    </div>
-                  )}
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">Anchor post</div>
-                      {anchorPost ? (
-                        <div className="mt-3 space-y-3">
-                          <div className="font-medium text-[var(--text-normal)]">{anchorPost.title || 'Untitled anchor post'}</div>
-                          <div className="flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
-                            <span>{anchorPost.platform?.toUpperCase() || 'POST'}</span>
-                            <span>{anchorPost.source_display_name || anchorPost.handle_or_url || 'unknown source'}</span>
-                            <span>{formatShortDate(anchorPost.published_at)}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {anchorPost.id && (
-                              <Link to={`/posts/${encodeURIComponent(anchorPost.id)}`} className="app-inline-button">
-                                Open post
-                              </Link>
-                            )}
-                            {anchorPost.url && (
-                              <a href={anchorPost.url} target="_blank" rel="noreferrer" className="app-inline-button">
-                                Open original
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-3 text-sm text-[var(--text-muted)]">No anchor post is attached.</div>
-                      )}
-                    </div>
-                    <div className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">Story metadata</div>
-                      <div className="mt-3 space-y-2 text-sm text-[var(--text-muted)]">
-                        <div>Created by: {storyDetail.created_by_method || 'unknown'}</div>
-                        <div>Resolution: {storyDetail.resolution_version || 'unversioned'}</div>
-                        <div>First seen: {formatDate(storyDetail.first_seen_at)}</div>
-                        <div>Last seen: {formatDate(storyDetail.last_seen_at)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-6 text-sm text-[var(--text-muted)]">
-                  Select a story from the index to load the full record.
-                </div>
-              )}
-            </SectionCard>
-
-            {storyDetail && (
-              <>
-                <SectionCard title="Timeline" subtitle="Chronological updates attached to the selected story.">
-                  <div className="space-y-3">
-                    {(timeline.length ? timeline : storyDetail.timeline || []).length ? (timeline.length ? timeline : storyDetail.timeline || []).map((update) => (
-                      <details key={update.id} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                        <summary className="cursor-pointer list-none">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium text-[var(--text-normal)]">{update.title}</span>
-                            {update.update_date && (
-                              <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
-                                {formatShortDate(update.update_date)}
-                              </span>
-                            )}
-                            {formatScore(update.importance_score) && (
-                              <span className="rounded-full border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-2 py-0.5 text-xs text-[var(--text-muted)]">
-                                importance {formatScore(update.importance_score)}
-                              </span>
-                            )}
-                          </div>
-                        </summary>
-                        <div className="mt-3 space-y-3">
-                          {update.summary && (
-                            <div className="prose max-w-none">
-                              <MarkdownRenderer content={update.summary} />
-                            </div>
-                          )}
-                          {update.posts?.length ? (
-                            <div className="space-y-2">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-faint)]">Posts in update</div>
-                              <div className="grid gap-2 md:grid-cols-2">
-                                {update.posts.map((entry) => (
-                                  <div key={`${update.id}-${entry.post_id}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-3">
-                                    <div className="font-medium text-[var(--text-normal)]">{entry.post.title || 'Untitled post'}</div>
-                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
-                                      {entry.post.source_display_name || entry.post.source} • {formatShortDate(entry.post.published_at || entry.post.date)}
-                                    </div>
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                      {entry.post.id && (
-                                        <Link to={`/posts/${encodeURIComponent(entry.post.id)}`} className="app-inline-button">
-                                          Open post
-                                        </Link>
-                                      )}
-                                      {entry.post.url && (
-                                        <a href={entry.post.url} target="_blank" rel="noreferrer" className="app-inline-button">
-                                          Open original
-                                        </a>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </details>
-                    )) : (
-                      <div className="text-sm text-[var(--text-muted)]">No timeline entries yet.</div>
-                    )}
-                  </div>
-                </SectionCard>
-
-                <SectionCard title="Posts by Role" subtitle="How the story connects to specific posts.">
-                  <div className="space-y-4">
-                    {Object.keys(detailPostsByRole).length ? Object.entries(detailPostsByRole).map(([role, entries]) => (
-                      <div key={role} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                        <div className="mb-3 flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-[var(--accent-strong)] px-2 py-0.5 text-xs text-[var(--text-normal)]">
-                            {role}
-                          </span>
-                          <span className="text-xs text-[var(--text-faint)]">{entries.length} post(s)</span>
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          {entries.map((entry) => (
-                            <div key={`${role}-${entry.post_id}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-3">
-                              <div className="font-medium text-[var(--text-normal)]">{entry.post.title || 'Untitled post'}</div>
-                              <div className="mt-1 text-xs text-[var(--text-muted)]">
-                                {entry.post.source_display_name || entry.post.source} • {formatShortDate(entry.post.published_at || entry.post.date)}
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
-                                <span>relevance {formatScore(entry.relevance_score) || 'n/a'}</span>
-                                <span>anchor {formatScore(entry.anchor_score) || 'n/a'}</span>
-                                <span>weight {formatScore(entry.evidence_weight) || 'n/a'}</span>
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {entry.post.id && (
-                                  <Link to={`/posts/${encodeURIComponent(entry.post.id)}`} className="app-inline-button">
-                                    Open post
-                                  </Link>
-                                )}
-                                {entry.post.url && (
-                                  <a href={entry.post.url} target="_blank" rel="noreferrer" className="app-inline-button">
-                                    Open original
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )) : detailPosts.length ? (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {detailPosts.map((entry) => (
-                          <div key={`${entry.story_id}-${entry.post_id}`} className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-4">
-                            <div className="font-medium text-[var(--text-normal)]">{entry.post.title || 'Untitled post'}</div>
-                            <div className="mt-1 text-xs text-[var(--text-muted)]">
-                              {entry.post.source_display_name || entry.post.source} • {formatShortDate(entry.post.published_at || entry.post.date)}
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {entry.post.id && (
-                                <Link to={`/posts/${encodeURIComponent(entry.post.id)}`} className="app-inline-button">
-                                  Open post
-                                </Link>
-                              )}
-                              {entry.post.url && (
-                                <a href={entry.post.url} target="_blank" rel="noreferrer" className="app-inline-button">
-                                  Open original
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-[var(--text-muted)]">No posts are attached to this story yet.</div>
-                    )}
-                  </div>
-                </SectionCard>
-              </>
+      {listError ? (
+        <ErrorState error={listError} title="Couldn’t load stories" onRetry={() => void loadStories(statusFilter, kindFilter)} />
+      ) : nothing ? (
+        filtered ? (
+          <EmptyState
+            title="No stories match these filters"
+            description="Try another status or kind."
+            action={{ label: 'Show all', onClick: () => changeFilters('', '') }}
+          />
+        ) : (
+          <EmptyState
+            title="No stories yet"
+            description="Stories appear once the resolver has tied posts together. Read the feed in the meantime."
+            action={{ label: 'Open the feed', onClick: () => navigate('/') }}
+          />
+        )
+      ) : (
+        <div className="grid gap-x-10 gap-y-10 xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+          <nav aria-label="Stories" className="min-w-0 xl:sticky xl:top-[calc(var(--topbar-h)+1rem)] xl:max-h-[calc(100dvh-var(--topbar-h)-2rem)] xl:self-start xl:overflow-y-auto xl:pr-1">
+            {loadingList && !stories.length ? (
+              <LoadingState label="Loading stories" rows={5} />
+            ) : (
+              <ol className="space-y-2" aria-busy={loadingList || undefined}>
+                {stories.map((story) => (
+                  <li key={story.id}>
+                    <SelectRow
+                      selected={story.id === selectedStoryId}
+                      onSelect={() => selectStory(story.id)}
+                      meta={shortDate(story.last_seen_at || story.updated_at)}
+                      title={story.canonical_title?.trim() || 'Untitled story'}
+                      description={story.canonical_summary || undefined}
+                      footer={
+                        <>
+                          <StoryStatus status={story.status} />
+                          {story.story_kind ? <span>{humanize(story.story_kind)}</span> : null}
+                          <span>{plural(story.post_count ?? 0, 'post')}</span>
+                          <span>{plural(story.update_count ?? 0, 'update')}</span>
+                        </>
+                      }
+                    />
+                  </li>
+                ))}
+              </ol>
             )}
-          </main>
+          </nav>
+
+          <div ref={detailRef} className="min-w-0 scroll-mt-[calc(var(--topbar-h)+1rem)]">
+            {detailError ? (
+              <Notice tone="error" title="Couldn’t load this story" message={detailError} action={{ label: 'Retry', onClick: () => void loadStoryDetail(selectedStoryId) }} />
+            ) : storyDetail ? (
+              <StoryDetailView story={storyDetail} timeline={timeline} refreshing={loadingDetail} onRefresh={() => void loadStoryDetail(selectedStoryId)} />
+            ) : loadingDetail ? (
+              <LoadingState label="Loading story" rows={3} />
+            ) : stories.length ? (
+              <p className="rounded-md border border-dashed border-line-strong px-4 py-10 text-center text-[0.875rem] text-fg-2">
+                Select a story to read its summary, timeline and posts.
+              </p>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+      <DevDataSwitch options={STORY_FIXTURE_NAMES} />
+    </Page>
   );
 }
