@@ -215,16 +215,11 @@ class IngestionRunner:
         fetched: List[_Fetched] = list(await asyncio.gather(
             *(self._fetch(*by_id[s["id"]], sessions) for s in ordered)
         ))
-        outcomes = [f.outcome for f in fetched]
-        await self._safely(
-            "record outcomes", self.state.record_outcomes, outcomes, trigger=request.trigger,
-            now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
-        )
         posts_fetched = sum(len(f.posts) for f in fetched)
         progress.event("fetched", {
             "sources_fetched": len(fetched),
             "posts_fetched": posts_fetched,
-            "outcomes": self._outcome_counts(outcomes),
+            "outcomes": self._outcome_counts([f.outcome for f in fetched]),
         })
 
         # Save: one batch for the run.
@@ -252,6 +247,20 @@ class IngestionRunner:
                                                       f"all {c['failed']} posts failed to save"))
         drafts.clear()
         progress.event("saved", {"inserted": saved.inserted, "updated": saved.updated, "failed": saved.failed})
+
+        # Outcomes are recorded after the save: a source none of whose posts reached the
+        # database is failing (its failure count grows, it retries on backoff), not healthy
+        # with its failures reset and its next fetch a whole cadence away.
+        save_errors = {f.source_id: f.error for f in failures if f.stage == "save"}
+        outcomes = [
+            dataclasses.replace(f.outcome, status=OutcomeStatus.ERROR, error=f"save: {save_errors[f.source['id']]}")
+            if f.source["id"] in save_errors and f.outcome.status != OutcomeStatus.ERROR else f.outcome
+            for f in fetched
+        ]
+        await self._safely(
+            "record outcomes", self.state.record_outcomes, outcomes, trigger=request.trigger,
+            now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
+        )
 
         # Enrich the inserted posts.
         try:

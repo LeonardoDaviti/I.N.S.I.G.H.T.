@@ -277,7 +277,27 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         h = _Harness([src], [_rss_kind()], saver=InMemoryPostSaver(failing))
         report = await h.run(force=True)
         self.assertEqual([f.stage for f in report.failures], ["save"])
-        self.assertEqual(h.state.rows[src["id"]].last_outcome, "healthy")
+        # Nothing reached the database, so the source is failing, not healthy: its failure
+        # count grows and it is retried on backoff instead of waiting out its cadence.
+        row = h.state.rows[src["id"]]
+        self.assertEqual(row.last_outcome, "error")
+        self.assertEqual(row.consecutive_failures, 1)
+        self.assertIn("failed to save", row.last_error)
+        self.assertIsNone(row.last_success_at)
+
+    async def test_a_failed_save_batch_marks_every_fetched_source_failing(self):
+        class BrokenSaver(InMemoryPostSaver):
+            def save(self, drafts):
+                raise RuntimeError("db down")
+
+        a, b = _source("https://a.test/rss"), _source("https://b.test/rss")
+        h = _Harness([a, b], [_rss_kind()], saver=BrokenSaver())
+        report = await h.run(force=True)
+        self.assertEqual(report.status, "failed")
+        for src in (a, b):
+            row = h.state.rows[src["id"]]
+            self.assertEqual(row.last_outcome, "error")
+            self.assertEqual(row.consecutive_failures, 1)
 
     async def test_enrichment_receives_only_inserted_posts(self):
         src = _source("https://mixed.test/rss")
