@@ -95,7 +95,8 @@ class Availability:
     """What this process can fetch at all. Unavailable is never backoff."""
 
     ytdlp_enabled: bool
-    # B1-B7: always False (the telegram_mtproto kind lands in B8).
+    # TELEGRAM_API_ID + TELEGRAM_API_HASH set and the session file present (B8). An
+    # unauthorised session is only known once the session opens: the runner reports it.
     telegram_credentials: bool
     telegram_reason: str | None = None   # why telegram_credentials is False (the skip reason)
 
@@ -118,13 +119,35 @@ class FetchDecision:
 _TRUTHY_OFF = {"0", "false", "no", "off"}
 
 
-def availability_from_env() -> Availability:
-    """Read INSIGHT_YTDLP_ENABLED. Injected into callers as a callable, so tests never read env."""
-    ytdlp = str(os.getenv("INSIGHT_YTDLP_ENABLED", "1")).strip().lower() not in _TRUTHY_OFF
+def availability_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    exists: Callable[[str], bool] = os.path.exists,
+) -> Availability:
+    """What this process can fetch, read from the environment. Injected into callers as a
+    callable, so the runner and its tests never read env themselves.
+
+    - INSIGHT_YTDLP_ENABLED (default on)
+    - telegram_mtproto: TELEGRAM_API_ID (an int), TELEGRAM_API_HASH and the authorised
+      session file at telegram_session_path(); telegram_reason names what is missing.
+    """
+    from insight_core.ingestion.kinds.telegram_session import (
+        LOGIN_HINT,
+        telegram_credentials,
+        telegram_session_path,
+    )
+
+    env = os.environ if env is None else env
+    ytdlp = str(env.get("INSIGHT_YTDLP_ENABLED", "1")).strip().lower() not in _TRUTHY_OFF
+    _api_id, _api_hash, reason = telegram_credentials(env)
+    if reason is None:
+        path = telegram_session_path(env)
+        if not exists(path):
+            reason = f"no Telegram session at {path}; {LOGIN_HINT}"
     return Availability(
         ytdlp_enabled=ytdlp,
-        telegram_credentials=False,
-        telegram_reason="Telegram MTProto is not wired up yet (Mark IX slice B8)",
+        telegram_credentials=reason is None,
+        telegram_reason=reason,
     )
 
 

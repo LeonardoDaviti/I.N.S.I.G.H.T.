@@ -21,6 +21,7 @@ from insight_core.ingestion.schedule import (
     availability_from_env,
     cadence_stats,
     decide_fetch,
+    unavailable_reason,
 )
 from insight_core.logs.core.logger_config import get_component_logger
 
@@ -95,11 +96,15 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
     stats = cadence_stats(source, state)
     decision = decide_fetch(stats, kind.profile, now, force=False, availability=availability)
     enabled = bool(source.get("enabled"))
+    # B8: why this kind cannot be fetched at all (yt-dlp off, no Telegram session, ...),
+    # kept even for a disabled source so the table says why enabling it would not help.
+    unavailable = unavailable_reason(kind.profile, availability)
     if not enabled:
         # As the runner's defensive path: a disabled source is never picked by a cycle
         # (fetch-now still works on it).
+        detail = "Source is disabled" + (f"; unavailable: {unavailable}" if unavailable else "")
         decision = replace(decision, kind=DecisionKind.SKIP_DISABLED, fetch=False,
-                           next_due_at=None, detail="Source is disabled")
+                           next_due_at=None, detail=detail)
     settings = source.get("settings") or {}
     archive = settings.get("archive") or {}
     failures = stats.consecutive_failures
@@ -123,6 +128,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "would_fetch_now": decision.fetch,
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
+        "unavailable_reason": unavailable,
         "status": health_status(enabled, decision, failures),
         "last_attempt_at": _iso(state.last_attempt_at if state else None),
         "last_success_at": _iso(state.last_success_at if state else None),

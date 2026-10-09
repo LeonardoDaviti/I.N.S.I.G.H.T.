@@ -39,7 +39,7 @@ class KindRegistry:
         from insight_core.ingestion.kinds.generic_rss import GenericRssKind
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.reddit import RedditKind
-        from insight_core.ingestion.kinds.telegram_mtproto import TelegramMtprotoKind
+        from insight_core.ingestion.kinds.telegram_mtproto import TelegramKind
         from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
         from insight_core.ingestion.kinds.youtube import YouTubeKind
 
@@ -49,7 +49,7 @@ class KindRegistry:
             YouTubeKind(youtube),
             TelegramRssKind(http),
             NitterRssKind(http),
-            TelegramMtprotoKind(),
+            TelegramKind(http=http),
             GenericRssKind(http),
         ])
 

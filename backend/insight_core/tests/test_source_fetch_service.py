@@ -16,7 +16,7 @@ from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
 from insight_core.ingestion.schedule import Availability
 from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
 from insight_core.services.source_fetch_service import SourceFetchService
-from insight_core.tests._kind_fakes import FakeKind
+from insight_core.tests._kind_fakes import FakeKind, RecordingKindSession
 
 
 class ArchiveAvailabilityTests(unittest.IsolatedAsyncioTestCase):
@@ -236,6 +236,43 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["pages_fetched"], 2)
         self.assertEqual(result["checkpoint"]["collected_posts"], 3)
         self.assertEqual([e["stage"] for e in events], ["planning_complete", "page_fetched", "page_fetched", "completed"])
+
+
+class ArchiveKindSessionTests(unittest.IsolatedAsyncioTestCase):
+    """B8: plan and archive run inside the kind's session, opened once and always closed."""
+
+    def service(self, kind):
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]))
+        service.sources_service = sources = _PlanSources()
+        service.posts_service = _Posts()
+        service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)
+        service._save_posts = lambda _sid, _posts: SaveBatchResult()
+        return service
+
+    async def test_archive_opens_the_session_once_around_the_plan_and_every_page(self):
+        session = RecordingKindSession()
+        pages = [ArchivePage([{"url": "u1"}], {"mode": "fake", "pages_fetched": 1, "collected_posts": 1}),
+                 ArchivePage([{"url": "u2"}], {"mode": "fake", "pages_fetched": 2, "collected_posts": 2})]
+        kind = FakeKind("fake_session", inspection=Inspection(5, 1, None), pages=pages, session=session)
+        await self.service(kind).archive_source("s1")
+        self.assertEqual(session.events, ["open", "inspect", "page", "page", "close"])
+
+    async def test_plan_closes_the_session(self):
+        session = RecordingKindSession()
+        kind = FakeKind("fake_session", inspection=Inspection(5, 1, None), session=session)
+        await self.service(kind).plan_archive("s1")
+        self.assertEqual(session.events, ["open", "inspect", "close"])
+
+    async def test_a_session_that_cannot_open_is_kind_unavailable(self):
+        session = RecordingKindSession(open_raises=KindUnavailable("Telegram session not authorised"))
+        kind = FakeKind("fake_session", session=session)
+        service = self.service(kind)
+        with self.assertRaises(KindUnavailable) as ctx:
+            await service.archive_source("s1")
+        self.assertIn("not authorised", ctx.exception.reason)
+        with self.assertRaises(KindUnavailable):
+            await service.plan_archive("s1")
+        self.assertNotIn("inspect", kind.events)
 
 
 if __name__ == "__main__":

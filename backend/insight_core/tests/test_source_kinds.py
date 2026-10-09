@@ -27,7 +27,7 @@ from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.generic_rss import GenericRssKind
 from insight_core.ingestion.kinds.nitter_rss import NitterRssKind, extract_nitter_tweet_count
 from insight_core.ingestion.kinds.reddit import RedditKind
-from insight_core.ingestion.kinds.telegram_mtproto import TelegramMtprotoKind
+from insight_core.ingestion.kinds.telegram_mtproto import TelegramKind
 from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
 from insight_core.ingestion.kinds.youtube import YouTubeKind
 from insight_core.ingestion.schedule import Availability, DecisionKind, cadence_stats, decide_fetch
@@ -373,9 +373,9 @@ class YouTubeKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("channel", inspection.raw)
 
 
-class TelegramMtprotoKindTests(unittest.TestCase):
+class TelegramKindTests(unittest.TestCase):
     def test_profile(self):
-        profile = TelegramMtprotoKind().profile
+        profile = TelegramKind().profile
         self.assertEqual(profile.requires, "telegram_creds")
         self.assertTrue(profile.live_pages_rate_limited)
         self.assertEqual((profile.page_delay_s, profile.batch_size, profile.batch_cooldown_s), (1, 10, 18))
@@ -393,9 +393,10 @@ class TelegramMtprotoKindTests(unittest.TestCase):
         self.assertEqual(decision.kind, DecisionKind.SKIP_UNAVAILABLE)
         self.assertFalse(decision.fetch)
 
-    def test_fetch_raises_kind_unavailable_until_b8(self):
+    def test_fetch_without_an_open_session_is_unavailable(self):
+        # The B8 behaviour tests (session lifecycle, flood wait, archive) are in test_telegram_kind.py.
         with self.assertRaises(KindUnavailable):
-            asyncio.run(TelegramMtprotoKind().fetch_latest(_src("telegram", "ai_newz"), 5))
+            asyncio.run(TelegramKind().fetch_latest(_src("telegram", "ai_newz"), 5))
 
     def test_importing_kinds_does_not_import_connectors_or_telethon(self):
         script = (
@@ -407,7 +408,7 @@ class TelegramMtprotoKindTests(unittest.TestCase):
             "k = r.resolve({'platform': 'telegram', 'handle_or_url': 'ai_newz'})\n"
             "assert k.name == 'telegram_mtproto' and k.profile.requires == 'telegram_creds'\n"
             "bad = [m for m in sys.modules if m == 'telethon' or m.startswith('telethon.') "
-            "or m.startswith('insight_core.connectors')]\n"
+            "or m.startswith('insight_core.' 'connectors')]\n"
             "assert not bad, bad\n"
         )
         result = subprocess.run([sys.executable, "-c", script], cwd=str(BACKEND_DIR),
@@ -423,7 +424,7 @@ DEAD_CONNECTOR_NAMES = re.compile("|".join(
 
 
 class ConnectorRemovalTests(unittest.TestCase):
-    """B5: the legacy connector package is gone except for the Telegram basis B8 replaces."""
+    """B5 deleted the dead connectors; B8 deleted the Telegram one and the package with it."""
 
     def test_importing_ingestion_does_not_import_connectors_or_telethon(self):
         script = (
@@ -436,7 +437,7 @@ class ConnectorRemovalTests(unittest.TestCase):
             "    telegram_mtproto, telegram_rss, youtube)\n"
             "import insight_core.services.source_fetch_service\n"
             "bad = [m for m in sys.modules if m == 'telethon' or m.startswith('telethon.') "
-            "or m.startswith('insight_core.connectors') or m.startswith('insight_core.engines')]\n"
+            "or m.startswith('insight_core.' 'connectors') or m.startswith('insight_core.engines')]\n"
             "assert not bad, bad\n"
         )
         result = subprocess.run([sys.executable, "-c", script], cwd=str(BACKEND_DIR),
@@ -446,17 +447,15 @@ class ConnectorRemovalTests(unittest.TestCase):
     def test_dead_connector_modules_are_deleted(self):
         core = BACKEND_DIR / "insight_core"
         for relative in [f"connectors/{name}.py" for name in _DEAD] + [
-                         "engines", "tests/connector_test.py", "tests/upsert_test.py",
+                         "connectors", "engines", "tests/connector_test.py", "tests/upsert_test.py",
                          "tests/upsert_multiple_test.py", "tests/read_posts.py"]:
             self.assertFalse((core / relative).exists(), relative)
 
-    def test_connectors_package_only_re_exports(self):
-        source = (BACKEND_DIR / "insight_core" / "connectors" / "__init__.py").read_text()
-        tree = ast.parse(source)
-        self.assertFalse([n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))])
-        exported = next(n for n in tree.body if isinstance(n, ast.Assign)
-                        and any(getattr(t, "id", None) == "__all__" for t in n.targets))
-        self.assertEqual(ast.literal_eval(exported.value), ["BaseConnector", "TelegramConnector"])
+    def test_no_python_file_imports_the_connectors_package_or_the_telegram_one(self):
+        pattern = re.compile("insight_core" r"\.connectors|\.\.connectors|" "telegram_" "connector|" "Telegram" "Connector")
+        hits = [str(path.relative_to(BACKEND_DIR)) for path in BACKEND_DIR.rglob("*.py")
+                if path != Path(__file__).resolve() and pattern.search(path.read_text(errors="replace"))]
+        self.assertEqual(hits, [])
 
     def test_no_python_file_references_a_dead_connector(self):
         hits = []

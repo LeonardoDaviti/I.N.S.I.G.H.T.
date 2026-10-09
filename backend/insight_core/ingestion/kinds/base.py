@@ -132,6 +132,26 @@ class KindUnavailable(Exception):
 
 
 @runtime_checkable
+class KindSession(Protocol):
+    """A kind's per-run session (B8). The runner opens it lazily, before the kind's first due
+    source, and closes it in a finally once the run is done with the kind."""
+
+    async def open(self) -> None: ...        # may raise KindUnavailable(reason); never prompts
+
+    async def close(self) -> None: ...       # idempotent
+
+
+class NullKindSession:
+    """The session of every kind that needs none (all but telegram_mtproto): a no-op."""
+
+    async def open(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+@runtime_checkable
 class SourceKind(Protocol):
     name: str                                # persisted as settings.archive.source_type
     profile: PolitenessProfile
@@ -151,6 +171,8 @@ class SourceKind(Protocol):
     def checkpoint_resumable(self, checkpoint: Any) -> bool: ...
 
     def estimate_pages(self, remaining: int, page_size: Optional[int]) -> int: ...
+
+    def session(self) -> KindSession: ...
 
 
 def source_host_key(source: Source) -> str:
@@ -203,6 +225,9 @@ class BaseKind:
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         return False
+
+    def session(self) -> KindSession:
+        return NullKindSession()
 
     def estimate_pages(self, remaining: int, page_size: Optional[int]) -> int:
         if remaining <= 0:

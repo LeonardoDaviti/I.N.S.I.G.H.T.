@@ -12,9 +12,27 @@ from insight_core.ingestion.kinds.base import (
     ArchivePage,
     BaseKind,
     Inspection,
+    KindSession,
     KindUnavailable,
+    NullKindSession,
     PolitenessProfile,
 )
+
+
+class RecordingKindSession:
+    """A KindSession that records open/close; open_raises makes open() fail."""
+
+    def __init__(self, open_raises: BaseException | None = None) -> None:
+        self.open_raises = open_raises
+        self.events: list[str] = []
+
+    async def open(self) -> None:
+        self.events.append("open")
+        if self.open_raises is not None:
+            raise self.open_raises
+
+    async def close(self) -> None:
+        self.events.append("close")
 
 
 class RecordingSleeper:
@@ -89,6 +107,7 @@ class FakeKind(BaseKind):
         matches: Callable[[Mapping[str, Any]], bool] | None = None,
         inspection: Inspection | None = None,
         pages: list[ArchivePage] | None = None,
+        session: KindSession | None = None,
     ) -> None:
         self.name = name
         self.profile = profile or PolitenessProfile(concurrency_pool="host-lock")
@@ -96,6 +115,8 @@ class FakeKind(BaseKind):
         self._matches = matches or (lambda _source: True)
         self._inspection = inspection or Inspection(None, None, None, {})
         self._pages = list(pages or [])
+        self._session = session
+        self.events: list[str] = []      # "fetch" / "inspect" / "page", interleaved with session events
         self.fetch_calls: list[tuple[str, int]] = []
         self.resumable_calls: list[Any] = []
         self.estimate_calls: list[tuple[int, int | None]] = []
@@ -103,15 +124,26 @@ class FakeKind(BaseKind):
     def matches(self, source: Mapping[str, Any]) -> bool:
         return self._matches(source)
 
+    def session(self) -> KindSession:
+        return self._session if self._session is not None else NullKindSession()
+
+    def _event(self, name: str) -> None:
+        self.events.append(name)
+        if isinstance(self._session, RecordingKindSession):
+            self._session.events.append(name)
+
     async def fetch_latest(self, source: Mapping[str, Any], limit: int) -> list[dict]:
         self.fetch_calls.append((str(source.get("handle_or_url")), limit))
+        self._event("fetch")
         return self._behaviour(source, limit)
 
     async def inspect(self, source: Mapping[str, Any]) -> Inspection:
+        self._event("inspect")
         return self._inspection
 
     async def archive_pages(self, source, target, checkpoint, rate):
         for page in self._pages:
+            self._event("page")
             yield page
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:

@@ -6,7 +6,9 @@ fetch goes through the ingestion runner (insight_core/ingestion). This service k
 - plan_archive / archive_source: one loop over kind.archive_pages, paced by
   kind.profile.rate_limit(persisted settings, request overrides); every page is a save
   batch followed by enrichment. An unavailable kind (yt-dlp off, no Telegram session)
-  raises KindUnavailable before any planning (the API answers 409).
+  raises KindUnavailable before any planning (the API answers 409). Both run inside the
+  kind's session (B8: telegram_mtproto connects and checks authorisation; every other kind
+  has a no-op session), so a session that cannot open is the same 409.
 - fetch_reddit_comments_for_post for the post detail page
 
 settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWriter.
@@ -14,7 +16,8 @@ settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWrit
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+import contextlib
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 import psycopg
 
@@ -88,10 +91,40 @@ class SourceFetchService:
             raise ValueError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
+        self._check_available(kind)
+        async with self._kind_session(kind):
+            return await self._plan(source_id, source, kind, desired_posts, resume=resume,
+                                    rate_limit_overrides=rate_limit_overrides)
+
+    def _check_available(self, kind: SourceKind) -> None:
         # E7: the archive honours the same availability switch as every live fetch.
         reason = unavailable_reason(kind.profile, self.availability())
         if reason is not None:
             raise KindUnavailable(reason)
+
+    @contextlib.asynccontextmanager
+    async def _kind_session(self, kind: SourceKind) -> AsyncIterator[None]:
+        """The kind's session around one plan or archive run (KindUnavailable if it cannot open)."""
+        session = kind.session()
+        await session.open()
+        try:
+            yield
+        finally:
+            try:
+                await session.close()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Could not close the %s session: %s", kind.name, exc)
+
+    async def _plan(
+        self,
+        source_id: str,
+        source: Dict[str, Any],
+        kind: SourceKind,
+        desired_posts: Optional[int],
+        *,
+        resume: bool,
+        rate_limit_overrides: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
         inspection = await self._inspect(kind, source)
         source_with_settings = self.sources_service.get_source_with_settings(source_id)
         current_archive = (source_with_settings.get("settings") or {}).get("archive", {})
@@ -136,13 +169,25 @@ class SourceFetchService:
         if not source:
             raise ValueError(f"Source {source_id} not found")
 
-        plan = await self.plan_archive(
-            source_id,
-            desired_posts,
-            resume=resume,
-            rate_limit_overrides=rate_limit_overrides,
-        )
         kind = self.kinds.resolve(source)
+        self._check_available(kind)
+        async with self._kind_session(kind):
+            return await self._archive(source_id, source, kind, desired_posts, progress_callback,
+                                       resume=resume, rate_limit_overrides=rate_limit_overrides)
+
+    async def _archive(
+        self,
+        source_id: str,
+        source: Dict[str, Any],
+        kind: SourceKind,
+        desired_posts: Optional[int],
+        progress_callback: ProgressCallback,
+        *,
+        resume: bool,
+        rate_limit_overrides: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        plan = await self._plan(source_id, source, kind, desired_posts, resume=resume,
+                                rate_limit_overrides=rate_limit_overrides)
         rate = kind.profile.rate_limit(plan.get("rate_limit"))
         target_posts = plan["desired_posts"]
         start_checkpoint = plan.get("checkpoint") if plan.get("resume") else None

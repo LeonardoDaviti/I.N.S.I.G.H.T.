@@ -34,7 +34,48 @@ never overrides unavailability: with `INSIGHT_YTDLP_ENABLED=0` YouTube stays ski
 Each answers `202 {job_id, job_type: "ingestion_run"}` and runs in the background; poll
 `GET /api/operations/jobs/{job_id}` for the run report (in the job payload). When the job
 cannot be tracked the answer is 503 and nothing runs. An archive plan or run on a kind the
-process cannot fetch (yt-dlp off) answers 409.
+process cannot fetch (yt-dlp off, no usable Telegram session) answers 409.
+
+### Telegram session
+
+The bare-handle Telegram sources (platform `telegram`, a handle such as `ai_newz`, no URL)
+are read over MTProto by the `telegram_mtproto` kind. The server never prompts for a login:
+it needs an already-authorised session, created once by an operator.
+
+1. Put `TELEGRAM_API_ID` (an integer) and `TELEGRAM_API_HASH` from https://my.telegram.org
+   in `.env`.
+2. Log in once:
+
+   ```bash
+   docker compose run --rm -it backend python -m insight_core.scripts.telegram_login
+   # --check only reports whether the session is authorised
+   ```
+
+   It asks for the phone number, the code Telegram sends and the 2FA password (if any).
+3. The session is written to `TELEGRAM_SESSION_PATH`, default
+   `/app/insight_core/config/telegram/insight.session` = `backend/insight_core/config/telegram/`
+   on the host. `config/` is bind-mounted into the backend and ingestion containers, so the
+   session survives rebuilds and both use it. It is a credential: the directory is
+   git-ignored; delete it to log out.
+
+One fetch run (or archive run) at a time holds the session, under the Postgres advisory lock
+`hashtext('insight.telegram_session')`; the run opens it before its first due telegram
+source and closes it at the end. Every telegram source is spaced 2s apart (host key
+`platform:telegram`) and paged at 1s with an 18s cooldown every 10 chunks.
+
+What the unavailable reasons mean (the source is skipped, never put into backoff):
+
+| Reason | Meaning / fix |
+|---|---|
+| `TELEGRAM_API_ID is not set` / `is not an integer`, `TELEGRAM_API_HASH is not set` | fix `.env` and restart the containers |
+| `no Telegram session at <path>; run scripts/telegram_login` | no session file yet: run the login above |
+| `Telegram session not authorised; run scripts/telegram_login` | the file exists but is logged out (revoked, or the login was not finished): log in again |
+| `Telegram session in use by another run` | another run (the scheduler or the API) holds the session; the next tick retries |
+| `Telegram flood wait until <time>` | Telegram asked the account to wait longer than 60s; the source that hit it is an error (normal backoff), the rest of the run's telegram sources are skipped |
+| `Telegram connect failed: ...` / `Telegram session lock unavailable: ...` | network or database trouble opening the session; retried next run |
+
+A channel problem (private, renamed, unknown username) is a normal source **error** with
+backoff: the channel is the problem, not the account.
 
 ### How a source is decided
 

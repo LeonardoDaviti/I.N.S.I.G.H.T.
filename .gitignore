@@ -20,6 +20,8 @@ reddit_post_analysis_https
 !frontend/tsconfig.json
 !frontend/tsconfig.node.json
 insight_session.session
+# The Telegram MTProto session (scripts/telegram_login.py); an account credential
+backend/insight_core/config/telegram/
 venv
 .venv
 .venv/
