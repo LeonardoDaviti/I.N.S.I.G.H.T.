@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { errorMessage } from '../lib/apiError';
-import { FOCUS_RING, PRESS_FEEDBACK } from './states/press';
+import Button from './ui/Button';
+import { StatusIcon } from './ui/StatusGlyph';
 
 type Props = {
   children: ReactNode;
@@ -38,27 +39,21 @@ export default class AppErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
-      <div className="mx-auto max-w-xl px-6 py-16">
-        <div
-          role="alert"
-          className="rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-6 py-8 text-center"
-        >
-          <p className="text-base font-semibold text-[var(--text-normal)]">This page hit an error</p>
-          <p className="mt-2 break-words text-sm text-[var(--text-error)]">{errorMessage(this.state.error)}</p>
-          <div className="mt-5 flex flex-wrap justify-center gap-3">
-            <button
-              type="button"
-              onClick={this.reset}
-              className={`inline-flex min-h-[44px] items-center rounded-lg bg-[var(--interactive-accent)] px-4 text-sm font-medium text-[var(--text-on-accent)] hover:bg-[var(--interactive-accent-hover)] ${PRESS_FEEDBACK} ${FOCUS_RING}`}
-            >
+      <div className="mx-auto max-w-xl px-4 py-16 sm:px-6">
+        <div role="alert" className="rounded-md border border-line-strong px-6 py-10 text-center">
+          <span className="mx-auto inline-flex h-6 w-6 items-center justify-center rounded-sm bg-inverse text-inverse-fg">
+            <StatusIcon status="failing" className="h-3 w-3" />
+            <span className="sr-only">Error:</span>
+          </span>
+          <p className="mt-3 text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">This page hit an error</p>
+          <p className="mt-1.5 break-words text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{errorMessage(this.state.error)}</p>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <Button variant="primary" onClick={this.reset}>
               Try again
-            </button>
-            <a
-              href="/"
-              className={`inline-flex min-h-[44px] items-center rounded-lg border border-[var(--background-modifier-border)] px-4 text-sm font-medium text-[var(--text-normal)] hover:bg-[var(--background-secondary)] ${PRESS_FEEDBACK} ${FOCUS_RING}`}
-            >
-              Go home
-            </a>
+            </Button>
+            <Button asChild variant="secondary">
+              <a href="/">Go to feed</a>
+            </Button>
           </div>
         </div>
       </div>

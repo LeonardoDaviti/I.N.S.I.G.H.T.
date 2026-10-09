@@ -1,15 +1,18 @@
 import type { ReactNode } from 'react';
-import { FOCUS_RING, PRESS_FEEDBACK } from './press';
+import Button from '../ui/Button';
+import { StatusIcon } from '../ui/StatusGlyph';
+import type { Status } from '../ui/styles';
 
 /** The four feedback kinds of spec F.7: status (a run in progress), completion
  *  (a run report), warning (backoff, kind unavailable) and error. */
 export type NoticeTone = 'status' | 'completion' | 'warning' | 'error';
 
-const TONE_CLASS: Record<NoticeTone, string> = {
-  status: 'border-[var(--background-modifier-border)] bg-[var(--background-secondary)]',
-  completion: 'border-[var(--accent-main)] bg-[var(--accent-soft)]',
-  warning: 'border-[var(--background-modifier-border)] bg-[var(--text-highlight-bg)]',
-  error: 'border-[var(--text-error)] bg-[var(--background-primary)]',
+/** Monochrome: tone is carried by glyph, border style and inversion (design doc §8). */
+const TONE: Record<NoticeTone, { box: string; glyph: Status; word: string }> = {
+  status: { box: 'border-line', glyph: 'running', word: 'Status' },
+  completion: { box: 'border-line-strong', glyph: 'ok', word: 'Done' },
+  warning: { box: 'border-dashed border-line-strong', glyph: 'backoff', word: 'Warning' },
+  error: { box: 'border-fg', glyph: 'failing', word: 'Error' },
 };
 
 /** One consistent inline notice. Status and completion are polite announcements
@@ -30,29 +33,28 @@ export default function Notice({
   className?: string;
 }) {
   const role = tone === 'warning' || tone === 'error' ? 'alert' : 'status';
+  const spec = TONE[tone];
   return (
     <div
       role={role}
       data-tone={tone}
-      className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${TONE_CLASS[tone]} ${className}`}
+      className={`flex flex-wrap items-start justify-between gap-3 rounded-md border bg-bg px-4 py-3 text-[0.875rem] ${spec.box} ${className}`}
     >
+      <span
+        className={`mt-[0.2rem] inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm ${tone === 'error' ? 'bg-inverse text-inverse-fg' : 'text-fg'}`}
+      >
+        <StatusIcon status={spec.glyph} className={tone === 'error' ? 'h-2.5 w-2.5' : undefined} />
+        <span className="sr-only">{spec.word}:</span>
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="break-words font-medium text-[var(--text-normal)]">{title}</p>
-        {message ? (
-          <div className={`mt-1 break-words ${tone === 'error' ? 'text-[var(--text-error)]' : 'text-[var(--text-muted)]'}`}>
-            {message}
-          </div>
-        ) : null}
+        <p className="break-words font-semibold text-fg">{title}</p>
+        {message ? <div className="mt-0.5 break-words text-fg-2 [overflow-wrap:anywhere]">{message}</div> : null}
         {children}
       </div>
       {action ? (
-        <button
-          type="button"
-          onClick={action.onClick}
-          className={`inline-flex min-h-[44px] items-center rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-3 font-medium text-[var(--text-normal)] hover:bg-[var(--background-secondary-alt)] ${PRESS_FEEDBACK} ${FOCUS_RING}`}
-        >
+        <Button size="sm" variant="secondary" onClick={action.onClick}>
           {action.label}
-        </button>
+        </Button>
       ) : null}
     </div>
   );

@@ -1,7 +1,9 @@
 import { errorMessage } from '../../lib/apiError';
-import { FOCUS_RING, PRESS_FEEDBACK } from './press';
+import Button from '../ui/Button';
+import { StatusIcon } from '../ui/StatusGlyph';
 
-/** A fetch that failed: the clean `ApiError.message` and a Retry button (Mark IX §F.6). */
+/** A fetch that failed: the clean `ApiError.message` and a Retry button (Mark IX §F.6).
+ *  No red: the inverted "×" block and the word "error" carry it (design doc §8). */
 export default function ErrorState({
   error,
   onRetry,
@@ -14,20 +16,17 @@ export default function ErrorState({
   className?: string;
 }) {
   return (
-    <div
-      role="alert"
-      className={`rounded-2xl border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-6 py-8 text-center ${className}`}
-    >
-      <p className="break-words text-base font-semibold text-[var(--text-normal)]">{title}</p>
-      <p className="mx-auto mt-2 max-w-prose break-words text-sm text-[var(--text-error)]">{errorMessage(error)}</p>
+    <div role="alert" className={`rounded-md border border-line-strong px-6 py-10 text-center ${className}`}>
+      <span className="mx-auto inline-flex h-6 w-6 items-center justify-center rounded-sm bg-inverse text-inverse-fg">
+        <StatusIcon status="failing" className="h-3 w-3" />
+        <span className="sr-only">Error:</span>
+      </span>
+      <p className="mt-3 break-words text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">{title}</p>
+      <p className="mx-auto mt-1.5 max-w-prose break-words text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{errorMessage(error)}</p>
       {onRetry ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className={`mt-5 inline-flex min-h-[44px] items-center justify-center rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] px-4 text-sm font-medium text-[var(--text-normal)] hover:bg-[var(--background-secondary-alt)] ${PRESS_FEEDBACK} ${FOCUS_RING}`}
-        >
+        <Button variant="secondary" onClick={onRetry} className="mt-5">
           Retry
-        </button>
+        </Button>
       ) : null}
     </div>
   );

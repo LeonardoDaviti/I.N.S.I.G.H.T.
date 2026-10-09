@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { FOCUS_RING, PRESS_FEEDBACK } from './press';
+import Button from '../ui/Button';
 
 export interface EmptyStateAction {
   label: string;
@@ -10,7 +10,8 @@ export interface EmptyStateAction {
 }
 
 /** A fetch that succeeded with nothing to show: copy plus one primary action
- *  ("Fetch this track", "Show all", "Add a source"), Mark IX §F.6. */
+ *  ("Fetch this track", "Show all", "Add a source"), Mark IX §F.6. Quiet: a
+ *  hairline box, a short headline, the action as the one inverted button. */
 export default function EmptyState({
   title,
   description,
@@ -24,23 +25,20 @@ export default function EmptyState({
   children?: ReactNode;
   className?: string;
 }) {
-  const actionClass = `inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[var(--interactive-accent)] px-4 text-sm font-medium text-[var(--text-on-accent)] hover:bg-[var(--interactive-accent-hover)] disabled:opacity-50 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
   return (
-    <div
-      className={`rounded-2xl border border-dashed border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-6 py-10 text-center ${className}`}
-    >
-      <p className="break-words text-base font-semibold text-[var(--text-normal)]">{title}</p>
-      {description ? <div className="mx-auto mt-2 max-w-prose text-sm text-[var(--text-muted)]">{description}</div> : null}
+    <div className={`rounded-md border border-line px-6 py-12 text-center ${className}`}>
+      <p className="break-words text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">{title}</p>
+      {description ? <div className="mx-auto mt-1.5 max-w-prose text-[0.875rem] text-fg-2">{description}</div> : null}
       {action ? (
         <div className="mt-5">
           {action.href ? (
-            <a href={action.href} className={actionClass}>
-              {action.label}
-            </a>
+            <Button asChild variant="primary">
+              <a href={action.href}>{action.label}</a>
+            </Button>
           ) : (
-            <button type="button" onClick={action.onClick} disabled={action.disabled} className={actionClass}>
+            <Button variant="primary" onClick={action.onClick} disabled={action.disabled}>
               {action.label}
-            </button>
+            </Button>
           )}
         </div>
       ) : null}
