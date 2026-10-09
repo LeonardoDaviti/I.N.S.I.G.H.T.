@@ -223,3 +223,30 @@ in place by its owning slice.
 - [ ] **Briefing** also drops the colour emoji (📊 📅) and the "I.N.S.I.G.H.T. INTELLIGENCE NETWORK" wordmark.
 - [ ] **Tracks `/tracks`, `/tracks/:id`** — `PageHeader`; track list as `Row`s with unread counts.
 - [ ] Every list: worst/empty/one/huge fixtures; 375px; 200% zoom; light theme parity.
+
+## Lead review of the live preview (2026-10-10 00:55) — binding for page, polish and fix agents
+
+The direction is right: black background, inverted wordmark, slash nav and type all match the reference. But the screens are about 60% there. Fix all of the following:
+
+**Feed (/)**
+1. Rows are airy and uneven. Read and star are stacked vertically at the far right, which makes every row about 100px tall. Put them in one horizontal cluster that appears on row hover/focus (always visible on touch), and aim for about 64px rows without a preview line. Titles wrap to 2 lines and never ellipsize at 1 line.
+2. The list column is about 650px inside a 1400px viewport, with a large dead gutter between the rail and the list. Either centre a ~72ch list with the rail adjacent, or let the list fill the space. Follow the reference: a **date column** (`Sep 29`) on the left of each row, plus **day group headers**. Use relative "10d ago" only inside the last 24h.
+3. Never show raw feed URLs as source names, in rows or in the rail. Use `display_name`, falling back to a derived name: `github.com/anthropics/claude-code/commits.atom` → `anthropics/claude-code`, `rss.arxiv.org/rss/cs.CL` → `arXiv cs.CL`, `r/x` stays as is. Add one shared `sourceLabel()` helper with tests.
+4. Remove duplicated chrome:
+   - the theme toggle appears in both the top bar and the page header (keep the top bar one);
+   - "INSIGHT" appears as both the wordmark and the rail heading;
+   - on mobile there are two hamburger menus;
+   - the icon-only density toggles and the `?`/refresh icons have no labels. Use text or tooltips, and keep `?` only as the keyboard hint.
+5. On mobile, three rows of controls come before any content. Collapse the filters into one row or a sheet. The meta line must not start with an orphaned "·".
+
+**Post (/posts/:id)**
+6. The H1 shows a truncated title ending in "…". Show the full title. If the stored title is truncated at ingest, derive the display title from the content's first line, and file a backend note.
+7. The body renders as a monospace block that overflows horizontally. Render it as prose with wrapping at about 68ch. Use monospace only for real code blocks.
+8. The notes/chat panel is the most prominent thing beside the article. Demote it: collapsed by default, or move it under the article. Reading comes first.
+
+**Briefings (/briefing)**
+9. The page opens on today's date with "0 posts". Default to the latest date that has posts.
+10. The left column is a long list of verbs (Topic briefing / Weekly briefing / Weekly topics / Refresh topics / Load posts / Fetch topics / go to …). Consolidate it into one tab row (Daily · Topics · Weekly · Vertical) plus a single primary action. Navigation already lives in the top bar.
+
+**System status**
+11. The status line reads "last fetch 10d ago". On the live system, ingestion has not run since about 2026-09-30 because the ingestion container is not running. The UI must make a stale system obvious with one clear warning line (glyph + label), not quiet grey text.
