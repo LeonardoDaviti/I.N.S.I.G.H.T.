@@ -22,6 +22,7 @@ from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
 
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
 from insight_core.ingestion.kinds.nitter_rss import NITTER_HOSTS
+from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY
 from insight_core.ingestion.kinds.telegram_mtproto import TELEGRAM_HOST_KEY
 from insight_core.ingestion.kinds.telegram_rss import TELEGRAM_RSS_HOSTS
 
@@ -38,6 +39,7 @@ HOST_FLOORS: Mapping[str, float] = {
     "reddit.com": 8.0,                 # the .rss reddit feeds (kind generic_rss)
     "platform:reddit": 8.0,            # bare r/<sub> handles (kind reddit_subreddit)
     TELEGRAM_HOST_KEY: 2.0,            # every telegram_mtproto source (one shared client, B8)
+    SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend, §10)
 }
 
 Sleep = Callable[[float], Awaitable[None]]

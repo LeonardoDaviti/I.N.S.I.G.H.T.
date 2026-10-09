@@ -94,6 +94,10 @@
                     "state": "enabled"
                 },
                 {
+                    "id": "https://kaitchup.substack.com/",
+                    "state": "enabled"
+                },
+                {
                     "id": "https://karpathy.bearblog.dev/feed/",
                     "state": "enabled"
                 },

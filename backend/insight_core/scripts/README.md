@@ -77,6 +77,19 @@ What the unavailable reasons mean (the source is skipped, never put into backoff
 A channel problem (private, renamed, unknown username) is a normal source **error** with
 backoff: the channel is the problem, not the account.
 
+### Substack paid posts
+
+`*.substack.com` sources (and a custom domain with `settings.substack: true`) use the
+`substack` kind: newest posts from `/api/v1/archive` (RSS `/feed` as fallback), each body from
+`/api/v1/posts/<slug>`. Paid posts come in full only with the owner's session cookie in
+`SUBSTACK_SID` (`.env`; see `plan/INSIGHT_mark_ix_plan.md` §10 for how to copy it). Without
+it the teaser is stored with `metadata.paywalled = true`. All Substack sources share host key
+`substack.com` (2s floor); post requests within a source are 1s apart.
+
+| Reason | Meaning / fix |
+|---|---|
+| `Substack session expired — update SUBSTACK_SID` | the cookie was rejected (401/403) or a paid post still came back truncated: copy a fresh `substack.sid` into `.env` and restart the backend and ingestion containers. Unavailable, never backoff. |
+
 ### How a source is decided
 
 `ingestion.schedule.decide_fetch`, fed by the source's cadence columns and its row in

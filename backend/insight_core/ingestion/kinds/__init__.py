@@ -39,12 +39,14 @@ class KindRegistry:
         from insight_core.ingestion.kinds.generic_rss import GenericRssKind
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.reddit import RedditKind
+        from insight_core.ingestion.kinds.substack import SubstackKind
         from insight_core.ingestion.kinds.telegram_mtproto import TelegramKind
         from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
         from insight_core.ingestion.kinds.youtube import YouTubeKind
 
         return KindRegistry([
             *(adapter_class(http) for adapter_class in ADAPTER_CLASSES),
+            SubstackKind(http),
             RedditKind(http),
             YouTubeKind(youtube),
             TelegramRssKind(http),

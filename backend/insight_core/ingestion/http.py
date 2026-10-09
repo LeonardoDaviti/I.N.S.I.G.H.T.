@@ -47,9 +47,14 @@ class KindHttp:
 
     # ------------------------------------------------------------------ requests
 
-    async def get_text(self, url: str, *, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
-        """GET url; returns (body, lower-cased headers). Raises ValueError on HTTP/network errors."""
-        return await asyncio.to_thread(self._get_text_sync, url, user_agent)
+    async def get_text(
+        self, url: str, *, user_agent: Optional[str] = None, headers: Optional[Dict[str, str]] = None
+    ) -> Tuple[str, Dict[str, str]]:
+        """GET url; returns (body, lower-cased headers). Raises ValueError on HTTP/network errors.
+
+        headers are extra request headers (e.g. a Cookie); they never appear in errors or logs.
+        """
+        return await asyncio.to_thread(self._get_text_sync, url, user_agent, headers)
 
     async def get_json(self, url: str, *, user_agent: Optional[str] = None) -> Any:
         body, _ = await self.get_text(url, user_agent=user_agent)
@@ -86,10 +91,12 @@ class KindHttp:
             return ssl._create_unverified_context()
         return None
 
-    def _get_text_sync(self, url: str, user_agent: Optional[str] = None) -> Tuple[str, Dict[str, str]]:
+    def _get_text_sync(
+        self, url: str, user_agent: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None
+    ) -> Tuple[str, Dict[str, str]]:
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*"},
+            headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*", **(extra_headers or {})},
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:

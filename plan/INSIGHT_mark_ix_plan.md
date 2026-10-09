@@ -1915,3 +1915,23 @@ The owner does not want any of the current processing steps for now: "a single p
 - **Data:** nothing is deleted. Briefings, topics, entities and events stay in the database for the analysis version.
 - **Code:** hidden, not deleted. Deletion is decided in the analysis-version spec (grilling round 1, Q2–Q7, is parked until then).
 - **Process:** nothing is built until the owner says go.
+
+## 10. Substack paid sources (owner request, 2026-10-10)
+
+The owner pays for The Kaitchup (`https://kaitchup.substack.com/`) and wants the full paid posts, not the RSS teasers.
+
+- **Kind `substack`** (`ingestion/kinds/substack.py`): matches `*.substack.com` URLs, and a custom domain whose source settings hold `substack: true`.
+  - Live fetch lists the newest posts from `/api/v1/archive?sort=new&offset=N&limit=12` (RSS `/feed` if the archive API fails) and reads each body from `/api/v1/posts/<slug>`.
+  - The archive pages the same API by offset (checkpoint mode `substack_offset`).
+  - All Substack sources share host key `substack.com` with a 2s floor; post requests inside one source are 1s apart.
+- **Credential:** env `SUBSTACK_SID`, the `substack.sid` cookie of the owner's logged-in browser. It is read from the environment only. It is never logged, never stored in the database and never committed.
+- **Without the cookie:** paid posts are stored as the public teaser, with `metadata.paywalled = true`.
+- **Expired cookie:** Substack answers 200 with the teaser for a stale cookie. So a 401/403, or an `only_paid` post that still comes back truncated (fewer than 60% of its `wordcount` words), makes the source **Unavailable** with "Substack session expired — update SUBSTACK_SID". Unavailable never counts as backoff. Founding-only posts the plan does not cover stay paywalled and do not trip it.
+- **How the owner provides the cookie:**
+  1. Log into substack.com in the browser.
+  2. Open DevTools → Application → Cookies → `https://substack.com`, and copy the value of `substack.sid`.
+  3. Edit `.env` directly (don't paste the cookie in chat or anywhere else) and add `SUBSTACK_SID=<value>`.
+  4. Restart the backend and ingestion containers.
+  The cookie lasts months. When it expires, the source health shows the reason above; repeat the steps.
+- **Use:** personal reading of the owner's own subscription only.
+- Posts already stored as teasers get the full body when they are fetched again with a valid cookie (the save upserts by url). Older teasers need an archive run.

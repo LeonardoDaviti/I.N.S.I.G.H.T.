@@ -59,6 +59,7 @@ class FakeHttp(KindHttp):
         super().__init__(sleep=self.sleeper, timeout=1, user_agent="test-agent")
         self.responses = responses if responses is not None else {}
         self.requests: list[str] = []
+        self.request_headers: list[tuple[str, dict[str, str]]] = []
         self.posts: list[tuple[str, dict]] = []
 
     def _answer(self, url: str) -> Response:
@@ -74,12 +75,19 @@ class FakeHttp(KindHttp):
             raise answer
         return answer
 
-    async def get_text(self, url: str, *, user_agent: str | None = None) -> tuple[str, dict[str, str]]:
+    async def get_text(
+        self, url: str, *, user_agent: str | None = None, headers: dict[str, str] | None = None
+    ) -> tuple[str, dict[str, str]]:
         self.requests.append(url)
+        self.request_headers.append((url, dict(headers or {})))
         answer = self._answer(url)
         if isinstance(answer, tuple):
             return answer
         return str(answer), {}
+
+    def headers_for(self, url: str) -> dict[str, str]:
+        """The extra headers of the last GET of url."""
+        return next((h for u, h in reversed(self.request_headers) if u == url), {})
 
     async def post_json(
         self,
