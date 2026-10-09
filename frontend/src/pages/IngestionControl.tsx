@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Archive,
@@ -7,9 +7,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   Clock3,
-  Database,
   Loader2,
-  Play,
   RefreshCw,
   Search,
   ScrollText,
@@ -22,10 +20,11 @@ import type {
   ArchiveCatalogEntry,
   ArchiveResponse,
   JobRun,
-  LiveFetchResponse,
   LogTailResponse,
   OperationsOverviewResponse,
+  RunReport,
   SchedulerConfig,
+  SchedulerState,
   SourceWithSettings,
 } from '../services/api';
 import {
@@ -33,7 +32,14 @@ import {
   getIngestionTabHref,
   normalizeIngestionTab,
 } from '../lib/ingestionNavigation';
-import { compactJobRun, compactOperationsOverview } from '../lib/operationsOverview';
+import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHealth } from '../lib/operationsOverview';
+import { asRunReport } from '../lib/runReport';
+import { localDateISO } from '../lib/dates';
+import { formatCount } from '../lib/format';
+import { HEALTH_STATUS_LABELS } from '../lib/sourceSchedule';
+import { useIngestionRun } from '../hooks/useIngestionRun';
+import RunCycleButton from '../components/ops/RunCycleButton';
+import RunReportSummary from '../components/ops/RunReportSummary';
 import { getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
 import SourceAvatar from '../components/SourceAvatar';
 
@@ -163,6 +169,27 @@ function formatArchiveRatio(entry?: ArchiveCatalogEntry | null) {
   return `${(entry.stored_posts || 0).toLocaleString()}/${available}`;
 }
 
+/** The archive plan's time estimate as "~2h 10m"; null when unknown. */
+function formatEta(seconds?: number | null) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return `~${formatTimeRemaining(seconds * 1000).replace(/ \d+s$/, '')}`;
+}
+
+/** "1,204 in backlog · ~2h" for an archive catalog entry; null when nothing is known. */
+function formatBacklog(entry?: ArchiveCatalogEntry | null) {
+  if (!entry) return null;
+  const parts: string[] = [];
+  if (typeof entry.backlog_posts === 'number') {
+    parts.push(entry.backlog_posts === 0 ? 'no backlog' : `${formatCount(entry.backlog_posts)} in backlog`);
+  }
+  const eta = formatEta(entry.estimated_seconds);
+  if (eta) {
+    const target = typeof entry.remaining_posts === 'number' ? ` for ${formatCount(entry.remaining_posts)} planned` : '';
+    parts.push(`${eta}${target}`);
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
 function SchedulerSettingsModal({
   open,
   schedulerConfig,
@@ -171,6 +198,7 @@ function SchedulerSettingsModal({
   onClose,
   onSave,
   onIntervalChange,
+  onTickChange,
   onToggle,
 }: {
   open: boolean;
@@ -180,6 +208,7 @@ function SchedulerSettingsModal({
   onClose: () => void;
   onSave: () => void;
   onIntervalChange: (value: number) => void;
+  onTickChange: (value: number) => void;
   onToggle: (key: keyof SchedulerConfig, checked: boolean) => void;
 }) {
   if (!open || !schedulerConfig) {
@@ -211,7 +240,7 @@ function SchedulerSettingsModal({
         <div className="space-y-4 px-5 py-4">
           <div>
             <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Interval Hours
+              Briefing interval (hours)
             </label>
             <input
               type="number"
@@ -221,6 +250,21 @@ function SchedulerSettingsModal({
               onChange={(e) => onIntervalChange(Math.max(0.25, Number(e.target.value) || 0.25))}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
             />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Ingestion tick (minutes, at least 15)
+            </label>
+            <input
+              type="number"
+              min={15}
+              step={5}
+              value={schedulerConfig.ingest_tick_minutes ?? 60}
+              onChange={(e) => onTickChange(Math.max(15, Number(e.target.value) || 15))}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            />
+            <p className="mt-1 text-xs text-slate-500">How often the scheduler looks for due sources. Each source still waits for its own cadence.</p>
           </div>
 
           <div className="grid gap-3">
@@ -266,10 +310,11 @@ function SchedulerSettingsModal({
 export default function IngestionControl() {
   const navigate = useNavigate();
   const { tab: tabParam } = useParams();
+  const [searchParams] = useSearchParams();
   const activeTab = normalizeIngestionTab(tabParam);
   const [sources, setSources] = useState<SourceWithSettings[]>([]);
   const [loadingSources, setLoadingSources] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => localDateISO());
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [desiredPosts, setDesiredPosts] = useState(200);
   const [liveFetchLimit, setLiveFetchLimit] = useState(20);
@@ -280,9 +325,9 @@ export default function IngestionControl() {
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [savingScheduler, setSavingScheduler] = useState(false);
   const [schedulerDirty, setSchedulerDirty] = useState(false);
-  const [ingestResult, setIngestResult] = useState<Record<string, any> | null>(null);
-  const [safeIngestResult, setSafeIngestResult] = useState<Record<string, any> | null>(null);
-  const [sourceFetchResult, setSourceFetchResult] = useState<LiveFetchResponse | null>(null);
+  const [cycleReport, setCycleReport] = useState<RunReport | null>(null);
+  const [sourceFetchReport, setSourceFetchReport] = useState<RunReport | null>(null);
+  const [schedulerState, setSchedulerState] = useState<SchedulerState | null>(null);
   const [briefingResult, setBriefingResult] = useState<Record<string, any> | null>(null);
   const [topicBriefingResult, setTopicBriefingResult] = useState<Record<string, any> | null>(null);
   const [archiveResult, setArchiveResult] = useState<ArchiveResponse | null>(null);
@@ -295,18 +340,26 @@ export default function IngestionControl() {
   const [logTail, setLogTail] = useState<LogTailResponse | null>(null);
   const [operationsOverview, setOperationsOverview] = useState<OperationsOverviewResponse | null>(null);
   const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(() => searchParams.get('job'));
   const [selectedJob, setSelectedJob] = useState<JobRun | null>(null);
   const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
   const [logs, setLogs] = useState<ActionLog[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [manualTimerAnchorMs, setManualTimerAnchorMs] = useState<number | null>(null);
   const [schedulerModalOpen, setSchedulerModalOpen] = useState(false);
+
+  const { run: runIngestion, isRunning: isIngestionRunning } = useIngestionRun();
+
+  // A ?job= link (from an ingestion toast) selects that mission.
+  useEffect(() => {
+    const jobParam = searchParams.get('job');
+    if (jobParam) setSelectedJobId(jobParam);
+  }, [searchParams]);
 
   useEffect(() => {
     const tickId = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       setNowMs(Date.now());
     }, 1000);
 
@@ -399,6 +452,14 @@ export default function IngestionControl() {
     setLoadingOverview(false);
   };
 
+  /** The scheduler's tick times (GET /api/operations/scheduler carries `state`). */
+  const loadSchedulerState = async () => {
+    const response = await apiService.getSchedulerConfig();
+    if (response.success && response.scheduler) {
+      setSchedulerState(response.scheduler.state ?? {});
+    }
+  };
+
   const loadArchiveCatalog = async (options?: { silent?: boolean }) => {
     setLoadingArchiveCatalog(true);
     const response = await apiService.getArchiveCatalog();
@@ -435,6 +496,7 @@ export default function IngestionControl() {
   useEffect(() => {
     loadSources();
     loadOperationsOverview();
+    void loadSchedulerState();
     if (activeTab === 'archive') {
       loadArchiveCatalog();
     }
@@ -455,9 +517,11 @@ export default function IngestionControl() {
     }
   }, [activeTab, selectedLogName, selectedJobId]);
 
+  // Polling pauses while the tab is hidden and catches up as soon as it is visible again.
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
+    const refresh = () => {
       void loadOperationsOverview({ silent: true });
+      void loadSchedulerState();
       if (activeTab === 'archive') {
         void loadArchiveCatalog({ silent: true });
       }
@@ -467,10 +531,22 @@ export default function IngestionControl() {
       if (activeTab === 'missions' && selectedJobId) {
         void loadSelectedJob(selectedJobId, { silent: true });
       }
+    };
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      refresh();
     }, activeTab === 'missions' ? 12000 : 15000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setNowMs(Date.now());
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [activeTab, selectedLogName, selectedJobId]);
 
@@ -514,31 +590,13 @@ export default function IngestionControl() {
     ].some((value) => (value || '').toLowerCase().includes(term)));
   }, [archiveCatalog, archiveSourceQuery]);
 
+  // The countdown is the scheduler's own next ingestion tick (scheduler_state.next_tick_at).
   const schedulerNextRunAt = useMemo(() => {
-    if (!schedulerConfig?.interval_hours) return null;
-
-    const schedulerJobs = (operationsOverview?.jobs || []).filter(
-      (job) => job.job_type === 'scheduler_cycle' && job.trigger === 'scheduler',
-    );
-    if (!schedulerJobs.length) return null;
-
-    const latestSchedulerJob = schedulerJobs.reduce((latest, current) => {
-      const latestAt = new Date(latest.finished_at || latest.started_at || '').getTime();
-      const currentAt = new Date(current.finished_at || current.started_at || '').getTime();
-      return currentAt > latestAt ? current : latest;
-    });
-
-    const baselineAt = latestSchedulerJob.finished_at || latestSchedulerJob.started_at;
-    const baselineMsFromJobs = baselineAt ? new Date(baselineAt).getTime() : NaN;
-    const safeBaselineFromJobs = Number.isNaN(baselineMsFromJobs) ? null : baselineMsFromJobs;
-    const effectiveBaselineMs = Math.max(
-      safeBaselineFromJobs || 0,
-      manualTimerAnchorMs || 0,
-    );
-    if (!effectiveBaselineMs) return null;
-
-    return effectiveBaselineMs + (Number(schedulerConfig.interval_hours) * 60 * 60 * 1000);
-  }, [manualTimerAnchorMs, operationsOverview?.jobs, schedulerConfig?.interval_hours]);
+    const nextTick = schedulerState?.next_tick_at;
+    if (!nextTick) return null;
+    const ms = new Date(nextTick).getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }, [schedulerState?.next_tick_at]);
 
   const schedulerCountdown = useMemo(() => {
     if (!schedulerNextRunAt) return null;
@@ -605,7 +663,7 @@ export default function IngestionControl() {
 
       if (
         activeTab === 'archive'
-        || ['ingest', 'safe-ingest', 'source-fetch', 'archive-status', 'archive-plan', 'archive-run', 'archive-run-fresh', 'sync-json-to-db', 'sync-db-to-json'].includes(actionKey)
+        || ['archive-status', 'archive-plan', 'archive-run', 'archive-run-fresh', 'sync-json-to-db', 'sync-db-to-json'].includes(actionKey)
       ) {
         await loadSources({ silent: true });
         await loadArchiveCatalog({ silent: true });
@@ -658,40 +716,18 @@ export default function IngestionControl() {
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <button
-          type="button"
-          onClick={() => runAction(
-            'ingest',
-            'Manual full ingestion started',
-            () => apiService.ingestPosts(),
-            (result) => setIngestResult(result),
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl bg-indigo-600 px-4 py-3.5 text-left text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            {runningAction === 'ingest' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            Run Full Ingestion
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => runAction(
-            'safe-ingest',
-            'Manual safe ingestion started',
-            () => apiService.safeIngestPosts(),
-            (result) => setSafeIngestResult(result),
-          )}
-          disabled={runningAction !== null}
-          className="rounded-2xl bg-emerald-600 px-4 py-3.5 text-left text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            {runningAction === 'safe-ingest' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-            Run Safe Ingestion
-          </div>
-        </button>
+      <div>
+        <RunCycleButton
+          onReport={(report) => {
+            setCycleReport(report);
+            appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Run finished: ${report.status}`);
+            void loadOperationsOverview({ silent: true });
+            void loadSchedulerState();
+          }}
+        />
+        <p className="mt-2 text-xs text-slate-500">
+          Fetches the sources that are due now, exactly as the next scheduler tick would. Each source keeps its own cadence and backoff.
+        </p>
       </div>
 
       <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -731,16 +767,25 @@ export default function IngestionControl() {
           </div>
           <button
             type="button"
-            onClick={() => selectedSourceId && runAction(
-              'source-fetch',
-              'Single-source fetch started',
-              () => apiService.fetchSourceNow(selectedSourceId, liveFetchLimit),
-              (result) => setSourceFetchResult(result as LiveFetchResponse),
-            )}
-            disabled={!selectedSourceId || runningAction !== null}
+            onClick={async () => {
+              if (!selectedSourceId) return;
+              const report = await runIngestion({
+                kind: 'source',
+                id: selectedSourceId,
+                name: selectedSource ? getSourceDisplayName(selectedSource) : undefined,
+                limit: liveFetchLimit,
+              });
+              if (report) {
+                setSourceFetchReport(report);
+                appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Fetch finished: ${report.status}`);
+                await loadSources({ silent: true });
+                await loadOperationsOverview({ silent: true });
+              }
+            }}
+            disabled={!selectedSourceId || isIngestionRunning({ kind: 'source', id: selectedSourceId })}
             className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
-            {runningAction === 'source-fetch' ? 'Fetching…' : 'Fetch Source Now'}
+            {selectedSourceId && isIngestionRunning({ kind: 'source', id: selectedSourceId }) ? 'Fetching…' : 'Fetch Source Now'}
           </button>
         </div>
 
@@ -831,40 +876,28 @@ export default function IngestionControl() {
         </button>
       </div>
 
-      <details className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-        <summary className="cursor-pointer list-none text-sm font-semibold text-slate-900">
-          Recent Responses
-        </summary>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Full Ingestion</div>
-            <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-6">
-              {formatJson(ingestResult)}
-            </pre>
+      <div className="mt-4 space-y-3">
+        <div className="text-sm font-semibold text-slate-900">Recent Responses</div>
+        {cycleReport || sourceFetchReport ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {cycleReport ? <RunReportSummary report={cycleReport} title="Run cycle" /> : null}
+            {sourceFetchReport ? <RunReportSummary report={sourceFetchReport} title="Single source" /> : null}
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Safe Ingestion</div>
-            <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-6">
-              {formatJson(safeIngestResult)}
-            </pre>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Single Source</div>
-            <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-6">
-              {formatJson(sourceFetchResult as Record<string, any> | null)}
-            </pre>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-slate-100">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Briefings</div>
-            <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-6">
+        ) : (
+          <p className="text-sm text-slate-500">No run in this session yet. Run reports show up here and in Missions.</p>
+        )}
+        {briefingResult || topicBriefingResult ? (
+          <details className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <summary className="cursor-pointer text-sm font-medium text-slate-900">Briefing responses (raw)</summary>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
               {formatJson({
                 daily: briefingResult,
                 topics: topicBriefingResult,
               })}
             </pre>
-          </div>
-        </div>
-      </details>
+          </details>
+        ) : null}
+      </div>
     </section>
   );
 
@@ -941,6 +974,8 @@ export default function IngestionControl() {
             <span>Stored posts: {selectedSource.post_count}</span>
             {selectedArchiveEntry?.archive_status && <span>Archive status: {selectedArchiveEntry.archive_status}</span>}
             {selectedArchiveEntry?.resume_ready ? <span>Resume ready</span> : <span>No checkpoint</span>}
+            {selectedArchiveEntry?.kind && <span>Kind: {selectedArchiveEntry.kind}</span>}
+            {formatBacklog(selectedArchiveEntry) && <span className="tabular-nums">{formatBacklog(selectedArchiveEntry)}</span>}
           </div>
         </div>
       )}
@@ -1057,11 +1092,25 @@ export default function IngestionControl() {
         </button>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-950 p-4 text-sm text-slate-100">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Archive Result</div>
-        <pre className="max-h-44 overflow-auto whitespace-pre-wrap text-xs leading-6">
-          {formatJson(archiveResult as Record<string, any> | null)}
-        </pre>
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Archive Result</div>
+        {archiveResult ? (
+          <>
+            <p className={`mt-1 break-words ${archiveResult.success === false ? 'text-rose-700' : 'text-slate-800'}`}>
+              {archiveResult.success === false
+                ? archiveResult.error || archiveResult.detail || 'The archive request failed'
+                : archiveResult.message || (archiveResult.status ? `Archive ${String(archiveResult.status)}` : 'Done')}
+            </p>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-slate-500">Raw response</summary>
+              <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
+                {formatJson(archiveResult as Record<string, any>)}
+              </pre>
+            </details>
+          </>
+        ) : (
+          <p className="mt-1 text-slate-500">Nothing run in this session yet.</p>
+        )}
       </div>
 
       <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -1100,8 +1149,9 @@ export default function IngestionControl() {
                         display_name: entry.display_name,
                       })}
                     </div>
-                    <div className="text-xs text-slate-500">
+                    <div className="text-xs tabular-nums text-slate-500">
                       {entry.platform} · {formatArchiveRatio(entry)}
+                      {formatBacklog(entry) ? ` · ${formatBacklog(entry)}` : ''}
                     </div>
                   </div>
                 </div>
@@ -1234,8 +1284,8 @@ export default function IngestionControl() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="font-semibold text-slate-900">
-                      {job.job_type}
+                    <div className="min-w-0 break-words font-semibold text-slate-900">
+                      {jobLabel(job)}
                       {job.source_display_name ? ` · ${job.source_display_name}` : ''}
                     </div>
                     <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
@@ -1279,7 +1329,7 @@ export default function IngestionControl() {
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Mission Detail</div>
               <div className="mt-1 text-lg font-semibold text-slate-900">
-                {selectedJob?.job_type || 'Select a mission'}
+                {selectedJob ? jobLabel(selectedJob) : 'Select a mission'}
               </div>
             </div>
             {loadingSelectedJob ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : null}
@@ -1347,12 +1397,16 @@ export default function IngestionControl() {
                         )}
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Payload</div>
-                      <pre className="max-h-[14rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
+                    {(() => {
+                      const report = selectedJob.job_type === 'ingestion_run' ? asRunReport(selectedJob.payload) : null;
+                      return report ? <RunReportSummary report={report} /> : null;
+                    })()}
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Payload (raw)</summary>
+                      <pre className="mt-2 max-h-[14rem] overflow-auto whitespace-pre-wrap text-xs leading-6 text-slate-700">
                         {formatJson(selectedJob.payload || null)}
                       </pre>
-                    </div>
+                    </details>
                   </>
                 );
               })()}
@@ -1365,26 +1419,46 @@ export default function IngestionControl() {
         </div>
       </div>
 
-      <div className="mt-4 space-y-2">
-        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Source Health</div>
-        {(operationsOverview?.source_health || []).slice(0, 8).map((source) => (
-          <div key={source.source_id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-            <div>
-              <div className="font-medium text-slate-900">{source.display_name}</div>
-              <div className="text-xs text-slate-500">{source.platform} · {source.stored_posts} stored posts</div>
+      {(() => {
+        const health = normalizeSourceHealth(operationsOverview?.source_health);
+        const { summary } = health;
+        return (
+          <div className="mt-4 space-y-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Source Health</div>
+              <Link to="/settings/sources?tab=health" className="text-sm text-indigo-700 hover:underline">
+                All sources in Settings → Sources → Health
+              </Link>
             </div>
-            <span className={`rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
-              source.status === 'error'
-                ? 'bg-rose-100 text-rose-700'
-                : source.status === 'healthy'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-slate-100 text-slate-700'
-            }`}>
-              {source.status}
-            </span>
+            <div className="flex flex-wrap gap-2 text-xs tabular-nums text-slate-600">
+              <span>{formatCount(summary.due_now)} due</span>
+              <span>· {formatCount(summary.deferred)} scheduled</span>
+              <Link to="/settings/sources?tab=health&status=error" className="hover:underline">· {formatCount(summary.errors + summary.backoff)} failing</Link>
+              <span>· {formatCount(summary.unavailable)} unavailable</span>
+            </div>
+            {health.rows.map((source) => (
+              <div key={source.source_id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-slate-900" title={source.display_name}>{source.display_name}</div>
+                  <div className="truncate text-xs text-slate-500" title={source.last_error || source.decision_detail || undefined}>
+                    {source.platform} · {formatCount(source.stored_posts)} stored posts
+                    {source.last_error ? ` · ${source.last_error}` : source.decision_detail ? ` · ${source.decision_detail}` : ''}
+                  </div>
+                </div>
+                <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                  source.status === 'error' || source.status === 'backoff'
+                    ? 'bg-rose-100 text-rose-700'
+                    : source.status === 'due'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-slate-100 text-slate-700'
+                }`}>
+                  {HEALTH_STATUS_LABELS[source.status] ?? source.status}
+                </span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
     </section>
   );
 
@@ -1486,15 +1560,22 @@ export default function IngestionControl() {
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Scheduler</div>
                   <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
                     <Clock3 className="h-4 w-4 text-indigo-600" />
-                    {schedulerConfig ? `${schedulerConfig.interval_hours}-hour automatic cycle` : 'Loading...'}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">
                     {schedulerConfig
-                      ? schedulerNextRunAt
-                        ? `Next ingestion in ${schedulerCountdown}`
-                        : 'Next ingestion countdown will appear after the first scheduler cycle is recorded.'
-                      : 'Reading scheduler status...'}
+                      ? `Checks for due sources every ${formatCount(Number(schedulerConfig.ingest_tick_minutes ?? 60))} min`
+                      : 'Loading...'}
                   </div>
+                  <div className="mt-1 text-xs tabular-nums text-slate-500">
+                    {schedulerState === null
+                      ? 'Reading scheduler status...'
+                      : schedulerNextRunAt
+                        ? schedulerCountdown === 'due now'
+                          ? 'Next ingestion tick is due now'
+                          : `Next ingestion tick in ${schedulerCountdown}`
+                        : 'The countdown appears after the scheduler records its first tick.'}
+                  </div>
+                  {schedulerConfig ? (
+                    <div className="mt-0.5 text-xs text-slate-500">Briefings every {schedulerConfig.interval_hours}h</div>
+                  ) : null}
                 </div>
                 {schedulerConfig && (
                   <button
@@ -1507,23 +1588,16 @@ export default function IngestionControl() {
                   </button>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => runAction(
-                  'ingest-now',
-                  'Manual full ingestion started',
-                  () => apiService.ingestPosts(),
-                  (result) => {
-                    setIngestResult(result);
-                    setManualTimerAnchorMs(Date.now());
-                  },
-                )}
-                disabled={runningAction !== null}
-                className="mt-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-              >
-                {runningAction === 'ingest-now' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                Ingest Now
-              </button>
+              <RunCycleButton
+                compact
+                className="mt-3"
+                onReport={(report) => {
+                  setCycleReport(report);
+                  appendLog(report.status === 'failed' ? 'error' : 'success', report.summary || `Run finished: ${report.status}`);
+                  void loadOperationsOverview({ silent: true });
+                  void loadSchedulerState();
+                }}
+              />
             </div>
           </div>
 
@@ -1608,6 +1682,13 @@ export default function IngestionControl() {
           setSchedulerConfig((prev) => prev ? ({
             ...prev,
             interval_hours: value,
+          }) : prev);
+        }}
+        onTickChange={(value) => {
+          setSchedulerDirty(true);
+          setSchedulerConfig((prev) => prev ? ({
+            ...prev,
+            ingest_tick_minutes: value,
           }) : prev);
         }}
         onToggle={(key, checked) => {

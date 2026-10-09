@@ -2,6 +2,7 @@
 import type { SourceConfig } from '../types';
 import { apiErrorFromResponse, errorMessage, isAbortError, toApiError } from '../lib/apiError';
 import { JobFailedError, pollJob } from '../lib/jobPolling';
+import { asRunReport } from '../lib/runReport';
 
 // Use relative base by default (Vite dev proxy will forward /api to backend). Override with VITE_API_URL in production.
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
@@ -265,8 +266,16 @@ export interface ArchiveCatalogEntry {
   display_name: string;
   platform: string;
   enabled: boolean;
+  /** Source kind (Mark IX §D), e.g. `generic_rss`, `telegram_mtproto`. */
+  kind?: string;
   stored_posts: number;
   available_posts?: number | null;
+  /** max(available - stored, 0), or null when the available count is unknown (E1). */
+  backlog_posts?: number | null;
+  /** The archive plan's requested target still to fetch (not the backlog). */
+  remaining_posts?: number | null;
+  /** The archive plan's time estimate for `remaining_posts`, in seconds. */
+  estimated_seconds?: number | null;
   archive_status?: string | null;
   resume_ready?: boolean;
   source_type?: string | null;
@@ -283,22 +292,6 @@ export interface ArchiveCatalogResponse {
   total?: number;
 }
 
-export interface LiveFetchResponse {
-  success?: boolean;
-  error?: string;
-  source_id?: string;
-  source?: {
-    display_name?: string;
-    platform?: string;
-    handle_or_url?: string;
-  };
-  fetched_limit?: number;
-  posts_fetched?: number;
-  posts_inserted?: number;
-  posts_updated?: number;
-  stored_posts?: number;
-}
-
 export interface LogTailResponse {
   success?: boolean;
   error?: string;
@@ -310,17 +303,32 @@ export interface LogTailResponse {
   lines?: string[];
 }
 
+/** When the scheduler last acted and will act next (ISO strings; empty before the first tick). */
+export interface SchedulerState {
+  last_tick_at?: string | null;
+  next_tick_at?: string | null;
+  last_daily_work_at?: string | null;
+  next_daily_work_at?: string | null;
+}
+
 export interface SchedulerConfig {
+  /** Daily work (briefings) interval. */
   interval_hours: number;
   sync_sources_each_cycle: boolean;
   generate_daily_briefing: boolean;
   generate_topic_briefing: boolean;
+  /** How often the ingestion tick looks for due sources (>= 15). */
+  ingest_tick_minutes?: number;
   updated_at?: string | null;
+  /** Only on GET /api/operations/scheduler. */
+  state?: SchedulerState;
 }
 
 export interface JobRun {
   id: string;
   job_type: string;
+  /** Human label from the backend (`ingestion_run` -> "Ingestion run"). */
+  job_label?: string;
   status: string;
   trigger: string;
   source_id?: string | null;
@@ -334,18 +342,107 @@ export interface JobRun {
   finished_at?: string | null;
 }
 
+// ---- Mark IX ingestion types (spec §F.3) ----
+
+export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced'
+  | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
+export type CadenceTier = 'fast' | 'medium' | 'slow' | 'unknown';
+export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
+export type SourceSelector = { kind: 'all' } | { kind: 'folder'; id: string } | { kind: 'source'; id: string };
+/** One status per health row (B6): the summary buckets plus `disabled`. */
+export type HealthStatus = 'error' | 'backoff' | 'unavailable' | 'due' | 'deferred' | 'disabled';
+export type IntervalBasis = 'override' | 'tier' | 'probation' | 'backlog_guard' | 'profile_floor';
+export type RunStatus = 'success' | 'partial' | 'failed' | 'skipped_busy' | 'nothing_due';
+
+export interface RunReport {
+  run_id: string | null;
+  trigger: 'scheduler' | 'manual' | 'cli';
+  selector: SourceSelector;
+  force: boolean;
+  status: RunStatus;
+  /** The backend's one-line summary ("12 due, 63 deferred, 1 failed; 48 new posts"). */
+  summary?: string;
+  started_at: string;
+  finished_at: string;
+  duration_s?: number;
+  sources_considered: number;
+  sources_fetched: number;
+  sources_failed: number;
+  decisions: Partial<Record<DecisionKind, number>>;
+  posts_fetched: number;
+  /** THE "new posts" number. */
+  posts_inserted: number;
+  posts_updated: number;
+  posts_failed: number;
+  failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
+  post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
+  inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
+  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | null;
+}
+
 export interface SourceHealthRow {
   source_id: string;
   display_name: string;
   platform: string;
+  kind: string;
   enabled: boolean;
+  in_main_digest: boolean;
+  folders: { id: string; name: string }[];
   stored_posts: number;
-  archive_status?: string | null;
-  status: string;
-  last_checked_at?: string | null;
-  last_success_at?: string | null;
-  last_error_at?: string | null;
-  last_message?: string | null;
+  backlog_posts: number | null;
+  tier: CadenceTier;
+  mean_gap_hours: number | null;
+  interval_hours: number;
+  interval_basis: IntervalBasis;
+  override_hours: number | null;
+  next_due_at: string | null;
+  would_fetch_now: boolean;
+  decision: DecisionKind;
+  /** The decision's human text (for example the unavailable reason). */
+  decision_detail?: string | null;
+  status: HealthStatus;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_outcome: OutcomeStatus | null;
+  last_fetched_posts: number | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  consecutive_failures: number;
+  next_retry_at: string | null;
+  dormant: boolean;
+}
+
+export interface SourceHealthSummary {
+  due_now: number;
+  deferred: number;
+  backoff: number;
+  unavailable: number;
+  errors: number;
+}
+
+export interface SourcesHealthResponse {
+  success: true;
+  generated_at: string;
+  rows: SourceHealthRow[];
+  summary: SourceHealthSummary;
+}
+
+export interface JobAccepted {
+  success: true;
+  accepted?: boolean;
+  job_id: string;
+  job_type: string;
+  status: 'running';
+  message?: string;
+}
+
+/** Options for the Mark IX tracked ingestion methods. */
+export interface RunRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  intervalMs?: number;
+  /** Called once the backend accepted the run (202), before polling: the job id is known. */
+  onAccepted?: (job: JobAccepted) => void;
 }
 
 export interface OperationsOverviewResponse {
@@ -353,7 +450,8 @@ export interface OperationsOverviewResponse {
   error?: string;
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
-  source_health?: SourceHealthRow[];
+  /** Summary plus the 8 worst rows (Mark IX); use lib/operationsOverview.normalizeSourceHealth. */
+  source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[] };
   alerts?: Array<{
     id: string;
     severity: string;
@@ -1580,36 +1678,6 @@ class ApiService {
     }
   }
 
-  async ingestPosts(): Promise<{ success: boolean; error?: string; message?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; error?: string; message?: string }>('/api/ingest-posts', {
-        method: 'POST',
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to ingest posts:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async safeIngestPosts(): Promise<{ success: boolean; error?: string; message?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; error?: string; message?: string }>('/api/safe-ingest-posts', {
-        method: 'POST',
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to safe ingest posts:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
   async getArchiveStatus(sourceId: string): Promise<ArchiveResponse> {
     try {
       return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/status`);
@@ -1696,19 +1764,74 @@ class ApiService {
     }
   }
 
-  async fetchSourceNow(sourceId: string, limit?: number): Promise<LiveFetchResponse> {
-    try {
-      return await this.makeTrackedRequest<LiveFetchResponse>(`/api/sources/${sourceId}/fetch-now`, {
-        method: 'POST',
-        body: JSON.stringify({ limit, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to fetch source now:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
+  // ---- Mark IX ingestion (spec §4). These throw (ApiError, JobTimeoutError, AbortError)
+  // instead of resolving {success:false}; a finished run resolves with its RunReport even
+  // when some sources failed (a `partial` run is a failed job but still a report).
+
+  /** Start an ingestion_run job, then wait for its run report. */
+  private async runIngestionJob(endpoint: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
+    const accepted = await this.makeRequest<JobAccepted>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal: opts?.signal,
+    });
+    if (!accepted || typeof accepted.job_id !== 'string') {
+      throw new Error('The backend did not start an ingestion run');
     }
+    opts?.onAccepted?.(accepted);
+    try {
+      const payload = await this.waitForJob<unknown>(accepted.job_id, opts);
+      const report = asRunReport(payload);
+      if (!report) throw new Error('The ingestion run finished without a run report');
+      return { ...report, run_id: report.run_id ?? accepted.job_id };
+    } catch (error) {
+      if (error instanceof JobFailedError) {
+        const report = asRunReport(error.value);
+        if (report) return { ...report, run_id: report.run_id ?? accepted.job_id };
+      }
+      throw error;
+    }
+  }
+
+  /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
+  async runIngestionCycle(options: { force?: boolean } & RunRequestOptions = {}): Promise<RunReport> {
+    const { force = false, ...opts } = options;
+    return this.runIngestionJob('/api/ingestion/run', { force }, opts);
+  }
+
+  /** Fetch one source now (forced, even when disabled). */
+  async fetchSourceNow(sourceId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
+    const { limit, ...opts } = options;
+    return this.runIngestionJob(`/api/sources/${encodeURIComponent(sourceId)}/fetch-now`, limit ? { limit } : {}, opts);
+  }
+
+  /** Fetch every enabled source of a folder/track now (forced). */
+  async fetchFolderNow(folderId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
+    const { limit, ...opts } = options;
+    return this.runIngestionJob(`/api/folders/${encodeURIComponent(folderId)}/ingest`, limit ? { limit } : {}, opts);
+  }
+
+  /** Every source's schedule-aware health row, worst first, plus the summary. */
+  async getSourcesHealth(): Promise<SourcesHealthResponse> {
+    return this.makeRequest<SourcesHealthResponse>('/api/sources/health');
+  }
+
+  /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
+  async setCadenceOverride(sourceId: string, hours: number | null): Promise<{ success: true; row: SourceHealthRow }> {
+    return this.makeRequest<{ success: true; row: SourceHealthRow }>(`/api/sources/${encodeURIComponent(sourceId)}/cadence`, {
+      method: 'PUT',
+      body: JSON.stringify({ override_hours: hours }),
+    });
+  }
+
+  /** Include/exclude one source from the main digest and the main feed. Throws on failure. */
+  async setSourceMainDigest(sourceId: string, inMainDigest: boolean): Promise<{ success: true; source_id: string; in_main_digest: boolean }> {
+    const response = await this.makeRequest<{ success: boolean; error?: string; source_id: string; in_main_digest: boolean }>(
+      `/api/sources/${encodeURIComponent(sourceId)}/main-digest`,
+      { method: 'PUT', body: JSON.stringify({ in_main_digest: inMainDigest }) },
+    );
+    if (!response.success) throw new Error(response.error || 'Failed to update the main-digest setting');
+    return response as { success: true; source_id: string; in_main_digest: boolean };
   }
 
   async getIngestionLogs(log = 'application', lines = 200): Promise<LogTailResponse> {
@@ -1738,7 +1861,7 @@ class ApiService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         jobs: [],
-        source_health: [],
+        source_health: { summary: { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 }, rows: [] },
         alerts: [],
       };
     }
@@ -1790,6 +1913,7 @@ class ApiService {
           syncSourcesEachCycle: config.sync_sources_each_cycle,
           generateDailyBriefing: config.generate_daily_briefing,
           generateTopicBriefing: config.generate_topic_briefing,
+          ingestTickMinutes: config.ingest_tick_minutes,
         }),
       });
     } catch (error) {

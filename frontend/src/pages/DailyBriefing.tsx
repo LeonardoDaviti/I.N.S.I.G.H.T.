@@ -1,7 +1,7 @@
 import React from 'react';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText, Layers3, Search } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import SourcesConfig from './SourcesConfig';
 import { apiService } from '../services/api';
 import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings, SystemStatusResponse } from '../services/api';
@@ -297,20 +297,6 @@ export default function DailyBriefing() {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [editingTopicTitle, setEditingTopicTitle] = useState<string>('');
   const [isSavingTitle, setIsSavingTitle] = useState(false);
-
-  // Ingestion state
-  const [isIngesting, setIsIngesting] = useState(false);
-  const [isSafeIngesting, setIsSafeIngesting] = useState(false);
-  const [ingestStats, setIngestStats] = useState<{
-    success: boolean;
-    message?: string;
-    date: string;
-  } | null>(null);
-  const [safeIngestStats, setSafeIngestStats] = useState<{
-    success: boolean;
-    message?: string;
-    date: string;
-  } | null>(null);
 
   // 🚀 CACHE: Store fetched posts to avoid re-fetching
   // Think of this as your "photocopy collection"
@@ -1146,66 +1132,6 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleIngestPosts = async () => {
-    setIsIngesting(true);
-    setError(null);
-    setIngestStats(null);
-    
-    try {
-      console.log('🚀 Ingesting posts from all sources');
-      const response = await apiService.ingestPosts();
-      
-      if (response.success) {
-        console.log('✅ Posts ingested successfully');
-        setIngestStats({
-          success: true,
-          message: response.message || 'Posts ingested successfully',
-          date: new Date().toISOString().split('T')[0]
-        });
-        // Refresh the sources list to show updated counts
-        await loadSourcesWithCounts();
-      } else {
-        console.error('❌ Ingestion failed:', response.error);
-        setError(response.error || 'Failed to ingest posts');
-      }
-    } catch (error) {
-      console.error('❌ API call failed:', error);
-      setError(error instanceof Error ? error.message : 'Network error occurred');
-    } finally {
-      setIsIngesting(false);
-    }
-  };
-
-  const handleSafeIngestPosts = async () => {
-    setIsSafeIngesting(true);
-    setError(null);
-    setSafeIngestStats(null);
-    
-    try {
-      console.log('🚀 Safe ingesting posts from sources that need updating');
-      const response = await apiService.safeIngestPosts();
-      
-      if (response.success) {
-        console.log('✅ Posts safe ingested successfully');
-        setSafeIngestStats({
-          success: true,
-          message: response.message || 'Posts safely ingested',
-          date: new Date().toISOString().split('T')[0]
-        });
-        // Refresh the sources list to show updated counts
-        await loadSourcesWithCounts();
-      } else {
-        console.error('❌ Safe ingestion failed:', response.error);
-        setError(response.error || 'Failed to safe ingest posts');
-      }
-    } catch (error) {
-      console.error('❌ API call failed:', error);
-      setError(error instanceof Error ? error.message : 'Network error occurred');
-    } finally {
-      setIsSafeIngesting(false);
-    }
-  };
-
   useEffect(() => {
     if (initializedFromUrlRef.current) {
       return;
@@ -1446,7 +1372,7 @@ export default function DailyBriefing() {
 
           {/* Fetch Posts Section */}
           <div>
-            <label className="block text-xs font-medium text-gray-900 mb-2">Fetch Posts by Date</label>
+            <label className="block text-xs font-medium text-gray-900 mb-2">Load Posts by Date</label>
             <button
               onClick={() => void handleLoadDatabasePosts()}
               disabled={isLoadingPosts}
@@ -1460,7 +1386,7 @@ export default function DailyBriefing() {
               ) : (
                 <>
                   <Calendar className="w-4 h-4" />
-                  Fetch Posts
+                  Load posts
                 </>
               )}
             </button>
@@ -1540,20 +1466,6 @@ export default function DailyBriefing() {
               <div className="text-xs text-teal-700 space-y-0.5">
                 <div>📚 Topics: {topicsStats.total}</div>
                 <div>📅 Date: {topicsStats.date}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Ingest Stats */}
-          {ingestStats && (
-            <div className="mt-2.5 p-2.5 bg-orange-50 border border-orange-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-orange-600" />
-                <span className="text-xs font-medium text-orange-800">Posts Ingested</span>
-              </div>
-              <div className="text-xs text-orange-700 space-y-0.5">
-                <div>📊 Total: {sourcesData?.total_posts || 0}</div>
-                <div>📅 Date: {ingestStats.date}</div>
               </div>
             </div>
           )}
@@ -1724,10 +1636,14 @@ export default function DailyBriefing() {
                     {systemStatus.corpus?.enabled_sources ?? 0}/{systemStatus.corpus?.total_sources ?? 0} sources on
                   </span>
                   {Boolean(systemStatus.source_health_summary?.errors) && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      {systemStatus.source_health_summary?.errors} source errors
-                    </span>
+                    <Link
+                      to="/settings/sources?tab=health&status=error"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700 hover:bg-red-100"
+                      title="Open the failing sources in Settings → Sources → Health"
+                    >
+                      <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                      {systemStatus.source_health_summary?.errors} source {systemStatus.source_health_summary?.errors === 1 ? 'error' : 'errors'}
+                    </Link>
                   )}
                   {systemStatus.gemini_configured === false && (
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">

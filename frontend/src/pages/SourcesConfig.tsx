@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, Plus, Settings, Trash2, FolderPlus, Sparkles, Rss, Send, MessageSquare, Youtube } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Activity, ChevronLeft, Plus, Settings, Trash2, FolderPlus, Sparkles, Rss, Send, MessageSquare, Youtube } from 'lucide-react';
 import { apiService } from '../services/api';
 import type { SourceWithSettings, Folder, Expert } from '../services/api';
 import AddSourceModal from '../components/AddSourceModal';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
+import SourceHealthTable from '../components/ops/SourceHealthTable';
+import ConfirmDialog from '../components/ops/ConfirmDialog';
+
+type SourcesTab = 'sources' | 'health';
+type PendingDelete = { kind: 'source' | 'folder'; id: string; name: string } | null;
+
+const TABS: { key: SourcesTab; label: string }[] = [
+  { key: 'sources', label: 'Sources & tracks' },
+  { key: 'health', label: 'Health & cadence' },
+];
 
 interface SourcesConfigProps {
   embedded?: boolean;
@@ -47,7 +57,7 @@ function SourceRow({
       <button onClick={onSettings} className="shrink-0 text-gray-400 hover:text-gray-700" aria-label="Settings">
         <Settings className="w-4 h-4" />
       </button>
-      <button onClick={onRemove} className="shrink-0 text-gray-400 hover:text-red-600" aria-label="Delete source">
+      <button onClick={onRemove} className="shrink-0 text-gray-400 hover:text-red-600" aria-label={`Delete source ${name}`}>
         <Trash2 className="w-4 h-4" />
       </button>
     </div>
@@ -56,6 +66,21 @@ function SourceRow({
 
 export default function SourcesConfig({ embedded = false, onClose }: SourcesConfigProps) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Embedded (inside the briefing page) shows the sources list only; the Health tab
+  // lives at /settings/sources?tab=health, where its ?status= filter owns the URL.
+  const tab: SourcesTab = !embedded && searchParams.get('tab') === 'health' ? 'health' : 'sources';
+  const setTab = (next: SourcesTab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'health') params.set('tab', 'health');
+    else {
+      params.delete('tab');
+      params.delete('status');
+      params.delete('data');
+    }
+    setSearchParams(params, { replace: true });
+  };
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
   const [loading, setLoading] = useState(true);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [sources, setSources] = useState<SourceWithSettings[]>([]);
@@ -123,22 +148,22 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
       source={s}
       onToggle={() => toggleEnabled(s)}
       onSettings={() => setEditingSource(s)}
-      onRemove={() => removeSource(s.id)}
+      onRemove={() => setPendingDelete({ kind: 'source', id: s.id, name: s.settings?.display_name || s.handle_or_url })}
     />
   );
 
   return (
     <div className={embedded ? 'app-shell' : 'app-shell min-h-screen'}>
-      <div className={embedded ? 'max-w-4xl mx-auto p-6' : 'max-w-4xl mx-auto p-8'}>
+      <div className={embedded ? 'max-w-4xl mx-auto p-6' : `${tab === 'health' ? 'max-w-7xl' : 'max-w-4xl'} mx-auto p-8`}>
         {!embedded && (
           <button onClick={() => navigate('/briefing')} className="mb-3 inline-flex items-center text-sm text-gray-600 hover:text-gray-900">
             <ChevronLeft className="w-4 h-4 mr-1" /> Back to Briefing
           </button>
         )}
 
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Sources</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => navigate('/experts')} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm">
               <Sparkles className="w-4 h-4" /> Experts
             </button>
@@ -151,8 +176,41 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
           </div>
         </div>
 
-        {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-2">{error}</div>}
+        {error && <div role="alert" className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-2">{error}</div>}
 
+        {embedded ? (
+          <Link to="/settings/sources?tab=health" className="mb-4 inline-flex items-center gap-1.5 text-sm text-[var(--text-accent)] hover:underline">
+            <Activity className="h-4 w-4" aria-hidden="true" /> Health &amp; cadence
+          </Link>
+        ) : (
+          <div role="tablist" aria-label="Sources settings" className="mb-5 flex gap-1 border-b border-[var(--background-modifier-border)]">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                id={`sources-tab-${t.key}`}
+                aria-selected={tab === t.key}
+                aria-controls={`sources-panel-${t.key}`}
+                onClick={() => setTab(t.key)}
+                className={`-mb-px min-h-[44px] border-b-2 px-3 text-sm font-medium ${
+                  tab === t.key
+                    ? 'border-[var(--interactive-accent)] text-[var(--text-normal)]'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-normal)]'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'health' ? (
+          <div role="tabpanel" id="sources-panel-health" aria-labelledby="sources-tab-health">
+            <SourceHealthTable />
+          </div>
+        ) : (
+        <div role={embedded ? undefined : 'tabpanel'} id="sources-panel-sources" aria-labelledby={embedded ? undefined : 'sources-tab-sources'}>
         {/* Create folder */}
         <div className="mb-5 flex items-center gap-2">
           <input
@@ -188,7 +246,7 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
                       <Sparkles className="w-3.5 h-3.5" /> {fExperts.map((e) => e.name).join(', ')}
                     </button>
                   )}
-                  <button onClick={() => removeFolder(f.id)} className="ml-auto text-gray-300 hover:text-red-600" aria-label="Delete folder">
+                  <button onClick={() => setPendingDelete({ kind: 'folder', id: f.id, name: f.name })} className="ml-auto text-gray-300 hover:text-red-600" aria-label={`Delete folder ${f.name}`}>
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -219,6 +277,9 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
           </div>
         </div>
 
+        </div>
+        )}
+
         {embedded && onClose && (
           <div className="mt-6">
             <button onClick={onClose} className="text-sm text-gray-600 hover:text-gray-900">Close</button>
@@ -233,6 +294,24 @@ export default function SourcesConfig({ embedded = false, onClose }: SourcesConf
           onAdd={handleAddSource}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete?.kind === 'folder' ? `Delete the folder "${pendingDelete.name}"?` : `Delete "${pendingDelete?.name ?? ''}"?`}
+        description={pendingDelete?.kind === 'folder'
+          ? 'The folder, its experts and its milestones are deleted. Its sources and their posts stay (they move to Unassigned if they are in no other folder).'
+          : 'The source and every post collected from it are deleted. This cannot be undone; disabling it keeps its posts.'}
+        confirmLabel={pendingDelete?.kind === 'folder' ? 'Delete folder' : 'Delete source'}
+        destructive
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const target = pendingDelete;
+          setPendingDelete(null);
+          if (!target) return;
+          if (target.kind === 'folder') void removeFolder(target.id);
+          else void removeSource(target.id);
+        }}
+      />
 
       {editingSource && (
         <SourceSettingsEditor

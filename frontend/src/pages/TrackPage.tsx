@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, RefreshCw, ExternalLink, Inbox } from 'lucide-react';
+import { ChevronLeft, RefreshCw, ExternalLink, Loader2, Zap } from 'lucide-react';
 import { apiService, type Folder, type Post } from '../services/api';
+import { useIngestionRun } from '../hooks/useIngestionRun';
+import { EmptyState } from '../components/states';
 import MilestonesRail from '../components/MilestonesRail';
 import TrackBriefingPanel from '../components/TrackBriefingPanel';
 
@@ -54,7 +56,8 @@ export default function TrackPage() {
   const load = useCallback(
     async (opts?: { append?: boolean }) => {
       const append = Boolean(opts?.append);
-      append ? setLoadingMore(true) : setLoading(true);
+      if (append) setLoadingMore(true);
+      else setLoading(true);
       setError(null);
       const response = await apiService.getFolderPosts(trackId, {
         limit: PAGE_SIZE,
@@ -73,7 +76,8 @@ export default function TrackPage() {
           return Array.from(new Map(merged.map((p, i) => [p.id ?? p.url ?? `idx:${i}`, p])).values());
         });
       }
-      append ? setLoadingMore(false) : setLoading(false);
+      if (append) setLoadingMore(false);
+      else setLoading(false);
     },
     [trackId, days, posts.length],
   );
@@ -91,6 +95,16 @@ export default function TrackPage() {
   };
 
   const isTrack = folder?.kind === 'track';
+
+  // "Fetch this track": a forced fetch of every enabled member source. When it
+  // brings new posts, the list reloads (this page has no unread pill).
+  const { run, isRunning } = useIngestionRun();
+  const trackTarget = { kind: 'folder' as const, id: trackId, name: folder?.name };
+  const fetchingTrack = isRunning(trackTarget);
+  const fetchTrack = async () => {
+    const report = await run(trackTarget);
+    if (report && report.posts_inserted > 0) await load();
+  };
 
   return (
     <div className="app-shell min-h-screen bg-gray-50">
@@ -114,13 +128,27 @@ export default function TrackPage() {
             </div>
             {folder?.description && <p className="text-sm text-gray-600 mt-1">{folder.description}</p>}
           </div>
-          <button
-            onClick={() => void load()}
-            disabled={loading}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </button>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={() => void fetchTrack()}
+              disabled={fetchingTrack || !trackId}
+              aria-busy={fetchingTrack}
+              title="Fetch every enabled source in this track now (ignores cadence and backoff)"
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md bg-[var(--interactive-accent)] px-3 py-1.5 text-sm font-medium text-[var(--text-on-accent)] transition-transform duration-[120ms] ease-out hover:bg-[var(--interactive-accent-hover)] active:scale-[0.97] disabled:opacity-60 motion-reduce:transition-none"
+            >
+              {fetchingTrack
+                ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+                : <Zap className="h-3.5 w-3.5" aria-hidden="true" />}
+              {fetchingTrack ? 'Fetching…' : 'Fetch this track'}
+            </button>
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              className="inline-flex min-h-[36px] items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-4">
@@ -174,18 +202,19 @@ export default function TrackPage() {
             )}
 
             {!loading && posts.length === 0 && !error && (
-              <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center">
-                <Inbox className="w-8 h-8 mx-auto text-gray-400 mb-3" />
-                <div className="font-medium text-gray-900 mb-1">Nothing collected yet</div>
-                <p className="text-sm text-gray-600 max-w-md mx-auto">
-                  This track has {sourceCount} sources but no posts. Newly added sources have no fetch
-                  history, so they are collected on the next ingestion cycle. Run one from{' '}
-                  <button onClick={() => navigate('/ingestion')} className="text-blue-600 hover:underline">
-                    Ingestion Control
-                  </button>
-                  , or wait for the scheduler.
-                </p>
-              </div>
+              <EmptyState
+                title="Nothing collected yet"
+                description={
+                  sourceCount === 0
+                    ? 'This track has no sources yet. Add some from Settings → Sources.'
+                    : `This track has ${sourceCount} source${sourceCount === 1 ? '' : 's'} but no posts${days ? ` in the last ${days} days` : ''}. New sources are collected on the next ingestion tick, or fetch them now.`
+                }
+                action={
+                  sourceCount === 0
+                    ? { label: 'Add a source', href: '/settings/sources' }
+                    : { label: fetchingTrack ? 'Fetching…' : 'Fetch this track', onClick: () => void fetchTrack(), disabled: fetchingTrack }
+                }
+              />
             )}
 
             <div className="space-y-3">

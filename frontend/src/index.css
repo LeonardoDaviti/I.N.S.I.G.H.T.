@@ -584,3 +584,42 @@
     background-color: hsl(var(--muted));
   }
 }
+
+/* Mark IX ops dialogs (ConfirmDialog): short, strong ease-out entrances on
+   transform/opacity only; a plain fade under reduced motion (spec §F.7). */
+@keyframes ops-fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes ops-panel-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+}
+
+.ops-dialog-overlay[data-state='open'] {
+  animation: ops-fade-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ops-dialog-panel[data-state='open'] {
+  animation: ops-panel-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ops-dialog-panel[data-state='open'] {
+    animation: ops-fade-in 150ms ease-out;
+  }
+}
+
+/* Translucent sticky header of the health table; solid when transparency is reduced. */
+.ops-sticky-material {
+  background: color-mix(in srgb, var(--background-primary) 82%, transparent);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ops-sticky-material {
+    background: var(--background-primary);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

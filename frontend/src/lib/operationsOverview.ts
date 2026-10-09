@@ -1,4 +1,4 @@
-import type { JobRun, OperationsOverviewResponse } from '../services/api';
+import type { JobRun, OperationsOverviewResponse, SourceHealthRow, SourceHealthSummary } from '../services/api';
 
 type CompactMode = 'summary' | 'detail';
 
@@ -103,16 +103,62 @@ function compactValue(value: unknown, options: CompactOptions, depth: number, ke
   return value;
 }
 
+/** The run report lists RunReportSummary renders. The backend already caps each at 20
+ *  entries, so they are kept whole; only the job's `events` log is trimmed. */
+const RUN_REPORT_LISTS = new Set(['failures', 'post_failures', 'inserted_by_source', 'decisions', 'selector', 'enrichment']);
+
+function compactRunReportPayload(payload: Record<string, unknown>, options: CompactOptions): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [
+      key,
+      RUN_REPORT_LISTS.has(key) ? value : compactValue(value, options, 1, key),
+    ]),
+  );
+}
+
 export function compactJobRun(job: JobRun, mode: CompactMode = 'summary'): JobRun {
   const options = mode === 'detail' ? DETAIL_OPTIONS : SUMMARY_OPTIONS;
   if (!job.payload) {
     return job;
   }
 
+  if (job.job_type === 'ingestion_run') {
+    return { ...job, payload: compactRunReportPayload(job.payload, options) as JobRun['payload'] };
+  }
+
   return {
     ...job,
     payload: compactValue(job.payload, options, 0, 'payload') as JobRun['payload'],
   };
+}
+
+const EMPTY_SUMMARY: SourceHealthSummary = { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 };
+
+/** `overview.source_health` as `{summary, rows}`. The Mark VIII array shape (an old
+ *  backend during a rolling deploy) or a missing value degrade to an empty summary. */
+export function normalizeSourceHealth(value: unknown): { summary: SourceHealthSummary; rows: SourceHealthRow[] } {
+  if (!isPlainObject(value)) return { summary: { ...EMPTY_SUMMARY }, rows: [] };
+  const summary = isPlainObject(value.summary) ? { ...EMPTY_SUMMARY, ...(value.summary as Partial<SourceHealthSummary>) } : { ...EMPTY_SUMMARY };
+  const rows = Array.isArray(value.rows) ? (value.rows as SourceHealthRow[]) : [];
+  return { summary, rows };
+}
+
+const JOB_LABELS: Record<string, string> = {
+  ingestion_run: 'Ingestion run',
+  scheduler_cycle: 'Daily work',
+  archive_source: 'Archive',
+  daily_briefing: 'Daily briefing',
+  topic_briefing: 'Topic briefing',
+  expert_briefing: 'Expert briefing',
+};
+
+/** The human label for a job: the backend's `job_label`, a local fallback, then the type. */
+export function jobLabel(job: Pick<JobRun, 'job_type' | 'job_label'>): string {
+  if (job.job_label) return job.job_label;
+  const known = JOB_LABELS[job.job_type];
+  if (known) return known;
+  const text = (job.job_type || '').replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function compactOperationsOverview(overview: OperationsOverviewResponse): OperationsOverviewResponse {
