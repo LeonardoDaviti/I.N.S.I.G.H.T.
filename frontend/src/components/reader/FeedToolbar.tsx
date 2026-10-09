@@ -1,10 +1,9 @@
 import { Fragment, type ReactNode } from 'react';
-import { ChevronDown, HelpCircle, RefreshCw, Rows3, Rows4 } from 'lucide-react';
+import { ChevronDown, RefreshCw } from 'lucide-react';
 
 import type { FeedFilter, FeedView } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
-import { iconButtonClass } from '../ui/styles';
-import { FOCUS_RING } from '../states';
+import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 
 /**
  * A radio group drawn as the top bar's language: lowercase words separated by
@@ -39,35 +38,6 @@ function SlashChoice<T extends string>({ label, value, options, onChange }: {
   );
 }
 
-/** Two icon toggles in one hairline box (density is a mode, not a word). */
-function DensityToggle({ value, onChange }: { value: FeedDensity; onChange: (value: FeedDensity) => void }) {
-  const options = [
-    { value: 'comfortable' as const, label: 'Comfortable', icon: <Rows3 aria-hidden="true" className="h-4 w-4" /> },
-    { value: 'compact' as const, label: 'Compact (titles only)', icon: <Rows4 aria-hidden="true" className="h-4 w-4" /> },
-  ];
-  return (
-    <div role="radiogroup" aria-label="Density" className="inline-flex shrink-0 rounded-md border border-line p-0.5">
-      {options.map((option) => {
-        const active = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            aria-label={option.label}
-            title={option.label}
-            onClick={() => onChange(option.value)}
-            className={`inline-flex h-7 w-8 items-center justify-center rounded-[0.25rem] coarse:h-10 coarse:w-11 ${active ? 'bg-inverse text-inverse-fg' : 'text-fg-3 hover:text-fg'} ${FOCUS_RING}`}
-          >
-            {option.icon}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'unread', label: 'Unread' },
   { value: 'starred', label: 'Starred' },
@@ -77,6 +47,13 @@ const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
 ];
+const DENSITIES: ReadonlyArray<{ value: FeedDensity; label: string }> = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'compact', label: 'Compact' },
+];
+
+/** A quiet text action in the slash-nav language: a lowercase word, underlined on hover. */
+const TEXT_ACTION = `inline-flex min-h-[2rem] items-center gap-1.5 whitespace-nowrap rounded-sm px-1 text-[0.875rem] lowercase text-fg-2 underline decoration-transparent decoration-1 underline-offset-[0.22em] hover:text-fg hover:decoration-fg-3 disabled:opacity-60 coarse:min-h-[2.75rem] ${PRESS_FEEDBACK} ${FOCUS_RING}`;
 
 export interface FeedToolbarProps {
   title: string;
@@ -100,8 +77,8 @@ export interface FeedToolbarProps {
 
 /**
  * The reader's sticky toolbar, under the app's one top bar: the scope title and
- * its unread count, the scope fetch and the shortcut help, then the filter and
- * view as slash-separated words and the density toggle. The theme toggle, the
+ * its unread count, the scope fetch and the shortcut help as labelled text
+ * actions, then the filter, view and density as slash-separated words. The theme toggle, the
  * wordmark and the app menu live in the top bar only. Below md the title opens
  * the feeds drawer (a chevron says so), so there is no second hamburger.
  */
@@ -112,7 +89,7 @@ export default function FeedToolbar({
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
   return (
     <div className="reader-material reader-edge sticky top-0 z-30">
-      <div className="mx-auto w-full max-w-3xl px-4 pb-2 pt-4 sm:px-6">
+      <div className="w-full max-w-5xl px-4 pb-2 pt-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="flex min-w-0 flex-1 items-baseline gap-2" title={title}>
             <button
@@ -128,15 +105,17 @@ export default function FeedToolbar({
             <span className={`${heading} hidden md:block`}>{title}</span>
             {subtitle ? <span className="hidden shrink-0 whitespace-nowrap text-[0.8125rem] font-normal tabular-nums text-fg-3 sm:inline">{subtitle}</span> : null}
           </h1>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <div className="mr-1.5"><DensityToggle value={density} onChange={onDensityChange} /></div>
+          <div className="flex shrink-0 items-center gap-3">
             {onFetch ? (
-              <button type="button" onClick={onFetch} disabled={fetching} aria-label={fetchLabel} title={`${fetchLabel} (f)`} className={iconButtonClass}>
-                <RefreshCw aria-hidden="true" className={fetching ? 'motion-safe:animate-spin' : ''} />
+              <button type="button" onClick={onFetch} disabled={fetching} aria-label={fetchLabel} title={`${fetchLabel} (f)`} className={TEXT_ACTION}>
+                <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${fetching ? 'motion-safe:animate-spin' : ''}`} />
+                <span className="sm:hidden">{fetching ? 'fetching…' : 'fetch'}</span>
+                <span className="hidden sm:inline">{fetching ? 'fetching…' : fetchLabel}</span>
               </button>
             ) : null}
-            <button type="button" onClick={onOpenHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" className={iconButtonClass}>
-              <HelpCircle aria-hidden="true" />
+            <button type="button" onClick={onOpenHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" className={`${TEXT_ACTION} hidden sm:inline-flex`}>
+              shortcuts
+              <kbd aria-hidden="true" className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-[0.25rem] border border-line-strong px-1 font-sans text-[0.75rem] not-italic text-fg-2 no-underline">?</kbd>
             </button>
           </div>
         </div>
@@ -144,6 +123,7 @@ export default function FeedToolbar({
         <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1">
           <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
           <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />
+          <div className="hidden md:block"><SlashChoice label="Density" value={density} options={DENSITIES} onChange={onDensityChange} /></div>
           {pill ? <div className="ml-auto">{pill}</div> : null}
         </div>
       </div>

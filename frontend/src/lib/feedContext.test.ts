@@ -96,9 +96,9 @@ test('scope paths and post links', () => {
   assert.equal(href, `/posts/${POST}?ctx=${encodeURIComponent('all:unread:')}`);
 });
 
-test('displaySourceName: URL-named feeds lose the scheme, www and trailing slash; names stay', () => {
-  assert.equal(displaySourceName('https://rss.arxiv.org/rss/cs.AI'), 'rss.arxiv.org/rss/cs.AI');
-  assert.equal(displaySourceName('http://www.example.com/feed/'), 'example.com/feed');
+test('displaySourceName: URL-named feeds get a derived name (sourceLabel); names stay', () => {
+  assert.equal(displaySourceName('https://rss.arxiv.org/rss/cs.AI'), 'arXiv cs.AI');
+  assert.equal(displaySourceName('http://www.example.com/feed/'), 'example.com');
   assert.equal(displaySourceName('r/EvenRealities'), 'r/EvenRealities');
   assert.equal(displaySourceName('  '), 'Unknown source');
   assert.equal(displaySourceName(null), 'Unknown source');

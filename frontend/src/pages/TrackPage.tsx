@@ -4,24 +4,12 @@ import { ChevronLeft, RefreshCw, ExternalLink, Loader2, Zap } from 'lucide-react
 import { apiService, type Folder, type Post } from '../services/api';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { EmptyState } from '../components/states';
+import { sourceLabel } from '../lib/sourceLabel';
+import { feedDateLabel } from '../lib/feedDates';
 import MilestonesRail from '../components/MilestonesRail';
 import TrackBriefingPanel from '../components/TrackBriefingPanel';
 
 const PAGE_SIZE = 25;
-
-function relativeTime(value?: string | null): string {
-  if (!value) return '';
-  const parsed = new Date(value);
-  if (isNaN(parsed.getTime())) return '';
-  const minutes = Math.round((Date.now() - parsed.getTime()) / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return parsed.toLocaleDateString();
-}
 
 /** First media_urls entry that actually looks like an image. */
 function thumbnailOf(post: Post): string | null {
@@ -243,9 +231,9 @@ export default function TrackPage() {
                         </h2>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                           <span className="px-1.5 py-0.5 rounded bg-gray-100">{post.platform}</span>
-                          <span className="truncate max-w-[16rem]">{post.source_display_name}</span>
+                          <span className="truncate max-w-[16rem]" title={post.source_display_name ?? undefined}>{sourceLabel(post.source_display_name)}</span>
                           <span>·</span>
-                          <span>{relativeTime(post.published_at)}</span>
+                          <span>{post.published_at ? feedDateLabel(post.published_at) : ''}</span>
                         </div>
                         <div className="mt-2 flex items-center gap-3 text-sm">
                           <button

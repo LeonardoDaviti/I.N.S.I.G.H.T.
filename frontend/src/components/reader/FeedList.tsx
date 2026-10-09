@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -12,6 +12,7 @@ import { feedNavigation, initialNavState, type NavAction, type NavIntent } from 
 import { postHref, type FeedContext } from '../../lib/feedContext';
 import { errorMessage } from '../../lib/apiError';
 import { plural } from '../../lib/format';
+import { feedDayHeading, feedDayKey } from '../../lib/feedDates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 import ConfirmDialog from '../ops/ConfirmDialog';
 import FeedItem, { feedItemDomId } from './FeedItem';
@@ -259,17 +260,27 @@ export default function FeedList({
             ? groups.map((group) => (
               <FeedGroup key={group.source_id} group={group} tabbableId={tabbableId} itemHref={itemHref} {...shared} />
             ))
-            : items.map((item) => (
-              <FeedItem
-                key={item.id}
-                item={item}
-                selected={item.id === selectedId}
-                tabbable={item.id === tabbableId}
-                href={itemHref(item)}
-                onMarkThrough={askMarkThrough}
-                {...shared}
-              />
-            ))}
+            : items.map((item, index) => {
+              const day = feedDayKey(item.sort_at);
+              const newDay = index === 0 || day !== feedDayKey(items[index - 1].sort_at);
+              return (
+                <Fragment key={item.id}>
+                  {newDay ? (
+                    <h2 className={`px-1 pb-0.5 text-[0.8125rem] font-semibold tracking-[-0.006em] text-fg-2 ${index === 0 ? '' : 'pt-5'}`}>
+                      {feedDayHeading(item.sort_at)}
+                    </h2>
+                  ) : null}
+                  <FeedItem
+                    item={item}
+                    selected={item.id === selectedId}
+                    tabbable={item.id === tabbableId}
+                    href={itemHref(item)}
+                    onMarkThrough={askMarkThrough}
+                    {...shared}
+                  />
+                </Fragment>
+              );
+            })}
         </div>
         <div ref={sentinel} aria-hidden="true" className="h-px" />
         <div className="flex flex-col items-center gap-2 py-6">

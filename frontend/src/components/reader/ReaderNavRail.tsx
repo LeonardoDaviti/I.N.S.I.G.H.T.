@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Inbox, Settings, Star, X } from 'lucide-react';
+import { Inbox, Star, X } from 'lucide-react';
 
 import type { FeedFilter, UnreadCounts } from '../../services/api';
 import { useReaderDirectory } from '../../hooks/useReaderDirectory';
-import { displaySourceName, scopePath } from '../../lib/feedContext';
+import { scopePath } from '../../lib/feedContext';
+import { sourceLabel } from '../../lib/sourceLabel';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { iconButtonClass } from '../ui/styles';
 import { FOCUS_RING } from '../states';
@@ -36,7 +37,7 @@ function RailLink({ to, current, label, count, icon, onNavigate }: {
       className={`group flex min-h-[2.25rem] items-center gap-2 rounded-md border px-2.5 text-[0.875rem] coarse:min-h-[2.75rem] ${current ? 'border-line-strong bg-surface font-semibold text-fg' : 'border-transparent text-fg-2 hover:bg-raised hover:text-fg'} ${FOCUS_RING}`}
     >
       {icon}
-      <span className="min-w-0 truncate">{middleTruncate(label, 28)}</span>
+      <span className="min-w-0 truncate">{middleTruncate(label, 26)}</span>
       <Badge count={count} />
     </Link>
   );
@@ -107,7 +108,7 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
           {shownSources.map(([sourceId, count]) => {
             const sourceScope = `source:${sourceId}`;
             const raw = sourceNames.get(sourceId);
-            const name = raw ? displaySourceName(raw) : health.isPending ? 'Loading…' : 'Unknown source';
+            const name = raw ? sourceLabel(raw) : health.isPending ? 'Loading…' : 'Unknown source';
             return (
               <RailLink
                 key={sourceId}
@@ -133,11 +134,6 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
         <p className="px-2.5 text-[0.8125rem] text-fg-3">{counts ? 'Nothing unread.' : 'Loading…'}</p>
       )}
 
-      <div className="mt-auto pt-6">
-        <div className="space-y-0.5 border-t border-line pt-3">
-          <RailLink to="/settings/sources" current={false} label="Sources & settings" icon={<Settings aria-hidden="true" className="h-4 w-4 shrink-0" />} onNavigate={onNavigate} />
-        </div>
-      </div>
     </nav>
   );
 }

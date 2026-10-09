@@ -32,6 +32,13 @@ function render(api: Api) {
   );
 }
 
+// sonner's toast calls setPointerCapture on press; jsdom has no pointer capture.
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.hasPointerCapture = () => false;
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   resetStoredChoices();

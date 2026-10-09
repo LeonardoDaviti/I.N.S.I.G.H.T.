@@ -1,3 +1,4 @@
+import { sourceLabel } from './sourceLabel.ts';
 /**
  * The feed context a post page carries in `?ctx=` (spec §F.3), so prev/next keep
  * following the feed order after a reload: `<scope>:<filter>:<cursor>`.
@@ -144,8 +145,5 @@ export function postHref(postId: string, ctx: FeedContext | null): string {
  * tells two feeds apart (callers middle-truncate it, design doc §F.7).
  */
 export function displaySourceName(name: string | null | undefined): string {
-  const text = name?.trim();
-  if (!text) return 'Unknown source';
-  if (!/^https?:\/\//i.test(text)) return text;
-  return text.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '') || text;
+  return sourceLabel(name);
 }

@@ -72,9 +72,16 @@ describe('ReaderNavRail', () => {
     expect(screen.queryByRole('button', { name: /switch to (light|dark) theme/i })).not.toBeInTheDocument();
   });
 
-  it('shows URL-named sources without the scheme', async () => {
+  it('never shows a raw feed URL: URL-named sources get a derived name', async () => {
     setup('/', 'https://rss.arxiv.org/rss/cs.AI');
     const rail = await screen.findByRole('navigation', { name: 'Feeds' });
-    expect(await within(rail).findByRole('link', { name: /^rss\.arxiv\.org\/rss\/cs\.AI/ })).toBeInTheDocument();
+    expect(await within(rail).findByRole('link', { name: /^arXiv cs\.AI/ })).toBeInTheDocument();
+    expect(within(rail).queryByText(/rss\.arxiv\.org/)).not.toBeInTheDocument();
+  });
+
+  it('has no settings link (the top bar owns sources)', async () => {
+    setup();
+    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    expect(within(rail).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
   });
 });

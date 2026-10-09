@@ -4,9 +4,9 @@ import { CheckCheck, Circle, CircleCheck, PlayCircle, Star } from 'lucide-react'
 
 import type { FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
-import { formatRelativeTime } from '../../lib/dates';
+import { feedDateLabel } from '../../lib/feedDates';
 import { formatCount, middleTruncate } from '../../lib/format';
-import { displaySourceName } from '../../lib/feedContext';
+import { sourceLabel } from '../../lib/sourceLabel';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 
 export function feedItemDomId(id: string) {
@@ -60,8 +60,9 @@ export interface FeedItemProps {
 /**
  * One feed row (spec §F.6): an `<article>` whose only link is the title, with the
  * read and star toggles as sibling buttons (32px, 44px on touch). Laid out like
- * the news.smol.ai list: a hairline-bordered row, a muted date column, a bold title. Selection is a roving tabIndex
- * plus `aria-current`; no animation, since j/k runs hundreds of times a day.
+ * the news.smol.ai list: a hairline-bordered row, a muted date column ("Sep 29",
+ * relative only inside 24h), a bold title when unread. Selection is a roving
+ * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
   item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, now,
@@ -73,7 +74,8 @@ function FeedItem({
   const titleId = `${feedItemDomId(item.id)}-title`;
   const title = displayTitle(item);
   const length = lengthLabel(item);
-  const time = item.published_at ?? item.sort_at;
+  // The feed's own order key (published, else fetched), so the column and the day headers agree.
+  const time = item.sort_at ?? item.published_at;
   const showThumb = !compact && item.media_thumb && !thumbFailed;
   const excerpt = item.excerpt?.trim();
   const showExcerpt = !compact && excerpt && excerpt !== title && !title.startsWith(excerpt.slice(0, 40));
@@ -83,8 +85,16 @@ function FeedItem({
     onSelect(item.id);
   };
 
-  const timeLabel = formatRelativeTime(time, now);
+  const timeLabel = feedDateLabel(time, now);
   const fullTime = new Date(time).toLocaleString();
+  const source = sourceLabel(item.source_display_name);
+  // On a real pointer the actions wait for hover or focus; on touch, and on the
+  // selected row, they stay visible (lead review #1).
+  // Below sm the title needs the width, so only the selected row (a tap selects)
+  // carries them.
+  const actionsReveal = selected
+    ? 'flex'
+    : 'hidden sm:flex [@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100';
 
   return (
     <article
@@ -95,21 +105,18 @@ function FeedItem({
       data-read={isRead ? 'true' : 'false'}
       onClick={selectFromClick}
       onFocus={(event) => { if (event.target === event.currentTarget) onSelect(item.id); }}
-      className={`reader-row group relative flex scroll-mt-40 scroll-mb-24 items-start gap-3 rounded-md border px-3 sm:gap-4 sm:px-4 ${compact ? 'py-1.5' : 'py-2.5'} outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg ${selected ? 'border-line-strong bg-surface' : 'border-line hover:border-line-strong'}`}
+      className={`reader-row group relative flex scroll-mt-40 scroll-mb-24 items-start gap-3 rounded-md border pl-3 pr-1.5 sm:gap-4 sm:pl-4 ${compact ? 'py-1.5' : 'py-2'} outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg ${selected ? 'border-fg-3 bg-surface' : 'border-line hover:border-line-strong'}`}
     >
       <time
         dateTime={time}
         title={fullTime}
-        className={`hidden w-[4.75rem] shrink-0 whitespace-nowrap text-[0.8125rem] leading-6 tabular-nums text-fg-3 sm:block ${compact ? '' : 'pt-px'}`}
+        className="w-[3.25rem] shrink-0 text-[0.75rem] leading-6 tabular-nums text-fg-3 sm:w-[4.25rem] sm:whitespace-nowrap sm:text-[0.8125rem]"
       >
         {timeLabel}
       </time>
-      <span aria-hidden="true" className="flex h-6 w-2 shrink-0 items-center justify-center">
-        <span className={`h-1.5 w-1.5 rounded-full ${isRead ? 'bg-transparent' : 'bg-fg'}`} />
-      </span>
       <div className={`min-w-0 flex-1 ${compact ? 'sm:flex sm:items-baseline sm:gap-3' : ''}`}>
         <h3
-          className={`min-w-0 [overflow-wrap:anywhere] tracking-[-0.011em] ${compact ? 'line-clamp-2 text-[0.9375rem] leading-6 sm:line-clamp-1 sm:flex-1' : 'line-clamp-2 text-[0.9375rem] leading-6 sm:text-base'} ${isRead ? 'font-normal text-fg-2' : 'font-semibold text-fg'}`}
+          className={`line-clamp-2 min-w-0 text-[0.9375rem] leading-6 tracking-[-0.011em] [overflow-wrap:anywhere] ${compact ? 'sm:flex-1' : ''} ${isRead ? 'font-normal text-fg-2' : 'font-semibold text-fg'}`}
         >
           <Link
             id={titleId}
@@ -120,11 +127,10 @@ function FeedItem({
             {title}
           </Link>
         </h3>
-        <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'mt-0.5 sm:mt-0 sm:max-w-[16rem] sm:shrink-0' : 'mt-0.5'}`}>
-          <time dateTime={time} title={fullTime} className="shrink-0 whitespace-nowrap sm:hidden">{timeLabel}</time>
-          <span aria-hidden="true" className="shrink-0 sm:hidden">·</span>
+        <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
+          {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
           <span className="min-w-0 truncate" title={item.source_display_name}>
-            {middleTruncate(displaySourceName(item.source_display_name), compact ? 32 : 56)}
+            {middleTruncate(source, compact ? 32 : 56)}
           </span>
           {length ? (
             <>
@@ -139,13 +145,13 @@ function FeedItem({
           {isStarred ? <span className="sr-only">Starred</span> : null}
         </p>
         {showExcerpt ? (
-          <p dir="auto" className="mt-1 line-clamp-2 text-sm leading-relaxed text-fg-2 [overflow-wrap:anywhere]">
+          <p dir="auto" className="mt-0.5 line-clamp-1 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
             {excerpt}
           </p>
         ) : null}
       </div>
       {showThumb ? (
-        <div className="hidden aspect-video w-24 shrink-0 overflow-hidden rounded-md border border-line bg-surface sm:block">
+        <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">
           <img
             src={item.media_thumb ?? undefined}
             alt=""
@@ -156,7 +162,7 @@ function FeedItem({
           />
         </div>
       ) : null}
-      <div className="-mr-1 flex shrink-0 items-center gap-0.5 coarse:-my-2.5">
+      <div className={`shrink-0 items-center gap-0.5 transition-opacity duration-100 ease-out coarse:-my-2.5 ${actionsReveal}`}>
         {selected && onMarkThrough ? (
           <button
             type="button"

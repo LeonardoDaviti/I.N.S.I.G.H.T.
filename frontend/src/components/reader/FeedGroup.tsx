@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom';
 
 import type { FeedGroup as FeedGroupData, FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
-import { displaySourceName, scopePath } from '../../lib/feedContext';
+import { scopePath } from '../../lib/feedContext';
+import { sourceLabel } from '../../lib/sourceLabel';
 import { formatCount, middleTruncate, plural } from '../../lib/format';
 import FeedItem from './FeedItem';
 
@@ -22,7 +23,7 @@ export interface FeedGroupProps {
 
 /** One source in the by-source view: up to 3 posts, then "N more from <source>". */
 export default function FeedGroup({ group, density, selectedId, tabbableId, itemHref, now, ...handlers }: FeedGroupProps) {
-  const name = displaySourceName(group.source_display_name);
+  const name = sourceLabel(group.source_display_name);
   const more = Math.max(0, group.count - group.items.length);
   const sourceHref = scopePath(`source:${group.source_id}`);
   const headingId = `feed-group-${group.source_id}`;

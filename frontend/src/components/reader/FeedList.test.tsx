@@ -53,6 +53,28 @@ beforeEach(() => {
 });
 
 describe('FeedList', () => {
+  it('shows a date column ("Sep 29"; relative only inside 24h), day headers and derived source names', async () => {
+    const now = Date.now();
+    const iso = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000).toISOString();
+    const old = new Date(now - 12 * 24 * 3_600_000);
+    setup({
+      getFeed: vi.fn().mockResolvedValue(feedPage([
+        feedItem({ id: ID(1), title: 'Fresh', sort_at: iso(2), published_at: iso(2) }),
+        feedItem({ id: ID(2), title: 'Old one', sort_at: old.toISOString(), published_at: old.toISOString(), source_display_name: 'https://github.com/anthropics/claude-code/commits.atom' }),
+        feedItem({ id: ID(3), title: 'Old two', sort_at: old.toISOString(), published_at: old.toISOString(), source_display_name: 'https://rss.arxiv.org/rss/cs.CL' }),
+      ])),
+    });
+    const [fresh, oldOne] = await screen.findAllByRole('article');
+    expect(within(fresh).getByText('2h ago')).toBeInTheDocument();
+    const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    expect(within(oldOne).getByText(shortDate)).toBeInTheDocument();
+    expect(screen.queryByText(/\d+d ago/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(2);
+    expect(screen.getByText('anthropics/claude-code')).toBeInTheDocument();
+    expect(screen.getByText('arXiv cs.CL')).toBeInTheDocument();
+    expect(screen.queryByText(/github\.com|rss\.arxiv/)).not.toBeInTheDocument();
+  });
+
   it('renders one article per item with exactly one link each', async () => {
     setup();
     const articles = await screen.findAllByRole('article');

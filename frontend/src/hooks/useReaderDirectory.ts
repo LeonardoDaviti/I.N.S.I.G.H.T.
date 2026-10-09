@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
 import type { Folder } from '../services/api';
+import { sourceLabel } from '../lib/sourceLabel';
 import { useSourcesHealth } from './useSourcesHealth';
 
 export const FOLDERS_KEY = ['folders'] as const;
@@ -37,5 +38,6 @@ export function scopeLabel(scope: string, folders: Folder[] | undefined, sourceN
   if (scope === 'all') return 'All posts';
   const [kind, id] = scope.split(':');
   if (kind === 'folder') return folders?.find((folder) => folder.id === id)?.name ?? 'Track';
-  return sourceNames.get(id) ?? 'Source';
+  const name = sourceNames.get(id);
+  return name ? sourceLabel(name) : 'Source';
 }

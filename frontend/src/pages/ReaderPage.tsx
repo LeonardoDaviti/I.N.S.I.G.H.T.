@@ -169,7 +169,7 @@ function Reader({ scope }: { scope: string }) {
             onOpenHelp={() => setHelpOpen(true)}
             pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
           />
-          <div className="mx-auto w-full max-w-3xl px-3 pb-32 pt-3 sm:px-6">
+          <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
             <FeedList
               scope={scope}
               filter={filter}
