@@ -2,11 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { X, Plus } from 'lucide-react';
 import type { SourceState } from '../types';
 import { apiService } from '../services/api';
+import { FilterChip } from './ui';
 
 interface Template {
   id: string;
   name: string;
-  color: string;
   platform: string;
   variableName: string;
   defaultVariableValue?: string;
@@ -27,7 +27,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'nitter',
     name: 'Nitter',
-    color: '#FF6C60',
     platform: 'rss',
     variableName: 'username',
     variableLabel: 'Username',
@@ -44,7 +43,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'telegram-rss',
     name: 'Telegram RSS',
-    color: '#0EA5E9',
     platform: 'rss',
     variableName: 'username',
     variableLabel: 'Channel Username',
@@ -61,7 +59,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'lesswrong',
     name: 'LessWrong',
-    color: '#2563EB',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'lesswrong',
@@ -79,7 +76,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'gwern',
     name: 'Gwern',
-    color: '#111827',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'gwern',
@@ -97,7 +93,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'dario-amodei',
     name: 'Dario Amodei Blog',
-    color: '#334155',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'dario',
@@ -115,7 +110,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'deeplearning-batch',
     name: 'DeepLearning.AI The Batch',
-    color: '#F65B66',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'the-batch',
@@ -133,7 +127,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'philschmid-cloud-attention',
     name: 'Cloud Attention',
-    color: '#10B981',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'cloud-attention',
@@ -151,7 +144,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'ztm-ml-monthly',
     name: 'ZTM AI & ML Monthly',
-    color: '#EC4899',
     platform: 'rss',
     variableName: 'site',
     defaultVariableValue: 'machine-learning-monthly',
@@ -169,7 +161,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'youtube-handle',
     name: 'YouTube',
-    color: '#EF4444',
     platform: 'youtube',
     variableName: 'channel',
     variableLabel: 'Channel Handle',
@@ -335,24 +326,13 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
               </label>
               <div className="flex flex-wrap gap-2">
                 {availableTemplates.map((template) => (
-                  <button
+                  <FilterChip
                     key={template.id}
+                    selected={selectedTemplate?.id === template.id}
                     onClick={() => handleTemplateClick(template)}
-                    className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                      selectedTemplate?.id === template.id
-                        ? 'bg-white shadow-md'
-                        : 'bg-white hover:shadow-md'
-                    }`}
-                    style={{
-                      border: `2px solid ${template.color}`,
-                      color: template.color,
-                      boxShadow: selectedTemplate?.id === template.id
-                        ? `0 0 12px ${template.color}40`
-                        : 'none',
-                    }}
                   >
                     {template.name}
-                  </button>
+                  </FilterChip>
                 ))}
               </div>
             </div>
@@ -492,7 +472,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
               disabled
             />
             <p className="text-xs text-gray-500 mt-1">
-              ⚠️ Not enforced (future feature)
+              Not enforced yet
             </p>
           </div>
         </div>

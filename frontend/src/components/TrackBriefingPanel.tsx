@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { apiService } from '../services/api';
@@ -19,22 +19,6 @@ const MarkdownRenderer = lazy(() => import('./ui/MarkdownRenderer'));
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
-
-/**
- * MarkdownRenderer paints with the System A theme tokens (var(--text-normal) & co).
- * This page is hard-coded light (bg-gray-50 / white cards) regardless of the theme
- * toggle, so we pin the light values inside the markdown subtree — otherwise the
- * dark theme renders near-white text on a white card.
- */
-const LIGHT_MARKDOWN_VARS = {
-  '--text-normal': '#1F2937',
-  '--text-muted': '#5F6C7B',
-  '--text-faint': '#8B97A5',
-  '--accent-strong': '#1D4ED8',
-  '--background-secondary': '#F4F6F8',
-  '--background-modifier-border': '#D6DEE8',
-  '--text-highlight-bg': 'rgba(76, 141, 255, 0.16)',
-} as unknown as CSSProperties;
 
 /** "fallback" is the deterministic stub, not analysis. The user must be able to tell. */
 function GeneratorBadge({ generator }: { generator?: string | null }) {
@@ -68,7 +52,7 @@ function TopicCard({ topic }: { topic: ExpertTopic }) {
         </span>
       </div>
       {topic.summary && (
-        <div className="mt-1 text-sm text-gray-700" style={LIGHT_MARKDOWN_VARS}>
+        <div className="mt-1 text-sm text-gray-700">
           <Suspense fallback={<p className="whitespace-pre-wrap text-gray-700">{topic.summary}</p>}>
             <MarkdownRenderer content={topic.summary} />
           </Suspense>
@@ -257,7 +241,7 @@ export default function TrackBriefingPanel({
       {open && (
         <div className={`border-t border-gray-100 p-4 ${switching ? 'opacity-50' : ''}`}>
           {briefing?.briefing && (
-            <div className="text-sm text-gray-800" style={LIGHT_MARKDOWN_VARS}>
+            <div className="text-sm text-gray-800">
               <Suspense
                 fallback={<p className="whitespace-pre-wrap text-gray-800">{briefing.briefing}</p>}
               >

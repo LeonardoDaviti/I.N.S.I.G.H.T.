@@ -259,6 +259,22 @@
     background-image: none !important;
   }
 
+  /* Arbitrary-value shadows with a literal colour (indigo/cyan/blue glows, yellow
+     inset highlights) slip past the palette swap. Zero only the shadow layer, so
+     focus rings (--tw-ring-shadow) on the same element still draw. Hairline
+     shadows built from tokens (shadow-[0_1px_0_var(--…)]) carry no rgba( and stay. */
+  [class*='shadow-['][class*='rgba('] {
+    --tw-shadow: 0 0 #0000 !important;
+    --tw-shadow-colored: 0 0 #0000 !important;
+  }
+
+  /* Literal-colour arbitrary backgrounds (bg-[rgba(253,224,71,…)] chips) become the
+     neutral highlight tint. Token-based ones (bg-[rgb(var(--…))]) are untouched. */
+  [class*='bg-[rgba('],
+  [class*='bg-[#'] {
+    background-color: rgb(var(--text) / 0.07) !important;
+  }
+
   .app-shell {
     background: rgb(var(--bg));
     color: rgb(var(--text));

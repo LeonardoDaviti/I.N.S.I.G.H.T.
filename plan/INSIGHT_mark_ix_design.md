@@ -3,7 +3,7 @@
 Status: adopted 2026-10-09. Owner direction: "I don't like the Mark VIII hub at all, it's non user friendly."
 Dark is **black and white only**, like news.smol.ai. Light uses the same monochrome system, inverted.
 This document is the contract for every frontend slice (spec §F.6, §F.7). Implemented in
-`frontend/src/index.css`, `frontend/tailwind.config.js`, `frontend/src/components/ui/*`,
+`frontend/src/index.css`, `frontend/tailwind.config.cjs`, `frontend/src/components/ui/*`,
 `frontend/src/components/states/*` and `frontend/src/components/layout/*`.
 
 Reference: `plan/design/reference-news-smol-ai-dark.png`. Before: `plan/design/before-mark-viii-hub.png`,
@@ -210,10 +210,16 @@ in place by its owning slice.
 - [ ] **Reader `/`, `/read/*`** — drop its own wordmark and "All tools" link (the top bar has them); rail and toolbar
       sticky under the top bar (`top: var(--topbar-h)`); items as `Row`-like articles; unread = dot + weight 600.
 - [ ] **Post `/posts/:id`** — `PageHeader` + 68ch reading column; actions as ghost buttons; summary in `<details>`.
+      Replace the yellow `<mark>` highlight classes and the `bg-[rgba(253,224,71,…)]` chip with the
+      `--text-highlight-bg` tint (index.css currently neutralises them globally); make the reading column
+      `min-w-0` and give `<pre>` its own `overflow-x: auto` so a long code line never widens the card past the viewport.
 - [ ] **Sources `/settings/sources`** — `PageHeader` with one primary "Add source"; underline `Tabs`; health table
       on the `Table` primitive with `StatusGlyph`; filter chips = `FilterChip`; "Fetch now" = secondary `sm`.
-- [ ] **Ingestion `/ingestion`** — `PageHeader`; Run cycle = primary; run report as `Notice` + `Table`.
+- [ ] **Ingestion `/ingestion`** — `PageHeader`; Run cycle = primary; run report as `Notice` + `Table`; the active
+      tab uses the underline `Tabs` primitive instead of `indigo/cyan` + arbitrary glow classes.
 - [ ] **Briefing `/briefing`** — remove its private sidebar header/wordmark; list as `Row`s with date column.
-- [ ] **Stories, Inbox, Vertical briefing** — remove "Back to hub", eyebrow pills, `app-panel` bubbles → `Row`/`Table`.
+- [ ] **Stories, Inbox, Vertical briefing** — remove "Back to hub", eyebrow pills, marketing hero copy, `app-panel`
+      bubbles → `Row`/`Table`; drop the `shadow-[…rgba()]` selected-card glows (neutralised globally for now).
+- [ ] **Briefing** also drops the colour emoji (📊 📅) and the "I.N.S.I.G.H.T. INTELLIGENCE NETWORK" wordmark.
 - [ ] **Tracks `/tracks`, `/tracks/:id`** — `PageHeader`; track list as `Row`s with unread counts.
 - [ ] Every list: worst/empty/one/huge fixtures; 375px; 200% zoom; light theme parity.
