@@ -1044,6 +1044,18 @@ Shortcuts are ignored while focus is in an `input`, `textarea`, `select` or `[co
 
 ---
 
+### F.7 Design language (product-owner directive, 2026-10-09)
+
+Every frontend slice (F1 where it sets tokens, F3, F2, and the final polish pass) is built against three project skills in `.claude/skills/`. Load them with the Skill tool before writing UI code: `apple-design`, `emil-design-eng`, `break-ui`. The concrete rules for INSIGHT:
+
+- **Motion budget by frequency.** j/k, keyboard navigation, mark-read and list hovers get **no animation**; they happen hundreds of times a day. Toasts, sheets, popovers and the shortcut-help dialog get short, interruptible transitions: under 300ms, strong ease-out `cubic-bezier(0.23, 1, 0.32, 1)`, `transform`/`opacity` only, never `transition: all`, never `scale(0)`. Popovers scale from their trigger; modals stay centered. Use springs (critically damped by default) only for anything draggable.
+- **Response.** Every pressable control gives instant `:active` feedback (`scale(0.97)`, 100–160ms). Optimistic UI for mark-read/unread with rollback on error. No artificial delays on the input path. Hover effects only under `@media (hover: hover) and (pointer: fine)`.
+- **Materials and hierarchy.** Sticky reader toolbar and nav rail use a translucent material (`backdrop-filter` blur + semi-transparent bg) with content scrolling under it, and a scroll-edge fade instead of a hard 1px divider. Never stack translucent on translucent.
+- **Reading typography.** System font stack with optical sizing. Body measure 60–75ch, line-height ~1.5–1.6. Headings use tighter leading and negative tracking (≈ −0.02em at display sizes). `tabular-nums` for counts, timestamps and health-table numbers. Spacing in rem so 200% zoom and a raised root font size don't break layout.
+- **Accessibility signals.** Honour `prefers-reduced-motion` (cross-fades instead of slides), `prefers-reduced-transparency` (solid surfaces, no blur) and `prefers-contrast: more`. Dark mode must hold.
+- **Feedback kinds.** Status (run in progress), completion (run report), warning (backoff, kind unavailable), error. Each has one consistent component from F1's `components/states/*`.
+- **Worst-case data is an acceptance gate.** Every new list or row component (FeedItem, FeedGroup, SourceHealthTable row, RunReportSummary) ships with a worst-case fixture from `.claude/skills/break-ui/CATALOG.md`: long and missing titles, unbreakable URLs, non-Latin, RTL and emoji text, 0/1/12,847 counts, null dates, future dates, sources in backoff, kind unavailable. Fixtures live next to the component's tests, and a dev-only `?data=worst|empty|one|huge` switch is exposed on the reader and health-table routes. Long text: titles wrap (clamped at 2–3 lines in lists), URLs and handles middle-truncate with a `title` attribute, and numbers and dates are never truncated. Use `Intl.PluralRules` and `Intl.NumberFormat`.
+
 ## 3. Seams and adapters (real vs test)
 
 | Seam (interface) | Real adapter | Test adapter |
