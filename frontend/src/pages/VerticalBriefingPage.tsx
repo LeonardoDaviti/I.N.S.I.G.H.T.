@@ -8,6 +8,7 @@ import { apiService } from '../services/api';
 import type { SourceWithSettings, VerticalBriefingResponse, VerticalBriefingTrack } from '../services/api';
 import { formatCount, plural } from '../lib/format';
 import { formatIssueRange, formatIssueShort } from '../lib/issueDate';
+import { readableSourceName } from '../lib/briefingPage';
 import { cn } from '../lib/utils';
 
 /**
@@ -197,7 +198,8 @@ export default function VerticalBriefingPage() {
   const tracks = briefing?.tracks || [];
   const postsById = briefing?.posts || {};
   const sourceName =
-    briefing?.source_label || selectedSource?.settings?.display_name || selectedSource?.handle_or_url || 'No source selected';
+    readableSourceName(briefing?.source_label, selectedSource?.settings?.display_name, selectedSource?.handle_or_url) ||
+    'No source selected';
   const busy = loadingBriefing || refreshing;
 
   const syncSearchParams = (patch: Record<string, string | null | undefined>) => {
@@ -328,7 +330,7 @@ export default function VerticalBriefingPage() {
             <option value="">Select a source</option>
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
-                {source.settings?.display_name || source.handle_or_url || source.id}
+                {readableSourceName(source.settings?.display_name, source.handle_or_url) || source.id}
               </option>
             ))}
           </Select>

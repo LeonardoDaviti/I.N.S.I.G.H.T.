@@ -14,6 +14,7 @@ import { Button, Chip, Skeleton, StatusIcon } from './ui';
 import { Notice } from './states';
 import { formatCount, plural } from '../lib/format';
 import { formatIssueShort } from '../lib/issueDate';
+import { readableSourceName } from '../lib/briefingPage';
 import { cn } from '../lib/utils';
 
 /**
@@ -192,7 +193,7 @@ function RailNode({ node, folderId }: { node: MilestoneListNode; folderId?: stri
                       {e.title || 'Untitled post'}
                     </div>
                     <div className="truncate text-[0.75rem] tabular-nums text-fg-3" title={`${e.role} · ${e.source_name}`}>
-                      {e.role} · {e.source_name} · {formatIssueShort(e.published_at)}
+                      {e.role} · {readableSourceName(e.source_name)} · {formatIssueShort(e.published_at)}
                     </div>
                   </Link>
                 ))}

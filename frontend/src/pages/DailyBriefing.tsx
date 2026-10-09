@@ -1,18 +1,34 @@
-import React from 'react';
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Download, Share2, Calendar, BarChart3, RefreshCw, AlertCircle, CheckCircle2, ExternalLink, Settings, Copy, Eye, EyeOff, ChevronDown, ChevronRight, Pencil, Check, X, Scissors, FileText, Layers3, Search } from 'lucide-react';
+import { Children, Fragment, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Check, ChevronRight, ExternalLink, Pencil, X } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import SourcesConfig from './SourcesConfig';
+import { toast } from 'sonner';
 import { apiService } from '../services/api';
 import type { BriefingReference, BriefingResponse, Post, BriefingTopicsResponse, Topic, SourcesWithCountsResponse, SourceWithSettings, SystemStatusResponse } from '../services/api';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
-import SourceAvatar from '../components/SourceAvatar';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
-import { filterSourceGroups, getPlatformLabel, getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
+import { Button, Chip, Input, Page, StatusGlyph, StatusIcon, Tabs, TabsContent, TabsList, TabsTrigger, TextLink, iconButtonClass, tabTriggerClass } from '../components/ui';
+import { EmptyState, LoadingState, Notice, FOCUS_RING } from '../components/states';
+import { getPlatformLabel, getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
 import { writeToClipboard } from '../lib/clipboard';
+import { formatRelativeTime, localDateISO } from '../lib/dates';
+import { formatCount, plural } from '../lib/format';
+import { isStale, readableSourceName, tabForMode, type BriefingTab } from '../lib/briefingPage';
+import { formatIssueLong, formatIssueRange, formatIssueShort } from '../lib/issueDate';
+import { cn } from '../lib/utils';
 
-const SIDEBAR_WIDTH_STEPS = [280, 340, 400];
-const SIDEBAR_WIDTH_STORAGE_KEY = 'insight.briefing.sidebar-width';
+/**
+ * The briefings page (/briefing, /briefing/topics).
+ *
+ * Mark IX restyle: read like a newsletter (news.smol.ai), not a dashboard. One
+ * centred reading column: a dated header with the system line (loud only when
+ * ingestion is stale), one tab per briefing kind (daily / topics / weekly, plus
+ * the vertical page), a date and ONE primary action per tab, then the issue:
+ * kicker, title, text in the reading measure, a plain numbered topic list and
+ * the cited posts. It opens on the latest day that has posts, not on an empty
+ * today. Monochrome only: no platform colours, no tinted stat cards, no emoji;
+ * status is a glyph plus a word. Generation logic is unchanged.
+ */
+
 
 function getRenderablePostContent(post: Post): string {
   const raw = (post.content_html || post.content || '').trim();
@@ -56,136 +72,354 @@ function getPostThumbnails(post: Post, limit = 3): string[] {
   return images.slice(0, limit);
 }
 
-function formatRelativeTime(value?: string | null): string {
-  if (!value) return '';
-  const parsed = new Date(value);
-  if (isNaN(parsed.getTime())) return '';
+const MetaSep = () => (
+  <span aria-hidden="true" className="text-fg-3">
+    ·
+  </span>
+);
 
-  const diffMinutes = Math.round((Date.now() - parsed.getTime()) / 60000);
-  if (diffMinutes < 1) return 'just now';
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return parsed.toLocaleDateString();
+/** Long-form text (a briefing, a topic summary, a post) in the reading measure. */
+function Reading({ content, size = 'body', className }: { content: string; size?: 'body' | 'small'; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'min-w-0 max-w-reading break-words text-fg [overflow-wrap:anywhere]',
+        size === 'body' ? 'text-[1.0625rem] leading-[1.7]' : 'text-[0.9375rem] leading-[1.6]',
+        className,
+      )}
+    >
+      <MarkdownRenderer content={content} />
+    </div>
+  );
 }
 
-function getPlatformTone(platform?: string) {
-  switch ((platform || '').toLowerCase()) {
-    case 'reddit':
-      return {
-        card: 'border-l-4 border-l-orange-500 bg-orange-50/30',
-        badge: 'bg-orange-100 text-orange-700 border-orange-200',
-      };
-    case 'youtube':
-      return {
-        card: 'border-l-4 border-l-red-500 bg-red-50/20',
-        badge: 'bg-red-100 text-red-700 border-red-200',
-      };
-    case 'telegram':
-      return {
-        card: 'border-l-4 border-l-sky-500 bg-sky-50/30',
-        badge: 'bg-sky-100 text-sky-700 border-sky-200',
-      };
-    case 'rss':
-      return {
-        card: 'border-l-4 border-l-indigo-500 bg-indigo-50/20',
-        badge: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-      };
-    default:
-      return {
-        card: 'border-l-4 border-l-slate-400 bg-white',
-        badge: 'bg-slate-100 text-slate-700 border-slate-200',
-      };
+/** A text action in a row's action line ("preview · read · original · copy"). */
+function RowAction({
+  children,
+  onClick,
+  href,
+  pressed,
+  label,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  href?: string;
+  pressed?: boolean;
+  label?: string;
+}) {
+  const className = cn(
+    'inline-flex items-center gap-1 whitespace-nowrap rounded-sm text-fg-2 hover:text-fg coarse:min-h-[2.75rem]',
+    'underline decoration-[rgb(var(--text)/0.3)] underline-offset-[0.2em] hover:decoration-[rgb(var(--text))]',
+    FOCUS_RING,
+  );
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className={className} aria-label={label}>
+        {children}
+      </a>
+    );
   }
+  return (
+    <button type="button" onClick={onClick} className={className} aria-pressed={pressed} aria-label={label}>
+      {children}
+    </button>
+  );
 }
 
-function BriefingReferenceStrip({
+function RowActions({ children }: { children: ReactNode }) {
+  // Separators are real elements, not ::before content, so they never pick up an
+  // action's underline and screen readers skip them.
+  const items = Children.toArray(children).filter(Boolean);
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.8125rem]">
+      {items.map((item, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <MetaSep /> : null}
+          {item}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function postDateLabels(post: Post): { short: string; full: string } {
+  const value = post.date || post.published_at || null;
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) return { short: '—', full: 'Unknown date' };
+  return { short: formatIssueShort(value), full: parsed.toLocaleString() };
+}
+
+/**
+ * One post in a briefing list or a feed: an optional muted date column, the bold
+ * title (it toggles the inline preview), a meta line and a line of text actions.
+ * Monochrome: the platform is a word, not a coloured stripe.
+ */
+function PostEntry({
+  post,
+  expanded,
+  onToggle,
+  onOpen,
+  copied,
+  onCopy,
+  onOutlier,
+  number,
+  showDate = false,
+  showThumbnails = false,
+}: {
+  post: Post;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpen?: () => void;
+  copied?: boolean;
+  onCopy?: () => void;
+  onOutlier?: () => void;
+  number?: number;
+  /** true = a date column (meta line below sm); 'none' = no date at all (a list of one day). */
+  showDate?: boolean | 'none';
+  showThumbnails?: boolean;
+}) {
+  const platform = (post.platform || 'unknown').toLowerCase();
+  const title = post.title || `${getPlatformLabel(post.platform)} post`;
+  const source = readableSourceName(post.source_display_name, post.source);
+  const date = postDateLabels(post);
+  const thumbnails = showThumbnails ? getPostThumbnails(post) : [];
+  const body = expanded ? getRenderablePostContent(post) : '';
+
+  return (
+    <li className="border-t border-line first:border-t-0" data-testid="post-entry">
+      <div className="flex items-start gap-3 py-3.5">
+        {showDate === true ? (
+          <span className="hidden w-[4.75rem] shrink-0 whitespace-nowrap pt-0.5 text-[0.8125rem] tabular-nums text-fg-3 sm:block" title={date.full}>
+            {date.short}
+          </span>
+        ) : null}
+        {number !== undefined ? (
+          <span aria-hidden="true" className="w-6 shrink-0 pt-0.5 text-[0.8125rem] tabular-nums text-fg-3">
+            {number}
+          </span>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={onToggle}
+            className={cn('block w-full rounded-sm text-left', FOCUS_RING)}
+          >
+            <span className="line-clamp-3 break-words font-semibold leading-[1.4] text-fg [overflow-wrap:anywhere]">{title}</span>
+          </button>
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[0.8125rem] text-fg-3">
+            <span className="whitespace-nowrap">{platform}</span>
+            {source ? (
+              <>
+                <MetaSep />
+                <span className="min-w-0 max-w-full truncate" title={source}>
+                  {source}
+                </span>
+              </>
+            ) : null}
+            {showDate !== 'none' && (post.date || post.published_at) ? (
+              <span className={cn('contents', showDate === true && 'sm:hidden')}>
+                <MetaSep />
+                <span className="whitespace-nowrap tabular-nums" title={date.full}>
+                  {date.short}
+                </span>
+              </span>
+            ) : null}
+          </div>
+          {thumbnails.length > 0 ? (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {thumbnails.map((mediaUrl) => (
+                <img
+                  key={mediaUrl}
+                  src={mediaUrl}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  className="aspect-video w-28 shrink-0 rounded-sm border border-line bg-raised object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
+          <RowActions>
+            <RowAction onClick={onToggle} pressed={expanded}>
+              {expanded ? 'hide text' : 'preview'}
+            </RowAction>
+            {post.id && onOpen ? <RowAction onClick={onOpen}>read</RowAction> : null}
+            {post.url ? (
+              <RowAction href={post.url} label={`Open the original of ${title} in a new tab`}>
+                original
+                <ExternalLink aria-hidden="true" className="h-3 w-3" />
+              </RowAction>
+            ) : null}
+            {onCopy ? (
+              <RowAction onClick={onCopy} label={copied ? 'Copied to clipboard' : 'Copy post text'}>
+                {copied ? (
+                  <>
+                    <Check aria-hidden="true" className="h-3 w-3" />
+                    copied
+                  </>
+                ) : (
+                  'copy'
+                )}
+              </RowAction>
+            ) : null}
+            {onOutlier ? <RowAction onClick={onOutlier}>move to outlier</RowAction> : null}
+          </RowActions>
+        </div>
+      </div>
+      {expanded ? (
+        <div className={cn('pb-5', showDate === true ? 'sm:pl-[5.5rem]' : number !== undefined ? 'pl-9' : '')}>
+          {body ? <Reading content={body} size="small" className="text-fg-2" /> : <p className="text-[0.875rem] text-fg-3">This post has no text.</p>}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** A numbered topic in a briefing: the title toggles its body (summary, timeline, posts). */
+function TopicItem({
+  number,
+  title,
+  count,
+  open,
+  onToggle,
+  outlier = false,
+  headerExtra,
+  editor,
+  children,
+}: {
+  number: number;
+  title: string;
+  count?: number;
+  open: boolean;
+  onToggle: () => void;
+  outlier?: boolean;
+  headerExtra?: ReactNode;
+  /** Replaces the title button while the title is being edited. */
+  editor?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <li className="border-t border-line first:border-t-0" data-testid="topic-item">
+      <div className="flex items-start gap-2 py-4">
+        <span aria-hidden="true" className="w-7 shrink-0 pt-[0.15rem] text-[0.8125rem] tabular-nums text-fg-3">
+          {String(number).padStart(2, '0')}
+        </span>
+        {editor ?? (
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={onToggle}
+            className={cn('group flex min-w-0 flex-1 items-start gap-2 rounded-sm text-left', FOCUS_RING)}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="break-words text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg [overflow-wrap:anywhere]">
+                {title || 'Untitled topic'}
+              </span>
+              {outlier ? (
+                <Chip variant="dashed" className="ml-2 align-[0.1em]">
+                  outlier
+                </Chip>
+              ) : null}
+              {count !== undefined ? (
+                <span className="ml-2 whitespace-nowrap text-[0.8125rem] font-normal tabular-nums text-fg-3">{plural(count, 'post')}</span>
+              ) : null}
+            </span>
+            <ChevronRight aria-hidden="true" className={cn('mt-1 h-4 w-4 shrink-0 text-fg-3 group-hover:text-fg', open && 'rotate-90')} />
+          </button>
+        )}
+        {headerExtra}
+      </div>
+      {open ? <div className="space-y-5 pb-6 pl-9">{children}</div> : null}
+    </li>
+  );
+}
+
+/** The posts a briefing cites, as a plain list under the text. */
+function ReferenceList({
   references,
   onOpenPost,
-  className = '',
 }: {
   references?: BriefingReference[] | null;
   onOpenPost: (postId: string) => void;
-  className?: string;
 }) {
   if (!references?.length) {
     return null;
   }
-
   const visible = references.slice(0, 10);
 
   return (
-    <div className={`rounded-2xl border border-gray-200 bg-white/80 p-4 ${className}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
-            Referenced Posts
-          </div>
-          <div className="text-sm text-gray-600">
-            {references.length} source{references.length === 1 ? '' : 's'} linked to this briefing
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <section className="mt-8 max-w-reading" aria-label="Referenced posts">
+      <h3 className="text-[0.8125rem] font-medium text-fg-3">
+        Referenced posts <span className="tabular-nums">· {formatCount(references.length)}</span>
+      </h3>
+      <ol className="mt-2 border-t border-line">
         {visible.map((reference, index) => {
           const post = reference.post;
           const label = reference.display_label || post?.title || post?.source_display_name || post?.source || `Post ${index + 1}`;
           const rawHighlight = reference.highlight?.highlight_text || reference.highlight?.commentary || '';
           const highlight = rawHighlight.length > 220 ? `${rawHighlight.slice(0, 220)}…` : rawHighlight;
+          const source = readableSourceName(post?.source_display_name, post?.source) || reference.reference_role || 'reference';
           return (
-            <div key={reference.id || `${reference.post_id}-${index}`} className="min-w-[220px] max-w-[320px] rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-              <div className="flex items-start justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => reference.post_id && onOpenPost(reference.post_id)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <div className="truncate text-sm font-semibold text-gray-900">{label}</div>
-                  <div className="mt-1 truncate text-xs text-gray-500">
-                    {post?.source_display_name || post?.source || reference.reference_role || 'reference'}
-                  </div>
-                </button>
-                <div className="flex items-center gap-2 text-gray-500">
-                  {post?.url && (
-                    <a
-                      href={post.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-gray-800"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  )}
-                  {reference.post_id && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenPost(reference.post_id!)}
-                      className="hover:text-gray-800"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
+            <li key={reference.id || `${reference.post_id}-${index}`} className="flex items-start gap-3 border-b border-line py-2.5">
+              <span aria-hidden="true" className="w-6 shrink-0 pt-0.5 text-[0.8125rem] tabular-nums text-fg-3">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                {reference.post_id ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenPost(reference.post_id!)}
+                    className={cn('block w-full rounded-sm text-left', FOCUS_RING)}
+                  >
+                    <span className="line-clamp-2 break-words font-medium text-fg [overflow-wrap:anywhere] hover:underline">{label}</span>
+                  </button>
+                ) : (
+                  <span className="line-clamp-2 break-words font-medium text-fg [overflow-wrap:anywhere]">{label}</span>
+                )}
+                <span className="block truncate text-[0.8125rem] text-fg-3" title={source}>
+                  {source}
+                </span>
+                {highlight ? (
+                  <p className="mt-1 line-clamp-3 break-words text-[0.875rem] leading-[1.55] text-fg-2 [overflow-wrap:anywhere]">“{highlight}”</p>
+                ) : null}
               </div>
-              {highlight && (
-                <div className="mt-2 text-xs leading-relaxed text-gray-600">
-                  {highlight}
-                </div>
-              )}
-            </div>
+              {post?.url ? (
+                <a
+                  href={post.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={iconButtonClass}
+                  aria-label={`Open the original of ${label} in a new tab`}
+                >
+                  <ExternalLink aria-hidden="true" />
+                </a>
+              ) : null}
+            </li>
           );
         })}
-      </div>
+      </ol>
       {references.length > visible.length && (
-        <div className="mt-3 text-xs text-gray-500">
-          +{references.length - visible.length} more referenced posts
-        </div>
+        <p className="mt-2 text-[0.8125rem] tabular-nums text-fg-3">+{formatCount(references.length - visible.length)} more referenced posts</p>
       )}
-    </div>
+    </section>
+  );
+}
+
+/** One briefing on the page, read like a newsletter issue: kicker (date/kind), title, body. */
+function IssueSection({ id, kicker, title, children }: { id: string; kicker?: ReactNode; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="border-t border-line pt-8 first:border-t-0 first:pt-0">
+      {kicker ? <p className="text-[0.8125rem] tabular-nums text-fg-3">{kicker}</p> : null}
+      <h2 id={id} className="mt-1 break-words text-[1.375rem] font-semibold leading-[1.25] tracking-[-0.02em] text-fg">
+        {title}
+      </h2>
+      <div className="mt-5">{children}</div>
+    </section>
   );
 }
 
@@ -194,11 +428,14 @@ export default function DailyBriefing() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initializedFromUrlRef = useRef(false);
   const SOURCE_POSTS_PAGE_SIZE = 20;
-  // Focus mode
-  const [focusMode, setFocusMode] = useState(false);
+  // One tab per briefing kind (daily / topics / weekly); vertical is its own page.
+  const [tab, setTab] = useState<BriefingTab>(() => tabForMode(searchParams.get('mode')));
+  // Resolves with the first /api/status answer, so the default date can follow it.
+  const statusRequestRef = useRef<Promise<SystemStatusResponse | null> | null>(null);
   
   // Date selection (for briefing generation only)
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  // The local calendar day: toISOString() is the UTC day, which is wrong for part of every day.
+  const [selectedDate, setSelectedDate] = useState(() => localDateISO());
   
   // Briefing generation state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -245,17 +482,6 @@ export default function DailyBriefing() {
   
   // Sources sidebar state
   const [sourcesData, setSourcesData] = useState<SourcesWithCountsResponse | null>(null);
-  const [isLoadingSources, setIsLoadingSources] = useState(false);
-  const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
-  const [sourceQuery, setSourceQuery] = useState('');
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    if (typeof window === 'undefined') {
-      return SIDEBAR_WIDTH_STEPS[1];
-    }
-
-    const stored = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
-    return SIDEBAR_WIDTH_STEPS.includes(stored) ? stored : SIDEBAR_WIDTH_STEPS[1];
-  });
   const [editingSource, setEditingSource] = useState<SourceWithSettings | null>(null);
   const [loadingSourceEditorId, setLoadingSourceEditorId] = useState<string | null>(null);
   
@@ -330,31 +556,21 @@ export default function DailyBriefing() {
     [sourcesData],
   );
 
-  const filteredSourceGroups = useMemo(
-    () => filterSourceGroups(sourceGroups, sourceQuery),
-    [sourceGroups, sourceQuery],
-  );
-
   const selectedSource = useMemo(
     () => sourceGroups.flatMap((group) => group.sources).find((source) => source.id === selectedSourceId) || null,
     [selectedSourceId, sourceGroups],
   );
 
-  const selectedSourceName = selectedSource ? getSourceDisplayName(selectedSource) : 'Source';
+  const selectedSourceName = selectedSource
+    ? readableSourceName(getSourceDisplayName(selectedSource), selectedSource.handle_or_url) || 'Source'
+    : 'Source';
   const selectedSourceHandle = selectedSource ? getSourceHandleLabel(selectedSource) : '';
 
   // Load sources with counts on mount
   useEffect(() => {
     loadSourcesWithCounts();
-    void loadSystemStatus();
+    statusRequestRef.current = loadSystemStatus();
   }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
-  }, [sidebarWidth]);
 
   const toggleTopic = (topicId: string) => {
     setOpenTopics((prev) => {
@@ -403,7 +619,6 @@ export default function DailyBriefing() {
   };
 
   const loadSourcesWithCounts = async () => {
-    setIsLoadingSources(true);
     try {
       console.log('📋 Loading sources with post counts...');
       const response = await apiService.getSourcesWithCounts();
@@ -411,12 +626,7 @@ export default function DailyBriefing() {
       if (response.success) {
         console.log(`✅ Loaded sources: ${response.total_posts} total posts`);
         setSourcesData(response);
-        
-        // Auto-expand all platforms by default
-        const platforms = Object.keys(response.platforms);
-        const expanded: Record<string, boolean> = {};
-        platforms.forEach(p => expanded[p] = true);
-        setExpandedPlatforms(expanded);
+
       } else {
         console.error('❌ Failed to load sources:', response.error);
         setError(response.error || 'Failed to load sources');
@@ -424,16 +634,17 @@ export default function DailyBriefing() {
     } catch (error) {
       console.error('❌ API call failed:', error);
       setError(error instanceof Error ? error.message : 'Network error');
-    } finally {
-      setIsLoadingSources(false);
     }
   };
 
-  const loadSystemStatus = async () => {
+  const loadSystemStatus = async (): Promise<SystemStatusResponse | null> => {
     setIsLoadingStatus(true);
     try {
       const response = await apiService.getStatus();
       setSystemStatus(response);
+      return response ?? null;
+    } catch {
+      return null;
     } finally {
       setIsLoadingStatus(false);
     }
@@ -694,12 +905,9 @@ export default function DailyBriefing() {
           })
         );
         
-        // If outlier topic doesn't exist in our list, we might want to reload
-        // For now, just show success message
-        setError(response.message || 'Post moved to outlier topic successfully');
-        
-        // Clear error after 3 seconds (since it's actually a success message)
-        setTimeout(() => setError(null), 3000);
+        // A success is a toast, not the error slot (it used to borrow setError and
+        // clear itself after 3s, so a success read as a failure).
+        toast.success(response.message || 'Post moved to the outlier topic');
       } else {
         console.error('❌ Failed to move post to outlier:', response.error);
         setError(response.error || 'Failed to move post to outlier');
@@ -1193,1172 +1401,600 @@ export default function DailyBriefing() {
     // No usable deep link: open today's feed instead of an empty briefing shell.
     // Guard on requestedDate, not mode - every mode branch above needs a date, so
     // e.g. "?mode=daily" with no date would otherwise fall through to nothing.
+    // Open on the latest day that has posts, not on today: with ingestion paused
+    // "today" is an empty page (lead review #9). /api/status knows the newest post.
     if (!requestedDate) {
-      handleLoadDatabasePosts({ dateOverride: selectedDate });
+      void (async () => {
+        const status = await (statusRequestRef.current ?? Promise.resolve(null));
+        const latest = status?.corpus?.latest_post_at ? new Date(status.corpus.latest_post_at) : null;
+        const date = latest && !Number.isNaN(latest.getTime()) ? localDateISO(latest) : selectedDate;
+        setSelectedDate(date);
+        handleLoadDatabasePosts({ dateOverride: date });
+      })();
     }
   }, [searchParams]);
 
-  const briefingTitle = weeklyBriefing || briefingData || topicsBriefing ? 'Intelligence Briefing' : 'Daily Briefing';
-  const activeTakeaway = weeklyMeta?.oneSentenceTakeaway || briefingTakeaway || topicsTakeaway;
+  const activeTakeaway =
+    tab === 'weekly' ? weeklyMeta?.oneSentenceTakeaway : tab === 'topics' ? topicsTakeaway : briefingTakeaway;
+  const isDatePosts = activeView === 'all-posts' && searchParams.get('mode') === 'db-posts';
+  const isBrowsing = activeView === 'source' || (activeView === 'all-posts' && !isDatePosts);
   const openPostDetail = (postId: string) => {
     navigate(`/posts/${postId}`, { state: { returnTo: currentReturnUrl() } });
   };
+  const generating = {
+    daily: isGenerating,
+    topics: isGeneratingTopics || isRefreshingTopics,
+    weekly: isGeneratingWeekly || isGeneratingWeeklyTopics,
+  }[tab];
 
-  return (
-    <div className="app-shell flex h-screen">
-      {/* Floating Focus toggle */}
-      <div className="fixed bottom-20 right-4 md:right-6 z-50">
+  const selectTab = (next: string) => {
+    setTab(next as BriefingTab);
+    // Browsing one source is not a briefing; a tab click returns to the briefings.
+    if (activeView === 'source' || activeView === 'configure' || (activeView === 'all-posts' && !isDatePosts)) {
+      setActiveView('briefing');
+    }
+  };
+
+  // The page header names the view and, for briefings, the day (or week) it covers.
+  const header = (() => {
+    if (activeView === 'source') {
+      return {
+        kicker: selectedSource ? getPlatformLabel(selectedSource.platform) : 'Source',
+        title: selectedSourceName,
+        meta: sourcePostsMeta.total ? plural(sourcePostsMeta.total, 'post') : selectedSourceHandle,
+      };
+    }
+    if (isBrowsing) {
+      return { kicker: 'Every source', title: 'All posts', meta: plural(sourcesData?.total_posts ?? displayedPosts.length, 'post') };
+    }
+    if (tab === 'weekly' && (weeklyMeta?.weekStart || weeklyMeta?.weekEnd)) {
+      return {
+        kicker: `Week of ${formatIssueRange(weeklyMeta.weekStart, weeklyMeta.weekEnd)}`,
+        title: 'Briefing',
+        meta: plural(weeklyMeta.dailyBriefingsUsed || 0, 'daily briefing'),
+      };
+    }
+    const meta =
+      tab === 'daily'
+        ? briefingStats
+          ? plural(briefingStats.postsProcessed, 'post')
+          : databasePostsStats && isDatePosts
+            ? plural(databasePostsStats.total, 'post')
+            : null
+        : tab === 'topics'
+          ? topicsStats
+            ? plural(topicsStats.total, 'stored topic')
+            : topics.length
+              ? plural(topics.length, 'topic')
+              : null
+          : null;
+    return { kicker: formatIssueLong(selectedDate), title: 'Briefing', meta };
+  })();
+
+  const lastFetch = systemStatus?.corpus?.latest_fetch_at;
+  const stale = Boolean(systemStatus?.success) && isStale(lastFetch);
+
+  const statusLine = systemStatus ? (
+    <div className="mt-4 space-y-2">
+      {/* A stopped ingestion is the one thing on this page that must be loud
+          (lead review #11): an inverted "×" chip and a sentence, not grey meta. */}
+      {stale && (
+        <div
+          role="status"
+          data-testid="stale-warning"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-fg px-3 py-2 text-[0.875rem]"
+        >
+          <StatusGlyph status="failing" label="stale" />
+          <span className="font-semibold text-fg">Nothing fetched for {formatRelativeTime(lastFetch).replace(/ ago$/, '')}.</span>
+          <span className="text-fg-2">
+            Ingestion is not running, so briefings stop at posts from {formatIssueShort(systemStatus.corpus?.latest_post_at)}.
+          </span>
+          <TextLink to="/ingestion">Open ingestion</TextLink>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3" aria-label="System status">
+        {systemStatus.success ? (
+          <>
+            {!stale && <StatusGlyph status="ok" label="system" className="text-fg-2" />}
+            {!stale && <MetaSep />}
+            <span>newest post {systemStatus.corpus?.latest_post_at ? formatRelativeTime(systemStatus.corpus.latest_post_at) : 'unknown'}</span>
+            <MetaSep />
+            <span>last fetch {lastFetch ? formatRelativeTime(lastFetch) : 'unknown'}</span>
+            <MetaSep />
+            <span>{formatCount(systemStatus.corpus?.posts_last_24h ?? 0)} posts / 24h</span>
+            <MetaSep />
+            <span>
+              {formatCount(systemStatus.corpus?.enabled_sources ?? 0)}/{formatCount(systemStatus.corpus?.total_sources ?? 0)} sources on
+            </span>
+            {Boolean(systemStatus.source_health_summary?.errors) && (
+              <Link
+                to="/settings/sources?tab=health&status=error"
+                className={cn('rounded-sm', FOCUS_RING)}
+                title="Open the failing sources in Settings → Sources → Health"
+              >
+                <StatusGlyph status="failing" label={plural(systemStatus.source_health_summary?.errors ?? 0, 'source error')} />
+              </Link>
+            )}
+            {systemStatus.gemini_configured === false && <StatusGlyph status="unavailable" label="Gemini key missing" />}
+          </>
+        ) : (
+          <StatusGlyph status="failing" label="status unavailable" />
+        )}
         <button
           type="button"
-          onClick={() => setFocusMode(v => !v)}
-          className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-blue-600 text-white shadow-lg hover:bg-blue-700 focus:outline-none"
-          title={focusMode ? 'Unfocus' : 'Focus'}
+          onClick={() => void loadSystemStatus()}
+          disabled={isLoadingStatus}
+          className={cn('text-link rounded-sm text-fg-2 disabled:opacity-50 coarse:min-h-[2.75rem]', FOCUS_RING)}
         >
-          {focusMode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          {isLoadingStatus ? 'refreshing…' : 'refresh'}
         </button>
       </div>
+    </div>
+  ) : null;
 
-      {/* Sidebar */}
-      <div
-        className={`${focusMode ? 'w-0 p-0 opacity-0 pointer-events-none border-0' : 'shrink-0 border-r px-4 pb-4 pt-3.5 opacity-100'} overflow-y-auto relative transition-[width,padding,opacity] duration-300 ease-in-out`}
-        style={focusMode ? undefined : { width: `${sidebarWidth}px` }}
-        aria-hidden={focusMode}
-      >
-        <div className={`${focusMode ? 'hidden' : 'block'} mb-6`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-lg font-bold text-gray-900">I.N.S.I.G.H.T.</h1>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">
-                Intelligence Network
-              </p>
-            </div>
-            <div className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/80 p-1 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setSidebarWidth((current) => {
-                  const currentIndex = SIDEBAR_WIDTH_STEPS.indexOf(current);
-                  return SIDEBAR_WIDTH_STEPS[Math.max(0, currentIndex - 1)];
-                })}
-                disabled={sidebarWidth === SIDEBAR_WIDTH_STEPS[0]}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-35"
-                aria-label="Make sidebar narrower"
-                title="Make sidebar narrower"
-              >
-                -
-              </button>
-              <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                Rail
-              </span>
-              <button
-                type="button"
-                onClick={() => setSidebarWidth((current) => {
-                  const currentIndex = SIDEBAR_WIDTH_STEPS.indexOf(current);
-                  return SIDEBAR_WIDTH_STEPS[Math.min(SIDEBAR_WIDTH_STEPS.length - 1, currentIndex + 1)];
-                })}
-                disabled={sidebarWidth === SIDEBAR_WIDTH_STEPS[SIDEBAR_WIDTH_STEPS.length - 1]}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-35"
-                aria-label="Make sidebar wider"
-                title="Make sidebar wider"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        </div>
+  // One primary action per tab (the generator), the stored reads beside it as secondaries.
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <label htmlFor="briefing-date" className="sr-only">
+        Briefing date
+      </label>
+      <Input
+        id="briefing-date"
+        type="date"
+        value={selectedDate}
+        onChange={(e) => setSelectedDate(e.target.value)}
+        disabled={isGenerating || isGeneratingTopics}
+        className="w-auto tabular-nums"
+      />
+      {tab === 'daily' && (
+        <>
+          <Button variant="primary" onClick={() => void handleGenerateBriefing()} disabled={isGenerating} aria-busy={isGenerating || undefined}>
+            {isGenerating ? 'Generating…' : 'Generate briefing'}
+          </Button>
+          <Button variant="secondary" onClick={() => void handleLoadDatabasePosts()} disabled={isLoadingPosts}>
+            {isLoadingPosts ? 'Loading…' : 'Posts of the day'}
+          </Button>
+        </>
+      )}
+      {tab === 'topics' && (
+        <>
+          <Button
+            variant="primary"
+            onClick={() => handleGenerateTopicBriefing(false)}
+            disabled={isGeneratingTopics || isRefreshingTopics}
+            aria-busy={isGeneratingTopics || undefined}
+          >
+            {isGeneratingTopics ? 'Generating…' : 'Generate topic briefing'}
+          </Button>
+          <Button variant="secondary" onClick={() => void handleLoadTopics()} disabled={isLoadingTopics}>
+            {isLoadingTopics ? 'Loading…' : 'Stored topics'}
+          </Button>
+          <Button variant="ghost" onClick={() => handleGenerateTopicBriefing(true)} disabled={isGeneratingTopics || isRefreshingTopics}>
+            {isRefreshingTopics ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        </>
+      )}
+      {tab === 'weekly' && (
+        <>
+          <Button
+            variant="primary"
+            onClick={() => handleGenerateWeeklyBriefing(false)}
+            disabled={isGeneratingWeekly}
+            aria-busy={isGeneratingWeekly || undefined}
+          >
+            {isGeneratingWeekly ? 'Generating…' : 'Generate weekly briefing'}
+          </Button>
+          <Button variant="secondary" onClick={() => handleGenerateWeeklyTopicBriefing(false)} disabled={isGeneratingWeeklyTopics}>
+            {isGeneratingWeeklyTopics ? 'Generating…' : 'Weekly topics'}
+          </Button>
+        </>
+      )}
+    </div>
+  );
 
-        {/* Date Selection - for briefing generation only */}
-        <div className="mb-6">
-          <label className="block text-xs font-medium text-gray-900 mb-2">Generate Briefing</label>
-          <div className="space-y-2">
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                disabled={isGenerating || isGeneratingTopics}
-                className="w-full pl-10 pr-3 py-1.5 border border-gray-200 rounded-lg bg-white text-xs focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-colors disabled:opacity-50"
-              />
-            </div>
-            <button
-              onClick={() => void handleGenerateBriefing()}
-              disabled={isGenerating}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <BarChart3 className="w-4 h-4" />
-                  Generate Briefing
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleGenerateTopicBriefing(false)}
-              disabled={isGeneratingTopics || isRefreshingTopics}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isGeneratingTopics ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <BarChart3 className="w-4 h-4" />
-                  Topic Briefing
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleGenerateWeeklyBriefing(false)}
-              disabled={isGeneratingWeekly}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isGeneratingWeekly ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Calendar className="w-4 h-4" />
-                  Weekly Briefing
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleGenerateWeeklyTopicBriefing(false)}
-              disabled={isGeneratingWeeklyTopics}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-teal-700 text-white rounded-lg hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isGeneratingWeeklyTopics ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Calendar className="w-4 h-4" />
-                  Weekly Topics
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleGenerateTopicBriefing(true)}
-              disabled={isGeneratingTopics || isRefreshingTopics}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isRefreshingTopics ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Refreshing...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-4 h-4" />
-                  Refresh Topics
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="my-4 border-t border-gray-200"></div>
-
-          {/* Fetch Posts Section */}
-          <div>
-            <label className="block text-xs font-medium text-gray-900 mb-2">Load Posts by Date</label>
-            <button
-              onClick={() => void handleLoadDatabasePosts()}
-              disabled={isLoadingPosts}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
-            >
-              {isLoadingPosts ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                <>
-                  <Calendar className="w-4 h-4" />
-                  Load posts
-                </>
-              )}
-            </button>
-            
-            {/* Fetch Topics Button */}
-            <button
-              onClick={() => void handleLoadTopics()}
-              disabled={isLoadingTopics}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
-            >
-              {isLoadingTopics ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                <>
-                  <BarChart3 className="w-4 h-4" />
-                  Fetch Topics
-                </>
-              )}
-            </button>
-            
-          </div>
-
-          {/* Briefing Stats */}
-          {briefingStats && (
-            <div className="mt-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
-                <span className="text-xs font-medium text-green-800">Generated</span>
-              </div>
-              <div className="text-xs text-green-700 space-y-0.5">
-                <div>📊 Posts: {briefingStats.postsProcessed}</div>
-                <div>📅 Date: {briefingStats.date}</div>
-              </div>
-            </div>
-          )}
-
-          {weeklyMeta && (
-            <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-slate-700" />
-                <span className="text-xs font-medium text-slate-800">
-                  {weeklyMeta.variant === 'topics' ? 'Weekly Topic Briefing' : 'Weekly Briefing'}
-                </span>
-              </div>
-              <div className="text-xs text-slate-700 space-y-0.5">
-                <div>🗓️ {weeklyMeta.weekStart} → {weeklyMeta.weekEnd}</div>
-                <div>📚 Daily briefings: {weeklyMeta.dailyBriefingsUsed || 0}</div>
-                <div>{weeklyMeta.cached ? 'Using cached weekly briefing' : 'Generated fresh weekly briefing'}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Database Posts Stats */}
-          {databasePostsStats && (
-            <div className="mt-2.5 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="text-xs font-medium text-emerald-800">Posts Loaded</span>
-              </div>
-              <div className="text-xs text-emerald-700 space-y-0.5">
-                <div>📊 Total: {databasePostsStats.total}</div>
-                <div>📅 Date: {databasePostsStats.date}</div>
-              </div>
-            </div>
-          )}
-
-          {/* Topics Stats */}
-          {topicsStats && (
-            <div className="mt-2.5 p-2.5 bg-teal-50 border border-teal-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
-                <span className="text-xs font-medium text-teal-800">Topics Loaded</span>
-              </div>
-              <div className="text-xs text-teal-700 space-y-0.5">
-                <div>📚 Topics: {topicsStats.total}</div>
-                <div>📅 Date: {topicsStats.date}</div>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="mt-2.5 p-2.5 bg-red-50 border border-red-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                <span className="text-xs font-medium text-red-800">Error</span>
-              </div>
-              <div className="text-xs text-red-700">{error}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="mb-6 border-t border-gray-200 pt-4">
-          <h3 className="text-xs font-semibold text-gray-900 mb-2.5">Actions</h3>
-          <div className="space-y-1.5">
-            <button
-              onClick={() => navigate('/ingestion')}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-gray-700 hover:bg-gray-100"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Ingestion Control
-            </button>
-            <button 
-              onClick={() => setActiveView('configure')}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors ${
-                activeView === 'configure'
-                  ? 'bg-indigo-50 text-indigo-900 border border-indigo-200'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              Configure Sources
-            </button>
-          </div>
-        </div>
-
-        {/* Sources Navigation */}
-        <div>
-          <div className="mb-2.5 flex items-center justify-between gap-2">
-            <h3 className="text-xs font-semibold text-gray-900">Sources</h3>
-            {sourceQuery.trim() && (
-              <span className="text-[11px] font-medium text-gray-500">filtered</span>
-            )}
-          </div>
-          <div className="relative mb-3">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-            <input
-              type="search"
-              value={sourceQuery}
-              onChange={(e) => setSourceQuery(e.target.value)}
-              placeholder="Search source"
-              className="h-8 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-xs text-gray-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+  const renderTopicPosts = (topic: Topic, postsLookup: Record<string, Post>, defaultExpanded: boolean) => {
+    const ids = topic.post_ids || [];
+    const posts = ids.map((pid) => postsLookup[pid]).filter(Boolean) as Post[];
+    if (!posts.length) return null;
+    return (
+      <ol className="border-t border-line">
+        {posts.map((post, rIndex) => {
+          const key = `${topic.id}:${post.id || ids[rIndex]}`;
+          const isExpanded = expandedPosts[key] ?? defaultExpanded;
+          return (
+            <PostEntry
+              key={`${key}_${rIndex}`}
+              post={post}
+              number={rIndex + 1}
+              expanded={isExpanded}
+              onToggle={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
+              onOpen={post.id ? () => openPostDetail(post.id as string) : undefined}
             />
-          </div>
-          <nav className="space-y-2">
-            {/* All Posts */}
-            <button
-              onClick={handleLoadAllPosts}
-              className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-1.5 text-xs transition-colors ${
-                activeView === 'all-posts'
-                  ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
-                  : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
-              }`}
-            >
-              <span className="flex min-w-0 items-center gap-2.5">
-                <SourceAvatar
-                  source={{ id: 'all-posts', platform: 'all', display_name: 'All Posts' }}
-                  mode="platform"
-                />
-                <span className="truncate font-medium">All Posts</span>
-              </span>
-              <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
-                {sourcesData?.total_posts || 0}
-              </span>
-            </button>
+          );
+        })}
+      </ol>
+    );
+  };
 
-            {/* Grouped by Platform */}
-            {isLoadingSources ? (
-              <div className="text-center py-3 text-xs text-gray-500">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin mx-auto mb-2" />
-                Loading...
-              </div>
-            ) : filteredSourceGroups.length > 0 ? filteredSourceGroups.map((group) => {
-              const isExpanded = sourceQuery.trim() ? true : Boolean(expandedPlatforms[group.platform]);
-              const visibleTotal = group.sources.reduce((sum, source) => sum + source.post_count, 0);
-
-              return (
-                <div key={group.platform} className="space-y-1.5">
-                  <button
-                    onClick={() => setExpandedPlatforms(prev => ({...prev, [group.platform]: !isExpanded}))}
-                    className="w-full flex items-center justify-between rounded-xl border border-transparent px-2.5 py-1.5 text-xs text-gray-700 transition-colors hover:border-gray-200 hover:bg-white"
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <SourceAvatar
-                        source={{ id: `platform:${group.platform}`, platform: group.platform, display_name: getPlatformLabel(group.platform) }}
-                        mode="platform"
-                      />
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
-                        <span className="truncate font-medium">{getPlatformLabel(group.platform)}</span>
-                      </span>
-                    </span>
-                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-500">
-                      {sourceQuery.trim() ? visibleTotal : group.totalCount}
-                    </span>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="ml-4 border-l border-gray-200 pl-3 space-y-1">
-                      {group.sources.map((source) => (
-                        <button
-                          key={source.id}
-                          onClick={() => handleLoadSourcePosts(source.id)}
-                          className={`w-full flex items-center justify-between rounded-xl border px-2.5 py-1.5 text-xs transition-colors ${
-                            activeView === 'source' && selectedSourceId === source.id
-                              ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
-                              : 'border-transparent text-gray-700 hover:border-gray-200 hover:bg-white'
-                          }`}
-                        >
-                          <span className="flex min-w-0 items-center gap-2.5">
-                            <SourceAvatar source={source} />
-                            <span className="truncate">{getSourceDisplayName(source)}</span>
-                          </span>
-                          <span className="ml-2 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-500">
-                            {source.post_count}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            }) : (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-white/70 px-3 py-4 text-center text-xs text-gray-500">
-                No matching sources
-              </div>
-            )}
-          </nav>
+  const postsList = (
+    <div>
+      {activeView === 'source' && selectedSourceId && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => navigate(`/briefing/vertical/source/${selectedSourceId}`)}>
+            Source briefing
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void openSourceSettings(selectedSourceId)}
+            disabled={loadingSourceEditorId === selectedSourceId}
+          >
+            {loadingSourceEditorId === selectedSourceId ? 'Opening…' : 'Settings'}
+          </Button>
+          {selectedSourceHandle ? (
+            <span className="min-w-0 max-w-full truncate text-[0.8125rem] text-fg-3" title={selectedSourceHandle}>
+              {selectedSourceHandle}
+            </span>
+          ) : null}
         </div>
-      </div>
+      )}
 
-      {/* Main Content */}
-      <div className={`flex-1 overflow-y-auto ${focusMode ? 'flex items-start justify-center' : ''} transition-all duration-300 ease-in-out`}>
-        <div className={`px-4 py-4 lg:px-5 lg:py-5 ${focusMode ? 'w-full max-w-5xl mx-auto' : 'max-w-5xl mx-auto'} transition-all duration-300 ease-in-out`}>
-          {/* System freshness / health */}
-          {systemStatus && (
-            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-gray-200 bg-white/80 px-3 py-2 text-[11px] text-gray-600">
-              {systemStatus.success ? (
-                <>
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-gray-700">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                    System
-                  </span>
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
-                    Newest post {formatRelativeTime(systemStatus.corpus?.latest_post_at) || 'unknown'}
-                  </span>
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
-                    Last fetch {formatRelativeTime(systemStatus.corpus?.latest_fetch_at) || 'unknown'}
-                  </span>
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
-                    {systemStatus.corpus?.posts_last_24h ?? 0} posts / 24h
-                  </span>
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5">
-                    {systemStatus.corpus?.enabled_sources ?? 0}/{systemStatus.corpus?.total_sources ?? 0} sources on
-                  </span>
-                  {Boolean(systemStatus.source_health_summary?.errors) && (
-                    <Link
-                      to="/settings/sources?tab=health&status=error"
-                      className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700 hover:bg-red-100"
-                      title="Open the failing sources in Settings → Sources → Health"
-                    >
-                      <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                      {systemStatus.source_health_summary?.errors} source {systemStatus.source_health_summary?.errors === 1 ? 'error' : 'errors'}
-                    </Link>
-                  )}
-                  {systemStatus.gemini_configured === false && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      Gemini key missing
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-red-700">
-                  <AlertCircle className="h-3.5 w-3.5" />
-                  Status unavailable
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => void loadSystemStatus()}
-                disabled={isLoadingStatus}
-                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50"
-                title="Refresh system status"
+      {isLoadingPosts && displayedPosts.length === 0 ? (
+        <LoadingState label="Loading posts" rows={5} />
+      ) : displayedPosts.length > 0 ? (
+        <>
+          <ol className="border-y border-line">
+            {displayedPosts.map((post, index) => {
+              const key = post.id || `post:${index}`;
+              const isExpanded = postsExpanded[key] ?? false;
+              return (
+                <PostEntry
+                  key={key}
+                  post={post}
+                  showDate={isDatePosts ? 'none' : true}
+                  showThumbnails
+                  expanded={isExpanded}
+                  onToggle={() => setPostsExpanded((prev) => ({ ...prev, [key]: !isExpanded }))}
+                  onOpen={post.id ? () => openPostDetail(post.id as string) : undefined}
+                  copied={Boolean(copied[key])}
+                  onCopy={() => void handleCopyPost(post, key)}
+                />
+              );
+            })}
+          </ol>
+          {activeView === 'source' && sourcePostsMeta.hasMore && (
+            <div className="flex justify-center pt-6">
+              <Button
+                variant="secondary"
+                onClick={() => selectedSourceId && handleLoadSourcePosts(selectedSourceId, { append: true })}
+                disabled={isLoadingMoreSourcePosts}
+                aria-busy={isLoadingMoreSourcePosts || undefined}
               >
-                <RefreshCw className={`h-3 w-3 ${isLoadingStatus ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
+                {isLoadingMoreSourcePosts ? 'Loading more…' : `Load ${SOURCE_POSTS_PAGE_SIZE} more`}
+              </Button>
             </div>
           )}
-          
-          {/* Briefing View */}
-          {activeView === 'briefing' && (
-            <div className="space-y-6">
-              <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">{briefingTitle}</h1>
-              {activeTakeaway && (
-                <div className="rounded-2xl border border-gray-200 bg-white/80 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
-                    One-Sentence Takeaway
-                  </div>
-                  <div className="mt-2 text-sm leading-7 text-gray-700">
-                    {activeTakeaway}
-                  </div>
-                </div>
-              )}
+        </>
+      ) : (
+        <EmptyState
+          title={isDatePosts ? `No posts on ${formatIssueLong(databasePostsStats?.date || selectedDate)}` : 'No posts found'}
+          description={
+            isDatePosts
+              ? 'Nothing was collected for this day. Pick another date, or read every source.'
+              : 'Nothing stored for this view yet. It fills in after the next ingestion cycle.'
+          }
+          action={isDatePosts ? { label: 'Show all posts', onClick: () => void handleLoadAllPosts() } : undefined}
+        />
+      )}
+    </div>
+  );
 
-              {/* Standard Briefing */}
-              {weeklyBriefing && weeklyMeta?.variant !== 'topics' && (
-                <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">
-                    📆 Weekly Intelligence Briefing
-                  </h3>
-                  <div className="prose max-w-none">
-                    <MarkdownRenderer content={weeklyBriefing} />
-                  </div>
-                  <div className="mt-4">
-                    <BriefingReferenceStrip references={weeklyReferences} onOpenPost={openPostDetail} />
-                  </div>
-                </div>
-              )}
+  const takeaway = activeTakeaway ? (
+    <p className="max-w-reading text-[1.1875rem] font-medium leading-[1.5] tracking-[-0.01em] text-fg">
+      <span className="mb-1 block text-[0.8125rem] font-normal tracking-normal text-fg-3">In one sentence</span>
+      {activeTakeaway}
+    </p>
+  ) : null;
 
-              {weeklyBriefing && weeklyMeta?.variant === 'topics' && (
-                <div className="space-y-4">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h3 className="text-base font-semibold text-gray-900 mb-3.5">
-                      🗓️ Weekly Topic Briefing
-                    </h3>
-                    <div className="prose max-w-none">
-                      <MarkdownRenderer content={weeklyBriefing} />
-                    </div>
-                    <div className="mt-4">
-                      <BriefingReferenceStrip references={weeklyReferences} onOpenPost={openPostDetail} />
-                    </div>
-                  </div>
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h3 className="text-base font-semibold text-gray-900 mb-3.5">📈 Topic Evolution By Week</h3>
-                    <div className="space-y-3.5">
-                      {weeklyTopics.map((topic, tIndex) => {
-                        const isOpen = Boolean(openTopics[topic.id]);
+  const generatingNotice = generating ? (
+    <Notice
+      tone="status"
+      title="Writing the briefing…"
+      message={`The model is reading the posts for ${formatIssueLong(selectedDate)}. This can take a minute.`}
+    />
+  ) : null;
+
+  const dailyTab = (
+    <div className="space-y-12">
+      {takeaway}
+      {generatingNotice}
+      {briefingData && (
+        <IssueSection
+          id="issue-daily"
+          kicker={`daily · ${briefingStats ? plural(briefingStats.postsProcessed, 'post') : formatIssueShort(selectedDate)}`}
+          title="Daily briefing"
+        >
+          <Reading content={briefingData} />
+          <ReferenceList references={briefingReferences} onOpenPost={openPostDetail} />
+        </IssueSection>
+      )}
+      {isDatePosts ? (
+        <section aria-labelledby="posts-of-the-day" className={briefingData ? 'border-t border-line pt-8' : undefined}>
+          <h2 id="posts-of-the-day" className="mb-4 text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">
+            Posts of the day{' '}
+            <span className="font-normal tabular-nums text-fg-3">{formatCount(databasePostsStats?.total ?? displayedPosts.length)}</span>
+          </h2>
+          {postsList}
+        </section>
+      ) : (
+        !briefingData &&
+        !generating && (
+          <EmptyState
+            title={`No daily briefing for ${formatIssueLong(selectedDate)} yet`}
+            description="Generate it for this date, or read the posts of the day first."
+          />
+        )
+      )}
+    </div>
+  );
+
+  const topicsTab = (
+    <div className="space-y-12">
+      {takeaway}
+      {generatingNotice}
+      {topicsBriefing && (
+        <IssueSection id="issue-topics" kicker={`topics · ${plural(topics.length, 'topic')}`} title="Topic briefing">
+          <Reading content={topicsBriefing} />
+          <ReferenceList references={topicsReferences} onOpenPost={openPostDetail} />
+          {topics.length > 0 && (
+            <ol className="mt-10 border-t border-line">
+              {topics.map((topic, tIndex) => (
+                <TopicItem
+                  key={topic.id || `topic_${tIndex}`}
+                  number={tIndex + 1}
+                  title={topic.title}
+                  count={topic.post_ids?.length}
+                  open={Boolean(openTopics[topic.id])}
+                  onToggle={() => toggleTopic(topic.id)}
+                >
+                  {topic.summary ? <Reading content={topic.summary} size="small" /> : null}
+                  {renderTopicPosts(topic, postsMap, true)}
+                </TopicItem>
+              ))}
+            </ol>
+          )}
+        </IssueSection>
+      )}
+
+      {databaseTopics.length > 0 && (
+        <IssueSection id="issue-stored-topics" kicker={`stored · ${plural(databaseTopics.length, 'topic')}`} title="Stored topics">
+          <ol className="border-t border-line">
+            {databaseTopics.map((topic, tIndex) => {
+              const isOpen = Boolean(openTopics[topic.id]);
+              const topicPosts = topic.posts || [];
+              const isEditing = editingTopicId === topic.id;
+              return (
+                <TopicItem
+                  key={topic.id || `db_topic_${tIndex}`}
+                  number={tIndex + 1}
+                  title={topic.title}
+                  count={topicPosts.length}
+                  outlier={Boolean(topic.is_outlier)}
+                  open={isOpen}
+                  onToggle={() => toggleTopic(topic.id)}
+                  editor={
+                    isEditing ? (
+                      <div className="flex min-w-0 flex-1 items-center gap-1">
+                        <label htmlFor={`topic-title-${topic.id}`} className="sr-only">
+                          Topic title
+                        </label>
+                        <Input
+                          id={`topic-title-${topic.id}`}
+                          value={editingTopicTitle}
+                          onChange={(e) => setEditingTopicTitle(e.target.value)}
+                          onBlur={() => !isSavingTitle && handleSaveTopicTitle(topic.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleSaveTopicTitle(topic.id);
+                            } else if (e.key === 'Escape') {
+                              handleCancelEditTitle();
+                            }
+                          }}
+                          autoFocus
+                          disabled={isSavingTitle}
+                          className="flex-1"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleSaveTopicTitle(topic.id)}
+                          disabled={isSavingTitle}
+                          aria-label="Save title"
+                          title="Save"
+                        >
+                          {isSavingTitle ? <StatusIcon status="running" /> : <Check aria-hidden="true" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleCancelEditTitle}
+                          disabled={isSavingTitle}
+                          aria-label="Cancel editing"
+                          title="Cancel"
+                        >
+                          <X aria-hidden="true" />
+                        </Button>
+                      </div>
+                    ) : undefined
+                  }
+                  headerExtra={
+                    isEditing ? null : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleEditTopicTitle(topic.id, topic.title || '')}
+                        aria-label={`Rename topic ${topic.title || tIndex + 1}`}
+                        title="Rename topic"
+                        className="-mt-1.5 text-fg-3"
+                      >
+                        <Pencil aria-hidden="true" />
+                      </Button>
+                    )
+                  }
+                >
+                  {topic.summary ? <Reading content={topic.summary} size="small" className="text-fg-2" /> : null}
+                  {topicPosts.length > 0 ? (
+                    <ol className="border-t border-line">
+                      {topicPosts.map((post, rIndex) => {
+                        const key = `${topic.id}:${post.id || rIndex}`;
                         return (
-                          <div key={topic.id || `weekly_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                            <button
-                              onClick={() => toggleTopic(topic.id)}
-                              className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
-                            >
-                              <span className="text-gray-900 font-bold tracking-tight text-base">
-                                {tIndex + 1}. {topic.title || 'Untitled Topic'}
-                              </span>
-                              <span className="text-xs text-gray-500">{isOpen ? 'Collapse' : 'Expand'}</span>
-                            </button>
-                            {isOpen && (
-                              <div className="px-4 pb-4">
-                                {topic.summary && (
-                                  <div className="text-xs text-gray-700 leading-relaxed mb-3.5">
-                                    <MarkdownRenderer content={topic.summary} />
-                                  </div>
-                                )}
-                                {(topic.timeline || []).length > 0 && (
-                                  <div className="mb-4 space-y-3">
-                                    {(topic.timeline || []).map((entry, entryIndex) => (
-                                      <div key={`${topic.id}-timeline-${entryIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">
-                                            {entry.date || 'Unknown date'}
-                                          </div>
-                                          {(entry.source_topics || []).length > 0 && (
-                                            <div className="text-[11px] text-gray-500">
-                                              {(entry.source_topics || []).join(' · ')}
-                                            </div>
-                                          )}
-                                        </div>
-                                        {entry.summary && (
-                                          <div className="mt-2 text-xs text-gray-700 leading-relaxed">
-                                            <MarkdownRenderer content={entry.summary} />
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                <div className="space-y-2.5">
-                                  {(topic.post_ids || []).map((pid, rIndex) => {
-                                    const post = weeklyPostsMap[pid];
-                                    if (!post) return null;
-                                    const key = `${topic.id}:${pid}`;
-                                    const isExpanded = expandedPosts[key] ?? false;
-                                    return (
-                                      <div key={`${pid}_${rIndex}`} className="border border-gray-200 rounded-xl overflow-hidden">
-                                        <button
-                                          type="button"
-                                          className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
-                                          onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
-                                        >
-                                          <div>
-                                            <h4 className="text-sm font-semibold text-gray-900">{post.title || 'Post'}</h4>
-                                            <div className="mt-1 text-xs text-gray-600">
-                                              {post.source_display_name || post.source} • {post.platform}
-                                            </div>
-                                          </div>
-                                          <div className="flex items-center gap-2">
-                                            {post.id && (
-                                              <button
-                                                type="button"
-                                                className="text-indigo-600 hover:text-indigo-800"
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
-                                                }}
-                                              >
-                                                <FileText className="w-4 h-4" />
-                                              </button>
-                                            )}
-                                            {post.url && (
-                                              <a
-                                                href={post.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-indigo-600 hover:text-indigo-800"
-                                                onClick={(e) => e.stopPropagation()}
-                                              >
-                                                <ExternalLink className="w-4 h-4" />
-                                              </a>
-                                            )}
-                                          </div>
-                                        </button>
-                                        {isExpanded && (
-                                          <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none">
-                                            <MarkdownRenderer content={getRenderablePostContent(post)} />
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <PostEntry
+                            key={key}
+                            post={post}
+                            number={rIndex + 1}
+                            expanded={expandedPosts[key] ?? false}
+                            onToggle={() => setExpandedPosts((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }))}
+                            onOpen={post.id ? () => openPostDetail(post.id as string) : undefined}
+                            copied={Boolean(copied[key])}
+                            onCopy={() => void handleCopyPost(post, key)}
+                            onOutlier={
+                              topic.id && post.id && !topic.is_outlier
+                                ? () => void handleMovePostToOutlier(topic.id, post.id as string)
+                                : undefined
+                            }
+                          />
                         );
                       })}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {briefingData && (
-                <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">
-                    🤖 AI-Generated Intelligence Briefing
-                  </h3>
-                  <div className="prose max-w-none">
-                    <MarkdownRenderer content={briefingData} />
-                  </div>
-                  <div className="mt-4">
-                    <BriefingReferenceStrip references={briefingReferences} onOpenPost={openPostDetail} />
-                  </div>
-                </div>
-              )}
-
-              {/* Topic-based Briefing */}
-              {topicsBriefing && (
-                <div className="bg-white border border-gray-200 rounded-lg p-4">
-                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">🧩 Topic-based Briefing</h3>
-                  {topicsBriefing && (
-                    <div className="prose max-w-none mb-3.5">
-                      <MarkdownRenderer content={topicsBriefing} />
-                    </div>
+                    </ol>
+                  ) : (
+                    <p className="text-[0.875rem] text-fg-3">No posts left in this topic.</p>
                   )}
-                  <div className="mb-4">
-                    <BriefingReferenceStrip references={topicsReferences} onOpenPost={openPostDetail} />
-                  </div>
-                  <div className="space-y-3.5">
-                    {topics.map((topic, tIndex) => {
-                      const isOpen = Boolean(openTopics[topic.id]);
-                      return (
-                        <div key={topic.id || `topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                          <button
-                            onClick={() => toggleTopic(topic.id)}
-                            className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors hover:bg-gray-50 ${isOpen ? 'bg-gray-50' : ''}`}
-                          >
-                            <span className="text-gray-900 font-bold tracking-tight text-base">
-                              {tIndex + 1}. {topic.title || 'Untitled Topic'}
-                            </span>
-                            <span className="text-xs text-gray-500">{isOpen ? 'Collapse' : 'Expand'}</span>
-                          </button>
-                          {isOpen && (
-                            <div className="px-4 pb-4">
-                              {topic.summary && (
-                                <div className="text-xs text-gray-700 leading-relaxed mb-3.5">
-                                  <MarkdownRenderer content={topic.summary} />
-                                </div>
+                </TopicItem>
+              );
+            })}
+          </ol>
+        </IssueSection>
+      )}
+
+      {!topicsBriefing && databaseTopics.length === 0 && !generating && (
+        <EmptyState
+          title={`No topics for ${formatIssueLong(selectedDate)} yet`}
+          description="Generate the topic briefing for this date, or open the topics already stored for it."
+        />
+      )}
+    </div>
+  );
+
+  const weeklyTab = (
+    <div className="space-y-12">
+      {takeaway}
+      {generatingNotice}
+      {weeklyBriefing ? (
+        <IssueSection
+          id="issue-weekly"
+          kicker={`weekly · ${formatIssueRange(weeklyMeta?.weekStart, weeklyMeta?.weekEnd)}${weeklyMeta?.cached ? ' · cached' : ''}`}
+          title={weeklyMeta?.variant === 'topics' ? 'Weekly topic briefing' : 'Weekly briefing'}
+        >
+          <Reading content={weeklyBriefing} />
+          <ReferenceList references={weeklyReferences} onOpenPost={openPostDetail} />
+          {weeklyMeta?.variant === 'topics' && weeklyTopics.length > 0 && (
+            <div className="mt-10">
+              <h3 className="mb-2 text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">Topic evolution by week</h3>
+              <ol className="border-t border-line">
+                {weeklyTopics.map((topic, tIndex) => (
+                  <TopicItem
+                    key={topic.id || `weekly_topic_${tIndex}`}
+                    number={tIndex + 1}
+                    title={topic.title}
+                    count={topic.post_ids?.length}
+                    open={Boolean(openTopics[topic.id])}
+                    onToggle={() => toggleTopic(topic.id)}
+                  >
+                    {topic.summary ? <Reading content={topic.summary} size="small" /> : null}
+                    {(topic.timeline || []).length > 0 && (
+                      <ol className="max-w-reading space-y-3">
+                        {(topic.timeline || []).map((entry, entryIndex) => (
+                          <li key={`${topic.id}-timeline-${entryIndex}`} className="grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-3">
+                            <span className="whitespace-nowrap pt-0.5 text-[0.8125rem] tabular-nums text-fg-3">{formatIssueShort(entry.date)}</span>
+                            <div className="min-w-0">
+                              {(entry.source_topics || []).length > 0 && (
+                                <p className="break-words text-[0.8125rem] text-fg-3">{(entry.source_topics || []).join(' · ')}</p>
                               )}
-                              <div className="space-y-2.5">
-                                {(topic.post_ids || []).map((pid, rIndex) => {
-                                  const post = postsMap[pid];
-                                  if (!post) return null;
-                                  const key = `${topic.id}:${pid}`;
-                                  const isExpanded = expandedPosts[key] ?? true;
-                                  return (
-                                    <div key={`${pid}_${rIndex}`} className="border border-gray-200 rounded-xl overflow-hidden">
-                                      <button
-                                        type="button"
-                                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
-                                        onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
-                                      >
-                                        <div>
-                                          <h4 className="text-sm font-semibold text-gray-900">{post.title || 'Post'}</h4>
-                                          <div className="mt-1 text-xs text-gray-600">
-                                            {post.source} • {post.platform}
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          {post.id && (
-                                            <button
-                                              type="button"
-                                              className="text-indigo-600 hover:text-indigo-800"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
-                                              }}
-                                            >
-                                              <FileText className="w-4 h-4" />
-                                            </button>
-                                          )}
-                                          {post.url && (
-                                            <a
-                                              href={post.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-indigo-600 hover:text-indigo-800"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              <ExternalLink className="w-4 h-4" />
-                                            </a>
-                                          )}
-                                        </div>
-                                      </button>
-                                      {isExpanded && (
-                                        <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none">
-                                          <MarkdownRenderer content={getRenderablePostContent(post)} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                              {entry.summary ? <Reading content={entry.summary} size="small" /> : null}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Database Topics */}
-              {databaseTopics.length > 0 && (
-                <div className="bg-white border border-gray-200 rounded-lg p-4">
-                  <h3 className="text-base font-semibold text-gray-900 mb-3.5">📚 Topics from Database</h3>
-                  <div className="space-y-3.5">
-                    {databaseTopics.map((topic, tIndex) => {
-                      const isOpen = Boolean(openTopics[topic.id]);
-                      const topicPosts = topic.posts || [];
-                      const isEditing = editingTopicId === topic.id;
-                      
-                      return (
-                        <div key={topic.id || `db_topic_${tIndex}`} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm group">
-                          <div className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${isOpen ? 'bg-gray-50' : ''}`}>
-                            {/* Edit Mode - Full Width */}
-                            {isEditing ? (
-                              <div className="flex-1 flex items-center gap-2">
-                                <span className="inline-block border-l-4 border-teal-600 pl-3 text-gray-900 font-bold">
-                                  {tIndex + 1}.
-                                </span>
-                                <input
-                                  type="text"
-                                  value={editingTopicTitle}
-                                  onChange={(e) => setEditingTopicTitle(e.target.value)}
-                                  onBlur={() => !isSavingTitle && handleSaveTopicTitle(topic.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      handleSaveTopicTitle(topic.id);
-                                    } else if (e.key === 'Escape') {
-                                      handleCancelEditTitle();
-                                    }
-                                  }}
-                                  autoFocus
-                                  disabled={isSavingTitle}
-                                  className="flex-1 px-2 py-1 border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm font-normal disabled:opacity-50"
-                                />
-                                <button
-                                  onClick={() => handleSaveTopicTitle(topic.id)}
-                                  disabled={isSavingTitle}
-                                  className="p-1 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
-                                  title="Save"
-                                >
-                                  {isSavingTitle ? (
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  ) : (
-                                    <Check className="w-3.5 h-3.5" />
-                                  )}
-                                </button>
-                                <button
-                                  onClick={handleCancelEditTitle}
-                                  disabled={isSavingTitle}
-                                  className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                                  title="Cancel"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                                /* Display Mode */
-                              <>
-                                <button
-                                  onClick={() => toggleTopic(topic.id)}
-                                  className="flex-1 flex items-center gap-2 text-left"
-                                >
-                                  <span className="text-gray-900 font-bold tracking-tight text-base flex items-center gap-2">
-                                    <span className="inline-block border-l-4 border-teal-600 pl-3">
-                                      {tIndex + 1}.
-                                    </span>
-                                    <span>{topic.title || 'Untitled Topic'}</span>
-                                    {topic.is_outlier && (
-                                      <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md font-normal">Outlier</span>
-                                    )}
-                                  </span>
-                                </button>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleEditTopicTitle(topic.id, topic.title || '');
-                                    }}
-                                    className="p-1 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title="Edit title"
-                                  >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => toggleTopic(topic.id)}
-                                    className="text-xs text-gray-500 flex items-center gap-2 hover:text-gray-700"
-                                  >
-                                    <span>{topicPosts.length} posts</span>
-                                    <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                          {isOpen && (
-                            <div className="px-4 pb-4">
-                              {topic.summary && (
-                                <div className="text-xs text-gray-700 leading-relaxed mb-3.5 bg-gray-50 p-3 rounded-lg">
-                                  <MarkdownRenderer content={topic.summary} />
-                                </div>
-                              )}
-                              <div className="space-y-2.5">
-                                {topicPosts.map((post, rIndex) => {
-                                  const key = `${topic.id}:${post.id ||rIndex}`;
-                                  const isExpanded = expandedPosts[key] ?? false;
-                                  const platformLabel = (post?.platform || 'unknown').toUpperCase();
-                                  const tone = getPlatformTone(post.platform);
-                                  const renderContent = getRenderablePostContent(post);
-                                  let dateLabel = 'Unknown date';
-                                  try {
-                                    const d = new Date((post?.date || post?.published_at) as string);
-                                    if (!isNaN(d.getTime())) dateLabel = d.toLocaleDateString();
-                                  } catch {}
-                                  
-                                  return (
-                                    <div key={key} className={`border border-gray-200 rounded-xl overflow-hidden relative ${tone.card}`}>
-                                      <button
-                                        type="button"
-                                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-start justify-between gap-3"
-                                        onClick={() => setExpandedPosts((prev) => ({ ...prev, [key]: !isExpanded }))}
-                                      >
-                                        <div className="flex-1">
-                                          <div className="flex items-center gap-2 mb-1">
-                                            <span className="shrink-0 w-6 h-6 rounded-md bg-teal-50 text-teal-700 text-xs font-semibold flex items-center justify-center">{rIndex + 1}</span>
-                                            <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{post.title || `${platformLabel} Post`}</h4>
-                                          </div>
-                                          <div className="mt-1 ml-8 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
-                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${tone.badge}`}>
-                                              {platformLabel}
-                                            </span>
-                                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5">
-                                              {dateLabel}
-                                            </span>
-                                            <span className="truncate max-w-[22rem]">📡 {post.source}</span>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          {post.id && (
-                                            <button
-                                              type="button"
-                                              className="text-teal-600 hover:text-teal-800"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
-                                              }}
-                                            >
-                                              <FileText className="w-4 h-4" />
-                                            </button>
-                                          )}
-                                          {post.url && (
-                                            <a
-                                              href={post.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-teal-600 hover:text-teal-800"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              <ExternalLink className="w-4 h-4" />
-                                            </a>
-                                          )}
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (topic.id && post.id) void handleMovePostToOutlier(topic.id, post.id);
-                                            }}
-                                            className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
-                                            title="Move to outlier topic"
-                                          >
-                                            <Scissors className="w-3.5 h-3.5" />
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className={`p-1 rounded transition-colors ${copied[key]
-                                              ? 'text-emerald-700 bg-emerald-100'
-                                              : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                                            }`}
-                                            title={copied[key] ? 'Copied to clipboard' : 'Copy post text'}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              void handleCopyPost(post, key);
-                                            }}
-                                          >
-                                            {copied[key] ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                                          </button>
-                                        </div>
-                                      </button>
-                                      {copied[key] && (
-                                        <div className="absolute right-3.5 top-3.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-1 shadow-sm">
-                                          Copied!
-                                        </div>
-                                      )}
-                                      {isExpanded && (
-                                        <div className="p-3.5 pt-2.5 text-gray-800 text-xs prose max-w-none border-t border-gray-100">
-                                          <MarkdownRenderer content={renderContent} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!weeklyBriefing && !briefingData && !topicsBriefing && databaseTopics.length === 0 && (
-                <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
-                  <BarChart3 className="w-10 h-10 text-gray-400 mx-auto mb-3.5" />
-                  <h3 className="text-base font-semibold text-gray-900 mb-2">
-                    {isGenerating || isGeneratingTopics ? 'Generating Intelligence Briefing...' : 'Ready to Generate Briefing'}
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    {isGenerating || isGeneratingTopics
-                      ? 'AI is analyzing intelligence sources...'
-                      : 'Select a date and click "Generate Briefing" to create your AI-powered intelligence report.'
-                    }
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Posts View (All Posts or Source Posts) */}
-          {(activeView === 'all-posts' || activeView === 'source') && (
-            <div className="space-y-6">
-              <div className="grid gap-4 rounded-3xl border border-gray-200 bg-white/85 px-4 py-4 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                <div className="flex min-w-0 items-start gap-3">
-                  {activeView === 'source' && selectedSource ? (
-                    <SourceAvatar source={selectedSource} size="md" className="mt-0.5" />
-                  ) : null}
-                  <div className="min-w-0">
-                    <h1 className="text-[1.85rem] font-extrabold leading-[1.05] tracking-tight text-gray-900">
-                      {activeView === 'all-posts' ? 'All Posts' : `${selectedSourceName} posts`}
-                    </h1>
-                    {activeView === 'source' && selectedSource && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
-                        <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 font-medium text-gray-700">
-                          {getPlatformLabel(selectedSource.platform)}
-                        </span>
-                        <span className="max-w-[32rem] truncate rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
-                          {selectedSourceHandle}
-                        </span>
-                      </div>
+                          </li>
+                        ))}
+                      </ol>
                     )}
-                  </div>
-                </div>
-
-                {activeView === 'source' && selectedSourceId && (
-                  <div className="flex shrink-0 flex-wrap items-start gap-2 lg:flex-nowrap lg:justify-end">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/briefing/vertical/source/${selectedSourceId}`)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
-                    >
-                      <Layers3 className="h-4 w-4" />
-                      Briefing
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void openSourceSettings(selectedSourceId)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                      disabled={loadingSourceEditorId === selectedSourceId}
-                    >
-                      <Settings className="h-4 w-4" />
-                      {loadingSourceEditorId === selectedSourceId ? 'Opening…' : 'Settings'}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {isLoadingPosts && displayedPosts.length === 0 ? (
-                <div className="text-center py-6">
-                  <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2 text-gray-400" />
-                  <p className="text-sm text-gray-600">Loading posts...</p>
-                </div>
-              ) : displayedPosts.length > 0 ? (
-                <div className="space-y-3.5">
-                  {displayedPosts.map((post, index) => {
-                    const key = post.id || `post:${index}`;
-                    const isExpanded = postsExpanded[key] ?? false;
-                    const platformLabel = (post?.platform || 'unknown').toUpperCase();
-                    const tone = getPlatformTone(post.platform);
-                    const renderContent = getRenderablePostContent(post);
-                    const thumbnails = getPostThumbnails(post);
-                    let dateLabel = 'Unknown date';
-                    let dateTitle = '';
-                    try {
-                      const d = new Date((post?.date || post?.published_at) as string);
-                      if (!isNaN(d.getTime())) {
-                        dateLabel = formatRelativeTime(d.toISOString()) || d.toLocaleDateString();
-                        dateTitle = d.toLocaleString();
-                      }
-                    } catch (_) {}
-
-                    return (
-                      <div key={key} className={`border border-gray-200 rounded-xl overflow-hidden shadow-sm relative ${tone.card}`}>
-                        <button
-                          type="button"
-                          className={`w-full text-left px-4 py-3 flex items-start justify-between transition-colors ${isExpanded ? 'bg-gray-50' : ''} hover:bg-gray-50`}
-                          onClick={() => setPostsExpanded((prev) => ({ ...prev, [key]: !isExpanded }))}
-                        >
-                          <div className="flex-1">
-                            <h4 className="text-sm font-semibold text-gray-900 leading-snug">{post.title || `${platformLabel} Post`}</h4>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
-                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${tone.badge}`}>
-                                {platformLabel}
-                              </span>
-                              <span
-                                className="inline-flex items-center rounded-full border border-gray-200 bg-white/80 px-2 py-0.5"
-                                title={dateTitle || undefined}
-                              >
-                                {dateLabel}
-                              </span>
-                              <span className="truncate max-w-[26rem]">📡 {post.source}</span>
-                            </div>
-                            {thumbnails.length > 0 && (
-                              <div className="mt-2.5 flex flex-wrap gap-2">
-                                {thumbnails.map((mediaUrl) => (
-                                  <img
-                                    key={mediaUrl}
-                                    src={mediaUrl}
-                                    alt=""
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer"
-                                    className="h-20 w-28 rounded-lg border border-gray-200 bg-gray-50 object-cover"
-                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                                  />
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2.5 ml-2.5">
-                            {post.id && (
-                              <button
-                                type="button"
-                                className="text-indigo-600 hover:text-indigo-800 p-1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate(`/posts/${post.id}`, { state: { returnTo: currentReturnUrl() } });
-                                }}
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {post.url && (
-                              <a
-                                href={post.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-indigo-600 hover:text-indigo-800 p-1"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            )}
-                            <button
-                              type="button"
-                              className={`p-1 rounded transition-colors ${copied[key]
-                                ? 'text-emerald-700 bg-emerald-100'
-                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                              }`}
-                              title={copied[key] ? 'Copied to clipboard' : 'Copy post text'}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleCopyPost(post, key);
-                              }}
-                            >
-                              {copied[key] ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
-                        </button>
-                        {copied[key] && (
-                          <div className="absolute right-3.5 top-3.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-1 shadow-sm">
-                            Copied!
-                          </div>
-                        )}
-                        {isExpanded && (
-                          <div className="p-3.5 pt-2.5 text-gray-800 text-xs leading-relaxed prose max-w-none">
-                            <MarkdownRenderer content={renderContent} />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {activeView === 'source' && sourcePostsMeta.hasMore && (
-                    <div className="flex justify-center pt-2">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => selectedSourceId && handleLoadSourcePosts(selectedSourceId, { append: true })}
-                        disabled={isLoadingMoreSourcePosts}
-                      >
-                        {isLoadingMoreSourcePosts ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                        {isLoadingMoreSourcePosts ? 'Loading more...' : `Load ${SOURCE_POSTS_PAGE_SIZE} more`}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-6 text-sm text-gray-500">
-                  <p>No posts found</p>
-                </div>
-              )}
+                    {renderTopicPosts(topic, weeklyPostsMap, false)}
+                  </TopicItem>
+                ))}
+              </ol>
             </div>
           )}
+        </IssueSection>
+      ) : (
+        !generating && (
+          <EmptyState
+            title="No weekly briefing loaded"
+            description={`Generate the briefing for the week that contains ${formatIssueLong(selectedDate)}. It is built from that week's daily briefings.`}
+          />
+        )
+      )}
+    </div>
+  );
 
-          {/* Configure Sources View */}
-          {activeView === 'configure' && (
-            <div className="space-y-6">
-              <SourcesConfig embedded />
-            </div>
-          )}
+  return (
+    <Page width="list">
+      <header className="mb-8">
+        <p className="text-[0.8125rem] tabular-nums text-fg-3">{header.kicker}</p>
+        <h1 className="mt-1 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg [overflow-wrap:anywhere]">
+          {header.title}
+        </h1>
+        {header.meta ? <p className="mt-1.5 text-[0.875rem] tabular-nums text-fg-2">{header.meta}</p> : null}
+        {statusLine}
+      </header>
+
+      <Tabs value={isBrowsing ? '' : tab} onValueChange={selectTab}>
+        <div className="flex items-end gap-5 overflow-x-auto border-b border-line">
+          <TabsList aria-label="Briefing kinds" className="overflow-visible border-b-0">
+            <TabsTrigger value="daily">daily</TabsTrigger>
+            <TabsTrigger value="topics">topics</TabsTrigger>
+            <TabsTrigger value="weekly">weekly</TabsTrigger>
+          </TabsList>
+          <Link to="/briefing/vertical" className={tabTriggerClass}>
+            vertical
+          </Link>
         </div>
-      </div>
+
+        {!isBrowsing && <div className="mt-5">{toolbar}</div>}
+
+        {error && (
+          <Notice
+            tone="error"
+            title="That did not work"
+            message={error}
+            action={{ label: 'Dismiss', onClick: () => setError(null) }}
+            className="mt-6"
+          />
+        )}
+
+        {isBrowsing ? (
+          <div className="pt-8">{postsList}</div>
+        ) : (
+          <>
+            <TabsContent value="daily" className="pt-10">
+              {dailyTab}
+            </TabsContent>
+            <TabsContent value="topics" className="pt-10">
+              {topicsTab}
+            </TabsContent>
+            <TabsContent value="weekly" className="pt-10">
+              {weeklyTab}
+            </TabsContent>
+          </>
+        )}
+      </Tabs>
 
       {editingSource && (
         <SourceSettingsEditor
@@ -2369,6 +2005,6 @@ export default function DailyBriefing() {
           }}
         />
       )}
-    </div>
+    </Page>
   );
 }
