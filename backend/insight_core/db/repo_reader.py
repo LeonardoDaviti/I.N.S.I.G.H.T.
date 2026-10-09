@@ -219,18 +219,27 @@ class ReaderRepository:
         return items, next_cursor
 
     def feed_by_source(self, cur: Cursor, scope: FeedScope, *, filter: FeedFilter, per_source: int = 3,
-                       group_cursor: FeedCursor | None = None, groups: int = 20
+                       group_cursor: FeedCursor | None = None, groups: int = 20,
+                       since: datetime | None = None
                        ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One group per source, newest group first; keyset on (newest_sort_at, source_id).
 
         `count` honours the filter and the window: the unread window bounds every filter except
         `starred` (an explicit star never ages out), so grouping stays cheap on a big archive.
+        `since` (the `days=` window) bounds both the counts and the items. Two queries per
+        page whatever its size: the groups, then every group's newest items in one LATERAL.
         """
         scope_sql, scope_params = self._scope_sql(scope)
         filter_sql, filter_params = self._filter_sql(filter)
-        window_sql, window_params = "TRUE", []
+        window = ["TRUE"]
+        window_params: List[Any] = []
         if filter == "all":
-            window_sql, window_params = f"{SORT_KEY} >= now() - make_interval(days => %s)", [self.unread_window_days]
+            window.append(f"{SORT_KEY} >= now() - make_interval(days => %s)")
+            window_params.append(self.unread_window_days)
+        if since is not None:
+            window.append(f"{SORT_KEY} >= %s")
+            window_params.append(since)
+        window_sql = " AND ".join(window)
         group_where, group_params = "TRUE", []
         if group_cursor is not None:
             group_where = "(g.newest_sort_at, g.source_id) < (%s, %s::uuid)"
@@ -256,28 +265,40 @@ class ReaderRepository:
         )
         group_rows = cur.fetchall()
         page = group_rows[:groups]
-        out: List[Dict[str, Any]] = []
-        for source_id, newest, n, display_name, platform in page:
+        items_by_source: Dict[str, List[Dict[str, Any]]] = {str(row[0]): [] for row in page}
+        if page:
             cur.execute(
                 f"""
-                SELECT {_ITEM_COLUMNS}
-                FROM posts p
-                JOIN sources s ON s.id = p.source_id
-                LEFT JOIN post_reader_state rs ON rs.post_id = p.id
-                WHERE p.source_id = %s AND {filter_sql} AND {window_sql}
-                ORDER BY {SORT_KEY} DESC, p.id DESC
-                LIMIT %s
+                SELECT x.*
+                FROM unnest(%s::uuid[]) AS g(source_id)
+                CROSS JOIN LATERAL (
+                    SELECT {_ITEM_COLUMNS}
+                    FROM posts p
+                    JOIN sources s ON s.id = p.source_id
+                    LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+                    WHERE p.source_id = g.source_id AND {filter_sql} AND {window_sql}
+                    ORDER BY {SORT_KEY} DESC, p.id DESC
+                    LIMIT %s
+                ) x
                 """,
-                [source_id, *filter_params, *window_params, per_source],
+                [list(items_by_source), *filter_params, *window_params, per_source],
             )
-            out.append({
+            for row in cur.fetchall():
+                item = _item(row)
+                items_by_source[item["source_id"]].append(item)
+        out: List[Dict[str, Any]] = [
+            {
                 "source_id": str(source_id),
                 "source_display_name": display_name,
                 "platform": platform,
                 "newest_sort_at": newest,
                 "count": int(n),
-                "items": [_item(r) for r in cur.fetchall()],
-            })
+                # LATERAL keeps each source's rows in its ORDER BY, but say so rather than rely on it.
+                "items": sorted(items_by_source[str(source_id)], key=lambda i: (i["sort_at"], i["id"]),
+                                reverse=True),
+            }
+            for source_id, newest, n, display_name, platform in page
+        ]
         next_cursor = None
         if len(group_rows) > groups:
             last = out[-1]

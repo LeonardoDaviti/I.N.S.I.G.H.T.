@@ -278,6 +278,31 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(groups[0]["count"], 1)
         self.assertEqual([i["id"] for i in groups[0]["items"]], [ids[3]])
 
+    def test_feed_by_source_since_bounds_counts_and_items(self):
+        source, old_only = self._source(), self._source()
+        recent = self._post(source, self.now - timedelta(days=1))
+        self._post(source, self.now - timedelta(days=10))
+        self._post(old_only, self.now - timedelta(days=10))
+        folder = self._folder(source, old_only)
+
+        groups, _ = self.repo.feed_by_source(self.cur, FeedScope("folder", folder), filter="all",
+                                             since=self.now - timedelta(days=3))
+
+        self.assertEqual([g["source_id"] for g in groups], [source], "a source with only old posts drops out")
+        self.assertEqual(groups[0]["count"], 1)
+        self.assertEqual([i["id"] for i in groups[0]["items"]], [recent])
+
+    def test_feed_by_source_items_stay_per_source_across_a_page(self):
+        sources = [self._source() for _ in range(3)]
+        ids = {sid: self._posts(sid, 5, start=self.now - timedelta(hours=n + 1)) for n, sid in enumerate(sources)}
+        folder = self._folder(*sources)
+
+        groups, _ = self.repo.feed_by_source(self.cur, FeedScope("folder", folder), filter="all", per_source=2)
+
+        for group in groups:
+            self.assertEqual([i["id"] for i in group["items"]], ids[group["source_id"]][:2])
+            self.assertEqual(group["count"], 5)
+
     # ---- item shape ---------------------------------------------------------------
 
     def test_item_shape(self):

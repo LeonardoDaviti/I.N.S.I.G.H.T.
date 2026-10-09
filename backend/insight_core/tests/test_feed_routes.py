@@ -166,3 +166,50 @@ class FeedRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReaderServiceDaysTests(unittest.TestCase):
+    """`days` reaches the repository for both views (spec §4: GET /api/feed days=)."""
+
+    class FakeRepo:
+        def __init__(self):
+            self.calls = []
+
+        def feed(self, cur, scope, **kwargs):
+            self.calls.append(("feed", kwargs))
+            return [], None
+
+        def feed_by_source(self, cur, scope, **kwargs):
+            self.calls.append(("feed_by_source", kwargs))
+            return [], None
+
+    def _feed(self, view, days):
+        from contextlib import nullcontext
+        from datetime import timedelta
+        from unittest import mock
+
+        from insight_core.services.reader_service import ReaderService
+
+        now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+        repo = self.FakeRepo()
+        service = ReaderService("postgresql:///unused", repo=repo, clock=lambda: now)
+        conn = mock.MagicMock()
+        conn.__enter__.return_value = conn
+        conn.cursor.return_value = nullcontext(object())
+        with mock.patch("insight_core.services.reader_service.psycopg.connect", return_value=conn):
+            service.feed(FeedScope("all", None), filter="all", view=view, cursor=None, limit=30, days=days)
+        return repo.calls[0], now - timedelta(days=days) if days else None
+
+    def test_by_source_passes_since(self):
+        (name, kwargs), expected = self._feed("by_source", 1)
+        self.assertEqual(name, "feed_by_source")
+        self.assertEqual(kwargs["since"], expected)
+
+    def test_stream_passes_since(self):
+        (name, kwargs), expected = self._feed("stream", 7)
+        self.assertEqual(name, "feed")
+        self.assertEqual(kwargs["since"], expected)
+
+    def test_no_days_means_no_since(self):
+        (_name, kwargs), _ = self._feed("by_source", None)
+        self.assertIsNone(kwargs["since"])
