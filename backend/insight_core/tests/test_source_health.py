@@ -192,6 +192,43 @@ class SourceHealthTests(unittest.TestCase):
         # Within "due": the one that has been due longest first.
         self.assertEqual(order[3:6], ["due", "pinned", "new"])
 
+    def test_a_failed_last_attempt_is_an_error_even_with_no_failure_count(self):
+        """Mark VIII backfill: last_outcome='error', 0 failures, no retry -> still 'error'."""
+        view = [
+            view_row("stale", state=state("stale", last_outcome="error", last_error="HTTP 429",
+                                          last_error_at=NOW - 240 * H, last_success_at=NOW - 300 * H)),
+            view_row("never", state=state("never", last_outcome="error", last_error="HTTP 404",
+                                          last_error_at=NOW - 240 * H)),
+            view_row("recovered", state=state("recovered", last_outcome="error", last_error="old",
+                                              last_error_at=NOW - 300 * H, last_success_at=NOW - 240 * H)),
+        ]
+        service = make_service(view)
+        result = service.get_source_health()
+        statuses = {r["source_id"]: r["status"] for r in result["rows"]}
+        self.assertEqual(statuses["stale"], "error")
+        self.assertEqual(statuses["never"], "error")
+        self.assertEqual(statuses["recovered"], "due", "a success after the error clears it")
+        self.assertEqual(result["summary"]["errors"], 2)
+        self.assertEqual(result["summary"]["due_now"], 1)
+
+    def test_backoff_still_wins_while_a_retry_is_scheduled(self):
+        view = [view_row("wait", state=state("wait", last_outcome="error", last_error_at=NOW - H,
+                                             consecutive_failures=1, next_retry_at=NOW + H))]
+        self.assertEqual(make_service(view).get_source_health()["rows"][0]["status"], "backoff")
+
+    def test_the_status_set_has_one_source(self):
+        from insight_core.services.operations_service import (
+            EMPTY_SOURCE_HEALTH,
+            HEALTH_STATUS_ORDER,
+            HealthStatus,
+            summarize_health,
+        )
+        self.assertEqual(HEALTH_STATUS_ORDER, tuple(s.value for s in HealthStatus))
+        self.assertEqual(summarize_health([]), EMPTY_SOURCE_HEALTH["summary"])
+        self.assertEqual(set(EMPTY_SOURCE_HEALTH["summary"]),
+                         {"due_now", "deferred", "backoff", "unavailable", "errors"},
+                         "the wire keys are API contract (spec F.4)")
+
     def test_overview_carries_the_summary_and_the_worst_eight(self):
         many = schedule_view() + [view_row(f"extra{i}", state=state(f"extra{i}", last_success_at=NOW))
                                   for i in range(5)]

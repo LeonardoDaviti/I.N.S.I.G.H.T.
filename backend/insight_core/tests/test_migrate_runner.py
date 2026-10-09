@@ -151,7 +151,8 @@ class FetchScheduleMigrationTests(unittest.TestCase):
             self.assertEqual(b[2], "error")
             self.assertEqual(b[5], "boom")
             self.assertEqual(b[6], ts(t2))
-            self.assertEqual(b[7], 0, "a malformed failure count backfills to 0")
+            self.assertEqual(b[7], 1, "an 'error' last status counts as at least one failure, "
+                                      "even when the failure count is malformed")
             self.assertIsNone(b[8], "a malformed retry time backfills to NULL")
 
             cur.execute("SELECT settings FROM sources WHERE id = ANY(%s::uuid[])", (ids,))
@@ -163,6 +164,46 @@ class FetchScheduleMigrationTests(unittest.TestCase):
 
             cur.execute(sql)
             self.assertEqual(snapshot(), rows, "0019 must be idempotent")
+        finally:
+            conn.rollback()
+            conn.close()
+
+    @requires_test_db
+    def test_0022_repairs_error_rows_backfilled_with_no_failures(self):
+        """Databases that ran the old 0019 have last_outcome='error' with 0 failures: count 1."""
+        sql = (MIGRATIONS_DIR / "0022_fetch_state_error_failures.sql").read_text(encoding="utf-8")
+        t1, t2 = datetime.fromisoformat("2026-09-02T10:00:00+00:00"), datetime.fromisoformat("2026-09-03T10:00:00+00:00")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            ids = {name: insert_scratch_source(cur) for name in
+                   ("stale_error", "never_succeeded", "recovered", "counted", "healthy")}
+            cur.execute("DELETE FROM source_fetch_state WHERE source_id = ANY(%s::uuid[])", (list(ids.values()),))
+            rows = {
+                "stale_error": ("error", t1, t2, 0, None),        # failed after its last success
+                "never_succeeded": ("error", None, t2, 0, None),
+                "recovered": ("error", t2, t1, 0, None),          # a success since the error
+                "counted": ("error", t1, t2, 3, t2),              # already counted: untouched
+                "healthy": ("healthy", t2, t1, 0, None),
+            }
+            for name, (outcome, success, error, failures, retry) in rows.items():
+                cur.execute(
+                    "INSERT INTO source_fetch_state (source_id, last_outcome, last_success_at, last_error_at, "
+                    "consecutive_failures, next_retry_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (ids[name], outcome, success, error, failures, retry),
+                )
+
+            cur.execute(sql)
+            cur.execute(sql)  # idempotent
+
+            cur.execute("SELECT source_id::text, consecutive_failures, next_retry_at FROM source_fetch_state "
+                        "WHERE source_id = ANY(%s::uuid[])", (list(ids.values()),))
+            got = {sid: (n, retry) for sid, n, retry in cur.fetchall()}
+            self.assertEqual(got[ids["stale_error"]], (1, None), "retry stays NULL: the next tick retries")
+            self.assertEqual(got[ids["never_succeeded"]], (1, None))
+            self.assertEqual(got[ids["recovered"]], (0, None))
+            self.assertEqual(got[ids["counted"]], (3, t2))
+            self.assertEqual(got[ids["healthy"]], (0, None))
         finally:
             conn.rollback()
             conn.close()

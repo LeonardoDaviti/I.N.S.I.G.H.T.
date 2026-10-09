@@ -8,11 +8,13 @@ import os
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 import psycopg
 
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
+from insight_core.db.repo_operations import JobRunsRepository, SystemSettingsRepository
 from insight_core.ingestion.schedule import (
     BACKOFF_DORMANT_AFTER,
     Availability,
@@ -58,12 +60,36 @@ INGEST_TICK_MINUTES_MAX = 24 * 60
 
 # Source health (spec §F.4). Every source lands in exactly one status; the summary counts
 # the enabled ones, so its buckets add up to the number of enabled sources.
-HEALTH_STATUS_ORDER = ("error", "backoff", "unavailable", "due", "deferred", "disabled")
-OVERVIEW_HEALTH_ROWS = 8
-EMPTY_SOURCE_HEALTH: Dict[str, Any] = {
-    "summary": {"due_now": 0, "deferred": 0, "backoff": 0, "unavailable": 0, "errors": 0},
-    "rows": [],
+class HealthStatus(str, Enum):
+    """The one place the status set lives; declaration order is the sort order (worst first)."""
+
+    ERROR = "error"
+    BACKOFF = "backoff"
+    UNAVAILABLE = "unavailable"
+    DUE = "due"
+    DEFERRED = "deferred"
+    DISABLED = "disabled"
+
+
+HEALTH_STATUS_ORDER = tuple(status.value for status in HealthStatus)
+# Summary wire keys (API contract, spec §F.4): a disabled source is not counted.
+HEALTH_SUMMARY_KEYS: Dict[HealthStatus, str] = {
+    HealthStatus.DUE: "due_now",
+    HealthStatus.DEFERRED: "deferred",
+    HealthStatus.BACKOFF: "backoff",
+    HealthStatus.UNAVAILABLE: "unavailable",
+    HealthStatus.ERROR: "errors",
 }
+# "Failing" in the spec glossary: retrying now (error) or waiting to retry (backoff).
+FAILING_STATUSES = (HealthStatus.ERROR, HealthStatus.BACKOFF)
+OVERVIEW_HEALTH_ROWS = 8
+
+
+def empty_health_summary() -> Dict[str, int]:
+    return {key: 0 for key in HEALTH_SUMMARY_KEYS.values()}
+
+
+EMPTY_SOURCE_HEALTH: Dict[str, Any] = {"summary": empty_health_summary(), "rows": []}
 CADENCE_OVERRIDE_MIN_HOURS = 1.0
 CADENCE_OVERRIDE_MAX_HOURS = 2160.0   # 90 days
 
@@ -78,16 +104,28 @@ def backlog_posts(available_posts: Any, stored_posts: Any) -> Optional[int]:
     return max(available_posts - int(stored_posts or 0), 0)
 
 
-def health_status(enabled: bool, decision: FetchDecision, consecutive_failures: int) -> str:
+def last_attempt_failed(state: Optional[FetchStateRow]) -> bool:
+    """The newest attempt failed: last_outcome is 'error' and no success came after it."""
+    if state is None or state.last_outcome != "error":
+        return False
+    if state.last_success_at is None or state.last_error_at is None:
+        return True
+    return state.last_error_at >= state.last_success_at
+
+
+def health_status(enabled: bool, decision: FetchDecision, consecutive_failures: int,
+                  state: Optional[FetchStateRow] = None) -> str:
     if not enabled:
-        return "disabled"
+        return HealthStatus.DISABLED.value
     if decision.kind == DecisionKind.SKIP_UNAVAILABLE:
-        return "unavailable"
+        return HealthStatus.UNAVAILABLE.value
     if decision.kind == DecisionKind.SKIP_BACKOFF:
-        return "backoff"
-    if consecutive_failures > 0:
-        return "error"          # failing, and its retry is due now
-    return "due" if decision.fetch else "deferred"
+        return HealthStatus.BACKOFF.value      # failing, its retry is scheduled
+    # Failing and its retry is due now. A failed last attempt counts even with no failure
+    # count: Mark VIII rows backfilled by 0019 can be last_outcome='error' with 0 failures.
+    if consecutive_failures > 0 or last_attempt_failed(state):
+        return HealthStatus.ERROR.value
+    return HealthStatus.DUE.value if decision.fetch else HealthStatus.DEFERRED.value
 
 
 def health_row(source: Dict[str, Any], kind: Any, availability: Availability, now: datetime) -> Dict[str, Any]:
@@ -129,7 +167,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
         "unavailable_reason": unavailable,
-        "status": health_status(enabled, decision, failures),
+        "status": health_status(enabled, decision, failures, state),
         "last_attempt_at": _iso(state.last_attempt_at if state else None),
         "last_success_at": _iso(state.last_success_at if state else None),
         "last_outcome": state.last_outcome if state else None,
@@ -150,11 +188,12 @@ def _health_sort_key(row: Dict[str, Any]) -> tuple:
 
 
 def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    summary = {"due_now": 0, "deferred": 0, "backoff": 0, "unavailable": 0, "errors": 0}
-    bucket = {"due": "due_now", "deferred": "deferred", "backoff": "backoff",
-              "unavailable": "unavailable", "error": "errors"}
+    summary = empty_health_summary()
     for row in rows:
-        key = bucket.get(row["status"])
+        try:
+            key = HEALTH_SUMMARY_KEYS.get(HealthStatus(row["status"]))
+        except ValueError:
+            key = None
         if key:
             summary[key] += 1
     return summary
@@ -162,7 +201,7 @@ def summarize_health(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 def sources_failing(summary: Dict[str, int]) -> int:
     """Sources whose last fetches failed: retrying now (errors) or waiting (backoff)."""
-    return int(summary.get("errors", 0)) + int(summary.get("backoff", 0))
+    return sum(int(summary.get(HEALTH_SUMMARY_KEYS[status], 0)) for status in FAILING_STATUSES)
 
 
 class OperationsService:
@@ -189,22 +228,17 @@ class OperationsService:
 
     def get_scheduler_config(self) -> Dict[str, Any]:
         defaults = self._default_scheduler_config()
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT value, updated_at FROM system_settings WHERE key = %s",
-                    (self.SETTINGS_KEY_SCHEDULER,),
-                )
-                row = cur.fetchone()
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER)
 
         if not row:
             return defaults
 
-        stored = row[0] or {}
+        stored, updated_at = row
         merged = {
             **defaults,
-            **stored,
-            "updated_at": row[1].isoformat() if row[1] else defaults.get("updated_at"),
+            **(stored or {}),
+            "updated_at": updated_at.isoformat() if updated_at else defaults.get("updated_at"),
         }
         return self._normalize_scheduler_config(merged)
 
@@ -222,18 +256,7 @@ class OperationsService:
 
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO system_settings (key, value, updated_at)
-                    VALUES (%s, %s::jsonb, now())
-                    ON CONFLICT (key) DO UPDATE SET
-                      value = EXCLUDED.value,
-                      updated_at = now()
-                    RETURNING updated_at
-                    """,
-                    (self.SETTINGS_KEY_SCHEDULER, json.dumps(payload)),
-                )
-                updated_at = cur.fetchone()[0]
+                updated_at = SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER, payload)
             conn.commit()
 
         merged["updated_at"] = updated_at.isoformat()
@@ -243,38 +266,21 @@ class OperationsService:
 
     def get_scheduler_state(self) -> Dict[str, Any]:
         """{last_tick_at, next_tick_at, last_daily_work_at, next_daily_work_at} as ISO strings (or {})."""
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT value FROM system_settings WHERE key = %s", (self.SETTINGS_KEY_SCHEDULER_STATE,))
-                row = cur.fetchone()
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER_STATE)
         return dict(row[0] or {}) if row else {}
 
     def set_scheduler_state(self, state: Dict[str, Any]) -> None:
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO system_settings (key, value, updated_at)
-                    VALUES (%s, %s::jsonb, now())
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-                    """,
-                    (self.SETTINGS_KEY_SCHEDULER_STATE, json.dumps(self._json_safe(state or {}))),
-                )
+                SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER_STATE,
+                                                self._json_safe(state or {}))
             conn.commit()
 
     def latest_successful_job_finished_at(self, job_type: str) -> Optional[datetime]:
         """When the newest successful job of this type finished (seeds the daily-work gate)."""
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT max(finished_at) FROM job_runs
-                    WHERE job_type = %s AND status = 'success' AND finished_at IS NOT NULL
-                    """,
-                    (job_type,),
-                )
-                row = cur.fetchone()
-        return row[0] if row else None
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            return JobRunsRepository.latest_success_finished_at(cur, job_type)
 
     def start_job(
         self,

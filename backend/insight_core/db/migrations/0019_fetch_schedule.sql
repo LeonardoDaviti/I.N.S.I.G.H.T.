@@ -58,7 +58,10 @@ SELECT s.id,
        pg_temp.try_int(s.settings #>> '{ops,last_fetched_posts}'),
        CASE WHEN s.settings #>> '{ops,last_status}' = 'error' THEN s.settings #>> '{ops,last_message}' END,
        pg_temp.try_ts(s.settings #>> '{ops,last_error_at}'),
-       GREATEST(COALESCE(pg_temp.try_int(s.settings #>> '{ingest_backoff,consecutive_failures}'), 0), 0),
+       -- A last status of 'error' is at least one failure, whatever ingest_backoff says
+       -- (missing or malformed): otherwise the source reads as healthy-but-due.
+       GREATEST(COALESCE(pg_temp.try_int(s.settings #>> '{ingest_backoff,consecutive_failures}'), 0),
+                CASE WHEN s.settings #>> '{ops,last_status}' = 'error' THEN 1 ELSE 0 END),
        pg_temp.try_ts(s.settings #>> '{ingest_backoff,next_retry_at}')
 FROM sources s
 ON CONFLICT (source_id) DO NOTHING;
