@@ -19,7 +19,7 @@ class SourcesRepository:
     def get_all_sources(self, cur: Cursor) -> List[Dict[str, Any]]:
         """Get all sources."""
         query = """
-            SELECT id, platform, handle_or_url, enabled, created_at, updated_at
+            SELECT id, platform, handle_or_url, enabled, created_at, updated_at, in_main_digest
             FROM sources
             ORDER BY platform, handle_or_url
         """
@@ -34,7 +34,8 @@ class SourcesRepository:
                 "handle_or_url": row[2],
                 "enabled": row[3],
                 "created_at": row[4],
-                "updated_at": row[5]
+                "updated_at": row[5],
+                "in_main_digest": row[6],
             })
         
         self.logger.debug(f"Retrieved {len(sources)} sources")
@@ -103,14 +104,14 @@ class SourcesRepository:
             self.logger.warning(f"Source {source_id} not found")
             return False
     
-    def insert_source(self, cur: Cursor, platform: str, handle: str) -> str:
+    def insert_source(self, cur: Cursor, platform: str, handle: str, *, in_main_digest: bool = True) -> str:
         """Insert new source."""
         query = """
-            INSERT INTO sources (platform, handle_or_url, enabled)
-            VALUES (%s, %s, TRUE)
+            INSERT INTO sources (platform, handle_or_url, enabled, in_main_digest)
+            VALUES (%s, %s, TRUE, %s)
             RETURNING id
         """
-        cur.execute(query, (platform, handle))
+        cur.execute(query, (platform, handle, in_main_digest))
         row = cur.fetchone()
         source_id = str(row[0])
         

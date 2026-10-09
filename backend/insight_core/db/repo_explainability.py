@@ -272,36 +272,29 @@ class ExplainabilityRepository:
         ]
 
     def get_post_reader_state(self, cur: Cursor, post_id: str) -> Dict[str, Any]:
+        """Interaction-log aggregates plus the read-state projection (read_at, starred_at).
+
+        `is_favorited` comes from the projection (post_reader_state.starred_at), which the
+        favorite endpoint writes; the interaction log stays the audit trail.
+        """
         query = """
-            WITH interactions AS (
-                SELECT interaction_type, interaction_value, created_at
-                FROM post_interactions
-                WHERE post_id = %s
-            )
             SELECT
-                COUNT(*) FILTER (WHERE interaction_type = 'opened') AS open_count,
-                MIN(created_at) FILTER (WHERE interaction_type = 'opened') AS first_opened_at,
-                MAX(created_at) FILTER (WHERE interaction_type = 'opened') AS last_opened_at,
+                COUNT(*) FILTER (WHERE i.interaction_type = 'opened') AS open_count,
+                MIN(i.created_at) FILTER (WHERE i.interaction_type = 'opened') AS first_opened_at,
+                MAX(i.created_at) FILTER (WHERE i.interaction_type = 'opened') AS last_opened_at,
                 COALESCE(SUM(
                     CASE
-                        WHEN interaction_type = 'reading_session'
-                        THEN COALESCE((interaction_value->>'duration_seconds')::numeric, 0)
+                        WHEN i.interaction_type = 'reading_session'
+                        THEN COALESCE((i.interaction_value->>'duration_seconds')::numeric, 0)
                         ELSE 0
                     END
                 ), 0) AS total_read_seconds,
-                COALESCE(
-                    (
-                        SELECT interaction_type = 'favorited'
-                        FROM interactions
-                        WHERE interaction_type IN ('favorited', 'unfavorited')
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    ),
-                    FALSE
-                ) AS is_favorited
-            FROM interactions
+                (SELECT rs.read_at FROM post_reader_state rs WHERE rs.post_id = %s) AS read_at,
+                (SELECT rs.starred_at FROM post_reader_state rs WHERE rs.post_id = %s) AS starred_at
+            FROM post_interactions i
+            WHERE i.post_id = %s
         """
-        cur.execute(query, (post_id,))
+        cur.execute(query, (post_id, post_id, post_id))
         row = cur.fetchone()
         if not row:
             return {
@@ -311,14 +304,18 @@ class ExplainabilityRepository:
                 "first_opened_at": None,
                 "last_opened_at": None,
                 "total_read_seconds": 0,
+                "read_at": None,
+                "starred_at": None,
             }
         return {
             "post_id": post_id,
-            "is_favorited": bool(row[4]),
+            "is_favorited": row[5] is not None,
             "open_count": int(row[0] or 0),
             "first_opened_at": row[1],
             "last_opened_at": row[2],
             "total_read_seconds": int(row[3] or 0),
+            "read_at": row[4],
+            "starred_at": row[5],
         }
 
     def _json_default(self, value: Any) -> Any:

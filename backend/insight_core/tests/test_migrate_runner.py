@@ -168,5 +168,101 @@ class FetchScheduleMigrationTests(unittest.TestCase):
             conn.close()
 
 
+ARXIV_RSS = [
+    "https://rss.arxiv.org/rss/cs.AI",
+    "https://rss.arxiv.org/rss/cs.CL",
+    "https://rss.arxiv.org/rss/cs.LG",
+    "https://rss.arxiv.org/rss/physics.optics",
+]
+
+
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class ReaderMigrationTests(unittest.TestCase):
+    """0020 (read-state projection) and 0021 (arXiv out of the main digest)."""
+
+    def test_reader_state_schema_exists(self):
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'post_reader_state'")
+            self.assertEqual(cur.fetchone()[0], 1)
+            cur.execute(
+                "SELECT indexname FROM pg_indexes WHERE indexname = ANY(%s)",
+                (["posts_feed_order_idx", "posts_source_feed_order_idx", "post_reader_state_starred_idx"],),
+            )
+            self.assertEqual(len(cur.fetchall()), 3)
+
+    @requires_test_db
+    def test_0020_backfill_from_interactions(self):
+        sql = (MIGRATIONS_DIR / "0020_reader_state.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            source = insert_scratch_source(cur)
+            posts = []
+            for n in range(3):
+                cur.execute(
+                    "INSERT INTO posts (source_id, url) VALUES (%s, %s) RETURNING id",
+                    (source, f"https://test.invalid/mark-ix/post/{n}/{source}"),
+                )
+                posts.append(str(cur.fetchone()[0]))
+            opened, starred, unstarred = posts
+            t = lambda h: f"2026-10-0{h}T10:00:00+00:00"  # noqa: E731
+            for post_id, kind, ts in [
+                (opened, "opened", t(2)), (opened, "opened", t(1)), (opened, "reading_session", t(3)),
+                (starred, "unfavorited", t(1)), (starred, "favorited", t(2)),
+                (unstarred, "favorited", t(1)), (unstarred, "unfavorited", t(2)),
+            ]:
+                cur.execute(
+                    "INSERT INTO post_interactions (post_id, interaction_type, created_at) VALUES (%s, %s, %s)",
+                    (post_id, kind, ts),
+                )
+            cur.execute(sql)
+            cur.execute(
+                "SELECT post_id::text, read_at, starred_at FROM post_reader_state WHERE post_id = ANY(%s::uuid[])",
+                (posts,),
+            )
+            rows = {r[0]: r[1:] for r in cur.fetchall()}
+            self.assertEqual(rows[opened], (datetime.fromisoformat(t(1)), None), "read_at = first open")
+            self.assertEqual(rows[starred], (None, datetime.fromisoformat(t(2))), "latest toggle was a favorite")
+            self.assertEqual(rows[unstarred], (None, None), "latest toggle was an unfavorite")
+            cur.execute(sql)  # idempotent
+        finally:
+            conn.rollback()
+            conn.close()
+
+    @requires_test_db
+    def test_0021_arxiv_main_digest(self):
+        sql = (MIGRATIONS_DIR / "0021_arxiv_out_of_main_digest.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            for url in ARXIV_RSS:
+                cur.execute(
+                    """
+                    INSERT INTO sources (platform, handle_or_url, enabled, in_main_digest)
+                    VALUES ('rss', %s, true, true)
+                    ON CONFLICT (platform, handle_or_url) DO UPDATE SET enabled = true, in_main_digest = true
+                    """,
+                    (url,),
+                )
+            other = insert_scratch_source(cur, enabled=True, in_main_digest=True)
+
+            cur.execute(sql)
+
+            cur.execute(
+                "SELECT handle_or_url, enabled, in_main_digest FROM sources WHERE handle_or_url = ANY(%s)",
+                (ARXIV_RSS,),
+            )
+            rows = cur.fetchall()
+            self.assertEqual(len(rows), 4)
+            for url, enabled, in_main_digest in rows:
+                self.assertTrue(enabled, url)
+                self.assertFalse(in_main_digest, url)
+            cur.execute("SELECT enabled, in_main_digest FROM sources WHERE id = %s", (other,))
+            self.assertEqual(cur.fetchone(), (True, True), "other sources are untouched")
+        finally:
+            conn.rollback()
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@ from insight_core.services.operations_service import OperationsService
 from insight_core.ingestion.ports import DbFetchStateStore
 from insight_core.ingestion.types import FetchOutcome
 from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.reader_service import ReaderService
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.stories_service import StoriesService
 from insight_core.services.story_timeline_service import StoryTimelineService
@@ -53,6 +54,7 @@ class InsightApiBridge:
         self.fetch_state = DbFetchStateStore(self.db)
         self.post_detail_service = PostDetailService(self.db)
         self.explainability_service = ExplainabilityService(self.db)
+        self.reader_service = ReaderService(self.db)
         self.stories_service = StoriesService(self.db)
         self.story_timeline_service = StoryTimelineService(self.db)
         self.inbox_service = InboxService(
@@ -1593,6 +1595,26 @@ class InsightApiBridge:
             return {"success": True, **result}
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id}
+
+    # ============= READER (Mark IX) =============
+    # New endpoints: errors propagate (the route maps them to 400/500 with a clean detail)
+    # instead of being wrapped in {success: false}.
+
+    def get_feed(self, scope, *, filter: str, view: str, cursor, limit: int, days: int | None) -> Dict[str, Any]:
+        return self.reader_service.feed(scope, filter=filter, view=view, cursor=cursor, limit=limit, days=days)
+
+    def get_unread_counts(self) -> Dict[str, Any]:
+        return self.reader_service.unread_counts()
+
+    def mark_read_through(self, scope, through, newest) -> Dict[str, Any]:
+        return self.reader_service.mark_read_through(scope, through, newest)
+
+    def set_posts_read(self, post_ids: List[str], read: bool) -> Dict[str, Any]:
+        return {"success": True, "updated": self.reader_service.set_read(post_ids, read)}
+
+    def set_post_read(self, post_id: str, read: bool) -> Dict[str, Any]:
+        updated = self.reader_service.set_read([post_id], read)
+        return {"success": True, "post_id": post_id, "updated": updated}
 
     def get_post_evidence(self, post_id: str) -> Dict[str, Any]:
         try:

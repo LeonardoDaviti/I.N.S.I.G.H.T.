@@ -58,13 +58,17 @@ class SourceConfigSyncService:
         stats = {"added": 0, "updated": 0, "deleted": 0, "errors": []}
         desired_keys = set()
 
-        for platform, handle_or_url, enabled in desired_sources:
+        for platform, handle_or_url, enabled, in_main_digest in desired_sources:
             desired_keys.add((platform, handle_or_url))
             current = current_lookup.get((platform, handle_or_url))
 
             if not current:
                 try:
-                    created = self.sources_service.add_source(platform, handle_or_url)
+                    # in_main_digest is a creation default only: an existing row's flag is
+                    # never overwritten by a sync, so a later change in the UI sticks.
+                    created = self.sources_service.add_source(
+                        platform, handle_or_url, in_main_digest=in_main_digest
+                    )
                     if not enabled:
                         self.sources_service.update_source_status(created["source_id"], False)
                     stats["added"] += 1
@@ -131,12 +135,14 @@ class SourceConfigSyncService:
         for source in sources:
             platform = source["platform"]
             entry = platforms.setdefault(platform, {"enabled": False, "sources": []})
-            entry["sources"].append(
-                {
-                    "id": source["handle_or_url"],
-                    "state": "enabled" if source["enabled"] else "disabled",
-                }
-            )
+            item = {
+                "id": source["handle_or_url"],
+                "state": "enabled" if source["enabled"] else "disabled",
+            }
+            # Written only when off, so the default (true) stays implicit in the file.
+            if source.get("in_main_digest") is False:
+                item["in_main_digest"] = False
+            entry["sources"].append(item)
             if source["enabled"]:
                 entry["enabled"] = True
 
@@ -169,15 +175,17 @@ class SourceConfigSyncService:
         with self.config_path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
 
-    def _flatten_sources(self, document: Dict[str, Any]) -> List[Tuple[str, str, bool]]:
-        flattened: List[Tuple[str, str, bool]] = []
+    def _flatten_sources(self, document: Dict[str, Any]) -> List[Tuple[str, str, bool, bool]]:
+        """(platform, handle_or_url, enabled, in_main_digest); in_main_digest is optional, default true."""
+        flattened: List[Tuple[str, str, bool, bool]] = []
         for platform, platform_data in document.get("platforms", {}).items():
             for source in platform_data.get("sources", []):
                 handle_or_url = source.get("id")
                 if not handle_or_url:
                     continue
                 enabled = source.get("state", "disabled") == "enabled"
-                flattened.append((platform, handle_or_url, enabled))
+                in_main_digest = source.get("in_main_digest", True) is not False
+                flattened.append((platform, handle_or_url, enabled, in_main_digest))
         return flattened
 
     def _default_document(self) -> Dict[str, Any]:

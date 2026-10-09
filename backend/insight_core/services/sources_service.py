@@ -66,11 +66,11 @@ class SourcesService:
                 self.logger.info(f"Folder {folder_id} -> in_main_digest={in_main_digest} ({changed} sources)")
                 return {"folder_id": folder_id, "in_main_digest": in_main_digest, "sources_updated": changed}
 
-    def add_source(self, platform: str, handle: str) -> Dict[str, Any]:
+    def add_source(self, platform: str, handle: str, *, in_main_digest: bool = True) -> Dict[str, Any]:
         """Add new source to database."""
         with psycopg.connect(self.db_url) as conn:
             with conn.cursor() as cur:
-                source_id = self.repo.insert_source(cur, platform, handle)
+                source_id = self.repo.insert_source(cur, platform, handle, in_main_digest=in_main_digest)
                 conn.commit()
                 self.logger.info(f"Added source: {platform}/{handle}")
                 return {"source_id": source_id, "platform": platform, "handle": handle}

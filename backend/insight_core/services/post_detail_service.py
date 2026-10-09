@@ -10,6 +10,7 @@ import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.db.repo_reader import ReaderRepository
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.source_fetch_service import SourceFetchService
@@ -25,6 +26,7 @@ class PostDetailService:
         self.posts_service = PostsService(db_url)
         self.source_fetch_service = SourceFetchService(db_url)
         self.explainability_service = ExplainabilityService(db_url)
+        self.reader_repo = ReaderRepository()
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         with psycopg.connect(self.db_url) as conn:
@@ -155,11 +157,13 @@ class PostDetailService:
         return self._get_cached_summary(post_id)
 
     def record_post_open(self, post_id: str, *, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self.explainability_service.record_post_interaction(
-            post_id,
-            "opened",
-            metadata or {},
-        )
+        """Log the open and mark the post read (the first read time is kept), in one transaction."""
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                stored = self.explainability_service.repo.record_post_interaction(cur, post_id, "opened", metadata or {})
+                self.reader_repo.set_read(cur, [post_id], True)
+            conn.commit()
+        return stored
 
     def record_reading_session(
         self,
@@ -180,7 +184,13 @@ class PostDetailService:
 
     def toggle_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
         interaction_type = "favorited" if favorited else "unfavorited"
-        stored = self.explainability_service.record_post_interaction(post_id, interaction_type, {"favorited": favorited})
+        with psycopg.connect(self.db_url) as conn:
+            with conn.cursor() as cur:
+                stored = self.explainability_service.repo.record_post_interaction(
+                    cur, post_id, interaction_type, {"favorited": favorited}
+                )
+                self.reader_repo.set_starred(cur, post_id, favorited)
+            conn.commit()
         state = self.get_post_reader_state(post_id)
         return {
             "post_id": post_id,

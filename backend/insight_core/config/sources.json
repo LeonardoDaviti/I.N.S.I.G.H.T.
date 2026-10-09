@@ -111,19 +111,23 @@
                 },
                 {
                     "id": "https://rss.arxiv.org/rss/cs.AI",
-                    "state": "enabled"
+                    "state": "enabled",
+                    "in_main_digest": false
                 },
                 {
                     "id": "https://rss.arxiv.org/rss/cs.CL",
-                    "state": "enabled"
+                    "state": "enabled",
+                    "in_main_digest": false
                 },
                 {
                     "id": "https://rss.arxiv.org/rss/cs.LG",
-                    "state": "enabled"
+                    "state": "enabled",
+                    "in_main_digest": false
                 },
                 {
                     "id": "https://rss.arxiv.org/rss/physics.optics",
-                    "state": "enabled"
+                    "state": "enabled",
+                    "in_main_digest": false
                 },
                 {
                     "id": "https://simonwillison.net/atom/everything/",

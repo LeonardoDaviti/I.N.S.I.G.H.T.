@@ -17,7 +17,7 @@ class FakeSourcesService:
     def get_all_sources(self):
         return list(self.sources)
 
-    def add_source(self, platform, handle):
+    def add_source(self, platform, handle, *, in_main_digest=True):
         source_id = f"{platform}:{handle}"
         self.sources.append(
             {
@@ -25,10 +25,14 @@ class FakeSourcesService:
                 "platform": platform,
                 "handle_or_url": handle,
                 "enabled": True,
+                "in_main_digest": in_main_digest,
             }
         )
         self.added.append((platform, handle))
         return {"source_id": source_id}
+
+    def set_in_main_digest(self, source_id, in_main_digest):
+        raise AssertionError("a sync must never overwrite an existing row's in_main_digest")
 
     def update_source_status(self, source_id, enabled):
         for source in self.sources:
@@ -95,6 +99,68 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertIn(("old-2", True), fake_sources.updated)
             self.assertIn("old-1", fake_sources.deleted)
+
+    def _write(self, config_path, sources):
+        config_path.write_text(
+            json.dumps({"metadata": {}, "platforms": {"rss": {"enabled": True, "sources": sources}}}),
+            encoding="utf-8",
+        )
+
+    def test_sync_creates_source_with_in_main_digest_off(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            self._write(config_path, [
+                {"id": "https://rss.arxiv.org/rss/cs.AI", "state": "enabled", "in_main_digest": False},
+                {"id": "https://blog.example/feed.xml", "state": "enabled"},
+            ])
+            fake_sources = FakeSourcesService([])
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+
+            service.sync_json_to_db(mirror=False)
+
+            flags = {s["handle_or_url"]: s["in_main_digest"] for s in fake_sources.sources}
+            self.assertEqual(flags, {"https://rss.arxiv.org/rss/cs.AI": False, "https://blog.example/feed.xml": True})
+
+    def test_sync_never_overwrites_an_existing_rows_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            self._write(config_path, [
+                {"id": "https://rss.arxiv.org/rss/cs.AI", "state": "enabled", "in_main_digest": False},
+            ])
+            existing = {"id": "1", "platform": "rss", "handle_or_url": "https://rss.arxiv.org/rss/cs.AI",
+                        "enabled": True, "in_main_digest": True}
+            fake_sources = FakeSourcesService([existing])
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+
+            result = service.sync_json_to_db(mirror=True)
+
+            self.assertTrue(result["success"])
+            self.assertTrue(fake_sources.sources[0]["in_main_digest"], "the user's re-enable sticks")
+
+    def test_export_round_trips_in_main_digest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = FakeSourcesService([
+                {"id": "1", "platform": "rss", "handle_or_url": "https://rss.arxiv.org/rss/cs.AI",
+                 "enabled": True, "in_main_digest": False},
+                {"id": "2", "platform": "rss", "handle_or_url": "https://blog.example/feed.xml",
+                 "enabled": True, "in_main_digest": True},
+            ])
+
+            service.export_db_to_json()
+
+            entries = {e["id"]: e for e in json.loads(config_path.read_text(encoding="utf-8"))["platforms"]["rss"]["sources"]}
+            self.assertIs(entries["https://rss.arxiv.org/rss/cs.AI"]["in_main_digest"], False)
+            self.assertNotIn("in_main_digest", entries["https://blog.example/feed.xml"], "the default stays implicit")
+
+            fresh = FakeSourcesService([])
+            service.sources_service = fresh
+            service.sync_json_to_db(mirror=False)
+            self.assertEqual({s["handle_or_url"]: s["in_main_digest"] for s in fresh.sources},
+                             {"https://rss.arxiv.org/rss/cs.AI": False, "https://blog.example/feed.xml": True})
 
 
 class YouTubeServiceTests(unittest.TestCase):

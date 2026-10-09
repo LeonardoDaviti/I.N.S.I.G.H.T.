@@ -1,6 +1,7 @@
 import logging
 import os
 import asyncio
+import uuid
 from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
@@ -8,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from insight_api_bridge import InsightApiBridge
+from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -180,6 +182,21 @@ class PostReaderSessionRequest(BaseModel):
 
 class PostFavoriteRequest(BaseModel):
     favorited: bool
+
+
+class PostReadRequest(BaseModel):
+    read: bool
+
+
+class FeedReadRequest(BaseModel):
+    ids: List[str]
+    read: bool
+
+
+class FeedMarkReadRequest(BaseModel):
+    scope: str = "all"
+    through_cursor: str
+    newest_cursor: str
 
 
 class PostOpenRequest(BaseModel):
@@ -446,6 +463,106 @@ async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
     except Exception as e:
         logger.exception("Failed to toggle post favorite")
         return {"success": False, "error": str(e), "post_id": post_id}
+
+
+# ============= READER (Mark IX) =============
+# New endpoints follow the §4 error contract: non-2xx with {"detail": "<human message>"}.
+
+MAX_FEED_LIMIT = 100
+MAX_READ_BATCH = 500
+
+
+def _bad_request(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+def _server_error(what: str) -> HTTPException:
+    # The exception is logged, never echoed: driver messages can carry DSNs and SQL.
+    logger.exception("Reader endpoint failed: %s", what)
+    return HTTPException(status_code=500, detail=f"Could not {what}. Check the backend logs.")
+
+
+def _require_post_ids(ids: List[str]) -> List[str]:
+    if len(ids) > MAX_READ_BATCH:
+        raise ValueError(f"at most {MAX_READ_BATCH} ids per request")
+    try:
+        return [str(uuid.UUID(str(pid))) for pid in ids]
+    except ValueError:
+        raise ValueError("ids must be post UUIDs") from None
+
+
+@app.get("/api/feed")
+async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
+                   cursor: str | None = None, limit: int = 30, days: int | None = None):
+    """Keyset-paginated, newest-first feed: FeedPage (stream) or FeedGroupsPage (by_source)."""
+    try:
+        feed_scope = FeedScope.parse(scope)
+        if filter not in FEED_FILTERS:
+            raise ValueError(f"filter must be one of {', '.join(FEED_FILTERS)}")
+        if view not in FEED_VIEWS:
+            raise ValueError(f"view must be one of {', '.join(FEED_VIEWS)}")
+        if not 1 <= int(limit) <= MAX_FEED_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_FEED_LIMIT}")
+        if days is not None and int(days) < 1:
+            raise ValueError("days must be at least 1")
+        feed_cursor = FeedCursor.decode(cursor) if cursor else None
+    except ValueError as exc:
+        raise _bad_request(exc)
+    try:
+        return api_bridge.get_feed(feed_scope, filter=filter, view=view, cursor=feed_cursor,
+                                   limit=int(limit), days=days)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception:
+        raise _server_error("load the feed")
+
+
+@app.get("/api/feed/unread-counts")
+async def get_feed_unread_counts():
+    try:
+        return api_bridge.get_unread_counts()
+    except Exception:
+        raise _server_error("load unread counts")
+
+
+@app.post("/api/feed/mark-read")
+async def mark_feed_read(request: FeedMarkReadRequest):
+    """Mark all read from newest_cursor down to through_cursor, bounded by the unread window."""
+    try:
+        scope = FeedScope.parse(request.scope)
+        through = FeedCursor.decode(request.through_cursor)
+        newest = FeedCursor.decode(request.newest_cursor)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    try:
+        return api_bridge.mark_read_through(scope, through, newest)
+    except Exception:
+        raise _server_error("mark posts read")
+
+
+@app.put("/api/feed/read")
+async def set_feed_read(request: FeedReadRequest):
+    """Batch read/unread (the mark-through Undo)."""
+    try:
+        ids = _require_post_ids(request.ids)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    try:
+        return api_bridge.set_posts_read(ids, bool(request.read))
+    except Exception:
+        raise _server_error("update read state")
+
+
+@app.put("/api/posts/item/{post_id}/read")
+async def set_post_read(post_id: str, request: PostReadRequest):
+    try:
+        (post_id,) = _require_post_ids([post_id])
+    except ValueError as exc:
+        raise _bad_request(exc)
+    try:
+        return api_bridge.set_post_read(post_id, bool(request.read))
+    except Exception:
+        raise _server_error("update read state")
 
 
 @app.get("/api/posts/item/{post_id}/evidence")
