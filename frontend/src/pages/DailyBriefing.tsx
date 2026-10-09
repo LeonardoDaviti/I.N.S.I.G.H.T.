@@ -1355,7 +1355,7 @@ export default function DailyBriefing() {
               />
             </div>
             <button
-              onClick={handleGenerateBriefing}
+              onClick={() => void handleGenerateBriefing()}
               disabled={isGenerating}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
             >
@@ -1448,7 +1448,7 @@ export default function DailyBriefing() {
           <div>
             <label className="block text-xs font-medium text-gray-900 mb-2">Fetch Posts by Date</label>
             <button
-              onClick={handleLoadDatabasePosts}
+              onClick={() => void handleLoadDatabasePosts()}
               disabled={isLoadingPosts}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
             >
@@ -1467,7 +1467,7 @@ export default function DailyBriefing() {
             
             {/* Fetch Topics Button */}
             <button
-              onClick={handleLoadTopics}
+              onClick={() => void handleLoadTopics()}
               disabled={isLoadingTopics}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs mt-2"
             >
@@ -2182,7 +2182,7 @@ export default function DailyBriefing() {
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
-                                              handleMovePostToOutlier(topic.id, post.id);
+                                              if (topic.id && post.id) void handleMovePostToOutlier(topic.id, post.id);
                                             }}
                                             className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors"
                                             title="Move to outlier topic"

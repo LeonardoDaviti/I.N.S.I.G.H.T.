@@ -43,6 +43,14 @@ type ChatMessage = {
   content: string;
 };
 
+/** The chat context summary the backend returns with each chat answer. */
+type PostChatContext = {
+  content_chars?: number;
+  reddit_comments_loaded?: number;
+  topics_loaded?: number;
+  [key: string]: unknown;
+};
+
 type PostDetailPageErrorBoundaryState = {
   hasError: boolean;
 };
@@ -428,7 +436,7 @@ export default function PostDetailPage() {
   const [togglingFavorite, setTogglingFavorite] = useState(false);
   const [actingCandidateId, setActingCandidateId] = useState<string | null>(null);
   const [chatting, setChatting] = useState(false);
-  const [chatContext, setChatContext] = useState<Record<string, unknown> | null>(null);
+  const [chatContext, setChatContext] = useState<PostChatContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sessionStartRef = useRef<number | null>(null);
   const openRecordedRef = useRef(false);
@@ -590,7 +598,7 @@ export default function PostDetailPage() {
         ? metadata.reddit_discussion as Record<string, unknown>
         : null;
       setComments(Array.isArray(discussion?.comments) ? discussion.comments as RedditComment[] : []);
-      setCommentsFetchedAt(discussion?.fetched_at || null);
+      setCommentsFetchedAt(typeof discussion?.fetched_at === 'string' ? discussion.fetched_at : null);
       const briefing = discussion?.briefing && typeof discussion.briefing === 'object' && !Array.isArray(discussion.briefing)
         ? discussion.briefing as Record<string, unknown>
         : null;
@@ -748,7 +756,7 @@ export default function PostDetailPage() {
         content: response.answer || response.error || 'No response returned.',
       },
     ]);
-    setChatContext(response.context && typeof response.context === 'object' && !Array.isArray(response.context) ? response.context as Record<string, unknown> : null);
+    setChatContext(response.context && typeof response.context === 'object' && !Array.isArray(response.context) ? response.context as PostChatContext : null);
     setChatting(false);
   };
 

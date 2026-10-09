@@ -1652,6 +1652,21 @@ Rules:
 
 **Commands:** `cd frontend && npm install && npm run typecheck && npm test && npm run build`
 
+**As built (F1, 2026-10-09), deviations from the text above:**
+- The root `.gitignore` ignores `*.json`, which silently dropped the new tsconfig files. It now un-ignores `frontend/tsconfig.json` and `frontend/tsconfig.node.json`. `package-lock.json` stays untracked as before, so the Dockerfile keeps `npm ci || npm install`.
+- `index.html` never loaded IBM Plex; only `index.css` named it. The decision stands: `index.css` now uses the system sans and mono stacks.
+- The typography plugin restyles the `prose` blocks that already exist in DailyBriefing, StoriesExplorer and PostIntelligenceInspector. Those were no-ops before. To keep this safe, `tailwind.config.js` maps the `--tw-prose-*` colours to the theme tokens, so `prose` follows dark mode.
+- 91 of the 101 type errors came from one untyped `asArray()` in `PostIntelligenceInspector.tsx`. Typed overloads fix them, along with a stray `loadEvidence(true)` argument. The DailyBriefing handlers are wrapped as `() => void handler()`. Before this, the click event was passed in as `options`.
+- `src/lib/operationsOverview.ts` had 7 `no-explicit-any` lint errors, and the acceptance requires `eslint src/lib` to be clean. They became `unknown`, a type-only change.
+- `api.ts` gains a public `waitForJob<T>(jobId, {signal, timeoutMs, intervalMs})` that throws (`JobFailedError` with the payload in `.value`, `JobTimeoutError`, `AbortError`, `ApiError`). It is the polling primitive for the Mark IX tracked methods in F2. `makeTrackedRequest` wraps it and keeps the Mark VIII `{success:false, error}` contract for the existing callers. It also exports `type Api` and `TrackedRequestOptions`.
+- The test helper `src/test/fakeApi.ts` adds `makeFakeApi(methods)`, a Proxy that throws and names any method the test did not provide.
+- `AppErrorBoundary` takes a `resetKey`. App passes the pathname, so navigating away from a crashed page recovers.
+- F1 meets the parts of §F.7 that it owns, which are the tokens and the state components:
+  - `components/states/` adds `Notice` (tone `status|completion|warning|error`: the four feedback kinds, as `role=status` or `role=alert`) and the shared `PRESS_FEEDBACK` (`active:scale-[0.97]`, 120ms, transform only) and `FOCUS_RING` classes.
+  - The skeleton pulses only under `motion-safe`.
+  - Tailwind's `future.hoverOnlyWhenSupported` puts every `hover:` style behind `(hover: hover) and (pointer: fine)`.
+  - The body font gets `font-optical-sizing: auto`.
+
 ### F2. Ingestion operations UI: run report, Run cycle, health table, fetch buttons
 
 > **Design gate:** before you write UI code, load the `apple-design`, `emil-design-eng` and `break-ui` skills with the Skill tool and meet §F.7. Acceptance includes worst-case fixtures and the dev-only `?data=` switch for every new list or row component.

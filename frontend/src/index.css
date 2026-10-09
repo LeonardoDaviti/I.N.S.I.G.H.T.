@@ -127,7 +127,8 @@
       radial-gradient(circle at bottom left, var(--app-glow-warm), transparent 20%),
       var(--background-primary-alt);
     color: var(--text-normal);
-    font-family: "IBM Plex Sans", "Aptos", "Segoe UI", sans-serif;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-optical-sizing: auto;
     font-size: 15px;
     transition: background-color 0.25s ease, color 0.25s ease;
   }
@@ -212,7 +213,7 @@
     background: var(--background-primary);
     color: var(--text-normal);
     padding: 1rem;
-    font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
     line-height: 1.7;
     outline: none;
   }

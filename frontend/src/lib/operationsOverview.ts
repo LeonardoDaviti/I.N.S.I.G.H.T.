@@ -23,11 +23,11 @@ const DETAIL_OPTIONS: CompactOptions = {
   maxObjectKeys: 12,
 };
 
-function isPlainObject(value: unknown): value is Record<string, any> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function looksLikeEntityMap(value: Record<string, any>): boolean {
+function looksLikeEntityMap(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
   if (keys.length < 6) {
     return false;
@@ -37,7 +37,7 @@ function looksLikeEntityMap(value: Record<string, any>): boolean {
   return entityLikeKeys.length >= Math.ceil(keys.length * 0.6);
 }
 
-function compactArray(value: any[], options: CompactOptions, depth: number, key: string): any[] {
+function compactArray(value: unknown[], options: CompactOptions, depth: number, key: string): unknown[] {
   const previewCount = key === 'events'
     ? options.eventPreview
     : key === 'sample_ids'
@@ -57,7 +57,7 @@ function compactArray(value: any[], options: CompactOptions, depth: number, key:
   ];
 }
 
-function compactObject(value: Record<string, any>, options: CompactOptions, depth: number, key: string): Record<string, any> {
+function compactObject(value: Record<string, unknown>, options: CompactOptions, depth: number, key: string): Record<string, unknown> {
   if (depth >= options.maxDepth) {
     return { truncated_keys: Object.keys(value).length };
   }
@@ -111,7 +111,7 @@ export function compactJobRun(job: JobRun, mode: CompactMode = 'summary'): JobRu
 
   return {
     ...job,
-    payload: compactValue(job.payload, options, 0, 'payload') as Record<string, any>,
+    payload: compactValue(job.payload, options, 0, 'payload') as JobRun['payload'],
   };
 }
 

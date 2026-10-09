@@ -1,7 +1,10 @@
 // API service for INSIGHT backend communication
+import type { SourceConfig } from '../types';
+import { apiErrorFromResponse, errorMessage, isAbortError, toApiError } from '../lib/apiError';
+import { JobFailedError, pollJob } from '../lib/jobPolling';
+
 // Use relative base by default (Vite dev proxy will forward /api to backend). Override with VITE_API_URL in production.
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
-import type { SourceConfig } from '../types';
 
 export interface PostsResponse {
   success: boolean;
@@ -420,6 +423,13 @@ export interface SystemStatusResponse {
   error?: string;
 }
 
+/** Polling knobs for a request that may come back as a job (202 + job_id). */
+export interface TrackedRequestOptions {
+  timeoutMs?: number;
+  intervalMs?: number;
+  signal?: AbortSignal;
+}
+
 interface AcceptedJobResponse {
   success?: boolean;
   accepted?: boolean;
@@ -704,6 +714,7 @@ export interface StoryAnchorPost {
   normalized_url?: string | null;
   canonical_url?: string | null;
   url_host?: string | null;
+  source_display_name?: string | null;
 }
 
 export interface StoryCard {
@@ -732,6 +743,8 @@ export interface StoryCard {
   added_by_method?: string | null;
   added_at?: string | null;
   story_post_metadata?: Record<string, any>;
+  /** present on the story detail response (repo_stories attaches the updates) */
+  timeline?: StoryUpdateEntry[];
 }
 
 export interface StoryPostEntry {
@@ -1040,30 +1053,17 @@ export interface YouTubeWatchProgressResponse {
   progress?: YouTubeWatchProgress | null;
 }
 
-function normalizeErrorText(text: string, contentType: string): string | null {
-  const raw = text.trim();
-  if (!raw) {
-    return null;
-  }
-
-  if (contentType.includes('text/html')) {
-    const titleMatch = raw.match(/<title>(.*?)<\/title>/is);
-    const headingMatch = raw.match(/<h1[^>]*>(.*?)<\/h1>/is);
-    const bestHtmlSnippet = titleMatch?.[1] || headingMatch?.[1] || raw;
-    const stripped = bestHtmlSnippet.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    return stripped.slice(0, 180) || 'HTML error response';
-  }
-
-  return raw.replace(/\s+/g, ' ').trim().slice(0, 240);
-}
-
 class ApiService {
+  /** One HTTP call. Non-2xx throws `ApiError` (status + the server's clean `detail`);
+   *  a network failure throws `ApiError` with status 0. Mark VIII methods catch this
+   *  and wrap it in `{success: false, error}`; Mark IX methods let it propagate to
+   *  react-query and the `ErrorState` components (§4 error contract). */
   private async makeRequest<T>(
-    endpoint: string, 
+    endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
-    
+
     const defaultOptions: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
@@ -1071,24 +1071,16 @@ class ApiService {
       },
     };
 
-    const response = await fetch(url, { ...defaultOptions, ...options });
-    
+    let response: Response;
+    try {
+      response = await fetch(url, { ...defaultOptions, ...options });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw toApiError(error);
+    }
+
     if (!response.ok) {
-      // Try to surface server error details when available
-      let detail = `${response.status} ${response.statusText}`;
-      try {
-        const data = await response.clone().json();
-        const serverMsg = (data && (data.detail || data.error || data.message));
-        if (serverMsg) detail = `${response.status} ${serverMsg}`;
-      } catch {
-        try {
-          const text = await response.text();
-          const contentType = response.headers.get('content-type') || 'unknown';
-          const normalizedText = normalizeErrorText(text, contentType);
-          if (normalizedText) detail = `${response.status} ${normalizedText}`;
-        } catch {}
-      }
-      throw new Error(`API request failed: ${detail} | url=${url}`);
+      throw await apiErrorFromResponse(response);
     }
 
     return response.json();
@@ -1103,60 +1095,68 @@ class ApiService {
     );
   }
 
-  private async pollOperationPayload<T extends { success?: boolean; error?: string }>(
-    jobId: string,
-    opts?: { timeoutMs?: number; intervalMs?: number },
-  ): Promise<T> {
-    const timeoutMs = Math.max(10_000, opts?.timeoutMs ?? 600_000);
-    const intervalMs = Math.max(500, opts?.intervalMs ?? 1_500);
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const jobResponse = await this.getOperationJob(jobId);
-      if (!jobResponse.success || !jobResponse.job) {
-        return {
-          success: false,
-          error: jobResponse.error || `Operation job ${jobId} not found`,
-        } as T;
-      }
-
-      const job = jobResponse.job;
-      if (job.status === 'success') {
-        return {
-          success: true,
-          ...(job.payload || {}),
-        } as T;
-      }
-
-      if (job.status === 'failed') {
-        const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
-        return {
-          success: false,
-          error: payloadError || job.message || `Operation ${job.job_type} failed`,
-          ...(job.payload || {}),
-        } as T;
-      }
-
-      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
-    }
-
-    return {
-      success: false,
-      error: `Operation timed out while waiting for job ${jobId}`,
-    } as T;
+  /** Wait for an operation job and resolve with its payload. Throws: `JobFailedError`
+   *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError` when
+   *  `signal` aborts, or the `ApiError` that ended polling. Up to two consecutive
+   *  transient read errors (a backend restart, a 502 from nginx) are tolerated. */
+  async waitForJob<T>(jobId: string, opts?: TrackedRequestOptions): Promise<T> {
+    return pollJob<T>(
+      async (signal) => {
+        const response = await this.makeRequest<OperationJobResponse>(
+          `/api/operations/jobs/${encodeURIComponent(jobId)}`,
+          { signal },
+        );
+        const job = response.job;
+        if (!job) {
+          return { state: 'failed', error: response.error || `Operation job ${jobId} not found` };
+        }
+        if (job.status === 'success') {
+          return { state: 'done', value: (job.payload || {}) as T };
+        }
+        if (job.status === 'failed') {
+          const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
+          return {
+            state: 'failed',
+            error: payloadError || job.message || `Operation ${job.job_type} failed`,
+            value: (job.payload || {}) as T,
+          };
+        }
+        return { state: 'pending' };
+      },
+      {
+        signal: opts?.signal,
+        timeoutMs: Math.max(10_000, opts?.timeoutMs ?? 600_000),
+        intervalMs: Math.max(500, opts?.intervalMs ?? 1_500),
+      },
+    );
   }
 
+  /** A request that may answer 202 with a job id; polls the job when it does.
+   *  Keeps the Mark VIII contract for its callers: failures, timeouts and polling
+   *  errors resolve as `{success: false, error}` (the failed job's payload is
+   *  spread in, as before). Only an abort rejects. */
   private async makeTrackedRequest<T extends { success?: boolean; error?: string }>(
     url: string,
     options: RequestInit,
-    opts?: { timeoutMs?: number; intervalMs?: number },
+    opts?: TrackedRequestOptions,
   ): Promise<T> {
-    const response = await this.makeRequest<T | AcceptedJobResponse>(url, options);
+    const requestOptions = opts?.signal ? { ...options, signal: opts.signal } : options;
+    const response = await this.makeRequest<T | AcceptedJobResponse>(url, requestOptions);
     if (!this.isAcceptedJobResponse(response)) {
       return response as T;
     }
-    return this.pollOperationPayload<T>(response.job_id!, opts);
+    try {
+      const payload = await this.waitForJob<Record<string, unknown>>(response.job_id!, opts);
+      return { success: true, ...payload } as unknown as T;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const payload = error instanceof JobFailedError && error.value && typeof error.value === 'object'
+        ? error.value as Record<string, unknown>
+        : {};
+      return { ...payload, success: false, error: errorMessage(error) } as unknown as T;
+    }
   }
+
 
   async generateBriefing(date: string): Promise<BriefingResponse> {
     try {
@@ -2358,8 +2358,10 @@ class ApiService {
   }
 
   /** Evidence + comparisons for one node. The tree no longer carries them, so this
-   *  backs the evidence drawer. Server-side it walks the same 60s-memoized tree the
-   *  list call just built, so after a page load it is a cache read, not a query. */
+   *  backs the evidence drawer. Server-side it reads the node cache every tree build
+   *  warms (15-minute TTL, longer than the 60s tree memo), so a drawer click minutes
+   *  after the page load is a dict lookup; a miss rebuilds that scope's tree once.
+   *  Pass the same folderId the list call used, or it lands on a different scope key. */
   async getMilestoneNode(nodeKey: string, folderId?: string | null): Promise<MilestoneNodeDetail> {
     try {
       const params = new URLSearchParams({ node_key: nodeKey });
@@ -2484,31 +2486,6 @@ export interface MilestoneListNode {
   comparison_count: number;
 }
 
-/** The full derived node. Backend-internal now: no response carries it whole. */
-export interface MilestoneNode {
-  node_key: string;
-  kind: 'release' | 'paper';
-  lane_id: string | null;
-  lane_name: string;
-  lane_order: number;
-  vendor: string | null;
-  title: string;
-  custom_title: string | null;
-  version_label: string | null;
-  /** zero-padded; THIS is chain order, not occurred_on */
-  version_sort: string;
-  occurred_on: string | null;
-  last_seen_on: string | null;
-  post_count: number;
-  source_count: number;
-  state: MilestoneState;
-  note: string | null;
-  /** single_source | retrospective | chain_start_at_corpus_edge | named_by_briefing */
-  flags: string[];
-  evidence: MilestoneEvidence[];
-  comparisons: MilestoneComparison[];
-}
-
 export interface MilestoneLaneGroup {
   lane_id: string;
   lane_name: string;
@@ -2623,3 +2600,7 @@ export interface ExpertRunResult {
 // Export singleton instance
 export const apiService = new ApiService();
 export default apiService;
+
+/** The API client's shape. Components get it from `useApi()` (ApiContext), so
+ *  tests can hand them a fake through `<ApiProvider value={fakeApi}>`. */
+export type Api = ApiService;

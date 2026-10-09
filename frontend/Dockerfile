@@ -1,5 +1,6 @@
 # Stage 1: Build
-FROM node:18-alpine AS builder
+# Node 22: Vite 7 needs >= 20.19. The image only builds; frontend tests run on the host.
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 

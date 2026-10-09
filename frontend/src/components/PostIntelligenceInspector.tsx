@@ -81,6 +81,10 @@ function SectionCard({
   );
 }
 
+// Typed when the input is already a typed (optional) array, so callers get the
+// element type (MemoryMention, EventEvidence, ...) instead of unknown.
+function asArray<T>(value: readonly T[] | null | undefined): T[];
+function asArray<T = unknown>(value: unknown): T[];
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
 }
@@ -187,7 +191,7 @@ export default function PostIntelligenceInspector({ postId, post }: Props) {
     setError(null);
     switch (activeTab) {
       case 'evidence':
-        await loadEvidence(true);
+        await loadEvidence();
         return;
       case 'memory':
         await loadMemory();
