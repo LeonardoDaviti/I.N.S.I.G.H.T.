@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Settings, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Plus, Settings, Trash2 } from 'lucide-react';
 import { apiService } from '../services/api';
 import type { SourceWithSettings, Folder, Expert } from '../services/api';
 import AddSourceModal from '../components/AddSourceModal';
@@ -43,6 +43,73 @@ function EnabledSwitch({ enabled, name, onToggle }: { enabled: boolean; name: st
   );
 }
 
+/**
+ * The ⋯ menu beside a track title: rare, destructive actions live here, off the
+ * scanning path. A small hand-rolled menu (button + role="menu"): Escape, outside
+ * click and Tab close it, focus moves into it on open and back to ⋯ on close.
+ */
+function TrackMenu({ name, onDelete }: { name: string; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return undefined;
+    rootRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onPointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    return () => document.removeEventListener('pointerdown', onPointer);
+  }, [open]);
+
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        ref={triggerRef}
+        variant="ghost"
+        size="icon"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={`More actions for track ${name}`}
+        title="More"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </Button>
+      {open ? (
+        <div
+          id={menuId}
+          role="menu"
+          aria-label={`Track ${name}`}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); close(true); }
+            if (event.key === 'Tab') close(false);
+          }}
+          className="absolute right-0 origin-top-right motion-safe:animate-[pop-in_150ms_cubic-bezier(0.23,1,0.32,1)] top-full z-30 mt-1 min-w-[11rem] rounded-md border border-line-strong bg-raised p-1 text-[0.8125rem] text-fg shadow-overlay"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { close(true); onDelete(); }}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-inverse hover:text-inverse-fg focus-visible:bg-inverse focus-visible:text-inverse-fg coarse:py-2.5"
+          >
+            <span aria-hidden="true" className="w-3 text-center font-semibold">×</span>
+            Delete track…
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** One smol-style bordered row: switch, readable name, platform + handle, actions. */
 function SourceRow({
   source,
@@ -58,7 +125,7 @@ function SourceRow({
   const name = sourceName(source);
   const handle = source.handle_or_url && source.handle_or_url !== name ? source.handle_or_url : null;
   return (
-    <li className="flex min-w-0 items-center gap-3 rounded-md border border-line bg-surface px-3 py-2.5 coarse:py-3">
+    <li className="group flex min-w-0 items-center gap-3 rounded-md border border-line bg-surface px-3 py-2.5 coarse:py-3">
       <EnabledSwitch enabled={source.enabled} name={name} onToggle={onToggle} />
       <div className="min-w-0 flex-1">
         <div
@@ -80,7 +147,15 @@ function SourceRow({
         <Button variant="ghost" size="icon" onClick={onSettings} aria-label={`Settings for ${name}`} title="Settings">
           <Settings aria-hidden="true" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={onRemove} aria-label={`Delete source ${name}`} title="Delete">
+        {/* Delete shows on row hover or keyboard focus; always on touch, where there is no hover. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onRemove}
+          aria-label={`Delete source ${name}`}
+          title="Delete"
+          className="opacity-0 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 coarse:opacity-100"
+        >
           <Trash2 aria-hidden="true" />
         </Button>
       </div>
@@ -260,15 +335,9 @@ export default function SourcesConfig() {
                         {fExperts.length === 1 ? 'expert' : 'experts'}: {fExperts.map((e) => e.name).join(', ')}
                       </span>
                     ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={() => setPendingDelete({ kind: 'folder', id: f.id, name: f.name })}
-                      aria-label={`Delete track ${f.name}`}
-                    >
-                      Delete track
-                    </Button>
+                    <div className="ml-auto self-center">
+                      <TrackMenu name={f.name} onDelete={() => setPendingDelete({ kind: 'folder', id: f.id, name: f.name })} />
+                    </div>
                   </div>
                   {fSources.length === 0 ? (
                     <p className="rounded-md border border-dashed border-line px-3 py-3 text-[0.8125rem] text-fg-3">

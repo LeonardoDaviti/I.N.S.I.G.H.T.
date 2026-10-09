@@ -22,7 +22,8 @@ import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHeal
 import { asRunReport } from '../lib/runReport';
 import { localDateISO } from '../lib/dates';
 import { formatCount, plural, sourceLabel } from '../lib/format';
-import { HEALTH_STATUS_LABELS } from '../lib/sourceSchedule';
+import { HEALTH_STATUS_LABELS, sortHealthRows, summarizeHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
+import { useSourcesHealth } from '../hooks/useSourcesHealth';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import RunCycleButton from '../components/ops/RunCycleButton';
 import RunReportSummary from '../components/ops/RunReportSummary';
@@ -343,6 +344,8 @@ export default function IngestionControl() {
 
   const { run: runIngestion, isRunning: isIngestionRunning } = useIngestionRun();
 
+  // Every source's row, so the summary can count by last attempt (the overview carries only the worst few).
+  const healthQuery = useSourcesHealth();
   // A ?job= link (from an ingestion toast) selects that mission.
   useEffect(() => {
     const jobParam = searchParams.get('job');
@@ -699,7 +702,27 @@ export default function IngestionControl() {
   const hint = 'mt-1 text-[0.75rem] text-fg-3';
   const busy = runningAction !== null;
   const sourceOptionLabel = (source: SourceWithSettings) => `${sourceLabel(source.settings?.display_name, source.handle_or_url)} · ${source.platform}`;
-  const sourceHealth = normalizeSourceHealth(operationsOverview?.source_health);
+  // Status by last attempt: a source whose last fetch failed counts as failing, not
+  // due. The full health list decides when loaded; the overview's few rows otherwise.
+  const sourceHealth = (() => {
+    const overview = normalizeSourceHealth(operationsOverview?.source_health);
+    if (healthQuery.data) {
+      const rows = withEffectiveStatus(healthQuery.data.rows, new Date(nowMs));
+      return { summary: summarizeHealthRows(rows), rows: sortHealthRows(rows).slice(0, Math.max(overview.rows.length, 8)) };
+    }
+    const rows = withEffectiveStatus(overview.rows, new Date(nowMs));
+    const shown = summarizeHealthRows(overview.rows);
+    const derived = summarizeHealthRows(rows);
+    // Rows the overview called due/scheduled but whose last attempt failed move to failing.
+    const summary = {
+      ...overview.summary,
+      due_now: Math.max(0, overview.summary.due_now - (shown.due_now - derived.due_now)),
+      deferred: Math.max(0, overview.summary.deferred - (shown.deferred - derived.deferred)),
+      errors: overview.summary.errors + (derived.errors - shown.errors),
+      backoff: overview.summary.backoff + (derived.backoff - shown.backoff),
+    };
+    return { summary, rows: sortHealthRows(rows) };
+  })();
   const stats = operationsOverview?.stats ?? {};
   const staleWarning = schedulerStaleness(schedulerState, Number(schedulerConfig?.ingest_tick_minutes ?? 60), nowMs);
 

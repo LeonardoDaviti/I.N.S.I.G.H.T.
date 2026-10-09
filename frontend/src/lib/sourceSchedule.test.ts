@@ -4,13 +4,16 @@ import assert from 'node:assert/strict';
 import {
   HEALTH_STATUS_ORDER,
   backoffLabel,
+  effectiveHealthStatus,
   filterHealthRows,
   formatDue,
   formatHours,
   intervalLabel,
   parseOverrideHours,
   sortHealthRows,
+  summarizeHealthRows,
   tierLabel,
+  withEffectiveStatus,
 } from './sourceSchedule.ts';
 import type { SourceHealthRow } from '../services/api';
 
@@ -153,4 +156,31 @@ test('parseOverrideHours validates the override the API accepts (null or 1..2160
     const result = parseOverrideHours(bad);
     assert.equal(result.ok, false, bad);
   }
+});
+
+test('effectiveHealthStatus: a failed last attempt is failing, or backoff while a retry is scheduled', () => {
+  const failed = { last_outcome: 'error' as const, last_error: 'HTTP 429', last_error_at: iso(-HOUR), last_success_at: iso(-48 * HOUR) };
+  assert.equal(effectiveHealthStatus(row({ status: 'due', ...failed }), NOW), 'error');
+  assert.equal(effectiveHealthStatus(row({ status: 'deferred', ...failed, next_retry_at: iso(2 * HOUR) }), NOW), 'backoff');
+  assert.equal(effectiveHealthStatus(row({ status: 'due', ...failed, next_retry_at: iso(-HOUR) }), NOW), 'error');
+  // Healthy sources keep their schedule status, even with an older error on record.
+  assert.equal(effectiveHealthStatus(row({ status: 'due', last_outcome: 'healthy', last_error: 'old' }), NOW), 'due');
+  assert.equal(effectiveHealthStatus(row({ status: 'deferred' }), NOW), 'deferred');
+  // Without an outcome, an error newer than the last success counts.
+  assert.equal(effectiveHealthStatus(row({ status: 'due', last_error: 'x', last_error_at: iso(-HOUR), last_success_at: iso(-2 * HOUR) }), NOW), 'error');
+  assert.equal(effectiveHealthStatus(row({ status: 'due', last_error: 'x', last_error_at: iso(-2 * HOUR), last_success_at: iso(-HOUR) }), NOW), 'due');
+  // Disabled and unavailable pass through.
+  assert.equal(effectiveHealthStatus(row({ status: 'disabled', ...failed }), NOW), 'disabled');
+  assert.equal(effectiveHealthStatus(row({ status: 'unavailable', ...failed }), NOW), 'unavailable');
+});
+
+test('summarizeHealthRows counts derived statuses, so failing rows count as failing', () => {
+  const rows = withEffectiveStatus([
+    row({ status: 'due', last_outcome: 'error', last_error: 'HTTP 429' }),
+    row({ status: 'due' }),
+    row({ status: 'deferred' }),
+    row({ status: 'unavailable' }),
+    row({ status: 'backoff' }),
+  ], NOW);
+  assert.deepEqual(summarizeHealthRows(rows), { due_now: 1, deferred: 1, backoff: 1, unavailable: 1, errors: 1 });
 });

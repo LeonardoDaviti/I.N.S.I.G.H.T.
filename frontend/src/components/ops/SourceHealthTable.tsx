@@ -15,6 +15,7 @@ import {
   sortHealthRows,
   tierHint,
   tierLabel,
+  withEffectiveStatus,
 } from '../../lib/sourceSchedule';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural, sourceLabel } from '../../lib/format';
@@ -82,6 +83,22 @@ function useMinuteClock(): Date {
   return now;
 }
 
+/** The command in a decision renders as code: backticked spans, or the tail after
+ *  "run " ("no Telegram session at …; run scripts/telegram_login"). */
+function DecisionDetail({ text }: { text: string }) {
+  const run = text.includes('`') ? null : /^(.*\brun )(\S.*)$/.exec(text);
+  const parts = run ? [run[1], run[2], ''] : text.split(/`([^`]+)`/);
+  return (
+    <>
+      {parts.map((part, index) => (index % 2 === 1 ? (
+        <code key={index} className="rounded-sm border border-line bg-surface px-1 py-px font-mono text-[0.6875rem] text-fg [overflow-wrap:anywhere]">
+          {part}
+        </code>
+      ) : part))}
+    </>
+  );
+}
+
 function countFor(rows: SourceHealthRow[], status: HealthStatus | null): number {
   return filterHealthRows(rows, status).length;
 }
@@ -105,7 +122,9 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
 
   const statusParam = searchParams.get('status');
   const activeFilter = HEALTH_STATUS_ORDER.includes(statusParam as HealthStatus) ? (statusParam as HealthStatus) : null;
-  const allRows = useMemo(() => query.data?.rows ?? [], [query.data]);
+  // Status comes from the last attempt: a source whose last fetch failed reads as
+  // failing (or backoff) here and in the chip counts, never as due or scheduled.
+  const allRows = useMemo(() => withEffectiveStatus(query.data?.rows ?? [], now), [query.data, now]);
   const rows = useMemo(() => sortRows(filterHealthRows(allRows, activeFilter), sortKey), [allRows, activeFilter, sortKey]);
 
   const setFilter = (value: HealthStatus | null) => {
@@ -146,9 +165,12 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
     const mobileLabel = 'text-fg-3 md:hidden';
     body = (
       <>
-        <div className="w-full rounded-md border border-line md:overflow-x-auto lg:overflow-visible">
+        {/* The frame scrolls sideways whenever the table outgrows it (it is ~1100px
+            at lg), so the header is not sticky: sticky inside a scroll box would
+            pin to the box and cover the first row. */}
+        <div data-health-frame className="w-full rounded-md border border-line md:overflow-x-auto">
           <Table className="md:min-w-[56rem]">
-            <THead sticky className="max-md:sr-only">
+            <THead className="max-md:sr-only">
               <tr>
                 <Th>Source</Th>
                 <Th>Status</Th>
@@ -167,13 +189,14 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
                 const fetchTarget = { kind: 'source' as const, id: row.source_id, name };
                 const fetching = isRunning(fetchTarget);
                 const backoff = backoffLabel(row, now);
+                const detail = row.status === 'unavailable' && row.decision_detail ? row.decision_detail : null;
                 return (
                   <Fragment key={row.source_id}>
                     <Tr
                       data-source-id={row.source_id}
-                      className="max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1 max-md:px-4 max-md:py-3"
+                      className={`${detail ? 'border-b-0' : ''} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1 max-md:px-4 max-md:py-3`}
                     >
-                      <Td className="max-md:p-0 md:min-w-[13rem] md:max-w-[18rem]">
+                      <Td className="max-md:p-0 md:min-w-[12rem] md:max-w-[18rem]">
                         <div className="line-clamp-2 break-words font-semibold [overflow-wrap:anywhere]" title={raw} dir="auto">
                           {name}
                         </div>
@@ -189,15 +212,7 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
                       </Td>
                       <Td className="max-md:row-start-1 max-md:col-start-2 max-md:justify-self-end max-md:p-0">
                         <StatusGlyph status={STATUS_GLYPH[row.status] ?? 'scheduled'} label={HEALTH_STATUS_LABELS[row.status] ?? row.status} />
-                        {row.status === 'unavailable' && row.decision_detail ? (
-                          <p className="mt-1 line-clamp-3 max-w-[14rem] text-[0.75rem] text-fg-2 [overflow-wrap:anywhere] max-md:hidden" title={row.decision_detail}>
-                            {row.decision_detail}
-                          </p>
-                        ) : null}
                       </Td>
-                      {row.status === 'unavailable' && row.decision_detail ? (
-                        <td className="col-span-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere] md:hidden">{row.decision_detail}</td>
-                      ) : null}
                       <Td className={`whitespace-nowrap max-md:inline ${cell}`}>
                         <div className="max-md:inline" title={tierHint(row.tier)}>
                           <span className={mobileLabel}>Cadence </span>{tierLabel(row.tier)}
@@ -261,6 +276,18 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
                         </div>
                       </Td>
                     </Tr>
+                    {detail ? (
+                      // The reason, in full: it carries the fix (for example the
+                      // telegram_login command), so it is never clamped.
+                      <Tr className="max-md:block">
+                        <Td colSpan={8} className="pt-0 max-md:block max-md:px-4 max-md:pb-3">
+                          <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
+                            <span className="font-semibold text-fg">Unavailable: </span>
+                            <DecisionDetail text={detail} />
+                          </p>
+                        </Td>
+                      </Tr>
+                    ) : null}
                     {editing === row.source_id ? (
                       <Tr className="bg-surface max-md:block">
                         <Td colSpan={8} className="max-md:block max-md:px-4 max-md:py-3">

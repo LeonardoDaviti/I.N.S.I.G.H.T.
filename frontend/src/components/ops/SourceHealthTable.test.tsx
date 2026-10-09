@@ -111,11 +111,27 @@ describe('SourceHealthTable', () => {
   it('shows the unavailable reason, and the empty and error states', async () => {
     const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse(worstHealthRows()));
     const { unmount } = renderWithProviders(<SourceHealthTable />, { api: makeFakeApi({ getSourcesHealth }) });
-    expect(rowFor(await screen.findByText('ai_newz').then((el) => el.textContent ?? ''))).toHaveTextContent('No Telegram session');
+    // The reason sits, unclamped, on its own full-width line right under the row.
+    const telegram = rowFor(await screen.findByText('ai_newz').then((el) => el.textContent ?? ''));
+    expect(telegram.nextElementSibling).toHaveTextContent('No Telegram session');
+    expect(within(telegram.nextElementSibling as HTMLElement).getByText(/telegram_login/).tagName).toBe('CODE');
     unmount();
 
     renderWithProviders(<SourceHealthTable />, { api: makeFakeApi({ getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([])) }) });
     expect(await screen.findByText('No sources yet')).toBeInTheDocument();
+  });
+
+  it('derives status from the last attempt: a due source whose last fetch failed reads as failing', async () => {
+    const now = new Date();
+    const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'rl-1', display_name: 'Rate Limited', status: 'due', last_outcome: 'error', last_error: 'HTTP 429 Too Many Requests' }, now),
+      healthRow({ source_id: 'ok-1', display_name: 'Calm Feed' }, now),
+    ]));
+    renderWithProviders(<SourceHealthTable />, { api: makeFakeApi({ getSourcesHealth }) });
+    const limited = rowFor(await screen.findByText('Rate Limited').then((el) => el.textContent ?? ''));
+    expect(limited).toHaveTextContent('Failing');
+    expect(limited).not.toHaveTextContent(/\bDue\b/);
+    expect(screen.getByRole('button', { name: /Failing/ })).toHaveTextContent('1');
   });
 
   it('renders the API error with a Retry', async () => {

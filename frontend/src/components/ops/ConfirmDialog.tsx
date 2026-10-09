@@ -37,7 +37,15 @@ export default function ConfirmDialog({
             (event.currentTarget as HTMLElement | null)?.querySelector<HTMLButtonElement>('[data-cancel]')?.focus();
           }}
         >
-          <Dialog.Title className="text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">{title}</Dialog.Title>
+          <Dialog.Title className="flex items-start gap-2.5 text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">
+            {destructive ? (
+              // Monochrome destructive mark: an inverted block with ×, never a hue.
+              <span aria-hidden="true" className="mt-[0.1875rem] inline-flex h-[1.125rem] w-[1.125rem] shrink-0 items-center justify-center rounded-sm bg-inverse text-[0.8125rem] leading-none text-inverse-fg">
+                ×
+              </span>
+            ) : null}
+            <span className="min-w-0 break-words">{title}</span>
+          </Dialog.Title>
           <Dialog.Description asChild>
             <div className="mt-2 break-words text-[0.875rem] text-fg-2">{description}</div>
           </Dialog.Description>
@@ -55,6 +63,7 @@ export default function ConfirmDialog({
               onClick={onConfirm}
               className={buttonVariants({ variant: destructive ? 'danger' : 'primary' })}
             >
+              {destructive ? <span aria-hidden="true" className="mr-1.5">×</span> : null}
               {confirmLabel}
             </button>
           </div>

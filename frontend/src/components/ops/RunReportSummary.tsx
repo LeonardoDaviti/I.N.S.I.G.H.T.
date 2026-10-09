@@ -1,6 +1,6 @@
 import type { RunReport } from '../../services/api';
 import { summarizeRunReport, type RunReportTone } from '../../lib/runReport';
-import { formatCount } from '../../lib/format';
+import { formatCount, sourceLabel } from '../../lib/format';
 import { StatusIcon } from '../ui';
 import type { Status } from '../ui';
 
@@ -23,7 +23,7 @@ const STAGE_LABELS: Record<string, string> = {
 function Count({ label, value, emphasis = false }: { label: string; value: number; emphasis?: boolean }) {
   return (
     <li className="min-w-0 border-l border-line pl-3">
-      <div className="text-[0.75rem] text-fg-3">{label}</div>
+      <div className="truncate whitespace-nowrap text-[0.75rem] text-fg-3" title={label}>{label}</div>
       <div className={`tabular-nums text-fg ${emphasis ? 'text-[1.0625rem] font-semibold' : 'text-[0.9375rem]'}`}>
         {formatCount(value)}
       </div>
@@ -83,7 +83,7 @@ export default function RunReportSummary({
         </ul>
       ) : null}
 
-      <ul aria-label="Run counts" className="mt-4 grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+      <ul aria-label="Run counts" className="mt-4 grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-3">
         <Count label="New posts" value={report.posts_inserted} emphasis />
         <Count label="Updated" value={report.posts_updated} />
         <Count label="Fetched posts" value={report.posts_fetched} />
@@ -99,8 +99,8 @@ export default function RunReportSummary({
             {report.failures.map((failure, index) => (
               <li key={`${failure.source_id}-${index}`} className="min-w-0 py-2">
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <span className="min-w-0 flex-1 truncate font-medium text-fg" title={failure.display_name}>
-                    {failure.display_name}
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg" title={failure.display_name} dir="auto">
+                    {sourceLabel(failure.display_name)}
                   </span>
                   <span className="shrink-0 text-[0.75rem] text-fg-3">{STAGE_LABELS[failure.stage] ?? failure.stage}</span>
                 </div>
@@ -126,8 +126,8 @@ export default function RunReportSummary({
           <ul aria-label="New posts by source" className="mt-1 divide-y divide-line">
             {topSources.map((source) => (
               <li key={source.source_id} className="flex min-w-0 items-baseline gap-3 py-1">
-                <span className="min-w-0 flex-1 truncate text-fg" title={source.display_name}>
-                  {source.display_name}
+                <span className="min-w-0 flex-1 truncate text-fg" title={source.display_name} dir="auto">
+                  {sourceLabel(source.display_name)}
                 </span>
                 <span className="shrink-0 tabular-nums text-fg-2">{formatCount(source.inserted)}</span>
               </li>

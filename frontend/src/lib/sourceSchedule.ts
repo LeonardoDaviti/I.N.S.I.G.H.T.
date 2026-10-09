@@ -5,7 +5,7 @@
  * `sortHealthRows` mirrors `operations_service._health_sort_key` exactly, so the
  * table reads in the same order the API returns and the next run decides.
  */
-import type { CadenceTier, HealthStatus, IntervalBasis, SourceHealthRow } from '../services/api';
+import type { CadenceTier, HealthStatus, IntervalBasis, SourceHealthRow, SourceHealthSummary } from '../services/api';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -121,6 +121,50 @@ export function sortHealthRows(rows: readonly SourceHealthRow[]): SourceHealthRo
     // ISO-8601 strings from one backend clock sort chronologically; "~" sorts after digits.
     || compareText(a.next_due_at || '~', b.next_due_at || '~')
     || compareText(String(a.display_name).toLowerCase(), String(b.display_name).toLowerCase()));
+}
+
+/** Did the source's last attempt fail? `last_outcome` decides; without it, an error
+ *  newer than the last success (or with no success at all) counts. */
+export function lastAttemptFailed(row: Pick<SourceHealthRow, 'last_outcome' | 'last_error' | 'last_error_at' | 'last_success_at'>): boolean {
+  if (row.last_outcome) return row.last_outcome === 'error';
+  if (!row.last_error) return false;
+  const failed = parseDate(row.last_error_at);
+  const succeeded = parseDate(row.last_success_at);
+  return !failed || !succeeded || failed.getTime() >= succeeded.getTime();
+}
+
+/**
+ * The status a row shows, derived from its last attempt. A source whose last fetch
+ * failed is failing (or backing off while a retry is scheduled) even when the
+ * backend's schedule calls it due or scheduled; due/scheduled are for healthy
+ * sources only. Disabled, unavailable, error and backoff pass through.
+ */
+export function effectiveHealthStatus(row: SourceHealthRow, now: Date = new Date()): HealthStatus {
+  if (row.status !== 'due' && row.status !== 'deferred') return row.status;
+  if (!lastAttemptFailed(row)) return row.status;
+  const retry = parseDate(row.next_retry_at);
+  return retry && retry.getTime() - now.getTime() >= MINUTE ? 'backoff' : 'error';
+}
+
+/** Rows with `status` replaced by `effectiveHealthStatus`; unchanged rows keep identity. */
+export function withEffectiveStatus(rows: readonly SourceHealthRow[], now: Date = new Date()): SourceHealthRow[] {
+  return rows.map((row) => {
+    const status = effectiveHealthStatus(row, now);
+    return status === row.status ? row : { ...row, status };
+  });
+}
+
+/** The summary counts for rows (as `summarize_health`): use on `withEffectiveStatus` rows. */
+export function summarizeHealthRows(rows: readonly SourceHealthRow[]): SourceHealthSummary {
+  const summary: SourceHealthSummary = { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 };
+  for (const row of rows) {
+    if (row.status === 'due') summary.due_now += 1;
+    else if (row.status === 'deferred') summary.deferred += 1;
+    else if (row.status === 'backoff') summary.backoff += 1;
+    else if (row.status === 'unavailable') summary.unavailable += 1;
+    else if (row.status === 'error') summary.errors += 1;
+  }
+  return summary;
 }
 
 export type HealthFilter = HealthStatus;
