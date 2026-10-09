@@ -33,16 +33,21 @@ export default function PageHeader({
   );
 }
 
-/** The page container: consistent gutters and width per page kind. */
+/**
+ * The page container. Two widths only, so page edges and headers never jump
+ * between routes: `reading` (max-w-3xl) for single-column pages you read top to
+ * bottom, `ops` (max-w-6xl) for tables and pages with a side rail. `list` and
+ * `wide` are the older names for the same two widths.
+ */
 export function Page({
-  width = 'wide',
+  width = 'ops',
   className,
   children,
 }: {
-  width?: 'reading' | 'list' | 'wide';
+  width?: 'reading' | 'ops' | 'list' | 'wide';
   className?: string;
   children: ReactNode;
 }) {
-  const max = width === 'reading' ? 'max-w-[68ch]' : width === 'list' ? 'max-w-3xl' : 'max-w-6xl';
+  const max = width === 'reading' || width === 'list' ? 'max-w-3xl' : 'max-w-6xl';
   return <div className={cn('mx-auto w-full px-4 pb-24 pt-8 sm:px-6 sm:pt-10', max, className)}>{children}</div>;
 }

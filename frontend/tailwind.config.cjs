@@ -74,7 +74,7 @@ module.exports = {
       none: 'none',
     },
     fontFamily: {
-      sans: ['Inter', '"Inter Variable"', 'ui-sans-serif', 'system-ui', '-apple-system', '"Segoe UI"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+      sans: ['Inter', '"Inter Variable"', 'ui-sans-serif', 'system-ui', '-apple-system', '"Segoe UI"', '"Helvetica Neue"', 'Arial', '"Noto Sans Arabic"', '"Noto Sans CJK JP"', '"Noto Sans"', 'sans-serif'],
       mono: ['ui-monospace', '"SF Mono"', '"JetBrains Mono"', 'Menlo', 'Consolas', '"Liberation Mono"', 'monospace'],
     },
     extend: {

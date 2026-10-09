@@ -497,3 +497,17 @@
     animation: fade-out 120ms ease-out;
   }
 }
+
+/*
+ * Right-to-left headings (Arabic, Hebrew, Persian titles from feeds, rendered
+ * with dir="auto"): the tight 1.15–1.25 leading tuned for Latin display type
+ * makes Arabic ascenders and descenders collide between lines. Tall scripts get
+ * body-like leading (apple §15: leading grows for tall scripts). Element +
+ * pseudo-class outranks a single leading-[…] utility class on purpose.
+ */
+h1:dir(rtl),
+h2:dir(rtl),
+h3:dir(rtl) {
+  line-height: 1.5;
+  letter-spacing: 0;
+}

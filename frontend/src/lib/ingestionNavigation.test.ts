@@ -19,6 +19,10 @@ test('normalizeIngestionTab keeps supported tab keys', () => {
   assert.equal(normalizeIngestionTab('logs'), 'logs');
 });
 
+test('normalizeIngestionTab opens the jobs tab for /ingestion/jobs', () => {
+  assert.equal(normalizeIngestionTab('jobs'), 'missions');
+});
+
 test('getIngestionTabHref uses the base route for main and nested routes for other tabs', () => {
   assert.equal(getIngestionTabHref('main'), '/ingestion');
   assert.equal(getIngestionTabHref('archive'), '/ingestion/archive');

@@ -214,7 +214,7 @@ export default function SourcesConfig() {
           <SourceHealthTable />
         </TabsContent>
 
-        <TabsContent value="sources" className="max-w-3xl">
+        <TabsContent value="sources">
           <form
             className="mb-10 flex flex-wrap items-end gap-2"
             onSubmit={(event) => { event.preventDefault(); void addFolder(); }}

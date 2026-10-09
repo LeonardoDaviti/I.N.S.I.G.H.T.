@@ -33,6 +33,10 @@ export function normalizeIngestionTab(tab?: string | null): IngestionTabKey {
   if (tab === 'archive' || tab === 'missions' || tab === 'logs') {
     return tab;
   }
+  // The tab is labelled "jobs", so /ingestion/jobs must open it, not the overview.
+  if (tab === 'jobs') {
+    return 'missions';
+  }
   return 'main';
 }
 

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Command, Menu } from 'lucide-react';
 import ThemeToggle from '../ThemeToggle';
@@ -19,15 +19,23 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
   const { pathname } = useLocation();
   const current = activeNavKey(pathname);
   const [scrolled, setScrolled] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // A 2px sentinel at the top of the document: once it leaves the viewport,
+  // content is under the bar. An observer instead of a scroll listener, because
+  // reading window.scrollY on every scroll event forced a synchronous layout
+  // right after React commits (68ms self time while holding j in the feed).
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 2);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver(([entry]) => setScrolled(!entry.isIntersecting));
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
   return (
+    <>
+    <div ref={sentinelRef} aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[2px]" />
     <header
       data-scrolled={scrolled || undefined}
       className={cn(
@@ -100,5 +108,6 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
         </div>
       </div>
     </header>
+    </>
   );
 }

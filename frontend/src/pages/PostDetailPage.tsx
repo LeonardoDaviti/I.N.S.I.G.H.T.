@@ -1013,7 +1013,7 @@ export default function PostDetailPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-[46rem] px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
+      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
         <LoadingState label="Loading post" rows={4} />
       </div>
     );
@@ -1021,7 +1021,7 @@ export default function PostDetailPage() {
 
   if (!post) {
     return (
-      <div className="mx-auto w-full max-w-[46rem] px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
+      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-8 sm:px-6 sm:pt-10">
         <EmptyState
           title="Post not found"
           description={error || 'This post does not exist in the database.'}
@@ -1034,7 +1034,7 @@ export default function PostDetailPage() {
   const hasReadingStats = readerState && (readerState.open_count || readerState.total_read_seconds || readerState.first_opened_at);
 
   return (
-    <div className="mx-auto w-full max-w-[76rem] px-4 pb-24 pt-6 sm:px-6 sm:pt-8">
+    <div className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8">
       <div className="grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center">
         <div className="min-w-0">
           <Button variant="ghost" size="sm" onClick={goBack} className="-ml-2.5 mb-5">
