@@ -5,6 +5,32 @@ default. The design language, tokens and component inventory live in
 `plan/INSIGHT_mark_ix_design.md`; this file is the how-to. Never introduce colour fills, gradients,
 pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyph`).
 
+## Three places, and the analysis flag
+
+The app ships reading-only. It has three places: **feed** (`/`, plus `/read/...` and
+`/tracks/:id`), **post** (`/posts/:id`) and **sources** (`/settings/sources`, with tabs
+`sources / connections / ingestion`). The top bar reads `feed / sources`. Ingestion is the
+`?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not a page.
+
+Everything that processes posts (briefings, stories, the inbox, experts, the tracks list, a
+track's briefing panel and milestones rail, and the post page's summary, inspector, notes, chat
+and related posts) is hidden, not deleted, behind one flag:
+
+- `useAnalysis()` / `useAnalysisEnabled()` (`hooks/useAnalysis.ts`) is the only way a component
+  reads it. It asks the backend's `GET /api/config` → `{ analysis_enabled }` once, and that answer
+  wins. The build flag `VITE_INSIGHT_ANALYSIS=on|off` (`lib/features.ts`, `ANALYSIS_ENABLED`)
+  decides only until the backend answers, or when it can't. Don't read `ANALYSIS_ENABLED`
+  directly in a component.
+- Routes: `App.tsx` wraps analysis pages in `<AnalysisOnly>`. With the flag off they redirect to
+  `/` (replace). `IngestionRoute` sends `/ingestion/:tab` to `/settings/sources?tab=ingestion&sub=<tab>`.
+  Both guards wait for `settled`, so a deep link isn't bounced before the runtime value is known.
+- Navigation: `navItems(analysisEnabled)` and the switcher list in
+  `components/layout/navigation.ts`. Off, the top bar is `feed / sources`, and ⌘K drops the
+  briefing, stories, inbox and experts entries, adds one entry per track and points "Ingestion"
+  at the sources tab.
+- A new analysis surface must check the flag, and come with a test for both values. With the flag
+  on, every surface must look and behave as before.
+
 ## Layout of `frontend/src`
 
 | Folder | What lives there |
@@ -14,6 +40,7 @@ pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyp
 | `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Table`, `Row`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
 | `components/states/` | `LoadingState`, `EmptyState`, `ErrorState`, `Notice`. Every async view uses these. |
 | `components/reader/`, `components/ops/` | The reader (feed, rail, toolbar) and the ingestion/health parts. |
+| `components/sources/` | The sources page's parts, including the `connections` and `ingestion` tabs. |
 | `hooks/` | Query and mutation hooks (`useFeed`, `usePost`, `useReaderMutations`, `useSourcesHealth`, `useIngestionRun`, ...). |
 | `lib/` | Pure logic with unit tests (`node --test`): navigation, labels, formatting, run reports. |
 | `services/api.ts` | The API client and its types. `services/ApiContext.tsx` provides it (`useApi()`). |
@@ -77,6 +104,10 @@ pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyp
 - Motion: short (under 200ms), ease-out, nothing on actions repeated many times a day, and
   fade-only under `prefers-reduced-motion`.
 - Source names: always `sourceLabel()` (`lib/sourceLabel.ts`), never a raw feed URL.
+- Reading typography: the post title and article headings wrap with `text-wrap: pretty`, so a
+  long title fills the reading column. `balance` stays on short UI headings only.
+  `MarkdownRenderer` styles `h1`–`h6` on one scale (size, weight and spacing, never colour; `h6`
+  is muted), so no heading level renders like body text.
 
 ## Accessibility
 
@@ -88,7 +119,7 @@ the `?` help (WCAG 2.1.4).
 
 ```bash
 cd frontend
-npm run dev         # Vite on :5173, proxies /api to :8000
+npm run dev         # Vite on :5173, proxies /api to :8000 (the backend's /api/config sets the flag)
 npm run typecheck
 npm test            # node --test for lib/, then vitest
 npx eslint <touched files>

@@ -1916,6 +1916,26 @@ The owner does not want any of the current processing steps for now: "a single p
 - **Code:** hidden, not deleted. Deletion is decided in the analysis-version spec (grilling round 1, Q2–Q7, is parked until then).
 - **Process:** nothing is built until the owner says go.
 
+**As built (2026-10-10, spec `plan/INSIGHT_mark_ix_reading_finish_plan.md`, branch `mark-ix-reading-finish`).** Deviations from the text above, all keeping its intent:
+
+- **S1, typography** (`1179ad9`, merged in `adfbc99`): the post H1 and article headings wrap with `text-wrap: pretty` instead of the global `balance`, so a long title fills the column. `MarkdownRenderer` styles `h4`–`h6` on the `h1`–`h3` scale (`h6` muted), so "Codex voice mode" reads as a subheading.
+- **S2, backend flag** (`e381c45`, `e51c308`, merged in `11b533c`): `INSIGHT_ANALYSIS` is read once into `insight_core/settings.py` (`on`/`true`/`1`/`yes` mean on) and served at `GET /api/config` → `{analysis_enabled}`.
+  - Off, fetch and archive saves skip enrichment, and the run report says `{"skipped": "analysis off"}`.
+  - Off, daily work prunes, refreshes cadence and syncs `sources.json`, and records experts and briefings as skipped on the `scheduler_cycle` job.
+  - The Gemini processor is built on first use in all five services, so the reading app never creates one.
+  - **Changed from "Analysis API routes stay but are unused":** they stay, but the ones that write analysis output or call Gemini (an `analysis_only` decorator in `main.py`) answer `409 {"error": "analysis_disabled"}`. Read-only GETs keep working. `GET /api/briefings/vertical/source/{id}` used to generate on a cache miss; off, it serves only the stored briefing and answers 409 on a miss (`e51c308`).
+- **S3, frontend shell** (`bd2ff3a`, merged in `efa0ce5`): the top bar is `feed / sources` (owner Decision 2, 2026-10-10).
+  - **Changed from the three-places list above:** the `/tracks` list page is dropped when off. It redirects to `/`. Tracks are read from the reader rail and managed from the sources list's group ⋯ menu. ⌘K has one entry per track. `/tracks/:id` stays as a reading view without the briefing panel or milestones rail.
+  - `/briefing*`, `/stories`, `/inbox` and `/experts` redirect to `/` (replace).
+  - The flag comes from `GET /api/config` and wins over the build flag `VITE_INSIGHT_ANALYSIS`. Route guards wait for it. The frontend image's build arg defaults to off.
+- **S4, ingestion tab** (`d42371c`, merged in `d304422`): sources has tabs `sources / connections / ingestion`. The ingestion tab holds the run report, `Run due sources`, the scheduler (it says plainly when it is not running) and the job history (`&sub=jobs`, `&job=`).
+  - With the flag off, `/ingestion/:tab` redirects there, carrying the tab as `sub`.
+  - "Fetch one source" is dropped (owner Decision 1): every source row and its sheet have Fetch now.
+  - The briefing and source-registry controls show only with the flag on.
+  - **Not moved:** archive control and the log tail stay on the analysis-on `/ingestion` page. Reading-only, archive is reachable through `POST /api/archive/{id}/plan|run`.
+- **S5, docs:** `README.md` ("Analysis switch" section, the three places and the redirects), `QUICKSTART.md` and `FRONTEND.md` describe the three places and the flag, and this note was added.
+- **Not done:** the Playwright screenshots in the reading-finish test plan (title's first line ≥ 85% of the column at 1400 and 390) were not automated. The component tests cover the wrap class.
+
 ## 10. Substack paid sources (owner request, 2026-10-10)
 
 The owner pays for The Kaitchup (`https://kaitchup.substack.com/`) and wants the full paid posts, not the RSS teasers.
