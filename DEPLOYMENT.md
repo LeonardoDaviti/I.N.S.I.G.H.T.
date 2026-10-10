@@ -69,7 +69,7 @@ If only environment variables changed: `docker compose up -d --force-recreate`.
 
 ```bash
 # backend (needs PostgreSQL and DATABASE_URL in .env)
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 python backend/insight_core/db/migrate.py
 python backend/start_api.py
 

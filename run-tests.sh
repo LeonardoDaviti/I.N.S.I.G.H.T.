@@ -44,7 +44,6 @@ if [ "${MIGRATE:-0}" = "1" ]; then
     --network insight_insight-network \
     --env-file .env \
     -e DATABASE_URL="$DB_URL" \
-    -e LANGFUSE_ENABLED=false \
     -w /app insight-backend:latest \
     python -m insight_core.db.migrate
 fi
@@ -53,6 +52,5 @@ exec docker run --rm \
   --network insight_insight-network \
   --env-file .env \
   -e DATABASE_URL="$DB_URL" \
-  -e LANGFUSE_ENABLED=false \
   -w /app insight-backend:latest \
   python -m unittest "$@"

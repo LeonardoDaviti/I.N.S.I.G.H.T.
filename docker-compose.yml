@@ -46,12 +46,8 @@ services:
       # pages actually return to the OS instead of being pinned by fragmentation.
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
-    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
-    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:
       - .env
-    extra_hosts:
-      - "langfuse.local:${LANGFUSE_HOST_IP:-192.168.0.25}"
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs
@@ -95,12 +91,8 @@ services:
       # pages actually return to the OS instead of being pinned by fragmentation.
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
-    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
-    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:
       - .env
-    extra_hosts:
-      - "langfuse.local:${LANGFUSE_HOST_IP:-192.168.0.25}"
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs

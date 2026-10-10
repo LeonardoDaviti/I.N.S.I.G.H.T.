@@ -13,7 +13,6 @@ import psycopg
 
 from insight_core.db.repo_experts import ExpertsRepository
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.observability.langfuse_tracer import trace_operation
 from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.folders_service import FoldersService
@@ -136,21 +135,11 @@ class ExpertsService:
             if not setup_ok:
                 raise RuntimeError("Gemini processor setup failed")
             await self.processor.connect()
-            with trace_operation(
-                "expert_briefing",
-                expert_id=expert_id,
-                expert_name=expert["name"],
-                folder_id=expert["folder_id"],
-                lookback_days=lookback,
-                posts=len(posts),
-                start_date=start_date.isoformat(),
-                end_date=end_date.isoformat(),
-            ):
-                result = await self.processor.expert_topic_briefing(
-                    posts,
-                    system_prompt=expert["system_prompt"],
-                    focus_instructions=expert.get("focus_instructions") or "",
-                )
+            result = await self.processor.expert_topic_briefing(
+                posts,
+                system_prompt=expert["system_prompt"],
+                focus_instructions=expert.get("focus_instructions") or "",
+            )
             generator = getattr(self.processor, "model_name", None) or "gemini"
         except Exception as exc:
             self.logger.warning("Falling back to deterministic expert briefing for %s: %s", expert_id, exc)
