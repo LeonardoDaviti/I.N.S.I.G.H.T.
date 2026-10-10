@@ -118,6 +118,75 @@ class AnalysisDisabledRouteTests(unittest.TestCase):
         self.assertEqual(result["success"], True)
 
 
+def _vertical(source_id="src-1", asyncMode=False):
+    return asyncio.run(main.get_source_vertical_briefing(
+        source_id, background_tasks=None, start="2026-01-01", end="2026-01-07", asyncMode=asyncMode))
+
+
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping route tests")
+class VerticalBriefingGetWhenOffTests(unittest.TestCase):
+    """GET /api/briefings/vertical/source/{id} generates on a cache miss; with analysis off it
+    may only serve the stored briefing (R3: read-only GETs of stored briefings stay open)."""
+
+    def setUp(self):
+        self.original_bridge = main.api_bridge
+
+    def tearDown(self):
+        main.api_bridge = self.original_bridge
+
+    def _assert_disabled(self, response):
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.body)["error"], "analysis_disabled")
+
+    def test_async_mode_answers_409_before_the_bridge(self):
+        main.api_bridge = _UntouchableBridge()
+        with _settings(OFF):
+            self._assert_disabled(_vertical(asyncMode=True))
+
+    def test_a_stored_briefing_is_served(self):
+        class Bridge:
+            def get_cached_source_vertical_briefing(self, source_id, start, end):
+                return {"success": True, "cached": True, "source_id": source_id}
+
+        main.api_bridge = Bridge()
+        with _settings(OFF):
+            result = _vertical()
+        self.assertEqual(result, {"success": True, "cached": True, "source_id": "src-1"})
+
+    def test_a_cache_miss_answers_409_and_builds_no_gemini_client(self):
+        from insight_api_bridge import InsightApiBridge
+        from insight_core.services.briefing_service import BriefingService
+
+        fail = mock.Mock(side_effect=AssertionError("analysis path reached while off"))
+        with mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
+                        side_effect=AssertionError("GeminiProcessor built")), \
+                mock.patch.object(BriefingService, "_resolve_vertical_briefing_range",
+                                  return_value=("2026-01-01", "2026-01-07")), \
+                mock.patch.object(BriefingService, "_ensure_vertical_supporting_memory", fail), \
+                mock.patch.object(InsightApiBridge, "_start_job_safe", fail):
+            bridge = InsightApiBridge()
+            bridge.briefing_service.store_service = mock.Mock(get_briefing=mock.Mock(return_value=None))
+            main.api_bridge = bridge
+            with _settings(OFF):
+                response = _vertical()
+        self._assert_disabled(response)
+        fail.assert_not_called()
+
+    def test_a_cache_miss_still_generates_when_on(self):
+        calls = []
+
+        class Bridge:
+            async def generate_source_vertical_briefing(self, source_id, start, end, refresh=False):
+                calls.append((source_id, start, end, refresh))
+                return {"success": True, "cached": False}
+
+        main.api_bridge = Bridge()
+        with _settings(ON):
+            result = _vertical()
+        self.assertEqual(result, {"success": True, "cached": False})
+        self.assertEqual(calls, [("src-1", "2026-01-01", "2026-01-07", False)])
+
+
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping route tests")
 class NoGeminiAtStartupTests(unittest.TestCase):
     def test_building_the_api_bridge_builds_no_gemini_client(self):

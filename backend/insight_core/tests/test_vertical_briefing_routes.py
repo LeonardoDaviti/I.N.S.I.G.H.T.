@@ -50,6 +50,11 @@ class VerticalBriefingRouteTests(unittest.TestCase):
                 }
 
         main.api_bridge = FakeBridge(self.calls)
+        # These exercise generation, which needs analysis on; the off behaviour is in
+        # test_analysis_routes.VerticalBriefingGetWhenOffTests.
+        settings_patch = mock.patch.object(main, "get_settings", return_value=Settings(analysis_enabled=True))
+        settings_patch.start()
+        self.addCleanup(settings_patch.stop)
 
     def tearDown(self):
         main.api_bridge = self.original_bridge
@@ -72,17 +77,15 @@ class VerticalBriefingRouteTests(unittest.TestCase):
         self.assertFalse(result["cached"])
 
     def test_refresh_source_vertical_briefing_sets_refresh_flag(self):
-        # Refreshing writes a briefing, so it is an analysis endpoint (409 while off).
-        with mock.patch.object(main, "get_settings", return_value=Settings(analysis_enabled=True)):
-            result = asyncio.run(
-                main.refresh_source_vertical_briefing(
-                    source_id="source-123",
-                    background_tasks=main.BackgroundTasks(),
-                    start="2026-03-01",
-                    end="2026-03-31",
-                    asyncMode=False,
-                )
+        result = asyncio.run(
+            main.refresh_source_vertical_briefing(
+                source_id="source-123",
+                background_tasks=main.BackgroundTasks(),
+                start="2026-03-01",
+                end="2026-03-31",
+                asyncMode=False,
             )
+        )
 
         self.assertEqual(self.calls[0], ("source-123", "2026-03-01", "2026-03-31", True))
         self.assertEqual(result["source_id"], "source-123")

@@ -2101,9 +2101,18 @@ async def get_source_vertical_briefing(
     end: str | None = None,
     asyncMode: bool = Query(False),
 ):
-    """Generate or fetch a cached source-scoped vertical briefing."""
+    """Generate or fetch a cached source-scoped vertical briefing.
+
+    With INSIGHT_ANALYSIS off this is a read of the stored briefing only (reading-finish R3):
+    a cache miss or asyncMode answers 409 analysis_disabled instead of generating.
+    """
     try:
         logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
+        if not get_settings().analysis_enabled:
+            cached = None if asyncMode else api_bridge.get_cached_source_vertical_briefing(source_id, start, end)
+            if cached is None:
+                return JSONResponse(status_code=409, content={"success": False, "error": "analysis_disabled"})
+            return cached
         if asyncMode:
             job_id = api_bridge._start_job_safe(
                 "vertical_briefing_source",

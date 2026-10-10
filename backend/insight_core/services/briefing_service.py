@@ -702,6 +702,29 @@ class BriefingService:
         resolved_end = end_date or latest_iso or oldest_iso
         return resolved_start, resolved_end
 
+    def get_cached_source_vertical_briefing(
+        self,
+        source_id: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """The stored current-version source vertical briefing, or None. Never generates, so
+        it is safe while INSIGHT_ANALYSIS is off (reading-finish R3)."""
+        start_date, end_date = self._resolve_vertical_briefing_range(source_id, start_date, end_date)
+        if not start_date or not end_date:
+            return None
+        subject_key = self._vertical_subject_key(source_id, start_date, end_date)
+        cached = self.store_service.get_briefing("vertical_briefing", subject_key, "source")
+        if not cached or (cached.get("payload") or {}).get("briefing_version") != self.VERTICAL_BRIEFING_VERSION:
+            return None
+        return self._build_cached_vertical_briefing_response(
+            source_id=source_id,
+            start_date=start_date,
+            end_date=end_date,
+            subject_key=subject_key,
+            cached_briefing=cached,
+        )
+
     async def generate_source_vertical_briefing(
         self,
         source_id: str,
@@ -741,15 +764,9 @@ class BriefingService:
 
         subject_key = self._vertical_subject_key(source_id, start_date, end_date)
         if not refresh:
-            cached = self.store_service.get_briefing("vertical_briefing", subject_key, "source")
-            if cached and (cached.get("payload") or {}).get("briefing_version") == self.VERTICAL_BRIEFING_VERSION:
-                return self._build_cached_vertical_briefing_response(
-                    source_id=source_id,
-                    start_date=start_date,
-                    end_date=end_date,
-                    subject_key=subject_key,
-                    cached_briefing=cached,
-                )
+            cached_response = self.get_cached_source_vertical_briefing(source_id, start_date, end_date)
+            if cached_response is not None:
+                return cached_response
 
         source = self.sources_service.get_source_with_settings(source_id)
         source_label = (
