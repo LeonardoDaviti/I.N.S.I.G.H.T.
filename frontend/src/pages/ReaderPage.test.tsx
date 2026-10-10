@@ -193,7 +193,7 @@ describe('ReaderPage, folder scope', () => {
     await screen.findByText('Claude Code ships hooks');
     expect(await screen.findByRole('complementary', { name: 'Milestones' })).toBeInTheDocument();
     await waitFor(() => expect(apiService.getMilestones).toHaveBeenCalledWith({ folderId: FOLDER }));
-    expect(apiService.getExperts).toHaveBeenCalled();
+    await waitFor(() => expect(apiService.getExperts).toHaveBeenCalled());
   });
 
   it('reading-only, a folder is just its posts: no briefing, no milestones', async () => {
