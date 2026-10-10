@@ -1175,6 +1175,15 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
+    def get_cached_source_vertical_briefing(
+        self,
+        source_id: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """The stored source vertical briefing, or None; starts no job and generates nothing."""
+        return self.briefing_service.get_cached_source_vertical_briefing(source_id, start_date, end_date)
+
     async def generate_source_vertical_briefing(
         self,
         source_id: str,
@@ -1608,11 +1617,11 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "stories": []}
 
-    def get_post_timeline(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
+    def get_post_timeline(self, post_id: str, refresh: bool = False, read_only: bool = False) -> Dict[str, Any]:
         try:
             if refresh:
                 return self.story_timeline_service.refresh_post_timeline(post_id)
-            return self.story_timeline_service.get_post_timeline(post_id, refresh=False)
+            return self.story_timeline_service.get_post_timeline(post_id, refresh=False, read_only=read_only)
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
 

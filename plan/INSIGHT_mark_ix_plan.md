@@ -1916,6 +1916,30 @@ The owner does not want any of the current processing steps for now: "a single p
 - **Code:** hidden, not deleted. Deletion is decided in the analysis-version spec (grilling round 1, Q2–Q7, is parked until then).
 - **Process:** nothing is built until the owner says go.
 
+**As built (2026-10-10, spec `plan/INSIGHT_mark_ix_reading_finish_plan.md`, branch `mark-ix-reading-finish`).** Deviations from the text above, all keeping its intent:
+
+- **S1, typography** (`1179ad9`, merged in `adfbc99`): the post H1 and article headings wrap with `text-wrap: pretty` instead of the global `balance`, so a long title fills the column. `MarkdownRenderer` styles `h4`–`h6` on the `h1`–`h3` scale (`h6` muted), so "Codex voice mode" reads as a subheading.
+- **S2, backend flag** (`e381c45`, `e51c308`, merged in `11b533c`): `INSIGHT_ANALYSIS` is read once into `insight_core/settings.py` (`on`/`true`/`1`/`yes` mean on) and served at `GET /api/config` → `{analysis_enabled}`.
+  - Off, fetch and archive saves skip enrichment, and the run report says `{"skipped": "analysis off"}`.
+  - Off, daily work prunes, refreshes cadence and syncs `sources.json`, and records experts and briefings as skipped on the `scheduler_cycle` job.
+  - The Gemini processor is built on first use in all five services, so the reading app never creates one.
+  - **Changed from "Analysis API routes stay but are unused":** they stay, but the ones that write analysis output or call Gemini (an `analysis_only` decorator in `main.py`) answer `409 {"error": "analysis_disabled"}`. Read-only GETs keep working. `GET /api/briefings/vertical/source/{id}` used to generate on a cache miss; off, it serves only the stored briefing and answers 409 on a miss (`e51c308`).
+- **S3, frontend shell** (`bd2ff3a`, merged in `efa0ce5`): the top bar is `feed / sources` (owner Decision 2, 2026-10-10).
+  - **Changed from the three-places list above:** the `/tracks` list page is dropped when off. It redirects to `/`. Tracks are read from the reader rail and managed from the sources list's group ⋯ menu. ⌘K has one entry per track. `/tracks/:id` stays as a reading view without the briefing panel or milestones rail.
+  - `/briefing*`, `/stories`, `/inbox` and `/experts` redirect to `/` (replace).
+  - The flag comes from `GET /api/config` and wins over the build flag `VITE_INSIGHT_ANALYSIS`. Route guards wait for it. The frontend image's build arg defaults to off.
+- **S4, ingestion tab** (`d42371c`, merged in `d304422`): sources has tabs `sources / connections / ingestion`. The ingestion tab holds the run report, `Run due sources`, the scheduler (it says plainly when it is not running) and the job history (`&sub=jobs`, `&job=`).
+  - With the flag off, `/ingestion/:tab` redirects there. `jobs`/`missions` become `&sub=jobs`; every other tab opens the overview (review fix: `archive` and `logs` used to become a `sub` the tab does not have).
+  - "Fetch one source" is dropped (owner Decision 1): every source row and its sheet have Fetch now.
+  - The briefing and source-registry controls show only with the flag on.
+  - **Not moved (for the owner to confirm):** archive control (backfill plan/run) and the log tail stay on the analysis-on `/ingestion` page. Reading-only there is no archive UI; archive is reachable only through `POST /api/archive/{id}/plan|run`. Archive fetches content, so it is not analysis; moving a minimal archive control into the ingestion tab is the alternative if the owner wants it reading-only.
+  - Off, a run report whose enrichment was skipped says so in one quiet line: "Enrichment skipped (analysis off)".
+- **S5, docs:** `README.md` ("Analysis switch" section, the three places and the redirects), `QUICKSTART.md` and `FRONTEND.md` describe the three places and the flag, and this note was added.
+- **Playwright check (review fix, run once by hand, not automated):** the post "A new feature for my blog, built using my voice" against the integration branch's Vite (API from the preview), dark and light give the same numbers:
+  - 1400px: column 672px, first line "A new feature for my blog, built using" 553px = **82%**, two lines, no horizontal scroll. **Below the 85% target.** "my" would fit on the first line (about 90%), but `text-wrap: pretty` moves it down so "voice" is not left alone on the second line. R1 asks for `pretty` (no orphans), so the two criteria conflict for this title. The owner decides: keep `pretty` (82%) or accept an orphan.
+  - 390px: column 358px, first line 342px = 95%, two lines, no horizontal scroll.
+- **Review fixes (2026-10-10):** the GET post timeline no longer computes and writes story candidates when off (it reads the stored ones); the lazy Gemini processor, the enricher choice (`enricher_for`), the 409 body (`analysis_disabled_response`) and the daily-work summary (`DailyWorkSummary`) each live in one place; the frontend flag accepts the backend's words (`on`/`true`/`1`/`yes`); the job formatting (`lib/jobRuns.ts`), the scheduler dialog (`components/sources/SchedulerDialog.tsx`) and the operations queries (`hooks/useOperations.ts`) are shared by the ingestion tab and the analysis-on page; `FRONTEND_UI_GUIDE.md` and the design doc's nav table describe the reading-only app.
+
 ## 10. Substack paid sources (owner request, 2026-10-10)
 
 The owner pays for The Kaitchup (`https://kaitchup.substack.com/`) and wants the full paid posts, not the RSS teasers.

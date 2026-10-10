@@ -23,7 +23,7 @@ import psycopg
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
-from insight_core.ingestion.enrichment import Enricher
+from insight_core.ingestion.enrichment import enricher_for
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resume_counts
@@ -35,6 +35,7 @@ from insight_core.services.event_memory_service import EventMemoryService
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
+from insight_core.settings import Settings, get_settings
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
 
@@ -49,6 +50,7 @@ class SourceFetchService:
         http: Optional[KindHttp] = None,
         kinds: Optional[KindRegistry] = None,
         availability: Callable[[], Availability] = availability_from_env,
+        settings: Optional[Settings] = None,
     ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
@@ -61,7 +63,8 @@ class SourceFetchService:
         self.http = http or KindHttp()
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
-        self.enricher = Enricher(self.memory_service, self.event_service)
+        # INSIGHT_ANALYSIS off: archived posts are saved but never enriched (reading-finish R3).
+        self.enricher = enricher_for(settings or get_settings(), self.memory_service, self.event_service)
         self.availability = availability
 
     # ------------------------------------------------------------------ kinds

@@ -39,8 +39,35 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+describe('TrackPage, reading-only (analysis off)', () => {
+  const offApi = () => makeFakeApi({ getConfig: vi.fn().mockResolvedValue({ analysis_enabled: false }) });
+
+  it('is the track’s reading view: back to the feed, posts, no briefing panel, no milestones rail', async () => {
+    vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue(page([post('p1', 'Claude Code ships hooks')]));
+    renderTrack(`/tracks/${TRACK}`, offApi());
+    expect(await screen.findByRole('link', { name: /Claude Code ships hooks/ })).toHaveAttribute('href', '/posts/p1');
+    expect(screen.getByRole('link', { name: 'Back to feed' })).toHaveAttribute('href', '/');
+    expect(screen.queryByRole('link', { name: 'Back to tracks' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: /milestones/i })).toBeNull();
+    expect(screen.queryByRole('region', { name: /briefing/i })).toBeNull();
+    expect(apiService.getMilestones).not.toHaveBeenCalled();
+    expect(apiService.getExperts).not.toHaveBeenCalled();
+  });
+});
+
+describe('TrackPage, analysis on', () => {
+  it('keeps the track briefing panel and the milestones rail', async () => {
+    vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue(page([post('p1', 'Claude Code ships hooks')]));
+    renderTrack(`/tracks/${TRACK}`, makeFakeApi({ getConfig: vi.fn().mockResolvedValue({ analysis_enabled: true }) }));
+    await screen.findByText('Claude Code ships hooks');
+    expect(await screen.findByRole('link', { name: 'Back to tracks' })).toHaveAttribute('href', '/tracks');
+    await waitFor(() => expect(apiService.getMilestones).toHaveBeenCalled());
+    expect(apiService.getExperts).toHaveBeenCalled();
+  });
+});
+
 describe('TrackPage', () => {
-  it('renders the track on Mark IX parts: back to tracks, a track chip, rows that link to the post', async () => {
+  it('renders the track on Mark IX parts: a track chip, rows that link to the post', async () => {
     vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue({
       success: true,
       folder: { id: TRACK, name: 'Agentic News', kind: 'track', exclude_from_main_digest: true } as never,
@@ -50,7 +77,6 @@ describe('TrackPage', () => {
     });
     renderTrack();
     expect(await screen.findByRole('heading', { level: 1, name: /Agentic News/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Back to tracks' })).toHaveAttribute('href', '/tracks');
     expect(screen.getByText('track')).toBeInTheDocument();
     expect(screen.getByText(/1 source · 2 posts · hidden from the main digest/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Claude Code ships hooks/ })).toHaveAttribute('href', '/posts/p1');

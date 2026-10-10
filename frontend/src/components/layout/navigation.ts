@@ -1,7 +1,12 @@
 /**
- * The information architecture (design doc §9): five nav words in the top bar,
+ * The information architecture (design doc §9): the nav words in the top bar,
  * and the destinations the ⌘K quick switcher can jump to. Navigation only:
  * search over posts stays deferred (spec §F.2).
+ *
+ * Reading-only (analysis off, reading-finish R3 and Decision 2): the app has
+ * three places, feed / sources / post. The top bar is `feed / sources`; tracks
+ * are read from the reader rail and reached in ⌘K one entry per track. With
+ * analysis on, the five words and the full switcher list stay as they were.
  */
 export type NavKey = 'feed' | 'tracks' | 'briefings' | 'sources' | 'ingestion';
 
@@ -11,6 +16,7 @@ export interface NavItem {
   to: string;
 }
 
+/** The analysis-on top bar: five words. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'feed', label: 'feed', to: '/' },
   { key: 'tracks', label: 'tracks', to: '/tracks' },
@@ -19,12 +25,20 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'ingestion', label: 'ingestion', to: '/ingestion' },
 ];
 
-/** Which nav word is current for a pathname; null when none is (an unknown route). */
-export function activeNavKey(pathname: string): NavKey | null {
+const READING_KEYS: ReadonlySet<NavKey> = new Set(['feed', 'sources']);
+
+/** The top bar's words: five with analysis on, `feed / sources` without it. */
+export function navItems(analysisEnabled: boolean): readonly NavItem[] {
+  return analysisEnabled ? NAV_ITEMS : NAV_ITEMS.filter((item) => READING_KEYS.has(item.key));
+}
+
+/** Which nav word is current for a pathname; null when none is (an unknown route).
+ *  Reading-only, a track page belongs to the feed: tracks live in the reader rail. */
+export function activeNavKey(pathname: string, analysisEnabled = true): NavKey | null {
   const path = pathname.replace(/\/+$/, '') || '/';
   const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
   if (path === '/' || under('/read') || under('/posts')) return 'feed';
-  if (under('/tracks') || under('/experts')) return 'tracks';
+  if (under('/tracks') || under('/experts')) return analysisEnabled ? 'tracks' : 'feed';
   if (under('/briefing') || under('/stories') || under('/inbox')) return 'briefings';
   if (under('/settings')) return 'sources';
   if (under('/ingestion')) return 'ingestion';
@@ -41,6 +55,7 @@ export interface Destination {
   keywords?: string;
 }
 
+/** The analysis-on switcher list. */
 export const DESTINATIONS: readonly Destination[] = [
   { id: 'feed-unread', label: 'Unread', group: 'feed', to: '/', keywords: 'home reader feed inbox new' },
   { id: 'feed-starred', label: 'Starred', group: 'feed', to: '/?filter=starred', keywords: 'saved favourites star' },
@@ -56,6 +71,41 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'sources-health', label: 'Source health', group: 'sources', to: '/settings/sources?tab=health', keywords: 'cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'ingestion', to: '/ingestion', keywords: 'run cycle fetch jobs report' },
 ];
+
+/** Switcher ids that belong to analysis (briefings, stories, inbox) or to the
+ *  tracks list page, which reading-only drops (Decision 2). */
+const ANALYSIS_DESTINATION_IDS: ReadonlySet<string> = new Set([
+  'tracks', 'briefing', 'briefing-topics', 'briefing-vertical', 'stories', 'inbox',
+]);
+
+export interface TrackRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * What ⌘K can jump to. With analysis on, the list above unchanged. Reading-only:
+ * the feed and sources entries, then one entry per track (to `/tracks/:id`,
+ * the track's reading view) in the order given.
+ */
+export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef[] = []): Destination[] {
+  if (analysisEnabled) return [...DESTINATIONS];
+  // Reading-only, ingestion is a tab under sources (reading-finish R3).
+  const reading = DESTINATIONS
+    .filter((item) => !ANALYSIS_DESTINATION_IDS.has(item.id))
+    .map((item) => (item.id === 'ingestion' ? { ...item, group: 'sources', to: '/settings/sources?tab=ingestion' } : item));
+  const trackItems = tracks.map((track): Destination => ({
+    id: `track-${track.id}`,
+    label: track.name,
+    group: 'tracks',
+    to: `/tracks/${encodeURIComponent(track.id)}`,
+    keywords: 'track folder',
+  }));
+  // Tracks go after the feed entries; with none after the feed, at the end.
+  const afterFeed = reading.findIndex((item) => item.group !== 'feed');
+  const at = afterFeed === -1 ? reading.length : afterFeed;
+  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at)];
+}
 
 /** Case-insensitive, every word must match label, group or keywords. Order is kept. */
 export function filterDestinations(query: string, items: readonly Destination[] = DESTINATIONS): Destination[] {

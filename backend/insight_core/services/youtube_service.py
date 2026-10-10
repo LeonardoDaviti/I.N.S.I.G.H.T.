@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 
 
 class YouTubeService:
@@ -52,10 +52,11 @@ class YouTubeService:
         "part", "episode", "ep", "video", "new", "live", "podcast", "interview",
     }
 
+    processor = lazy_gemini_processor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.logger = get_component_logger("youtube_service")
-        self.processor = GeminiProcessor()
         self.preferred_languages = tuple(
             item.strip()
             for item in os.environ.get("YOUTUBE_PREFERRED_LANGUAGES", ",".join(self.DEFAULT_LANGUAGES)).split(",")

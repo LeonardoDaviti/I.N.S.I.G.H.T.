@@ -28,6 +28,16 @@ describe('RunReportSummary', () => {
     expect(screen.getByRole('heading', { name: '1 new post, 3 sources failed' })).toBeInTheDocument();
   });
 
+  it('says quietly when enrichment was skipped (analysis off)', () => {
+    render(<RunReportSummary report={{ ...runReport(), enrichment: { skipped: 'analysis off' } }} />);
+    expect(screen.getByText('Enrichment skipped (analysis off)')).toBeInTheDocument();
+  });
+
+  it('says nothing about enrichment when it ran', () => {
+    render(<RunReportSummary report={runReport()} />);
+    expect(screen.queryByText(/Enrichment skipped/)).not.toBeInTheDocument();
+  });
+
   it('keeps the raw JSON behind a closed disclosure', async () => {
     const { container } = render(<RunReportSummary report={runReport()} />);
     const details = container.querySelector('details');

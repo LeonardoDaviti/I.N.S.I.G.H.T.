@@ -17,7 +17,7 @@ import PostIntelligenceInspector from '../components/PostIntelligenceInspector';
 import PostActions from '../components/post/PostActions';
 import { PostFigure, PostImageList } from '../components/post/PostImages';
 import { postMedia } from '../components/post/media';
-import { ANALYSIS_ENABLED } from '../lib/features';
+import { useAnalysisEnabled } from '../hooks/useAnalysis';
 import {
   Button,
   Chip,
@@ -494,17 +494,18 @@ function VideoPlayer({ videoId, title, className = '' }: { videoId: string; titl
 
 /** The page frame, shared by the loading skeleton and the loaded post. */
 const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
-const GRID_CLASS = ANALYSIS_ENABLED
+const gridClass = (analysisEnabled: boolean) => (analysisEnabled
   ? 'grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center'
   // Reading-only: one column of ~70ch at the body size, centred, nothing beside it.
-  : 'grid grid-cols-[minmax(0,42rem)] justify-center';
+  : 'grid grid-cols-[minmax(0,42rem)] justify-center');
 
 /** The loading frame: the same container, grid and column as the loaded page, so
  *  React swaps only the children on arrival (no width or padding jump). */
 function PostSkeleton() {
+  const analysisEnabled = useAnalysisEnabled();
   return (
     <div className={PAGE_CLASS}>
-      <div className={GRID_CLASS}>
+      <div className={gridClass(analysisEnabled)}>
         <div className="min-w-0" role="status" aria-busy="true" aria-live="polite">
           <span className="sr-only">Loading post</span>
           <div aria-hidden="true">
@@ -517,7 +518,7 @@ function PostSkeleton() {
               <Skeleton className="mt-2 h-7 w-11/12" />
               <Skeleton className="mt-2 h-7 w-2/3" />
             </div>
-            {ANALYSIS_ENABLED ? <Skeleton className="mb-10 h-12 w-full" /> : null}
+            {analysisEnabled ? <Skeleton className="mb-10 h-12 w-full" /> : null}
             <div className="max-w-[68ch] space-y-3">
               {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
                 <Skeleton key={index} className={`h-3.5 ${width}`} />
@@ -542,6 +543,7 @@ export default function PostDetailPage() {
   const { postId } = useParams();
   const { api, fixture } = useDevFixtureApi(postFixtureApi);
   const query = usePost(postId, { api, fixture });
+  const analysisEnabled = useAnalysisEnabled();
 
   if (postId && query.data?.post) {
     return <PostView key={`${postId}:${fixture ?? ''}`} postId={postId} detail={query.data} api={api} fixture={fixture} />;
@@ -549,7 +551,7 @@ export default function PostDetailPage() {
   if (postId && query.isPending) return <PostSkeleton />;
   return (
     <div className={PAGE_CLASS}>
-      <div className={GRID_CLASS}>
+      <div className={gridClass(analysisEnabled)}>
         <div className="min-w-0">
           <div className="mb-5 min-h-[2rem]" aria-hidden="true" />
           <EmptyState
@@ -588,6 +590,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const analysisEnabled = useAnalysisEnabled();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
   const [post, setPost] = useState<Post>(detail.post as Post);
   const [notes, setNotes] = useState(() => detail.notes?.notes_markdown || defaultNotesTemplate(detail.post));
@@ -970,8 +973,8 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     [summaryReferences],
   );
   const contentHighlightRanges = useMemo(
-    () => (ANALYSIS_ENABLED ? buildResolvedHighlightRanges(post?.content || '', highlights, summaryReferenceHighlightIds) : []),
-    [highlights, post?.content, summaryReferenceHighlightIds],
+    () => (analysisEnabled ? buildResolvedHighlightRanges(post?.content || '', highlights, summaryReferenceHighlightIds) : []),
+    [analysisEnabled, highlights, post?.content, summaryReferenceHighlightIds],
   );
   const highlightedContentBlock = useMemo(
     () => renderHighlightedContent(post?.content || '', contentHighlightRanges),
@@ -1110,7 +1113,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
 
   return (
     <div className={PAGE_CLASS}>
-      <div className={GRID_CLASS}>
+      <div className={gridClass(analysisEnabled)}>
         <div className="min-w-0">
           <nav aria-label="Post navigation" className="-ml-2.5 mb-5 flex min-h-[2rem] flex-wrap items-center gap-1">
             <Button variant="ghost" size="sm" onClick={goBack} title="Back (u)">
@@ -1161,10 +1164,10 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 onCopy={() => void handleCopy()}
               />
             </div>
-            <h1 dir="auto" className="mt-2 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
+            <h1 dir="auto" className="mt-2 break-words text-pretty text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
               {displayTitle}
             </h1>
-            {ANALYSIS_ENABLED ? (
+            {analysisEnabled ? (
               <div className="mt-4">
                 <Button size="sm" variant="ghost" className="-ml-2.5" onClick={() => setInspectorOpen(true)} aria-haspopup="dialog">
                   <PanelRight aria-hidden="true" />
@@ -1259,14 +1262,14 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     <Check aria-hidden="true" />
                     Mark complete
                   </Button>
-                  {ANALYSIS_ENABLED ? (
+                  {analysisEnabled ? (
                     <Button size="sm" variant="secondary" onClick={() => void loadYouTubeEvaluation()} disabled={loadingYouTubeEvaluation}>
                       <Busy when={loadingYouTubeEvaluation}>{null}</Busy>
                       {youtubeEvaluation?.summary_markdown ? 'Refresh watch guide' : 'Generate watch guide'}
                     </Button>
                   ) : null}
                   {/* Reading-only: the header's ↗ already opens the video. */}
-                  {ANALYSIS_ENABLED && youtubeVideoUrl && (
+                  {analysisEnabled && youtubeVideoUrl && (
                     <Button asChild size="sm" variant="ghost">
                       <a href={youtubeVideoUrl} target="_blank" rel="noopener noreferrer">
                         Open on YouTube
@@ -1294,7 +1297,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 </div>
               ) : null}
 
-              {ANALYSIS_ENABLED || youtubeChapters.length ? (
+              {analysisEnabled || youtubeChapters.length ? (
               <div>
                 <h2 className="mb-2 text-[0.875rem] font-semibold text-fg">Chapters</h2>
                 {youtubeChapters.length ? (
@@ -1323,7 +1326,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
           )}
 
           {/* ---- Summary: folded, secondary to the text (analysis only) ---- */}
-          {ANALYSIS_ENABLED ? (
+          {analysisEnabled ? (
           <details
             className="group mb-10 rounded-md border border-line"
             open={Boolean(summary) || loadingSummary || undefined}
@@ -1369,10 +1372,10 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
 
           {/* ---- The article ---- */}
           <article aria-label={isYouTubePost ? 'Transcript' : 'Post content'} className="min-w-0">
-            {(ANALYSIS_ENABLED && highlights.length) || (isYouTubePost && youtubeTranscriptBlocks.length) ? (
+            {(analysisEnabled && highlights.length) || (isYouTubePost && youtubeTranscriptBlocks.length) ? (
               <p className="mb-5 flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
                 {isYouTubePost && youtubeTranscriptBlocks.length ? <span>{plural(youtubeTranscriptBlocks.length, 'transcript section')}</span> : null}
-                {ANALYSIS_ENABLED && highlights.length ? <span>{plural(highlights.length, 'highlight')} · {formatCount(mappedHighlightCount)} shown in the text</span> : null}
+                {analysisEnabled && highlights.length ? <span>{plural(highlights.length, 'highlight')} · {formatCount(mappedHighlightCount)} shown in the text</span> : null}
                 {summaryReferenceHighlightIds.size > 0 ? (
                   <span>
                     <span className="text-fg underline decoration-fg underline-offset-[0.22em]">underlined</span> = used in the summary
@@ -1427,7 +1430,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     <p className="text-[0.9375rem] text-fg-3">No transcript was stored for this video yet.</p>
                   )}
                 </div>
-              ) : ANALYSIS_ENABLED && highlights.length && post.content ? (
+              ) : analysisEnabled && highlights.length && post.content ? (
                 highlightedContentBlock
               ) : (
                 <MarkdownRenderer content={renderContent} />
@@ -1452,7 +1455,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                       <Busy when={loadingComments}>{null}</Busy>
                       {comments.length ? 'Refresh comments' : 'Fetch comments'}
                     </Button>
-                    {ANALYSIS_ENABLED ? (
+                    {analysisEnabled ? (
                       <Button size="sm" variant="ghost" onClick={() => void generateCommentsBriefing(true)} disabled={loadingCommentsBriefing}>
                         <Busy when={loadingCommentsBriefing}>{null}</Busy>
                         {commentsBriefing ? 'Refresh briefing' : 'Brief the thread'}
@@ -1462,7 +1465,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 )}
               />
               <span id="post-discussion" className="sr-only">Discussion</span>
-              {ANALYSIS_ENABLED && commentsBriefing ? (
+              {analysisEnabled && commentsBriefing ? (
                 <div className="mb-6 rounded-md border border-line p-4">
                   <h3 className="mb-2 text-[0.875rem] font-semibold text-fg">Thread briefing</h3>
                   <div className="text-[0.9375rem] leading-[1.6]">
@@ -1500,7 +1503,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             </section>
           )}
 
-          {ANALYSIS_ENABLED ? (
+          {analysisEnabled ? (
           <>
           {/* ---- Story timeline: folded, loaded only when it is opened ---- */}
           <details
@@ -1659,7 +1662,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
         </div>
 
         {/* ---- Notes and chat: a quiet side column on wide screens (analysis only) ---- */}
-        {ANALYSIS_ENABLED ? (
+        {analysisEnabled ? (
         <aside aria-label="Notes and chat" className="min-w-0 xl:sticky xl:top-[calc(var(--topbar-h)+1.5rem)] xl:self-start">
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'notes' | 'chat')}>
             <TabsList aria-label="Workspace">
@@ -1740,7 +1743,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
         ) : null}
       </div>
 
-      {ANALYSIS_ENABLED && postId && (
+      {analysisEnabled && postId && (
         <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
           <SheetContent title="Post intelligence" className="w-[min(40rem,100vw)]">
             <PostDetailPageErrorBoundary>

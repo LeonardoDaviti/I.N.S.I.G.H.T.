@@ -16,7 +16,7 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.repo_topics import TopicsRepository
 from insight_core.services.topics_service import TopicsService
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
 DEBUG_MODE = True
@@ -29,11 +29,12 @@ class TopicGenerator:
     Generates topics from posts using AI and stores them in the database.
     """
     
+    processor = lazy_gemini_processor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.posts_repo = PostsRepository(db_url)
         self.topics_service = TopicsService(db_url)
-        self.processor = GeminiProcessor()
         
     def setup(self) -> bool:
         """Setup AI processor."""

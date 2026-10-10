@@ -1,11 +1,13 @@
 import { Suspense, lazy, type ReactNode } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './components/ThemeProvider';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import AppShell from './components/layout/AppShell';
 import { LoadingState } from './components/states';
 import { ApiProvider } from './services/ApiContext';
+import { useAnalysis } from './hooks/useAnalysis';
+import { sourcesIngestionHref } from './lib/ingestionNavigation';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
@@ -35,8 +37,35 @@ function RouteFallback() {
 }
 
 /**
+ * An analysis surface (briefings, stories, inbox, experts, the tracks list):
+ * rendered with analysis on, sent to the feed without it (reading-finish R3,
+ * Decision 2), replacing the history entry so Back doesn't bounce. It waits for
+ * GET /api/config first, so a deep link isn't redirected before the runtime
+ * value (which wins over the build flag) is known.
+ */
+function AnalysisOnly({ children }: { children: ReactNode }) {
+  const { enabled, settled } = useAnalysis();
+  if (!settled) return <RouteFallback />;
+  return enabled ? children : <Navigate to="/" replace />;
+}
+
+/**
+ * The old ingestion page: itself with analysis on; reading-only it moved to the
+ * ingestion tab under sources (reading-finish R3), carrying the tab and query.
+ */
+function IngestionRoute() {
+  const { enabled, settled } = useAnalysis();
+  const { tab } = useParams();
+  const location = useLocation();
+  if (!settled) return <RouteFallback />;
+  return enabled ? <IngestionControl /> : <Navigate to={sourcesIngestionHref(tab, location.search)} replace />;
+}
+
+/**
  * Routes (design doc §9). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
+ * Reading-only, the app is feed / sources / post, and `/tracks/:id` stays as
+ * the track's reading view.
  */
 export function AppRoutes() {
   return (
@@ -44,18 +73,18 @@ export function AppRoutes() {
       <Route path="/" element={<ReaderPage />} />
       <Route path="/read/:scopeKind/:scopeId?" element={<ReaderPage />} />
       <Route path="/hub" element={<Navigate to="/" replace />} />
-      <Route path="/briefing" element={<DailyBriefing />} />
-      <Route path="/briefing/vertical" element={<VerticalBriefingPage />} />
-      <Route path="/briefing/vertical/source/:sourceId" element={<VerticalBriefingPage />} />
-      <Route path="/briefing/topics" element={<DailyBriefing />} />
-      <Route path="/ingestion" element={<IngestionControl />} />
-      <Route path="/ingestion/:tab" element={<IngestionControl />} />
-      <Route path="/stories" element={<StoriesExplorerPage />} />
-      <Route path="/inbox" element={<AnalystInboxPage />} />
+      <Route path="/briefing" element={<AnalysisOnly><DailyBriefing /></AnalysisOnly>} />
+      <Route path="/briefing/vertical" element={<AnalysisOnly><VerticalBriefingPage /></AnalysisOnly>} />
+      <Route path="/briefing/vertical/source/:sourceId" element={<AnalysisOnly><VerticalBriefingPage /></AnalysisOnly>} />
+      <Route path="/briefing/topics" element={<AnalysisOnly><DailyBriefing /></AnalysisOnly>} />
+      <Route path="/ingestion" element={<IngestionRoute />} />
+      <Route path="/ingestion/:tab" element={<IngestionRoute />} />
+      <Route path="/stories" element={<AnalysisOnly><StoriesExplorerPage /></AnalysisOnly>} />
+      <Route path="/inbox" element={<AnalysisOnly><AnalystInboxPage /></AnalysisOnly>} />
       <Route path="/posts/:postId" element={<PostDetailPage />} />
       <Route path="/settings/sources" element={<SourcesConfig />} />
-      <Route path="/tracks" element={<ExpertsPage />} />
-      <Route path="/experts" element={<ExpertsPage />} />
+      <Route path="/tracks" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
+      <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/tracks/:trackId" element={<TrackPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -13,7 +13,7 @@ import psycopg
 
 from insight_core.db.repo_experts import ExpertsRepository
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.folders_service import FoldersService
 from insight_core.services.posts_service import PostsService
@@ -22,13 +22,14 @@ from insight_core.services.posts_service import PostsService
 class ExpertsService:
     """Manage experts and generate their folder-scoped briefings."""
 
+    processor = lazy_gemini_processor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.repo = ExpertsRepository(db_url)
         self.folders_service = FoldersService(db_url)
         self.posts_service = PostsService(db_url)
         self.store_service = BriefingsStoreService(db_url)
-        self.processor = GeminiProcessor()
         self.logger = get_component_logger("experts_service")
 
     # ---- CRUD ----

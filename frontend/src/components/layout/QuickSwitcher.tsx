@@ -5,7 +5,9 @@ import { Dialog, DialogContent } from '../ui/Dialog';
 import Kbd from '../ui/Kbd';
 import { useTheme } from '../ThemeProvider';
 import { cn } from '../../lib/utils';
-import { filterDestinations, type Destination } from './navigation';
+import { destinations, filterDestinations, type Destination } from './navigation';
+import { useAnalysisEnabled } from '../../hooks/useAnalysis';
+import { useFolders } from '../../hooks/useReaderDirectory';
 
 type Option = Destination | { id: 'toggle-theme'; label: string; group: string; to?: undefined };
 
@@ -21,6 +23,10 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
   const [active, setActive] = useState(0);
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
+  const analysisEnabled = useAnalysisEnabled();
+  // Per-track entries are reading-only (destinations() ignores them with analysis on).
+  const folders = useFolders({ enabled: !analysisEnabled });
+  const items = useMemo(() => destinations(analysisEnabled, folders.data ?? []), [analysisEnabled, folders.data]);
 
   const options: Option[] = useMemo(() => {
     const themeOption: Option = {
@@ -28,14 +34,14 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
       label: theme === 'theme-dark' ? 'Switch to light theme' : 'Switch to dark theme',
       group: 'theme',
     };
-    const matches: Option[] = filterDestinations(query);
+    const matches: Option[] = filterDestinations(query, items);
     const themeWords = 'theme dark light mode appearance';
     const q = query.trim().toLowerCase();
     if (!q || q.split(/\s+/).every((word) => `${themeOption.label.toLowerCase()} ${themeWords}`.includes(word))) {
       matches.push(themeOption);
     }
     return matches;
-  }, [query, theme]);
+  }, [query, theme, items]);
 
   useEffect(() => {
     if (!open) {

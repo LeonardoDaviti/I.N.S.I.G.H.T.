@@ -15,6 +15,7 @@ import { HEALTH_FIXTURE_NAMES, healthFixture, isHealthFixtureName } from '../com
 import SourceList, { type TrackActions } from '../components/sources/SourceList';
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
+import IngestionPanel from '../components/sources/IngestionPanel';
 import { useListKeys } from '../components/sources/useListKeys';
 import {
   STATUS_FILTERS,
@@ -75,6 +76,11 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
   };
 }
 
+/** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
+const EXTRA_TABS = ['connections', 'ingestion'] as const;
+type ExtraTab = (typeof EXTRA_TABS)[number];
+const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
+
 /**
  * Settings → Sources: every source on one dense list (spec §9, reading-first).
  * The old Sources and Health tabs are one view now: the toolbar searches,
@@ -89,17 +95,21 @@ export default function SourcesConfig() {
   const view = readSourcesView(searchParams);
   const setView = (next: SourcesView) => setSearchParams(writeSourcesView(searchParams, next), { replace: true });
 
-  // Two tabs: the list and Connections (?tab=connections, spec §10.1). The legacy
-  // Health tab URL becomes the status grouping it stood for.
-  const tab = searchParams.get('tab') === 'connections' ? 'connections' : 'sources';
+  // Three tabs: the list, Connections (?tab=connections, spec §10.1) and
+  // Ingestion (?tab=ingestion, reading-finish R3). The legacy Health tab URL
+  // becomes the status grouping it stood for.
+  const tabParam = searchParams.get('tab');
+  const tab = isExtraTab(tabParam) ? tabParam : 'sources';
   useEffect(() => {
     const legacy = searchParams.get('tab');
-    if (legacy !== null && legacy !== 'connections') setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
+    if (legacy !== null && !isExtraTab(legacy)) setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
   }, [searchParams, setSearchParams]);
   const setTab = (next: string) => {
     const params = new URLSearchParams(searchParams);
     params.delete('provider');
-    if (next === 'connections') params.set('tab', 'connections');
+    params.delete('sub');
+    params.delete('job');
+    if (isExtraTab(next)) params.set('tab', next);
     else params.delete('tab');
     setSearchParams(params, { replace: true });
   };
@@ -131,7 +141,7 @@ export default function SourcesConfig() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
   // A link out of the sheet ("add in Connections") switches the tab: the sheet closes with it.
-  useEffect(() => { if (tab === 'connections') setOpenId(null); }, [tab]);
+  useEffect(() => { if (tab !== 'sources') setOpenId(null); }, [tab]);
   const [showAddSource, setShowAddSource] = useState(false);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
@@ -411,6 +421,7 @@ export default function SourcesConfig() {
         <TabsList aria-label="Sources page" className="mb-4">
           <TabsTrigger value="sources">sources</TabsTrigger>
           <TabsTrigger value="connections">connections</TabsTrigger>
+          <TabsTrigger value="ingestion">ingestion</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="pt-0">
           <div className="pb-24">
@@ -421,6 +432,11 @@ export default function SourcesConfig() {
         <TabsContent value="connections" className="pt-2">
           <div className="pb-24">
             <ConnectionsPanel initialOpen={searchParams.get('provider')} />
+          </div>
+        </TabsContent>
+        <TabsContent value="ingestion" className="pt-2">
+          <div className="pb-24">
+            <IngestionPanel />
           </div>
         </TabsContent>
       </Tabs>

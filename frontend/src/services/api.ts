@@ -411,7 +411,8 @@ export interface RunReport {
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
   post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
-  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | null;
+  /** Per-step counts, or why enrichment did not run (`{ skipped: 'analysis off' }`, reading-finish R3). */
+  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | { skipped: string } | null;
 }
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
@@ -1236,6 +1237,11 @@ export interface YouTubeWatchProgressResponse {
   progress?: YouTubeWatchProgress | null;
 }
 
+/** GET /api/config. */
+export interface AppConfig {
+  analysis_enabled: boolean;
+}
+
 class ApiService {
   /** One HTTP call. Non-2xx throws `ApiError` (status + the server's clean `detail`);
    *  a network failure throws `ApiError` with status 0. Mark VIII methods catch this
@@ -2058,6 +2064,12 @@ class ApiService {
         job: null,
       };
     }
+  }
+
+  /** What the backend runs (GET /api/config, reading-finish R3). Mark IX contract:
+   *  a failure throws, and `useAnalysis` falls back to the build flag. */
+  async getConfig(): Promise<AppConfig> {
+    return this.makeRequest<AppConfig>('/api/config');
   }
 
   async getStatus(): Promise<SystemStatusResponse> {

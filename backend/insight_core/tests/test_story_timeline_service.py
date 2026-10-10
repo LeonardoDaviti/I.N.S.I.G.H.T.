@@ -1,6 +1,34 @@
 import unittest
+from unittest import mock
 
 from insight_core.services.story_timeline_service import StoryTimelineService
+
+
+def _service_with_no_stored_candidates() -> StoryTimelineService:
+    service = StoryTimelineService("postgresql:///unused")
+    service.post_detail_service = mock.Mock(get_post_by_id=mock.Mock(return_value={"id": "post-1"}))
+    service.stories_service = mock.Mock(get_post_story=mock.Mock(return_value={"primary_story": None}))
+    service._load_candidates = mock.Mock(return_value=[])
+    service._refresh_candidates = mock.Mock(side_effect=AssertionError("candidates written"))
+    return service
+
+
+class StoryTimelineReadOnlyTests(unittest.TestCase):
+    """INSIGHT_ANALYSIS off (reading-finish R3): the GET reads stored candidates and never
+    computes or writes new ones."""
+
+    def test_read_only_serves_the_stored_candidates_without_refreshing(self):
+        service = _service_with_no_stored_candidates()
+        result = service.get_post_timeline("post-1", read_only=True)
+        self.assertEqual(result["related_candidates"], [])
+        service._refresh_candidates.assert_not_called()
+
+    def test_without_read_only_a_miss_still_refreshes(self):
+        service = _service_with_no_stored_candidates()
+        service._refresh_candidates = mock.Mock(return_value=[{"id": "c-1"}])
+        result = service.get_post_timeline("post-1")
+        self.assertEqual(result["related_candidates"], [{"id": "c-1"}])
+        service._refresh_candidates.assert_called_once()
 
 
 class StoryTimelineServiceTests(unittest.TestCase):

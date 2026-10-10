@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.db.repo_reader import ReaderRepository
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.posts_service import PostsService
@@ -20,10 +20,11 @@ from insight_core.utils.media import post_media
 class PostDetailService:
     """Serve rich detail views for a single post."""
 
+    processor = lazy_gemini_processor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.logger = get_component_logger("post_detail_service")
-        self.processor = GeminiProcessor()
         self.posts_service = PostsService(db_url)
         self.source_fetch_service = SourceFetchService(db_url)
         self.explainability_service = ExplainabilityService(db_url)
