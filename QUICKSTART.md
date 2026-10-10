@@ -18,7 +18,7 @@ PostgreSQL must be running and `DATABASE_URL` in `.env` must point at it.
 
 ```bash
 # Terminal 1: API on :8000
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 python backend/insight_core/db/migrate.py
 python backend/start_api.py
 

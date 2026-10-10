@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
-    gcc \
     postgresql-client \
     tini \
     && rm -rf /var/lib/apt/lists/*

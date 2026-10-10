@@ -173,7 +173,7 @@ Recommended database for normal local development:
 1. Install backend dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 2. Apply migrations:
