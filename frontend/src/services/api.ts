@@ -414,6 +414,53 @@ export interface RunReport {
   enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | null;
 }
 
+// ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
+
+export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  hint: string;
+  /** False: set only by a flow (the Telegram session). */
+  writable: boolean;
+  /** The environment fallback's name (SUBSTACK_SID), or null. */
+  env: string | null;
+  set: boolean;
+  /** The last 4 characters of the saved value (null for the session). Never the value. */
+  last4: string | null;
+  updated_at: string | null;
+  source: 'db' | 'env' | 'file' | 'none';
+  error: string | null;
+}
+
+export interface CredentialTest {
+  ok: boolean;
+  message: string;
+  tested_at: string | null;
+}
+
+export type TelegramLoginStage = 'code' | 'password' | 'done';
+
+export interface CredentialProviderView {
+  provider: CredentialProviderId;
+  label: string;
+  description: string;
+  needed: boolean;
+  testable: boolean;
+  sign_in: boolean;
+  configured: boolean;
+  fields: CredentialField[];
+  test: CredentialTest | null;
+  login: { stage: TelegramLoginStage } | null;
+}
+
+export interface CredentialsResponse {
+  providers: CredentialProviderView[];
+}
+
+export type TelegramLoginStep = { stage: 'code' } | { stage: 'password' } | { stage: 'done'; account: string };
+
 export interface SourceHealthRow {
   source_id: string;
   display_name: string;
@@ -434,6 +481,10 @@ export interface SourceHealthRow {
   decision: DecisionKind;
   /** The decision's human text (for example the unavailable reason). */
   decision_detail?: string | null;
+  /** Why the kind cannot fetch at all (no Telegram session, ...), or null. */
+  unavailable_reason?: string | null;
+  /** A kind that fetches less without a credential says so (Substack: teasers only). */
+  credential_notice?: string | null;
   status: HealthStatus;
   last_attempt_at: string | null;
   last_success_at: string | null;
@@ -1866,6 +1917,46 @@ class ApiService {
     );
     if (!response.success) throw new Error(response.error || 'Failed to update the main-digest setting');
     return response as { success: true; source_id: string; in_main_digest: boolean };
+  }
+
+  // ---- Connections (Mark IX §10.1). Write-only; these throw ApiError on failure. ----
+
+  async getCredentials(): Promise<CredentialsResponse> {
+    return this.makeRequest<CredentialsResponse>('/api/credentials');
+  }
+
+  /** Save one secret. The response is the provider's view (set, last4), never the value. */
+  async putCredential(provider: string, key: string, value: string): Promise<CredentialProviderView> {
+    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    });
+  }
+
+  async deleteCredential(provider: string, key: string): Promise<CredentialProviderView> {
+    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async testCredential(provider: string): Promise<CredentialProviderView> {
+    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/test`, { method: 'POST' });
+  }
+
+  async telegramLoginStart(phone: string): Promise<TelegramLoginStep> {
+    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/start', { method: 'POST', body: JSON.stringify({ phone }) });
+  }
+
+  async telegramLoginCode(code: string): Promise<TelegramLoginStep> {
+    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/code', { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async telegramLoginPassword(password: string): Promise<TelegramLoginStep> {
+    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: JSON.stringify({ password }) });
+  }
+
+  async telegramLoginCancel(): Promise<{ stage: null }> {
+    return this.makeRequest<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' });
   }
 
   // ---- Reader (Mark IX). These throw ApiError on failure (§4 error contract). ----

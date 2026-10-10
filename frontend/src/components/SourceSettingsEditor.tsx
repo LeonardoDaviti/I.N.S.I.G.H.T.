@@ -15,6 +15,7 @@ import { Notice } from './states';
 import { sourceLabel } from '../lib/sourceLabel';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { getPlatformLabel } from '../lib/sourcePresentation';
+import { ConnectionsLink } from './connections';
 
 interface SourceSettingsEditorProps {
   source: SourceWithSettings;
@@ -56,6 +57,7 @@ function HealthSummary({ row, now }: { row: SourceHealthRow; now: Date }) {
       {row.status === 'unavailable' && row.decision_detail ? (
         <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.decision_detail}</p>
       ) : null}
+      <ConnectionsLink row={row} />
       {row.last_error ? (
         <p className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
           <span aria-hidden="true" className="mr-1 font-semibold">×</span>

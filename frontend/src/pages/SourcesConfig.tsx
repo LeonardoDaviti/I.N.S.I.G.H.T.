@@ -26,7 +26,8 @@ import {
   writeSourcesView,
   type SourcesView,
 } from '../components/sources/sourceList';
-import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader } from '../components/ui';
+import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
+import { ConnectionsPanel } from '../components/connections';
 import { EmptyState, ErrorState, LoadingState, Notice } from '../components/states';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { FOLDERS_KEY, useReaderDirectory } from '../hooks/useReaderDirectory';
@@ -81,10 +82,20 @@ export default function SourcesConfig() {
   const view = readSourcesView(searchParams);
   const setView = (next: SourcesView) => setSearchParams(writeSourcesView(searchParams, next), { replace: true });
 
-  // The legacy Health tab URL becomes the status grouping it stood for.
+  // Two tabs: the list and Connections (?tab=connections, spec §10.1). The legacy
+  // Health tab URL becomes the status grouping it stood for.
+  const tab = searchParams.get('tab') === 'connections' ? 'connections' : 'sources';
   useEffect(() => {
-    if (searchParams.get('tab') !== null) setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
+    const legacy = searchParams.get('tab');
+    if (legacy !== null && legacy !== 'connections') setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
   }, [searchParams, setSearchParams]);
+  const setTab = (next: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.delete('provider');
+    if (next === 'connections') params.set('tab', 'connections');
+    else params.delete('tab');
+    setSearchParams(params, { replace: true });
+  };
 
   const dataParam = searchParams.get('data');
   const fixtureName = import.meta.env.DEV && isHealthFixtureName(dataParam) ? dataParam : null;
@@ -109,6 +120,8 @@ export default function SourcesConfig() {
   const [focusToken, setFocusToken] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+  // A link out of the sheet ("add in Connections") switches the tab: the sheet closes with it.
+  useEffect(() => { if (tab === 'connections') setOpenId(null); }, [tab]);
   const [showAddSource, setShowAddSource] = useState(false);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
@@ -232,7 +245,7 @@ export default function SourcesConfig() {
     Enter: activeId ? () => setOpenId(activeId) : undefined,
     Escape: selected.size ? () => setSelected(new Set()) : undefined,
     '/': () => searchRef.current?.focus(),
-  }, shortcutsOn && !openId && !showAddSource && !newTrackOpen && pendingDelete === null);
+  }, shortcutsOn && tab === 'sources' && !openId && !showAddSource && !newTrackOpen && pendingDelete === null);
 
   const openRow = openId ? allRows.find((row) => row.source_id === openId) ?? null : null;
   const openSource = openId
@@ -320,12 +333,25 @@ export default function SourcesConfig() {
         />
       ) : null}
 
-      <div className="pb-24">
-        {allRows.length ? <SourcesToolbar ref={searchRef} view={view} counts={counts.byStatus} total={counts.total} onChange={setView} /> : null}
-        {body}
-      </div>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList aria-label="Sources page" className="mb-4">
+          <TabsTrigger value="sources">sources</TabsTrigger>
+          <TabsTrigger value="connections">connections</TabsTrigger>
+        </TabsList>
+        <TabsContent value="sources" className="pt-0">
+          <div className="pb-24">
+            {allRows.length ? <SourcesToolbar ref={searchRef} view={view} counts={counts.byStatus} total={counts.total} onChange={setView} /> : null}
+            {body}
+          </div>
+        </TabsContent>
+        <TabsContent value="connections" className="pt-2">
+          <div className="pb-24">
+            <ConnectionsPanel initialOpen={searchParams.get('provider')} />
+          </div>
+        </TabsContent>
+      </Tabs>
 
-      <BulkActionBar
+      {tab === 'sources' ? <BulkActionBar
         count={selectedVisible.length}
         folders={folders}
         busy={busy}
@@ -339,7 +365,7 @@ export default function SourcesConfig() {
             : plural(selectedVisible.length, 'source'),
         })}
         onClear={() => setSelected(new Set())}
-      />
+      /> : null}
 
       {showAddSource ? (
         <AddSourceModal platform="rss" onClose={() => setShowAddSource(false)} onAdd={handleAddSource} />

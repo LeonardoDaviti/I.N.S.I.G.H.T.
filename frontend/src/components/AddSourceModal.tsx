@@ -3,6 +3,8 @@ import { Plus } from 'lucide-react';
 import type { SourceState } from '../types';
 import { apiService } from '../services/api';
 import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
+import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
+import { errorMessage } from '../lib/apiError';
 
 interface Template {
   id: string;
@@ -200,6 +202,13 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
   const [maxPosts, setMaxPosts] = useState(50);
   const [isResolvingChannel, setIsResolvingChannel] = useState(false);
   const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(null);
+  // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
+  const substack = isSubstackUrl(handleOrUrl);
+  const connections = useConnections(substack);
+  const substackSid = connections.data?.providers.find((p) => p.provider === 'substack')?.fields.find((f) => f.key === 'sid');
+  const [sid, setSid] = useState('');
+  const [sidError, setSidError] = useState<string | null>(null);
+  const saveSid = useSaveCredential();
   
   const youtubeLookupValue = selectedTemplate?.id === 'youtube-handle'
     ? (templateVariable.trim() ? selectedTemplate.buildHandle(templateVariable.trim()) : '')
@@ -269,9 +278,20 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     setResolvedChannelName(null);
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!handleOrUrl.trim()) {
       return;
+    }
+    const cookie = substack ? cookieValue(sid) : '';
+    if (cookie) {
+      setSidError(null);
+      try {
+        await saveSid.mutateAsync({ provider: 'substack', key: 'sid', value: cookie });
+        setSid('');
+      } catch (err) {
+        setSidError(errorMessage(err));
+        return;
+      }
     }
 
     onAdd({
@@ -294,7 +314,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
       <DialogContent title="Add source" className="w-[min(32rem,calc(100vw-2rem))]">
         <form
           className="mt-4 space-y-5"
-          onSubmit={(event) => { event.preventDefault(); if (handleOrUrl.trim()) handleAdd(); }}
+          onSubmit={(event) => { event.preventDefault(); if (handleOrUrl.trim()) void handleAdd(); }}
         >
           {availableTemplates.length > 0 && (
             <div>
@@ -360,6 +380,41 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
             />
           </div>
 
+          {substack ? (
+            <div className="space-y-2 rounded-md border border-line p-3" data-testid="substack-sid">
+              {substackSid?.set ? (
+                <p className="text-[0.8125rem] text-fg-2">
+                  Paid posts: your Substack session is set in Connections
+                  {substackSid.last4 ? <span className="font-mono"> (••••{substackSid.last4})</span> : null}. Every Substack source shares it.
+                </p>
+              ) : (
+                <>
+                  <label htmlFor="substack_sid" className={label}>
+                    Paid subscription? Add your substack.sid <span className="font-normal text-fg-3">(optional)</span>
+                  </label>
+                  <Input
+                    id="substack_sid"
+                    type="password"
+                    value={sid}
+                    onChange={(e) => setSid(e.target.value)}
+                    placeholder="Paste the substack.sid cookie"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={sidError ? true : undefined}
+                    className="font-mono"
+                  />
+                  <p className={hint}>Saved to Connections and shared by every Substack source. Without it, paid posts arrive as teasers.</p>
+                  <SubstackHowTo />
+                  {sidError ? (
+                    <p role="alert" className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
+                      <span aria-hidden="true" className="mr-1 font-semibold">×</span>{sidError}
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+
           <div>
             <label htmlFor="display_name" className={label}>Name</label>
             <Input
@@ -421,7 +476,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
 
           <DialogFooter>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={!handleOrUrl.trim()}>
+            <Button type="submit" variant="primary" disabled={!handleOrUrl.trim() || saveSid.isPending}>
               <Plus aria-hidden="true" /> Add source
             </Button>
           </DialogFooter>

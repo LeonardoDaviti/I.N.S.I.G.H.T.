@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 import SourcesConfig from './SourcesConfig';
 import { healthResponse, healthRow, runReport } from '../components/ops/fixtures';
+import { demoCredentials } from '../components/connections/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { Api } from '../services/api';
@@ -52,10 +53,11 @@ const rowIds = (root: HTMLElement = document.body) =>
 const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`li[data-source-id="${id}"]`)[nth];
 
 describe('SourcesConfig', () => {
-  it('is one list grouped by track: no tabs, no expert labels, one line per source', async () => {
+  it('is one list grouped by track: sources and connections tabs only, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'connections']);
+    expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
     expect(groupNames()).toEqual(['AI engineering2', 'AR glasses2', 'Not in a track1']);
     // A source in two tracks shows in both; worst status first inside a group.
@@ -192,6 +194,33 @@ describe('SourcesConfig', () => {
     await screen.findByText('Road to VR');
     await userEvent.click(within(rowOf('off')).getByRole('switch'));
     await waitFor(() => expect(api.setSourceEnabled).toHaveBeenCalledWith('off', true));
+  });
+
+  it('?tab=connections opens Connections; the sources tab returns to the list', async () => {
+    const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
+    setup('/settings/sources?tab=connections&provider=substack', { getCredentials });
+    expect(await screen.findByRole('region', { name: 'Connections' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'connections' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('field-summary')).toHaveTextContent('••••a3f9');
+    expect(screen.queryByText('Road to VR')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'sources' }));
+    expect(await screen.findByText('Road to VR')).toBeInTheDocument();
+  });
+
+  it('an unavailable source links from its sheet to Connections', async () => {
+    const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
+    const tg = healthRow({
+      source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable',
+      decision: 'skip_unavailable', decision_detail: 'TELEGRAM_API_ID is not set; add it in Sources → Connections',
+      unavailable_reason: 'TELEGRAM_API_ID is not set; add it in Sources → Connections', folders: [],
+    });
+    setup('/settings/sources', { getCredentials, getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([tg])) });
+    await userEvent.click(await screen.findByRole('button', { name: 'ai_newz' }));
+    const sheet = await screen.findByRole('dialog');
+    await userEvent.click(within(sheet).getByRole('link', { name: 'add in Connections' }));
+    expect(await screen.findByRole('region', { name: 'Connections' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'API ID' })).toHaveTextContent('••••4821');
   });
 
   it('empty and no-match states', async () => {
