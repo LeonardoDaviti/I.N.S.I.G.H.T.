@@ -167,7 +167,7 @@ describe('ReaderPage', () => {
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
     }), `/read/source/${ID(7)}?filter=all`);
     expect(await screen.findByText('No posts here yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', '/settings/sources');
+    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', `/settings/sources?source=${ID(7)}`);
     expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
   });
 });
@@ -211,5 +211,36 @@ describe('ReaderPage, folder scope', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByRole('complementary', { name: 'Milestones' })).toBeNull();
     expect(apiService.getMilestones).not.toHaveBeenCalled();
+  });
+});
+
+// Issue 0003: the scope name is one click from where the source is managed.
+describe('ReaderPage, the scope name links into Sources', () => {
+  const api = () => base({
+    getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])),
+    getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+  });
+
+  it.each([
+    [`/read/source/${ID(7)}`, `/settings/sources?source=${ID(7)}`],
+    [`/read/folder/${ID(5)}`, `/settings/sources?track=${ID(5)}`],
+  ])('%s links its name to %s', async (route, href) => {
+    render(api(), route);
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(within(heading).getByRole('link')).toHaveAttribute('href', href);
+  });
+
+  it('the main feed name is plain text', async () => {
+    render(api());
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(within(heading).queryByRole('link')).toBeNull();
+  });
+
+  it('an empty scope points at that source in Sources', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+    }), `/read/folder/${ID(5)}?filter=all`);
+    expect(await screen.findByRole('link', { name: 'This track in Sources' })).toHaveAttribute('href', `/settings/sources?track=${ID(5)}`);
   });
 });

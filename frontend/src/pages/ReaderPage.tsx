@@ -17,7 +17,7 @@ import { feedKey, scopeUnreadCount, useUnreadCounts, type FeedFixture } from '..
 import { useDensityPreference } from '../hooks/useShortcutPreference';
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { scopeDelta, type UnreadChange } from '../hooks/useReaderMutations';
-import { isFeedFilter, scopeFromRoute } from '../lib/feedContext';
+import { isFeedFilter, scopeFromRoute, scopeSettingsHref } from '../lib/feedContext';
 import { formatCount } from '../lib/format';
 import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
@@ -161,7 +161,7 @@ function Reader({ scope }: { scope: string }) {
     return {
       title: 'No posts here yet',
       description: 'Posts appear once ingestion collects them.',
-      action: { label: scope.startsWith('folder:') ? 'This track in Sources' : 'This source in Sources', href: '/settings/sources', quiet: true },
+      action: { label: scope.startsWith('folder:') ? 'This track in Sources' : 'This source in Sources', href: scopeSettingsHref(scope) ?? '/settings/sources', quiet: true },
     };
   }, [filter, scope, showAll, stopped]);
 
@@ -186,6 +186,7 @@ function Reader({ scope }: { scope: string }) {
         <div className="min-w-0 flex-1">
           <FeedToolbar
             title={filter === 'starred' && scope === 'all' ? 'Starred' : title}
+            titleHref={scopeSettingsHref(scope)}
             subtitle={subtitle}
             filter={filter}
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
