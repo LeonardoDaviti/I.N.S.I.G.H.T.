@@ -3,11 +3,13 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import main
+from insight_core.settings import Settings
 
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
@@ -48,6 +50,11 @@ class VerticalBriefingRouteTests(unittest.TestCase):
                 }
 
         main.api_bridge = FakeBridge(self.calls)
+        # These exercise generation, which needs analysis on; the off behaviour is in
+        # test_analysis_routes.VerticalBriefingGetWhenOffTests.
+        settings_patch = mock.patch.object(main, "get_settings", return_value=Settings(analysis_enabled=True))
+        settings_patch.start()
+        self.addCleanup(settings_patch.stop)
 
     def tearDown(self):
         main.api_bridge = self.original_bridge

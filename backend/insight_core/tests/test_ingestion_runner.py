@@ -16,7 +16,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_fetch_state import FetchStateRow
-from insight_core.ingestion.enrichment import Enricher, EnrichmentReport, StepReport
+from insight_core.ingestion.enrichment import Enricher, EnrichmentReport, SkippedEnricher, StepReport
 from insight_core.ingestion.inspection import DbInspectionRefresher, inspection_due
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import Inspection
@@ -123,7 +123,7 @@ class _Harness:
     """One runner over in-memory ports; every port is reachable for assertions."""
 
     def __init__(self, sources, kinds, *, rows=None, folders=None, availability=ALL_ON,
-                 saver=None, lock_held=False):
+                 saver=None, lock_held=False, enricher=None):
         self.catalog = InMemorySourceCatalog(sources, folders)
         self.state = InMemoryFetchStateStore(rows)
         self.saver = saver or InMemoryPostSaver()
@@ -136,7 +136,7 @@ class _Harness:
         self.progress = RecordingProgressSink()
         self.runner = IngestionRunner(
             catalog=self.catalog, state=self.state, saver=self.saver,
-            enricher=Enricher(self.entity, self.event), inspections=self.inspections,
+            enricher=enricher or Enricher(self.entity, self.event), inspections=self.inspections,
             registry=self.registry, gates=self.gates, run_lock=self.lock,
             availability=lambda: availability, clock=self.clock, rand=lambda: 1.0,
         )
@@ -343,6 +343,50 @@ class IngestionRunnerLockTests(unittest.IsolatedAsyncioTestCase):
         report = await h.run(SourceSelector.folder("f"), Trigger.MANUAL, force=True)
         self.assertEqual(h.lock.entered, 0)
         self.assertEqual(report.status, "success")
+
+
+class AnalysisOffEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    """INSIGHT_ANALYSIS=off (reading-finish R3): posts are saved, never enriched."""
+
+    async def test_the_save_batch_runs_and_the_report_says_enrichment_was_skipped(self):
+        src = _source("https://reading.test/rss")
+        h = _Harness([src], [_rss_kind(_posts_for(3))], enricher=SkippedEnricher("analysis off"))
+        report = await h.run(force=True)
+        self.assertEqual(report.posts_inserted, 3)
+        self.assertEqual(h.entity.ids, [])
+        self.assertEqual(h.event.ids, [])
+        self.assertEqual(report.to_payload()["enrichment"], {"skipped": "analysis off"})
+        self.assertEqual(h.progress.phases, ["decided", "fetched", "saved", "enriched", "inspected"])
+
+    async def test_default_runner_skips_enrichment_and_builds_no_gemini_client(self):
+        from unittest import mock
+
+        from insight_core.ingestion import default_runner
+        from insight_core.settings import Settings
+
+        with mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
+                        side_effect=AssertionError("GeminiProcessor built")), \
+             mock.patch("insight_core.services.entity_memory_service.EntityMemoryService.process_posts",
+                        side_effect=AssertionError("entity memory ran")), \
+             mock.patch("insight_core.services.event_memory_service.EventMemoryService.process_posts",
+                        side_effect=AssertionError("event memory ran")):
+            runner = default_runner("postgresql://unused@localhost/none", settings=Settings(analysis_enabled=False))
+            report = await runner.enricher.run(_posts(2))
+        self.assertEqual(report.as_dict(), {"skipped": "analysis off"})
+
+    async def test_default_runner_enriches_when_analysis_is_on(self):
+        from unittest import mock
+
+        from insight_core.ingestion import default_runner
+        from insight_core.settings import Settings
+
+        with mock.patch("insight_core.services.entity_memory_service.EntityMemoryService.process_posts") as entity, \
+             mock.patch("insight_core.services.event_memory_service.EventMemoryService.process_posts") as event:
+            runner = default_runner("postgresql://unused@localhost/none", settings=Settings(analysis_enabled=True))
+            report = await runner.enricher.run(_posts(2))
+        self.assertEqual(report.as_dict()["entity"]["posts"], 2)
+        self.assertEqual(entity.call_count, 1)
+        self.assertEqual(event.call_count, 1)
 
 
 class RunReportTests(unittest.IsolatedAsyncioTestCase):

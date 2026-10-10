@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from functools import cached_property
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -52,10 +53,15 @@ class YouTubeService:
         "part", "episode", "ep", "video", "new", "live", "podcast", "interview",
     }
 
+    @cached_property
+    def processor(self) -> GeminiProcessor:
+        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
+        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
+        return GeminiProcessor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.logger = get_component_logger("youtube_service")
-        self.processor = GeminiProcessor()
         self.preferred_languages = tuple(
             item.strip()
             for item in os.environ.get("YOUTUBE_PREFERRED_LANGUAGES", ",".join(self.DEFAULT_LANGUAGES)).split(",")

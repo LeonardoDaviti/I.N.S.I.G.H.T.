@@ -1,3 +1,4 @@
+import functools
 import logging
 import math
 import os
@@ -14,6 +15,7 @@ from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.services.credentials_service import CredentialInvalid, CredentialNotFound, LoginFailed
+from insight_core.settings import get_settings
 from insight_core.services.operations_service import (
     CADENCE_OVERRIDE_MAX_HOURS,
     CADENCE_OVERRIDE_MIN_HOURS,
@@ -333,6 +335,21 @@ def _unavailable_or(result: Any) -> Any:
     return result
 
 
+def analysis_only(endpoint):
+    """409 {"error": "analysis_disabled"} while INSIGHT_ANALYSIS is off (reading-finish R3).
+
+    For endpoints that write analysis output or call Gemini; it answers before the bridge is
+    touched, so no GeminiProcessor is built. functools.wraps keeps the signature FastAPI reads.
+    """
+    @functools.wraps(endpoint)
+    async def guarded(*args, **kwargs):
+        if not get_settings().analysis_enabled:
+            return JSONResponse(status_code=409, content={"success": False, "error": "analysis_disabled"})
+        return await endpoint(*args, **kwargs)
+
+    return guarded
+
+
 @app.get("/")
 async def root():
     return {
@@ -345,6 +362,13 @@ async def root():
 @app.get("/hello")
 async def hello():
     return {"message": "Hello World"}
+
+
+@app.get("/api/config")
+async def get_config():
+    """What this backend runs (reading-finish R3). The frontend reads it at runtime so the
+    two can't disagree; the runtime value wins over the build flag."""
+    return {"analysis_enabled": get_settings().analysis_enabled}
 
 # ============= SOURCES ENDPOINTS (DATABASE-BACKED) =============
 
@@ -466,6 +490,7 @@ async def get_post_detail(post_id: str):
 
 
 @app.post("/api/posts/item/{post_id}/highlights")
+@analysis_only
 async def get_post_highlights(post_id: str, request: PostHighlightsRequest):
     try:
         logger.info(f"✨ Fetching post highlights: {post_id}")
@@ -643,6 +668,7 @@ async def get_post_memory(post_id: str):
 
 
 @app.post("/api/evidence/rebuild-for-post")
+@analysis_only
 async def rebuild_evidence_for_post(request: EvidenceRebuildPostRequest):
     try:
         logger.info(f"🔄 Rebuilding evidence for post: {request.postId}")
@@ -653,6 +679,7 @@ async def rebuild_evidence_for_post(request: EvidenceRebuildPostRequest):
 
 
 @app.post("/api/evidence/rebuild-for-date")
+@analysis_only
 async def rebuild_evidence_for_date(request: EvidenceRebuildDateRequest):
     try:
         logger.info(f"🔄 Rebuilding evidence for date: {request.date}")
@@ -663,6 +690,7 @@ async def rebuild_evidence_for_date(request: EvidenceRebuildDateRequest):
 
 
 @app.post("/api/memory/rebuild-for-post")
+@analysis_only
 async def rebuild_memory_for_post(request: MemoryRebuildPostRequest):
     try:
         logger.info(f"🔄 Rebuilding entity memory for post: {request.postId}")
@@ -673,6 +701,7 @@ async def rebuild_memory_for_post(request: MemoryRebuildPostRequest):
 
 
 @app.post("/api/memory/rebuild-for-date")
+@analysis_only
 async def rebuild_memory_for_date(request: MemoryRebuildDateRequest):
     try:
         logger.info(f"🔄 Rebuilding entity memory for date: {request.date}")
@@ -716,6 +745,7 @@ async def get_post_timeline(post_id: str):
 
 
 @app.post("/api/posts/item/{post_id}/timeline/refresh")
+@analysis_only
 async def refresh_post_timeline(post_id: str, request: PostTimelineRequest | None = None):
     """Refresh the candidate links and timeline for a single post."""
     try:
@@ -728,6 +758,7 @@ async def refresh_post_timeline(post_id: str, request: PostTimelineRequest | Non
 
 
 @app.post("/api/story-candidates/{candidate_id}/accept")
+@analysis_only
 async def accept_story_candidate(candidate_id: str):
     """Accept one story candidate into the target story timeline."""
     try:
@@ -739,6 +770,7 @@ async def accept_story_candidate(candidate_id: str):
 
 
 @app.post("/api/story-candidates/{candidate_id}/reject")
+@analysis_only
 async def reject_story_candidate(candidate_id: str):
     """Reject one story candidate from the timeline."""
     try:
@@ -750,6 +782,7 @@ async def reject_story_candidate(candidate_id: str):
 
 
 @app.post("/api/events/rebuild-for-post")
+@analysis_only
 async def rebuild_events_for_post(request: EventRebuildPostRequest):
     try:
         logger.info(f"🔄 Rebuilding event memory for post: {request.postId}")
@@ -760,6 +793,7 @@ async def rebuild_events_for_post(request: EventRebuildPostRequest):
 
 
 @app.post("/api/events/rebuild-for-date")
+@analysis_only
 async def rebuild_events_for_date(request: EventRebuildDateRequest):
     try:
         logger.info(f"🔄 Rebuilding event memory for date: {request.date}")
@@ -876,6 +910,7 @@ async def get_inbox_item(item_id: str):
 
 
 @app.post("/api/inbox/rebuild")
+@analysis_only
 async def rebuild_inbox(request: InboxRebuildRequest | None = None):
     """Rebuild the analyst inbox queue."""
     try:
@@ -894,6 +929,7 @@ async def rebuild_inbox(request: InboxRebuildRequest | None = None):
 
 
 @app.post("/api/inbox/items/{item_id}/actions")
+@analysis_only
 async def record_inbox_action(item_id: str, request: InboxActionRequest):
     """Record a durable analyst action for one inbox item."""
     try:
@@ -954,6 +990,7 @@ async def save_post_notes(post_id: str, request: PostNotesRequest):
 
 
 @app.post("/api/posts/item/{post_id}/summary")
+@analysis_only
 async def get_post_summary(post_id: str, request: PostSummaryRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"🧠 Generating summary for post: {post_id}")
@@ -981,6 +1018,7 @@ async def get_post_summary(post_id: str, request: PostSummaryRequest, background
 
 
 @app.post("/api/posts/item/{post_id}/chat")
+@analysis_only
 async def chat_about_post(post_id: str, request: PostChatRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"💬 Chat about post: {post_id}")
@@ -1040,6 +1078,7 @@ async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, back
 
 
 @app.post("/api/posts/item/{post_id}/reddit-comments/briefing")
+@analysis_only
 async def get_reddit_comments_briefing(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
     try:
         logger.info(f"🧠 Generating Reddit comments briefing for post: {post_id}")
@@ -1490,6 +1529,7 @@ async def delete_expert(expert_id: str):
 
 
 @app.post("/api/experts/{expert_id}/run")
+@analysis_only
 async def run_expert(expert_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
     """Generate an expert's folder-scoped briefing.
     Optional body: {as_of_date: 'YYYY-MM-DD', refresh: bool, asyncMode: bool}"""
@@ -1815,6 +1855,7 @@ async def telegram_login_cancel():
 
 
 @app.post("/api/daily")
+@analysis_only
 async def generate_daily_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
@@ -1908,6 +1949,7 @@ async def generate_daily_briefing(request: BriefingRequest, background_tasks: Ba
         return {"success": False, "error": str(e)}
 
 @app.post("/api/daily/topics")
+@analysis_only
 async def generate_daily_briefing_with_topics(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
@@ -1973,6 +2015,7 @@ async def generate_daily_briefing_with_topics(request: BriefingRequest, backgrou
         return {"success": False, "error": str(e)}
 
 @app.post("/api/weekly")
+@analysis_only
 async def generate_weekly_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
     try:
         date = request.date
@@ -2058,9 +2101,18 @@ async def get_source_vertical_briefing(
     end: str | None = None,
     asyncMode: bool = Query(False),
 ):
-    """Generate or fetch a cached source-scoped vertical briefing."""
+    """Generate or fetch a cached source-scoped vertical briefing.
+
+    With INSIGHT_ANALYSIS off this is a read of the stored briefing only (reading-finish R3):
+    a cache miss or asyncMode answers 409 analysis_disabled instead of generating.
+    """
     try:
         logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
+        if not get_settings().analysis_enabled:
+            cached = None if asyncMode else api_bridge.get_cached_source_vertical_briefing(source_id, start, end)
+            if cached is None:
+                return JSONResponse(status_code=409, content={"success": False, "error": "analysis_disabled"})
+            return cached
         if asyncMode:
             job_id = api_bridge._start_job_safe(
                 "vertical_briefing_source",
@@ -2094,6 +2146,7 @@ async def get_source_vertical_briefing(
 
 
 @app.post("/api/briefings/vertical/source/{source_id}/refresh")
+@analysis_only
 async def refresh_source_vertical_briefing(
     source_id: str,
     background_tasks: BackgroundTasks,
@@ -2251,6 +2304,7 @@ async def list_youtube_channel_videos(request: YouTubeChannelRequest):
 
 
 @app.post("/api/youtube/channel/roadmap")
+@analysis_only
 async def build_youtube_channel_roadmap(request: YouTubeChannelRequest):
     try:
         logger.info(f"🗺️ Building YouTube roadmap for {request.source}")
@@ -2271,6 +2325,7 @@ async def build_youtube_playlists(request: YouTubeChannelRequest):
 
 
 @app.post("/api/youtube/video/evaluate")
+@analysis_only
 async def evaluate_youtube_video(request: YouTubeVideoRequest):
     try:
         logger.info(f"🎥 Evaluating YouTube video {request.video}")
@@ -2281,6 +2336,7 @@ async def evaluate_youtube_video(request: YouTubeVideoRequest):
 
 
 @app.post("/api/youtube/video/chat")
+@analysis_only
 async def chat_with_youtube_video(request: YouTubeChatRequest):
     try:
         logger.info(f"💬 Chatting with YouTube video {request.video}")
@@ -2477,6 +2533,7 @@ async def move_post_to_outlier(topic_id: str, post_id: str, data: dict):
 # ============= TOPIC MODELING ENDPOINTS (TESTING) =============
 
 @app.post("/api/model-topics")
+@analysis_only
 async def model_topics(posts: List[Dict[str, Any]]):
     """Model topics from a list of posts (testing only)."""
     try:

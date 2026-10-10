@@ -10,7 +10,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.ingestion import FetchRequest, RunReport, SourceSelector, Trigger
-from insight_core.scripts.run_scheduler import SchedulerState, tick, tracked_job
+from unittest import mock
+
+from insight_core.scripts.run_scheduler import SchedulerState, daily_work, tick, tracked_job
+from insight_core.settings import Settings
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 CONFIG = {"interval_hours": 20, "ingest_tick_minutes": 60}
@@ -62,11 +65,13 @@ class FakeIngest:
 
 
 class FakeDailyWork:
-    def __init__(self):
+    def __init__(self, result=None):
         self.calls = 0
+        self.result = result
 
     async def __call__(self, config):
         self.calls += 1
+        return self.result
 
 
 class TickTests(unittest.IsolatedAsyncioTestCase):
@@ -125,10 +130,51 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
                            ingest=self.ingest, daily_work=self.daily, ops=self.ops)
         self.assertEqual(state.next_tick_at, NOW + timedelta(minutes=15))
 
+    async def test_skipped_daily_steps_are_recorded_on_the_scheduler_cycle_job(self):
+        skipped = {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"}
+        await self._tick(SchedulerState(last_daily_work_at=NOW - timedelta(hours=21)), daily=FakeDailyWork(skipped))
+        _, cycle = self.ops.finished[-1]
+        self.assertEqual(cycle["status"], "success")
+        self.assertEqual(cycle["payload"]["daily_work"], skipped)
+        self.assertIn("skipped", cycle["message"])
+
     def test_state_round_trips_through_its_dict(self):
         state = SchedulerState(NOW, NOW + timedelta(hours=1), NOW - timedelta(hours=3), NOW + timedelta(hours=17))
         self.assertEqual(SchedulerState.from_dict(state.as_dict()), state)
         self.assertEqual(SchedulerState.from_dict({"last_tick_at": "garbage"}), SchedulerState())
+
+
+class PruneOps(FakeOps):
+    def __init__(self):
+        super().__init__()
+        self.pruned = 0
+
+    def prune_job_runs(self, retain_days):
+        self.pruned += 1
+        return 0
+
+
+class DailyWorkAnalysisOffTests(unittest.IsolatedAsyncioTestCase):
+    """INSIGHT_ANALYSIS=off (reading-finish R3): upkeep runs; experts and briefings don't."""
+
+    async def test_upkeep_runs_and_experts_and_briefings_are_skipped_without_gemini(self):
+        ops = PruneOps()
+        never = AssertionError
+        with mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=3) as cadence, \
+             mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.sync_json_to_db",
+                        return_value={"success": True}) as sync, \
+             mock.patch("insight_core.services.experts_service.ExpertsService.__init__", side_effect=never("experts")), \
+             mock.patch("insight_core.services.briefing_service.BriefingService.__init__", side_effect=never("briefing")), \
+             mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
+                        side_effect=never("GeminiProcessor built")):
+            result = await daily_work("postgresql://unused@localhost/none", ops,
+                                      {"generate_daily_briefing": True, "generate_topic_briefing": True},
+                                      settings=Settings(analysis_enabled=False))
+        self.assertEqual(ops.pruned, 1)
+        self.assertEqual(cadence.call_count, 1)
+        self.assertEqual(sync.call_count, 1)
+        self.assertEqual(ops.job_types(), [], "no expert or briefing jobs start")
+        self.assertEqual(result, {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"})
 
 
 class TrackedJobTests(unittest.IsolatedAsyncioTestCase):

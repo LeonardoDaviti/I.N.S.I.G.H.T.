@@ -1175,6 +1175,15 @@ class InsightApiBridge:
                 "error": str(e),
             }
 
+    def get_cached_source_vertical_briefing(
+        self,
+        source_id: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """The stored source vertical briefing, or None; starts no job and generates nothing."""
+        return self.briefing_service.get_cached_source_vertical_briefing(source_id, start_date, end_date)
+
     async def generate_source_vertical_briefing(
         self,
         source_id: str,

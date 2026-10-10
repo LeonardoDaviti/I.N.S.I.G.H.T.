@@ -39,6 +39,7 @@ services:
       BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
+      INSIGHT_ANALYSIS: ${INSIGHT_ANALYSIS:-off}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.7-flash}
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-3.6-flash,gemini-3.5-flash,gemini-flash-latest,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.0-flash}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
@@ -90,6 +91,7 @@ services:
       INSIGHT_SYNC_SOURCES_EACH_CYCLE: ${INSIGHT_SYNC_SOURCES_EACH_CYCLE:-true}
       INSIGHT_GENERATE_DAILY_BRIEFING: ${INSIGHT_GENERATE_DAILY_BRIEFING:-true}
       INSIGHT_GENERATE_TOPIC_BRIEFING: ${INSIGHT_GENERATE_TOPIC_BRIEFING:-false}
+      INSIGHT_ANALYSIS: ${INSIGHT_ANALYSIS:-off}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.7-flash}
       GEMINI_MODEL_FALLBACKS: ${GEMINI_MODEL_FALLBACKS:-gemini-3.6-flash,gemini-3.5-flash,gemini-flash-latest,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.0-flash}
       INSIGHT_LOG_DIR: /app/logs

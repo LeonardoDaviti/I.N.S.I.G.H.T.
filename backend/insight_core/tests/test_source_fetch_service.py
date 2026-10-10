@@ -238,6 +238,26 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e["stage"] for e in events], ["planning_complete", "page_fetched", "page_fetched", "completed"])
 
 
+class ArchiveAnalysisOffTests(unittest.IsolatedAsyncioTestCase):
+    """INSIGHT_ANALYSIS=off (reading-finish R3): archived posts are saved, never enriched."""
+
+    async def test_archive_saves_skip_enrichment_and_build_no_gemini_client(self):
+        from unittest import mock
+
+        from insight_core.settings import Settings
+
+        with mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
+                        side_effect=AssertionError("GeminiProcessor built")), \
+             mock.patch("insight_core.services.entity_memory_service.EntityMemoryService.process_posts",
+                        side_effect=AssertionError("entity memory ran")), \
+             mock.patch("insight_core.services.event_memory_service.EventMemoryService.process_posts",
+                        side_effect=AssertionError("event memory ran")):
+            service = SourceFetchService("postgresql://test:test@localhost/test",
+                                         settings=Settings(analysis_enabled=False))
+            report = await service.enricher.run([{"id": "p1", "source_id": "s1"}])
+        self.assertEqual(report.as_dict(), {"skipped": "analysis off"})
+
+
 class ArchiveKindSessionTests(unittest.IsolatedAsyncioTestCase):
     """B8: plan and archive run inside the kind's session, opened once and always closed."""
 
