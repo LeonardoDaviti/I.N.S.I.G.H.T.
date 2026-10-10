@@ -82,7 +82,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
           ],
         ]}
         skipHtml={false}
-        // Monochrome reading styles (design doc §4): sizes and spacing are in em so
+        // Monochrome reading styles (design docs system/typography.md): sizes and spacing are in em so
         // the same renderer reads well in the 1.125rem post column and in a small
         // chat bubble. Hierarchy is weight and size, never hue.
         components={{

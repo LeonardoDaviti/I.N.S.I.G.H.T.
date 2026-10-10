@@ -14,7 +14,7 @@ import type { Status } from '../components/ui/styles';
 import { INBOX_FIXTURE_NAMES, inboxFixtureApi } from './AnalystInboxPage.fixtures';
 
 /**
- * Inbox (design doc §12): triage of generated candidates. The batch is a filter
+ * Inbox (design docs parked/inbox.md): triage of generated candidates. The batch is a filter
  * like the others, so the page is the same master/detail as Stories: a ranked
  * list of candidates on the left, the selected one on the right with its scores,
  * reasons, the triage actions and the action history.

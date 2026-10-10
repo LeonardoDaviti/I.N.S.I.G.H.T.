@@ -47,7 +47,7 @@ With analysis on, the bar is `feed / tracks / briefings / sources / ingestion`:
 - `/tracks/:trackId` → `/read/folder/:trackId`, replacing the history entry (the track page is retired into the reader, P9).
 - `*` (any unknown path) → `/`.
 
-Parked routes redirect to `/` while analysis is off (P10), after `GET /api/config` settles so a deep link isn't bounced early. `/ingestion[/:tab]` goes to `/settings/sources?tab=ingestion` instead, carrying the tab and query.
+Parked routes redirect to `/` while analysis is off (P10), after `GET /api/config` settles so a deep link isn't bounced early. The flag is the backend's `INSIGHT_ANALYSIS` (default off) read from `GET /api/config`, falling back to the build flag `VITE_INSIGHT_ANALYSIS`; on, every parked surface comes back unchanged and the post page regains its analysis (`parked/post-analysis.md`). `/ingestion[/:tab]` goes to `/settings/sources?tab=ingestion` instead, carrying the tab and query.
 
 ## Cross-links (P8)
 

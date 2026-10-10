@@ -106,7 +106,7 @@ function archiveGlyph(status?: string | null): { status: Status; label: string }
   return { status: 'scheduled', label: 'not archived' };
 }
 
-/** Lowercase tab words (design doc §4: lowercase is the voice of tabs). */
+/** Lowercase tab words (design docs system/typography.md: lowercase is the voice of tabs). */
 const TAB_WORDS: Record<string, string> = {
   main: 'overview',
   archive: 'archive',

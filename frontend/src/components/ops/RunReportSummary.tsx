@@ -5,7 +5,7 @@ import { sourceLabel } from '../../lib/sourceLabel';
 import { StatusIcon } from '../ui';
 import type { Status } from '../ui';
 
-/** Monochrome tone (design doc §8): border style and a glyph, never hue. */
+/** Monochrome tone (design docs system/status.md): border style and a glyph, never hue. */
 const TONE: Record<RunReportTone, { box: string; glyph: Status }> = {
   status: { box: 'border-line', glyph: 'running' },
   completion: { box: 'border-line-strong', glyph: 'ok' },

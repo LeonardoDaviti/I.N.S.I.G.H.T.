@@ -11,7 +11,7 @@ import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
- * The one top bar (design doc §9): the inverted INSIGHT wordmark on the left,
+ * The one top bar (design docs system/information-architecture.md): the inverted INSIGHT wordmark on the left,
  * the lowercase slash nav (`feed / sources` reading-only) and the ⌘K switcher on the right. A translucent
  * material over the black page; its hairline appears only once content scrolls
  * beneath it (apple §12: no divider where nothing overlaps).

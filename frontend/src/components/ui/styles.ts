@@ -1,11 +1,11 @@
 import { cva } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
 
-// Class recipes and vocabularies shared by the primitives (plan/INSIGHT_mark_ix_design.md).
+// Class recipes and vocabularies shared by the primitives (src/design/docs).
 // They live outside the component files so React fast refresh keeps working.
 
 /**
- * The one button. Monochrome (design doc §11): `primary` is the inverted block
+ * The one button. Monochrome (design docs system/components.md): `primary` is the inverted block
  * (one per view), `secondary` an outline, `ghost` text-only, `danger` an
  * inverted block with an inner hairline (and, from <Button/>, a leading "×"),
  * reserved for confirmed destructive actions, so it never passes for the
@@ -60,7 +60,7 @@ export const tabTriggerClass = cn(
 );
 
 /**
- * Status without colour (design doc §8). Every state is a shape plus a word.
+ * Status without colour (design docs system/status.md). Every state is a shape plus a word.
  */
 export type Status =
   | 'ok'

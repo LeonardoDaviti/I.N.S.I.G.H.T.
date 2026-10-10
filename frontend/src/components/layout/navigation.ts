@@ -1,5 +1,5 @@
 /**
- * The information architecture (design doc §9): the nav words in the top bar,
+ * The information architecture (design docs system/information-architecture.md): the nav words in the top bar,
  * and the destinations the ⌘K quick switcher can jump to. Navigation only:
  * search over posts stays deferred (spec §F.2).
  *

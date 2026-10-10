@@ -7,7 +7,7 @@ export interface SwitchProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
 }
 
 /**
- * The one on/off switch (design doc §11): an inverted pill when on, a hairline
+ * The one on/off switch (design docs system/components.md): an inverted pill when on, a hairline
  * when off, never a hue. One size everywhere; on touch the hit area grows to
  * 44px without moving the layout. The knob moves in 120ms (an occasional,
  * deliberate act) and not at all under reduced motion. Name it with
