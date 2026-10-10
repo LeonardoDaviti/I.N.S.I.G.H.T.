@@ -34,7 +34,7 @@ describe('ExpertsPage (tracks)', () => {
   it('lists folders as rows linking to their reading view, with counts and unread', async () => {
     render(api(folders, [expert()]));
     const link = await screen.findByRole('link', { name: 'Agentic News' });
-    expect(link).toHaveAttribute('href', '/tracks/folder-1');
+    expect(link).toHaveAttribute('href', '/read/folder/folder-1');
     expect(screen.getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === '12 unread')).toBeInTheDocument();
     expect(screen.getByText('1 source · 1 post', { exact: false })).toBeInTheDocument();
     expect(screen.getByText('1 track · 1 folder · 1 expert')).toBeInTheDocument();

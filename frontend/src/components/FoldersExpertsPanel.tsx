@@ -27,6 +27,7 @@ import { formatCount, plural } from '../lib/format';
 import { cn } from '../lib/utils';
 import type { Expert, ExpertRunResult, Folder } from '../services/api';
 import { TRACKS_FIXTURE_NAMES, tracksFixtureApi } from '../pages/ExpertsPage.fixtures';
+import { folderReadPath } from '../lib/feedContext';
 
 /**
  * Tracks & experts (design doc §12): the folders and tracks as smol-style rows
@@ -82,7 +83,7 @@ function FolderRow({ folder, unread, onDelete }: { folder: Folder; unread: numbe
       <span className="hidden w-[3.25rem] shrink-0 pt-px text-[0.8125rem] text-fg-3 sm:block">{folder.kind === 'track' ? 'track' : 'folder'}</span>
       <div className="min-w-0 flex-1">
         <Link
-          to={`/tracks/${encodeURIComponent(folder.id)}`}
+          to={folderReadPath(folder.id)}
           className="line-clamp-2 break-words font-semibold text-fg [overflow-wrap:anywhere] after:absolute after:inset-0 after:rounded-md focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-fg"
         >
           <span dir="auto">{folder.name?.trim() || 'Untitled folder'}</span>

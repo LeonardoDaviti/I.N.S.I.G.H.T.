@@ -157,6 +157,11 @@ export function scopePath(scope: string): string {
   return `/read/${kind}/${id}`;
 }
 
+/** The reader scoped to one folder (a track): where every track link goes (Design Studio D5). */
+export function folderReadPath(folderId: string): string {
+  return `/read/folder/${encodeURIComponent(folderId)}`;
+}
+
 /** The route params of `/read/:scopeKind/:scopeId?` as an API scope; null when invalid. */
 export function scopeFromRoute(kind: string | undefined, id: string | undefined): string | null {
   if (!kind) return 'all';

@@ -1,3 +1,5 @@
+import { folderReadPath } from '../../lib/feedContext';
+
 /**
  * The information architecture (design doc §9): the nav words in the top bar,
  * and the destinations the ⌘K quick switcher can jump to. Navigation only:
@@ -85,8 +87,8 @@ export interface TrackRef {
 
 /**
  * What ⌘K can jump to. With analysis on, the list above unchanged. Reading-only:
- * the feed and sources entries, then one entry per track (to `/tracks/:id`,
- * the track's reading view) in the order given.
+ * the feed and sources entries, then one entry per track (to `/read/folder/:id`,
+ * the reader scoped to it) in the order given.
  */
 export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef[] = []): Destination[] {
   if (analysisEnabled) return [...DESTINATIONS];
@@ -98,7 +100,7 @@ export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef
     id: `track-${track.id}`,
     label: track.name,
     group: 'tracks',
-    to: `/tracks/${encodeURIComponent(track.id)}`,
+    to: folderReadPath(track.id),
     keywords: 'track folder',
   }));
   // Tracks go after the feed entries; with none after the feed, at the end.

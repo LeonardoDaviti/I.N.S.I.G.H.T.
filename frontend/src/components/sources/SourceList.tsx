@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
 import { STATUS_GLYPH, compactAge, kindLabel, lastPostAt, rowFact, rowName, type SourceGroup } from './sourceList';
+import { folderReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
 const CHECKBOX =
@@ -155,7 +156,7 @@ export default function SourceList({
                       <RefreshCw aria-hidden="true" className={cn('h-3.5 w-3.5', track.isFetching(group.folderId) && 'motion-safe:animate-spin')} />
                     </button>
                     <Link
-                      to={`/tracks/${encodeURIComponent(group.folderId)}`}
+                      to={folderReadPath(group.folderId)}
                       aria-label={`Open track ${group.label}`}
                       title="Open track"
                       className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11 coarse:w-11"
