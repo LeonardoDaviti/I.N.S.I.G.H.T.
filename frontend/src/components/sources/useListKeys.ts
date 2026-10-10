@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 
-export type ListKey = 'j' | 'k' | 'x' | 'o' | 'Enter' | 'Escape' | '/';
-const BOUND = new Set<string>(['j', 'k', 'x', 'o', 'Enter', 'Escape', '/']);
+export type ListKey = 'j' | 'k' | 'x' | 'o' | 'Enter' | 'Escape';
+/** No "/": search is a visible field (Tab or click), and "/" stays the browser's quick find. */
+const BOUND = new Set<string>(['j', 'k', 'x', 'o', 'Enter', 'Escape']);
 
 function isEditable(target: EventTarget | null): boolean {
   return target instanceof HTMLElement
@@ -14,7 +15,7 @@ function isInDialog(target: EventTarget | null): boolean {
 
 /**
  * The Sources list keys: j/k move, x selects, o/Enter opens, Esc clears the
- * selection, / focuses search. Same guards as the reader: never inside a form
+ * selection. Same guards as the reader: never inside a form
  * field, a dialog or a menu, never with Ctrl/Alt/Meta, and single keys only
  * while the reader's shortcut switch (WCAG 2.1.4) is on. Enter on a button is
  * left to the button. The keys also work from a row's checkbox.

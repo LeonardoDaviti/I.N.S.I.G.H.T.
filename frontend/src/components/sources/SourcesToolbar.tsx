@@ -1,19 +1,29 @@
-import { forwardRef, useEffect, useRef } from 'react';
+import { Fragment, forwardRef, useEffect, useRef } from 'react';
 import { Search, X } from 'lucide-react';
 
-import type { HealthStatus } from '../../services/api';
-import { cn } from '../../lib/utils';
-import { FilterChip, Kbd, Select } from '../ui';
-import { GROUP_BY, GROUP_BY_LABELS, STATUS_FILTERS, type GroupBy, type SourcesView } from './sourceList';
+import { FilterChip, Select } from '../ui';
+import {
+  GROUP_BY,
+  GROUP_BY_LABELS,
+  SORT_BY,
+  SORT_BY_LABELS,
+  STATUS_FILTERS,
+  type GroupBy,
+  type SortBy,
+  type SourcesView,
+  type StatusFilter,
+} from './sourceList';
 
 /**
- * The one toolbar above the list (sticky, translucent): search, status chips
- * (only the ones with sources, plus the selected one) and group-by. Its height
- * is published as `--sources-toolbar-h` so group headers stick right under it.
+ * The one toolbar above the list (sticky, translucent): search, status chips,
+ * group-by and sort. The primary chips (all, enabled, disabled, failing,
+ * unavailable) always show; the secondary ones (backoff, due, scheduled) only
+ * with sources or while selected. Its height is published as
+ * `--sources-toolbar-h` so group headers stick right under it.
  */
 const SourcesToolbar = forwardRef<HTMLInputElement, {
   view: SourcesView;
-  counts: Partial<Record<HealthStatus, number>>;
+  counts: Partial<Record<StatusFilter, number>>;
   total: number;
   onChange: (view: SourcesView) => void;
 }>(function SourcesToolbar({ view, counts, total, onChange }, searchRef) {
@@ -35,7 +45,8 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
     return () => { observer.disconnect(); window.removeEventListener('resize', publish); };
   }, []);
 
-  const chips = STATUS_FILTERS.filter((chip) => (counts[chip.value] ?? 0) > 0 || chip.value === view.status);
+  const chips = STATUS_FILTERS.filter((chip) => !chip.secondary || (counts[chip.value] ?? 0) > 0 || chip.value === view.status);
+  const select = '[&_select]:min-h-[2rem] [&_select]:py-1 [&_select]:text-[0.8125rem]';
 
   return (
     <div
@@ -66,37 +77,47 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
           >
             <X aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
-        ) : (
-          <Kbd aria-hidden="true" className="pointer-events-none absolute right-2 hidden sm:inline-flex">/</Kbd>
-        )}
+        ) : null}
       </label>
 
       <div role="group" aria-label="Filter by status" className="flex min-w-0 flex-nowrap gap-1.5 overflow-x-auto">
         <FilterChip selected={view.status === null} count={total} onClick={() => onChange({ ...view, status: null })} className="min-h-[1.75rem] px-2">
           All
         </FilterChip>
-        {chips.map((chip) => (
-          <FilterChip
-            key={chip.value}
-            selected={view.status === chip.value}
-            count={counts[chip.value] ?? 0}
-            onClick={() => onChange({ ...view, status: view.status === chip.value ? null : chip.value })}
-            className="min-h-[1.75rem] px-2"
-          >
-            {chip.label}
-          </FilterChip>
+        {chips.map((chip, index) => (
+          <Fragment key={chip.value}>
+            {/* A hairline before the first secondary chip: the primary set reads as one group. */}
+            {chip.secondary && !chips[index - 1]?.secondary ? <span aria-hidden="true" className="my-1.5 w-px shrink-0 self-stretch bg-line" /> : null}
+            <FilterChip
+              selected={view.status === chip.value}
+              count={counts[chip.value] ?? 0}
+              onClick={() => onChange({ ...view, status: view.status === chip.value ? null : chip.value })}
+              className="min-h-[1.75rem] px-2"
+            >
+              {chip.label}
+            </FilterChip>
+          </Fragment>
         ))}
       </div>
 
-      <div className={cn('ml-auto flex shrink-0 items-center gap-2')}>
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         <label htmlFor="sources-group" className="text-[0.75rem] text-fg-3">Group</label>
         <Select
           id="sources-group"
           value={view.group}
           onChange={(event) => onChange({ ...view, group: event.target.value as GroupBy })}
-          className="[&_select]:min-h-[2rem] [&_select]:py-1 [&_select]:text-[0.8125rem]"
+          className={select}
         >
           {GROUP_BY.map((key) => <option key={key} value={key}>{GROUP_BY_LABELS[key]}</option>)}
+        </Select>
+        <label htmlFor="sources-sort" className="text-[0.75rem] text-fg-3">Sort</label>
+        <Select
+          id="sources-sort"
+          value={view.sort}
+          onChange={(event) => onChange({ ...view, sort: event.target.value as SortBy })}
+          className={select}
+        >
+          {SORT_BY.map((key) => <option key={key} value={key}>{SORT_BY_LABELS[key]}</option>)}
         </Select>
       </div>
     </div>

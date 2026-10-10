@@ -1,9 +1,10 @@
 /**
  * The Sources page as one list (pure, so it is testable): every source is one
- * health row; the toolbar filters it (search + status) and groups it (by track,
- * status, platform, or not at all). The view lives in the URL:
+ * health row; the toolbar filters it (search + status), groups it (by track,
+ * status, platform, or not at all) and sorts inside each group. The view lives
+ * in the URL:
  *
- *   ?q=simon&status=error&group=status
+ *   ?q=simon&status=error&group=status&sort=posts
  *
  * The old Health tab URL (`?tab=health`) maps to `group=status`, keeping its
  * `?status=` filter, so bookmarks and the command palette still land right.
@@ -25,10 +26,24 @@ export const GROUP_BY_LABELS: Record<GroupBy, string> = {
   none: 'No grouping',
 };
 
+export type SortBy = 'status' | 'name' | 'success' | 'posts';
+export const SORT_BY: readonly SortBy[] = ['status', 'name', 'success', 'posts'];
+export const SORT_BY_LABELS: Record<SortBy, string> = {
+  status: 'Status',
+  name: 'Name',
+  success: 'Last success',
+  posts: 'Posts',
+};
+
+/** A status chip: one health status, or `enabled` (every source that is on). */
+export type StatusFilter = HealthStatus | 'enabled';
+const STATUS_FILTER_VALUES: readonly string[] = ['enabled', ...HEALTH_STATUS_ORDER];
+
 export interface SourcesView {
   q: string;
-  status: HealthStatus | null;
+  status: StatusFilter | null;
   group: GroupBy;
+  sort: SortBy;
 }
 
 export const UNASSIGNED_KEY = 'track:none';
@@ -44,15 +59,17 @@ export interface SourceGroup {
 export function readSourcesView(params: URLSearchParams): SourcesView {
   const status = params.get('status');
   const group = params.get('group');
+  const sort = params.get('sort');
   const legacyHealth = params.get('tab') === 'health';
   return {
     q: params.get('q') ?? '',
-    status: HEALTH_STATUS_ORDER.includes(status as HealthStatus) ? (status as HealthStatus) : null,
+    status: STATUS_FILTER_VALUES.includes(status ?? '') ? (status as StatusFilter) : null,
     group: GROUP_BY.includes(group as GroupBy) ? (group as GroupBy) : legacyHealth ? 'status' : 'track',
+    sort: SORT_BY.includes(sort as SortBy) ? (sort as SortBy) : 'status',
   };
 }
 
-/** The URL for a view; `track` grouping and empty values stay out of it. Other params (`data`) survive. */
+/** The URL for a view; `track` grouping, `status` sort and empty values stay out of it. Other params (`data`) survive. */
 export function writeSourcesView(params: URLSearchParams, view: SourcesView): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete('tab');
@@ -60,6 +77,7 @@ export function writeSourcesView(params: URLSearchParams, view: SourcesView): UR
   set('q', view.q.trim() ? view.q : null);
   set('status', view.status);
   set('group', view.group === 'track' ? null : view.group);
+  set('sort', view.sort === 'status' ? null : view.sort);
   return next;
 }
 
@@ -67,9 +85,15 @@ export function rowName(row: Pick<SourceHealthRow, 'display_name' | 'source_id'>
   return sourceLabel(String(row.display_name || row.source_id));
 }
 
+/** The rows a status chip keeps: `enabled` is every source that is on, the rest as filterHealthRows. */
+export function filterByStatus(rows: readonly SourceHealthRow[], status: StatusFilter | null): SourceHealthRow[] {
+  if (status === 'enabled') return rows.filter((row) => row.enabled);
+  return filterHealthRows(rows, status);
+}
+
 export function filterSources(rows: readonly SourceHealthRow[], view: Pick<SourcesView, 'q' | 'status'>): SourceHealthRow[] {
   const words = queryWords(view.q);
-  return filterHealthRows(rows, view.status).filter((row) => matchesSource({
+  return filterByStatus(rows, view.status).filter((row) => matchesSource({
     name: String(row.display_name ?? ''),
     label: rowName(row),
     kind: row.kind,
@@ -81,19 +105,37 @@ export function filterSources(rows: readonly SourceHealthRow[], view: Pick<Sourc
 const byName = (a: SourceHealthRow, b: SourceHealthRow) =>
   rowName(a).localeCompare(rowName(b), undefined, { sensitivity: 'base' });
 
+const time = (iso: string | null | undefined) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? -Infinity : t;
+};
+
+/**
+ * The order inside a group. Status: worst first, then name. Name: A to Z.
+ * Last success: the stalest first (never fetched at the top), so the ones that
+ * stopped working surface. Posts: the most first. Ties fall back to the name.
+ */
+export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy): SourceHealthRow[] {
+  const named = [...rows].sort(byName);
+  if (sort === 'status') return sortHealthRows(named);
+  if (sort === 'name') return named;
+  if (sort === 'posts') return named.sort((a, b) => b.stored_posts - a.stored_posts);
+  return named.sort((a, b) => time(a.last_success_at) - time(b.last_success_at));
+}
+
 /**
  * Groups in display order. Track: every track in the folder order (empty ones
  * too, unless a search or filter is on), then "Not in a track"; a source in two
- * tracks shows in both. Status: worst first. Inside a group, worst status
- * first, then name.
+ * tracks shows in both. Status: worst first. Inside a group, `sort` (default:
+ * worst status first, then name).
  */
 export function groupSources(
   rows: readonly SourceHealthRow[],
   group: GroupBy,
   folders: readonly Pick<Folder, 'id' | 'name'>[] = [],
-  { keepEmpty = true }: { keepEmpty?: boolean } = {},
+  { keepEmpty = true, sort = 'status' }: { keepEmpty?: boolean; sort?: SortBy } = {},
 ): SourceGroup[] {
-  const sorted = sortHealthRows([...rows].sort(byName));
+  const sorted = sortSources(rows, sort);
   if (group === 'none') return [{ key: 'all', label: 'All sources', rows: sorted }];
   if (group === 'status') {
     return HEALTH_STATUS_ORDER
@@ -132,6 +174,20 @@ export function stepActive(keys: readonly string[], current: string | null, delt
   return keys[Math.min(keys.length - 1, Math.max(0, index + delta))];
 }
 
+/**
+ * Shift-click: the source ids from the anchor row to the target row, both
+ * included, in on-screen order (either direction). Without a visible anchor,
+ * just the target.
+ */
+export function rangeIds(keys: readonly { key: string; id: string }[], anchor: string | null, target: string): string[] {
+  const to = keys.findIndex((k) => k.key === target);
+  if (to < 0) return [];
+  const from = anchor ? keys.findIndex((k) => k.key === anchor) : -1;
+  if (from < 0) return [keys[to].id];
+  const [lo, hi] = from < to ? [from, to] : [to, from];
+  return [...new Set(keys.slice(lo, hi + 1).map((k) => k.id))];
+}
+
 export function toggleInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {
   const next = new Set(set);
   if (next.has(value)) next.delete(value);
@@ -160,12 +216,52 @@ export function rowFact(row: SourceHealthRow, now: Date): string {
   return `fetched ${formatRelativeTime(row.last_success_at, now)}`;
 }
 
-/** Status chips; `error` is "failing" (error + backoff), like the "N source errors" chip. */
-export const STATUS_FILTERS: { value: HealthStatus; label: string }[] = [
-  { value: 'error', label: 'Failing' },
-  { value: 'backoff', label: 'Backoff' },
-  { value: 'unavailable', label: 'Unavailable' },
-  { value: 'due', label: 'Due' },
-  { value: 'deferred', label: 'Scheduled' },
+/**
+ * Status chips. The primary ones always show (after All): enabled, disabled,
+ * failing (error + backoff, like the "N source errors" chip), unavailable. The
+ * secondary ones narrow further and show only when they have sources.
+ */
+export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: boolean }[] = [
+  { value: 'enabled', label: 'Enabled' },
   { value: 'disabled', label: 'Disabled' },
+  { value: 'error', label: 'Failing' },
+  { value: 'unavailable', label: 'Unavailable' },
+  { value: 'backoff', label: 'Backoff', secondary: true },
+  { value: 'due', label: 'Due', secondary: true },
+  { value: 'deferred', label: 'Scheduled', secondary: true },
 ];
+
+/** Readable names for the backend's source kinds; an unknown kind falls back to the platform. */
+const KIND_LABELS: Record<string, string> = {
+  generic_rss: 'RSS',
+  youtube_channel: 'YouTube',
+  telegram_mtproto: 'Telegram',
+  telegram_rss: 'Telegram RSS',
+  reddit_subreddit: 'Reddit',
+  substack: 'Substack',
+};
+
+export function kindLabel(row: Pick<SourceHealthRow, 'kind' | 'platform'>): string {
+  return KIND_LABELS[row.kind] ?? getPlatformLabel(row.platform);
+}
+
+/** When the source's newest post was published (the backend's `last_post_at`; older backends omit it). */
+export function lastPostAt(row: SourceHealthRow): string | null {
+  return (row as SourceHealthRow & { last_post_at?: string | null }).last_post_at ?? null;
+}
+
+/** A compact age for a narrow numeric column: "now", "45m", "3h", "2d", "5w", "4mo", "2y"; "—" for none. */
+export function compactAge(iso: string | null | undefined, now: Date): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return '—';
+  const minutes = Math.max(0, (now.getTime() - t) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${Math.floor(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.floor(hours)}h`;
+  const days = hours / 24;
+  if (days < 14) return `${Math.floor(days)}d`;
+  if (days < 60) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}

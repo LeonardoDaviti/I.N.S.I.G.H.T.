@@ -5,19 +5,23 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 
 import { useApi } from '../services/ApiContext';
-import type { HealthStatus, SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
+import type { SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
+import { renameTrack, setTrackMainDigest } from '../services/trackApi';
 import AddSourceModal from '../components/AddSourceModal';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import { HEALTH_FIXTURE_NAMES, healthFixture, isHealthFixtureName } from '../components/ops/fixtures';
-import SourceList from '../components/sources/SourceList';
+import SourceList, { type TrackActions } from '../components/sources/SourceList';
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
 import { useListKeys } from '../components/sources/useListKeys';
 import {
+  STATUS_FILTERS,
+  filterByStatus,
   filterSources,
   groupSources,
+  rangeIds,
   readSourcesView,
   rowName,
   stepActive,
@@ -25,6 +29,7 @@ import {
   visibleRowKeys,
   writeSourcesView,
   type SourcesView,
+  type StatusFilter,
 } from '../components/sources/sourceList';
 import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui';
 import { ConnectionsPanel } from '../components/connections';
@@ -32,7 +37,9 @@ import { EmptyState, ErrorState, LoadingState, Notice } from '../components/stat
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { FOLDERS_KEY, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
-import { HEALTH_STATUS_ORDER, filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
+import { useIngestionRun } from '../hooks/useIngestionRun';
+import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
+import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -114,9 +121,12 @@ export default function SourcesConfig() {
   const now = useMinuteClock();
   const [shortcutsOn] = useShortcutPreference();
   const searchRef = useRef<HTMLInputElement>(null);
+  const { run: runFetch, isRunning } = useIngestionRun();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  // Where a shift-click range starts: the last row checked or unchecked without Shift (or with x).
+  const [anchorKey, setAnchorKey] = useState<string | null>(null);
   const [focusToken, setFocusToken] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
@@ -125,6 +135,8 @@ export default function SourcesConfig() {
   const [showAddSource, setShowAddSource] = useState(false);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [renameText, setRenameText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,13 +151,13 @@ export default function SourcesConfig() {
   const rows = useMemo(() => filterSources(allRows, view), [allRows, view.q, view.status]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtering = Boolean(view.q.trim() || view.status);
   const groups = useMemo(
-    () => groupSources(rows, view.group, folders, { keepEmpty: !filtering }),
-    [rows, view.group, folders, filtering],
+    () => groupSources(rows, view.group, folders, { keepEmpty: !filtering, sort: view.sort }),
+    [rows, view.group, view.sort, folders, filtering],
   );
   const counts = useMemo(() => {
     const searched = filterSources(allRows, { q: view.q, status: null });
-    const out: Partial<Record<HealthStatus, number>> = {};
-    HEALTH_STATUS_ORDER.forEach((status) => { out[status] = filterHealthRows(searched, status).length; });
+    const out: Partial<Record<StatusFilter, number>> = {};
+    STATUS_FILTERS.forEach(({ value }) => { out[value] = filterByStatus(searched, value).length; });
     return { byStatus: out, total: searched.length };
   }, [allRows, view.q]);
   const keys = useMemo(() => visibleRowKeys(groups, collapsed), [groups, collapsed]);
@@ -201,6 +213,62 @@ export default function SourcesConfig() {
     if (openId && ids.includes(openId)) setOpenId(null);
   };
 
+  const removeFromTrack = async (ids: string[], folderId: string) => {
+    const folder = folders.find((f) => f.id === folderId);
+    // Only the selected sources that are in the track: the others have nothing to remove.
+    const members = ids.filter((id) => allRows.find((row) => row.source_id === id)?.folders.some((f) => f.id === folderId));
+    const ok = await each(members, (id) => api.removeSourceFromFolder(folderId, id), 'remove');
+    if (ok) toast(`Removed ${plural(members.length, 'source')} from ${folder?.name ?? 'the track'}`);
+  };
+
+  const setMainDigest = async (ids: string[], on: boolean) => {
+    const ok = await each(ids, async (id) => {
+      await api.setSourceMainDigest(id, on);
+      return { success: true };
+    }, on ? 'add to the main digest' : 'take out of the main digest');
+    void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
+    if (ok) toast(`${plural(ids.length, 'source')} ${on ? 'in' : 'out of'} the main digest`);
+  };
+
+  const trackActions: TrackActions = {
+    fetch: (id, name) => void runFetch({ kind: 'folder', id, name }),
+    isFetching: (id) => isRunning({ kind: 'folder', id }),
+    rename: (id, name) => { setRenameText(name); setRenaming({ id, name }); },
+    inMainDigest: (id) => {
+      const folder = foldersQuery.data?.find((f) => f.id === id);
+      if (folder && typeof folder.exclude_from_main_digest === 'boolean') return !folder.exclude_from_main_digest;
+      const members = allRows.filter((row) => row.folders.some((f) => f.id === id));
+      return members.length ? members.every((row) => row.in_main_digest) : null;
+    },
+    setMainDigest: (id, name, on) => {
+      void (async () => {
+        try {
+          await setTrackMainDigest(id, on);
+          toast(`${name}: ${on ? 'in' : 'out of'} the main feed and digest`);
+        } catch (err) {
+          setError(`Could not change ${name}: ${errorMessage(err)}`);
+        }
+        invalidate();
+        void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
+      })();
+    },
+    remove: (id, name) => setPendingDelete({ kind: 'folder', id, name }),
+  };
+
+  const submitRename = async () => {
+    const name = renameText.trim();
+    if (!renaming || !name) return;
+    const target = renaming;
+    setRenaming(null);
+    if (name === target.name) return;
+    try {
+      await renameTrack(target.id, name);
+    } catch (err) {
+      setError(`Could not rename ${target.name}: ${errorMessage(err)}`);
+    }
+    invalidate();
+  };
+
   const deleteFolder = async (id: string) => {
     const r = await api.deleteFolder(id);
     if (!r.success) setError(r.error || 'Could not delete the track');
@@ -229,6 +297,12 @@ export default function SourcesConfig() {
     ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
     return next;
   });
+  /** A row checkbox: Shift extends from the anchor (the range takes the clicked row's new state). */
+  const selectRow = (key: string, id: string, on: boolean, shift: boolean) => {
+    if (shift && anchorKey) selectIds(rangeIds(keys, anchorKey, key), on);
+    else selectIds([id], on);
+    setAnchorKey(key);
+  };
   const activeId = keys.find((k) => k.key === activeKey)?.id ?? null;
   const move = (delta: 1 | -1) => {
     const next = stepActive(keys.map((k) => k.key), activeKey, delta);
@@ -240,12 +314,11 @@ export default function SourcesConfig() {
   useListKeys({
     j: () => move(1),
     k: () => move(-1),
-    x: activeId ? () => setSelected((prev) => toggleInSet(prev, activeId)) : undefined,
+    x: activeId ? () => { setSelected((prev) => toggleInSet(prev, activeId)); setAnchorKey(activeKey); } : undefined,
     o: activeId ? () => setOpenId(activeId) : undefined,
     Enter: activeId ? () => setOpenId(activeId) : undefined,
     Escape: selected.size ? () => setSelected(new Set()) : undefined,
-    '/': () => searchRef.current?.focus(),
-  }, shortcutsOn && tab === 'sources' && !openId && !showAddSource && !newTrackOpen && pendingDelete === null);
+  }, shortcutsOn && tab === 'sources' && !openId && !showAddSource && !newTrackOpen && !renaming && pendingDelete === null);
 
   const openRow = openId ? allRows.find((row) => row.source_id === openId) ?? null : null;
   const openSource = openId
@@ -293,11 +366,12 @@ export default function SourcesConfig() {
         onToggleGroup={(key) => setCollapsed((prev) => toggleInSet(prev, key))}
         selected={selected}
         onSelect={selectIds}
+        onSelectRow={selectRow}
         activeKey={activeKey}
         onActivate={setActiveKey}
         onOpen={setOpenId}
         onToggleEnabled={(row) => void setEnabled([row.source_id], !row.enabled)}
-        onDeleteTrack={(id, name) => setPendingDelete({ kind: 'folder', id, name })}
+        track={trackActions}
         now={now}
         showHeaders={view.group !== 'none'}
         focusToken={focusToken}
@@ -354,9 +428,12 @@ export default function SourcesConfig() {
       {tab === 'sources' ? <BulkActionBar
         count={selectedVisible.length}
         folders={folders}
+        memberFolders={folders.filter((folder) => allRows.some((row) => selectedVisible.includes(row.source_id) && row.folders.some((f) => f.id === folder.id)))}
         busy={busy}
         onEnable={(enabled) => void setEnabled(selectedVisible, enabled)}
         onAddToTrack={(folderId) => void addToTrack(selectedVisible, folderId)}
+        onRemoveFromTrack={(folderId) => void removeFromTrack(selectedVisible, folderId)}
+        onMainDigest={(on) => void setMainDigest(selectedVisible, on)}
         onDelete={() => setPendingDelete({
           kind: 'sources',
           ids: selectedVisible,
@@ -388,6 +465,27 @@ export default function SourcesConfig() {
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setNewTrackOpen(false)}>Cancel</Button>
               <Button type="submit" variant="primary" disabled={!newTrackName.trim()}>Create track</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={renaming !== null} onOpenChange={(open) => { if (!open) setRenaming(null); }}>
+        <DialogContent title="Rename track" description={renaming ? `Now “${renaming.name}”.` : undefined}>
+          <form
+            className="mt-4 space-y-4"
+            onSubmit={(event) => { event.preventDefault(); void submitRename(); }}
+          >
+            <Input
+              aria-label="Track name"
+              value={renameText}
+              onChange={(event) => setRenameText(event.target.value)}
+              maxLength={120}
+              autoFocus
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRenaming(null)}>Cancel</Button>
+              <Button type="submit" variant="primary" disabled={!renameText.trim()}>Rename</Button>
             </DialogFooter>
           </form>
         </DialogContent>

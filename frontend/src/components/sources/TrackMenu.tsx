@@ -1,13 +1,31 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { Check, MoreHorizontal } from 'lucide-react';
 import { Button } from '../ui';
 
+const ITEM =
+  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-inverse hover:text-inverse-fg '
+  + 'focus-visible:bg-inverse focus-visible:text-inverse-fg coarse:py-2.5';
+
 /**
- * The ⋯ menu beside a track title: rare, destructive actions live here, off the
- * scanning path. A small hand-rolled menu (button + role="menu"): Escape, outside
- * click and Tab close it, focus moves into it on open and back to ⋯ on close.
+ * The ⋯ menu beside a track title: rare actions live here, off the scanning
+ * path (rename, the main-digest switch, delete). A small hand-rolled menu
+ * (button + role="menu"): arrows and Home/End move, Escape, outside click and
+ * Tab close it, focus moves into it on open and back to ⋯ on close.
  */
-export default function TrackMenu({ name, onDelete }: { name: string; onDelete: () => void }) {
+export default function TrackMenu({
+  name,
+  inMainDigest,
+  onRename,
+  onMainDigest,
+  onDelete,
+}: {
+  name: string;
+  /** null while unknown: the switch item is disabled. */
+  inMainDigest: boolean | null;
+  onRename: () => void;
+  onMainDigest: (on: boolean) => void;
+  onDelete: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -26,6 +44,18 @@ export default function TrackMenu({ name, onDelete }: { name: string; onDelete: 
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) triggerRef.current?.focus();
+  };
+  const pick = (action: () => void) => () => { close(true); action(); };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+    if (event.key === 'Tab') { close(false); return; }
+    const items = [...(rootRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (next === undefined || !items.length) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length].focus();
   };
 
   return (
@@ -48,18 +78,28 @@ export default function TrackMenu({ name, onDelete }: { name: string; onDelete: 
           id={menuId}
           role="menu"
           aria-label={`Track ${name}`}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') { event.preventDefault(); close(true); }
-            if (event.key === 'Tab') close(false);
-          }}
-          className="absolute right-0 origin-top-right motion-safe:animate-[pop-in_150ms_cubic-bezier(0.23,1,0.32,1)] top-full z-30 mt-1 min-w-[11rem] rounded-md border border-line-strong bg-raised p-1 text-[0.8125rem] text-fg shadow-overlay"
+          onKeyDown={onKeyDown}
+          className="absolute right-0 origin-top-right motion-safe:animate-[pop-in_150ms_cubic-bezier(0.23,1,0.32,1)] top-full z-30 mt-1 min-w-[13.5rem] rounded-md border border-line-strong bg-raised p-1 text-[0.8125rem] text-fg shadow-overlay"
         >
+          <button type="button" role="menuitem" onClick={pick(onRename)} className={ITEM}>
+            <span aria-hidden="true" className="w-3" />
+            Rename…
+          </button>
           <button
             type="button"
-            role="menuitem"
-            onClick={() => { close(true); onDelete(); }}
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-inverse hover:text-inverse-fg focus-visible:bg-inverse focus-visible:text-inverse-fg coarse:py-2.5"
+            role="menuitemcheckbox"
+            aria-checked={inMainDigest ?? false}
+            disabled={inMainDigest === null}
+            onClick={pick(() => onMainDigest(!inMainDigest))}
+            className={`${ITEM} disabled:text-fg-3`}
           >
+            <span aria-hidden="true" className="inline-flex w-3 justify-center">
+              {inMainDigest ? <Check className="h-3.5 w-3.5" /> : null}
+            </span>
+            In main feed and digest
+          </button>
+          <div role="separator" className="my-1 h-px bg-line" />
+          <button type="button" role="menuitem" onClick={pick(onDelete)} className={`${ITEM} font-medium`}>
             <span aria-hidden="true" className="w-3 text-center font-semibold">×</span>
             Delete track…
           </button>

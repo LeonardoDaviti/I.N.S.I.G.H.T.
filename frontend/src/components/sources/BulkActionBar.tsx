@@ -5,29 +5,44 @@ import type { Folder } from '../../services/api';
 import { formatCount } from '../../lib/format';
 import { Button } from '../ui';
 
+const PICKER =
+  'h-8 max-w-[11rem] cursor-pointer rounded-md border border-transparent bg-transparent px-2 text-[0.8125rem] font-medium text-fg-2 '
+  + 'hover:bg-raised hover:text-fg disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11';
+
 /**
  * Appears while sources are selected: a small floating bar at the bottom
  * centre (translucent, one short ease-out in; none under reduced motion).
- * Enable, disable, add to a track, delete; Esc or × clears the selection.
+ * Enable, disable, add to / remove from a track, main digest on/off, delete;
+ * Esc or × clears the selection. The pickers are native selects that act on
+ * change and reset, so each is one gesture.
  */
 export default function BulkActionBar({
   count,
   folders,
+  memberFolders,
   busy,
   onEnable,
   onAddToTrack,
+  onRemoveFromTrack,
+  onMainDigest,
   onDelete,
   onClear,
 }: {
   count: number;
   folders: Pick<Folder, 'id' | 'name'>[];
+  /** The tracks at least one selected source is in (what "Remove from track" offers). */
+  memberFolders: Pick<Folder, 'id' | 'name'>[];
   busy: boolean;
   onEnable: (enabled: boolean) => void;
   onAddToTrack: (folderId: string) => void;
+  onRemoveFromTrack: (folderId: string) => void;
+  onMainDigest: (on: boolean) => void;
   onDelete: () => void;
   onClear: () => void;
 }) {
-  const trackId = useId();
+  const addId = useId();
+  const removeId = useId();
+  const digestId = useId();
   if (count === 0) return null;
   return (
     <div
@@ -40,19 +55,46 @@ export default function BulkActionBar({
       <Button variant="ghost" size="sm" disabled={busy} onClick={() => onEnable(false)}>Disable</Button>
       {folders.length ? (
         <>
-          <label htmlFor={trackId} className="sr-only">Add to track</label>
+          <label htmlFor={addId} className="sr-only">Add to track</label>
           <select
-            id={trackId}
+            id={addId}
             value=""
             disabled={busy}
             onChange={(event) => { if (event.target.value) onAddToTrack(event.target.value); }}
-            className="h-8 max-w-[11rem] cursor-pointer rounded-md border border-transparent bg-transparent px-2 text-[0.8125rem] font-medium text-fg-2 hover:bg-raised hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg"
+            className={PICKER}
           >
             <option value="">Add to track…</option>
             {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
           </select>
         </>
       ) : null}
+      {memberFolders.length ? (
+        <>
+          <label htmlFor={removeId} className="sr-only">Remove from track</label>
+          <select
+            id={removeId}
+            value=""
+            disabled={busy}
+            onChange={(event) => { if (event.target.value) onRemoveFromTrack(event.target.value); }}
+            className={PICKER}
+          >
+            <option value="">Remove from track…</option>
+            {memberFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+          </select>
+        </>
+      ) : null}
+      <label htmlFor={digestId} className="sr-only">Main digest</label>
+      <select
+        id={digestId}
+        value=""
+        disabled={busy}
+        onChange={(event) => { if (event.target.value) onMainDigest(event.target.value === 'on'); }}
+        className={PICKER}
+      >
+        <option value="">Main digest…</option>
+        <option value="on">In the main digest</option>
+        <option value="off">Out of the main digest</option>
+      </select>
       <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete}>Delete…</Button>
       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClear} aria-label="Clear selection" title="Clear selection (Esc)">
         <X aria-hidden="true" />

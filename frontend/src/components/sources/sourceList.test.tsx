@@ -3,9 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { healthRow } from '../ops/fixtures';
 import {
   UNASSIGNED_KEY,
+  compactAge,
   filterSources,
   groupSources,
+  kindLabel,
+  rangeIds,
   readSourcesView,
+  sortSources,
   stepActive,
   visibleRowKeys,
   writeSourcesView,
@@ -24,22 +28,23 @@ const rows = [
 
 describe('readSourcesView / writeSourcesView', () => {
   it('defaults to track grouping, no search, no status', () => {
-    expect(readSourcesView(new URLSearchParams(''))).toEqual({ q: '', status: null, group: 'track' });
+    expect(readSourcesView(new URLSearchParams(''))).toEqual({ q: '', status: null, group: 'track', sort: 'status' });
   });
 
   it('maps the old ?tab=health to status grouping and keeps its ?status= filter', () => {
-    expect(readSourcesView(new URLSearchParams('tab=health&status=error'))).toEqual({ q: '', status: 'error', group: 'status' });
+    expect(readSourcesView(new URLSearchParams('tab=health&status=error'))).toEqual({ q: '', status: 'error', group: 'status', sort: 'status' });
   });
 
   it('an explicit group wins over the legacy tab; unknown values fall back', () => {
     expect(readSourcesView(new URLSearchParams('tab=health&group=platform')).group).toBe('platform');
-    expect(readSourcesView(new URLSearchParams('group=nope&status=bogus'))).toEqual({ q: '', status: null, group: 'track' });
+    expect(readSourcesView(new URLSearchParams('group=nope&status=bogus&sort=nope'))).toEqual({ q: '', status: null, group: 'track', sort: 'status' });
+    expect(readSourcesView(new URLSearchParams('status=enabled&sort=posts'))).toMatchObject({ status: 'enabled', sort: 'posts' });
   });
 
   it('writes only non-default values, drops the legacy tab and keeps other params', () => {
-    const next = writeSourcesView(new URLSearchParams('tab=health&data=worst'), { q: 'simon', status: null, group: 'track' });
+    const next = writeSourcesView(new URLSearchParams('tab=health&data=worst'), { q: 'simon', status: null, group: 'track', sort: 'status' });
     expect(next.toString()).toBe('data=worst&q=simon');
-    expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'status' }).toString()).toBe('status=due&group=status');
+    expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'status', sort: 'name' }).toString()).toBe('status=due&group=status&sort=name');
   });
 });
 
@@ -53,6 +58,11 @@ describe('filterSources', () => {
   it('status error means failing (error or backoff) and combines with the search', () => {
     expect(filterSources(rows, { q: '', status: 'error' }).map((r) => r.source_id)).toEqual(['flaky']);
     expect(filterSources(rows, { q: 'simon', status: 'error' })).toEqual([]);
+  });
+
+  it('enabled keeps every source that is on, whatever its status', () => {
+    expect(filterSources(rows, { q: '', status: 'enabled' }).map((r) => r.source_id)).toEqual(['simon', 'flaky', 'tg']);
+    expect(filterSources(rows, { q: '', status: 'disabled' }).map((r) => r.source_id)).toEqual(['off']);
   });
 });
 
@@ -88,6 +98,67 @@ describe('groupSources', () => {
     const all = groupSources(rows, 'none');
     expect(all).toHaveLength(1);
     expect(all[0].rows.map((r) => r.source_id)).toEqual(['flaky', 'tg', 'simon', 'off']);
+  });
+});
+
+describe('sortSources', () => {
+  const now = Date.now();
+  const ago = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  const list = [
+    healthRow({ source_id: 'b', display_name: 'Bravo', stored_posts: 5, last_success_at: ago(1) }),
+    healthRow({ source_id: 'a', display_name: 'alpha', stored_posts: 50, last_success_at: ago(48), status: 'error' }),
+    healthRow({ source_id: 'c', display_name: 'Charlie', stored_posts: 5, last_success_at: null }),
+  ];
+  const ids = (sort: Parameters<typeof sortSources>[1]) => sortSources(list, sort).map((r) => r.source_id);
+
+  it('status puts the worst first; name is A to Z, case-insensitive', () => {
+    expect(ids('status')[0]).toBe('a');
+    expect(ids('name')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('last success puts the stalest first (never fetched on top); posts the most first, ties by name', () => {
+    expect(ids('success')).toEqual(['c', 'a', 'b']);
+    expect(ids('posts')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('applies inside every group', () => {
+    expect(groupSources(list, 'none', [], { sort: 'posts' })[0].rows.map((r) => r.source_id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('row columns', () => {
+  it('names the kind, falling back to the platform', () => {
+    expect(kindLabel({ kind: 'youtube_channel', platform: 'youtube' })).toBe('YouTube');
+    expect(kindLabel({ kind: 'telegram_rss', platform: 'rss' })).toBe('Telegram RSS');
+    expect(kindLabel({ kind: 'something_new', platform: 'telegram' })).toBe('Telegram');
+  });
+
+  it('compactAge stays short for a narrow numeric column', () => {
+    const now = new Date('2026-10-10T12:00:00Z');
+    const at = (ms: number) => new Date(now.getTime() - ms).toISOString();
+    expect(compactAge(null, now)).toBe('—');
+    expect(compactAge(at(20_000), now)).toBe('now');
+    expect(compactAge(at(45 * 60_000), now)).toBe('45m');
+    expect(compactAge(at(3 * 3_600_000), now)).toBe('3h');
+    expect(compactAge(at(2 * 86_400_000), now)).toBe('2d');
+    expect(compactAge(at(35 * 86_400_000), now)).toBe('5w');
+    expect(compactAge(at(120 * 86_400_000), now)).toBe('4mo');
+    expect(compactAge(at(800 * 86_400_000), now)).toBe('2y');
+  });
+});
+
+describe('rangeIds (shift-click)', () => {
+  const keys = ['g1/a', 'g1/b', 'g2/a', 'g2/c'].map((key) => ({ key, id: key.split('/')[1] }));
+
+  it('spans anchor to target in either direction, one id per source', () => {
+    expect(rangeIds(keys, 'g1/b', 'g2/c')).toEqual(['b', 'a', 'c']);
+    expect(rangeIds(keys, 'g2/c', 'g1/a')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('without a visible anchor it is just the target', () => {
+    expect(rangeIds(keys, null, 'g1/b')).toEqual(['b']);
+    expect(rangeIds(keys, 'gone/x', 'g1/b')).toEqual(['b']);
+    expect(rangeIds(keys, 'g1/a', 'gone/x')).toEqual([]);
   });
 });
 

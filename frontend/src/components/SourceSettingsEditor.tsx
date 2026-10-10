@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Check, Copy } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SourceHealthRow, SourceWithSettings, Folder } from '../services/api';
 import { useApi } from '../services/ApiContext';
@@ -16,6 +17,35 @@ import { sourceLabel } from '../lib/sourceLabel';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { getPlatformLabel } from '../lib/sourcePresentation';
 import { ConnectionsLink } from './connections';
+import { writeToClipboard } from '../lib/clipboard';
+
+/** The source's address, whole (it wraps, never truncates) with a copy button. */
+function SourceAddress({ value }: { value: string }) {
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = async () => {
+    try {
+      await writeToClipboard(value);
+      setCopied('yes');
+    } catch {
+      setCopied('failed');
+    }
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(null), 1600);
+  };
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      <p className="min-w-0 flex-1 pt-1.5 text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]" dir="ltr">{value}</p>
+      <Button variant="ghost" size="icon" onClick={() => void copy()} aria-label="Copy URL" title="Copy URL" className="shrink-0">
+        {copied === 'yes' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      </Button>
+      <span role="status" className="sr-only">
+        {copied === 'yes' ? 'URL copied' : copied === 'failed' ? 'Could not copy the URL' : ''}
+      </span>
+    </div>
+  );
+}
 
 interface SourceSettingsEditorProps {
   source: SourceWithSettings;
@@ -187,16 +217,13 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
     <Sheet open onOpenChange={(open) => { if (!open && !isSaving) onClose(); }}>
       <SheetContent
         title={name}
-        description={(
-          <span className="block min-w-0 [overflow-wrap:anywhere]">
-            {getPlatformLabel(source.platform)} · {source.handle_or_url}
-          </span>
-        )}
+        description={getPlatformLabel(source.platform)}
         className="w-[min(32rem,100vw)]"
       >
         {/* A div, not a form: the cadence editor below is its own form and forms cannot nest. */}
         <div className="space-y-6">
           <div className="space-y-3">
+            <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} /> : null}
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -315,7 +342,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
 
           <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
             {onDelete ? (
-              <Button variant="ghost" onClick={onDelete} disabled={isSaving} className="mr-auto">Delete source…</Button>
+              <Button variant="danger" onClick={onDelete} disabled={isSaving} className="mr-auto">Delete source…</Button>
             ) : null}
             <Button variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
             <Button variant="primary" onClick={() => void handleSave()} disabled={isSaving || !formValid}>
