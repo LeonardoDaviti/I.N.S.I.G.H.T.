@@ -15,16 +15,7 @@ export const SOURCE_URLS_KEY = ['reader-source-urls'] as const;
  * name, from the cached `['sources-health']` rows that Settings → Health also uses.
  */
 export function useReaderDirectory() {
-  const api = useApi();
-  const folders = useQuery({
-    queryKey: [...FOLDERS_KEY],
-    queryFn: async (): Promise<Folder[]> => {
-      const response = await api.getFolders();
-      if (!response.success) throw new Error(response.error || 'Could not load tracks.');
-      return [...(response.folders ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
-    },
-    staleTime: 5 * 60_000,
-  });
+  const folders = useFolders();
   const health = useSourcesHealth();
   const sourceNames = useMemo(() => {
     const names = new Map<string, string>();
@@ -33,6 +24,20 @@ export function useReaderDirectory() {
   }, [health.data]);
 
   return { folders, health, sourceNames };
+}
+
+/** The tracks (folders) in their sort order; the reader rail and ⌘K share the cache. */
+export function useFolders() {
+  const api = useApi();
+  return useQuery({
+    queryKey: [...FOLDERS_KEY],
+    queryFn: async (): Promise<Folder[]> => {
+      const response = await api.getFolders();
+      if (!response.success) throw new Error(response.error || 'Could not load tracks.');
+      return [...(response.folders ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+    },
+    staleTime: 5 * 60_000,
+  });
 }
 
 /** The label of a scope: "All posts", a track's name or a source's name. */

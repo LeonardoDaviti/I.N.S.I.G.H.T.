@@ -133,6 +133,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        VITE_INSIGHT_ANALYSIS: ${VITE_INSIGHT_ANALYSIS:-off}
     container_name: insight-frontend
     restart: unless-stopped
     depends_on:
