@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import SourcesConfig from './SourcesConfig';
@@ -8,6 +8,7 @@ import { demoCredentials } from '../components/connections/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { Api } from '../services/api';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { renameTrack, setTrackMainDigest } from '../services/trackApi';
 
 vi.mock('../services/trackApi', () => ({
@@ -52,9 +53,19 @@ function setup(route = '/settings/sources', overrides: Partial<Record<keyof Api,
     deleteFolder: vi.fn().mockResolvedValue({ success: true }),
     ...overrides,
   };
-  const utils = renderWithProviders(<SourcesConfig />, { api: makeFakeApi(methods), route });
+  const utils = renderWithProviders(<><SourcesConfig /><Where /></>, { api: makeFakeApi(methods), route });
   return { ...utils, api: methods };
 }
+
+/** The URL, and the browser's Back button (a modal sheet makes the page inert, so it is called directly). */
+let browserBack: () => void = () => {};
+function Where() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  browserBack = () => navigate(-1);
+  return <p data-testid="where">{`${location.pathname}${location.search}`}</p>;
+}
+const where = () => screen.getByTestId('where').textContent;
 
 const groupNames = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
 const rowIds = (root: HTMLElement = document.body) =>
@@ -413,5 +424,64 @@ describe('SourcesConfig', () => {
     await userEvent.type(input, '6');
     await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
     await waitFor(() => expect(setCadenceOverride).toHaveBeenCalledWith('simon', 6));
+  });
+});
+
+// Issue 0003: reading views link here by id; the URL owns the sheet.
+describe('SourcesConfig deep links', () => {
+  it('?source=<id> opens that source’s sheet; closing it removes the parameter', async () => {
+    setup('/settings/sources?source=flaky');
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('heading', { name: 'Flaky Feed' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(where()).toBe('/settings/sources');
+  });
+
+  it('opening a row puts it in the URL, and Back closes the sheet', async () => {
+    setup('/settings/sources?q=simon');
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    await screen.findByRole('dialog');
+    expect(where()).toBe('/settings/sources?q=simon&source=simon');
+    act(() => browserBack());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(where()).toBe('/settings/sources?q=simon');
+  });
+
+  it('closing a sheet opened from the list goes back instead of stacking history', async () => {
+    setup('/settings/sources');
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    await screen.findByRole('dialog');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(where()).toBe('/settings/sources');
+  });
+
+  it('an unknown source shows the list with a quiet note, not an error', async () => {
+    setup('/settings/sources?source=a984b1ff-gone');
+    await screen.findByText('Road to VR');
+    expect(await screen.findByText('That source no longer exists')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('?track=<id> scrolls to that track’s group and highlights it briefly', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this); };
+    onTestFinished(() => { Element.prototype.scrollIntoView = original; });
+    setup('/settings/sources?track=f-ar');
+    await screen.findByText('Road to VR');
+    const group = screen.getByRole('region', { name: /AR glasses/ });
+    await waitFor(() => expect(scrolled).toContain(group));
+    expect(group).toHaveAttribute('data-highlighted', 'true');
+    await waitFor(() => expect(group).not.toHaveAttribute('data-highlighted'), { timeout: 3000 });
+  });
+
+  it('an unknown track shows the list with a quiet note', async () => {
+    setup('/settings/sources?track=f-gone');
+    await screen.findByText('Road to VR');
+    expect(await screen.findByText('That track no longer exists')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

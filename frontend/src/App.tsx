@@ -19,7 +19,6 @@ const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
-const TrackPage = lazy(() => import('./pages/TrackPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -61,11 +60,31 @@ function IngestionRoute() {
   return enabled ? <IngestionControl /> : <Navigate to={sourcesIngestionHref(tab, location.search)} replace />;
 }
 
+/** The reader params a track link may carry; the old page's `?days=` window has no reader equivalent. */
+const TRACK_KEPT_PARAMS = ['filter', 'view'] as const;
+
+/**
+ * The retired track page (Design Studio D5): `/tracks/:id` is the reader scoped
+ * to that folder, replacing the history entry so Back doesn't bounce.
+ */
+function TrackRedirect() {
+  const { trackId = '' } = useParams();
+  const location = useLocation();
+  const from = new URLSearchParams(location.search);
+  const kept = new URLSearchParams();
+  for (const name of TRACK_KEPT_PARAMS) {
+    const value = from.get(name);
+    if (value !== null) kept.set(name, value);
+  }
+  const search = kept.toString();
+  return <Navigate to={`/read/folder/${encodeURIComponent(trackId)}${search ? `?${search}` : ''}`} replace />;
+}
+
 /**
  * Routes (design docs system/information-architecture.md). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
- * Reading-only, the app is feed / sources / post, and `/tracks/:id` stays as
- * the track's reading view.
+ * Reading-only, the app is feed / sources / post. `/tracks/:id` redirects to
+ * the reader scoped to the track (Design Studio D5).
  */
 export function AppRoutes() {
   return (
@@ -85,7 +104,7 @@ export function AppRoutes() {
       <Route path="/settings/sources" element={<SourcesConfig />} />
       <Route path="/tracks" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
-      <Route path="/tracks/:trackId" element={<TrackPage />} />
+      <Route path="/tracks/:trackId" element={<TrackRedirect />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

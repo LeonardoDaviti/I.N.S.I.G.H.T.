@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
@@ -76,6 +76,11 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
   };
 }
 
+/** History state on an entry the sheet pushed, so closing it goes Back instead of stacking entries. */
+const SHEET_PUSHED = 'sourceSheetPushed';
+/** How long a deep-linked track group stays highlighted. */
+const TRACK_HIGHLIGHT_MS = 1600;
+
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
 const EXTRA_TABS = ['connections', 'ingestion'] as const;
 type ExtraTab = (typeof EXTRA_TABS)[number];
@@ -109,6 +114,8 @@ export default function SourcesConfig() {
     params.delete('provider');
     params.delete('sub');
     params.delete('job');
+    params.delete('source');
+    params.delete('track');
     if (isExtraTab(next)) params.set('tab', next);
     else params.delete('tab');
     setSearchParams(params, { replace: true });
@@ -138,10 +145,41 @@ export default function SourcesConfig() {
   // Where a shift-click range starts: the last row checked or unchecked without Shift (or with x).
   const [anchorKey, setAnchorKey] = useState<string | null>(null);
   const [focusToken, setFocusToken] = useState(0);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
+
+  // The URL owns the sheet (issue 0003): `?source=<id>` opens it, so a reader can
+  // link straight to a source's settings. Opening pushes a history entry (Back
+  // closes it); closing pops that entry, or drops the parameter of a deep link.
   // A link out of the sheet ("add in Connections") switches the tab: the sheet closes with it.
-  useEffect(() => { if (tab !== 'sources') setOpenId(null); }, [tab]);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const openId = tab === 'sources' ? searchParams.get('source') : null;
+  const latestParams = useRef(searchParams);
+  latestParams.current = searchParams;
+  const latestState = useRef(location.state);
+  latestState.current = location.state;
+  const openSheet = (id: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('source', id);
+    setSearchParams(params, { state: { [SHEET_PUSHED]: true } });
+  };
+  // Reads the latest URL, so a close after an await never goes Back twice.
+  const closeSheet = () => {
+    const params = new URLSearchParams(latestParams.current);
+    if (!params.has('source')) return;
+    const state = latestState.current as Record<string, unknown> | null;
+    if (state?.[SHEET_PUSHED]) {
+      navigate(-1);
+      return;
+    }
+    params.delete('source');
+    setSearchParams(params, { replace: true });
+  };
+  const dropParam = (name: 'source' | 'track') => {
+    const params = new URLSearchParams(latestParams.current);
+    params.delete(name);
+    setSearchParams(params, { replace: true });
+  };
   const [showAddSource, setShowAddSource] = useState(false);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
@@ -220,7 +258,7 @@ export default function SourcesConfig() {
     const ok = await each(ids, (id) => api.deleteSource(id), 'delete');
     if (ok) toast(`Deleted ${plural(ids.length, 'source')}`);
     setSelected((prev) => new Set([...prev].filter((id) => !ids.includes(id))));
-    if (openId && ids.includes(openId)) setOpenId(null);
+    if (openId && ids.includes(openId)) closeSheet();
   };
 
   const removeFromTrack = async (ids: string[], folderId: string) => {
@@ -325,8 +363,8 @@ export default function SourcesConfig() {
     j: () => move(1),
     k: () => move(-1),
     x: activeId ? () => { setSelected((prev) => toggleInSet(prev, activeId)); setAnchorKey(activeKey); } : undefined,
-    o: activeId ? () => setOpenId(activeId) : undefined,
-    Enter: activeId ? () => setOpenId(activeId) : undefined,
+    o: activeId ? () => openSheet(activeId) : undefined,
+    Enter: activeId ? () => openSheet(activeId) : undefined,
     Escape: selected.size ? () => setSelected(new Set()) : undefined,
   }, shortcutsOn && tab === 'sources' && !openId && !showAddSource && !newTrackOpen && !renaming && pendingDelete === null);
 
@@ -334,6 +372,36 @@ export default function SourcesConfig() {
   const openSource = openId
     ? sourcesQuery.data?.find((s) => s.id === openId) ?? (openRow ? fromHealthRow(openRow) : null)
     : null;
+  // A deep link to a source or track that is gone: the list, with a quiet note.
+  const missingSource = Boolean(openId && health.data && !openSource && !sourcesQuery.isPending);
+  const trackParam = tab === 'sources' ? searchParams.get('track') : null;
+  const foldersKnown = Boolean(fixtureName ? health.data : foldersQuery.data);
+  const missingTrack = Boolean(trackParam && foldersKnown && !folders.some((folder) => folder.id === trackParam));
+
+  // `?track=<id>`: scroll to that track's group once it is on screen and highlight it briefly.
+  const [highlightTrack, setHighlightTrack] = useState<string | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  const trackGroupShown = Boolean(trackParam && groups.some((group) => group.folderId === trackParam));
+  useEffect(() => {
+    if (!trackParam) {
+      scrolledTo.current = null;
+      return undefined;
+    }
+    if (!trackGroupShown || scrolledTo.current === trackParam) return undefined;
+    const section = document.querySelector<HTMLElement>(`section[data-folder-id="${CSS.escape(trackParam)}"]`);
+    if (!section) return undefined;
+    scrolledTo.current = trackParam;
+    const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    section.scrollIntoView?.({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
+    setHighlightTrack(trackParam);
+    return undefined;
+  }, [trackParam, trackGroupShown]);
+  useEffect(() => {
+    if (!highlightTrack) return undefined;
+    const timer = window.setTimeout(() => setHighlightTrack(null), TRACK_HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [highlightTrack]);
+
   const enabledCount = allRows.filter((row) => row.enabled).length;
   const failingCount = filterHealthRows(allRows, 'error').length;
 
@@ -379,7 +447,8 @@ export default function SourcesConfig() {
         onSelectRow={selectRow}
         activeKey={activeKey}
         onActivate={setActiveKey}
-        onOpen={setOpenId}
+        onOpen={openSheet}
+        highlightFolderId={highlightTrack}
         onToggleEnabled={(row) => void setEnabled([row.source_id], !row.enabled)}
         track={trackActions}
         now={now}
@@ -425,6 +494,12 @@ export default function SourcesConfig() {
         </TabsList>
         <TabsContent value="sources" className="pt-0">
           <div className="pb-24">
+            {missingSource ? (
+              <Notice tone="status" title="That source no longer exists" action={{ label: 'Dismiss', onClick: () => dropParam('source') }} className="mb-3" />
+            ) : null}
+            {missingTrack ? (
+              <Notice tone="status" title="That track no longer exists" action={{ label: 'Dismiss', onClick: () => dropParam('track') }} className="mb-3" />
+            ) : null}
             {allRows.length ? <SourcesToolbar ref={searchRef} view={view} counts={counts.byStatus} total={counts.total} onChange={setView} /> : null}
             {body}
           </div>
@@ -530,11 +605,11 @@ export default function SourcesConfig() {
           key={openSource.id}
           source={openSource}
           healthRow={openRow}
-          onClose={() => setOpenId(null)}
+          onClose={closeSheet}
           onSave={invalidate}
           onToggleEnabled={(enabled) => void setEnabled([openSource.id], enabled)}
           onDelete={() => {
-            setOpenId(null);
+            closeSheet();
             setPendingDelete({ kind: 'sources', ids: [openSource.id], name: openRow ? rowName(openRow) : openSource.handle_or_url });
           }}
         />

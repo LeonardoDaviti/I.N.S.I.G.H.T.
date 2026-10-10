@@ -26,6 +26,19 @@ describe('PostDetailPage header', () => {
     expect(original).toHaveAttribute('target', '_blank');
   });
 
+  it('links the source name to that source in Sources (issue 0003)', async () => {
+    render(baseApi(rssPost({ source_id: 'src-1' })));
+    const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    const header = heading.closest('header')!;
+    expect(within(header).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/settings/sources?source=src-1');
+  });
+
+  it('a post with no source id keeps its source name as plain text', async () => {
+    render(baseApi(rssPost({ source_id: undefined })));
+    const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    expect(within(heading.closest('header')!).queryByRole('link', { name: 'simonwillison.net' })).toBeNull();
+  });
+
   it('lets the title fill the reading column: pretty wrapping, not balanced into two short lines', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
