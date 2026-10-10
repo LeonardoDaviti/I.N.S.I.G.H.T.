@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
+import { POST_ID, baseApi, renderPost as render, rssPost, youtubePost } from './PostDetailPage.testkit';
 
 import PostDetailPage from './PostDetailPage';
 import { postSourceName as displaySourceName } from '../lib/sourceLabel';
@@ -11,69 +12,6 @@ import { makeTestQueryClient, renderWithProviders } from '../test/render';
 import { postKey } from '../hooks/usePost';
 import { feedItem, feedPage } from '../components/reader/fixtures';
 import type { Api, Post } from '../services/api';
-
-const POST_ID = '7dbe33ac-ddda-429f-a8a2-d51a05f5ecaf';
-
-function rssPost(overrides: Partial<Post> = {}): Post {
-  return {
-    id: POST_ID,
-    title: '2026 in LLMs (so far)',
-    source: 'https://simonwillison.net/atom/everything/',
-    source_display_name: 'https://simonwillison.net/atom/everything/',
-    platform: 'rss',
-    url: 'https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/',
-    published_at: '2026-09-27T23:54:15+00:00',
-    content: 'On Friday I gave the closing keynote. Agents shipped everywhere this year.',
-    // Feed HTML arrives indented; four spaces must not turn it into a code block.
-    content_html: '\n    <p>On Friday I gave the closing keynote.</p>\n    <p>Agents shipped everywhere this year.</p>',
-    categories: ['ai', 'llms'],
-    topics: [],
-    metadata: {},
-    ...overrides,
-  };
-}
-
-function youtubePost(): Post {
-  return {
-    id: POST_ID,
-    title: 'Some OpenVPN Connections Broke on Linux Mint 22.3',
-    source: 'UCoryWpk4QVYKFCJul9KBdyw',
-    platform: 'youtube',
-    external_id: 'dQw4w9WgXcQ',
-    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    published_at: '2026-09-28T04:00:00+00:00',
-    content: 'Welcome back to the channel.\nToday we fix a VPN.\n\nFirst open the network manager.\nThen restart it.',
-    metadata: { channel_title: 'Switched to Linux', duration_seconds: 600, transcript_source: 'automatic_captions:en' },
-  };
-}
-
-function baseApi(post: Post, methods: Partial<Record<keyof Api, unknown>> = {}) {
-  return makeFakeApi({
-    getPostDetail: vi.fn().mockResolvedValue({
-      success: true,
-      post,
-      notes: null,
-      summary: null,
-      summary_references: [],
-      highlights: [],
-      reader_state: { post_id: POST_ID, is_favorited: false, open_count: 2, total_read_seconds: 252 },
-    }),
-    getPostTimeline: vi.fn().mockResolvedValue({ success: true, primary_story: null, story: null, timeline: null, related_candidates: [] }),
-    recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
-    recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
-    getYouTubeWatchProgress: vi.fn().mockResolvedValue({ success: true, progress: null }),
-    ...methods,
-  });
-}
-
-function render(api: Api) {
-  return renderWithProviders(
-    <Routes>
-      <Route path="/posts/:postId" element={<PostDetailPage />} />
-    </Routes>,
-    { api, route: `/posts/${POST_ID}` },
-  );
-}
 
 describe('PostDetailPage header', () => {
   it('shows the source host, platform, date, title and the original link', async () => {
@@ -109,72 +47,138 @@ describe('PostDetailPage header', () => {
     const user = userEvent.setup();
     const togglePostFavorite = vi.fn().mockResolvedValue({ success: true, favorited: true });
     render(baseApi(rssPost(), { togglePostFavorite }));
-    await user.click(await screen.findByRole('button', { name: 'Star' }));
+    const star = await screen.findByRole('button', { name: 'Star' });
+    expect(star).toHaveAttribute('aria-pressed', 'false');
+    await user.click(star);
     expect(togglePostFavorite).toHaveBeenCalledWith(POST_ID, true);
-    expect(await screen.findByRole('button', { name: 'Starred' })).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true'));
   });
 
-  it('shows a request error as a dismissible notice', async () => {
-    const user = userEvent.setup();
-    const getPostSummary = vi.fn().mockResolvedValue({ success: false, error: 'LLM quota exhausted' });
-    render(baseApi(rssPost(), { getPostSummary }));
-    await user.click(await screen.findByRole('button', { name: 'Generate summary' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('LLM quota exhausted');
-    await user.click(within(alert).getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
 });
 
-describe('PostDetailPage intelligence inspector', () => {
-  it('stays closed and unfetched until Inspect opens it in a sheet', async () => {
+describe('PostDetailPage reading-only (analysis off)', () => {
+  it('puts open original, star and copy as icon-only buttons in the title block, and no Inspect', async () => {
+    render(baseApi(rssPost()));
+    const heading = await screen.findByRole('heading', { level: 1 });
+    const header = heading.closest('header')!;
+    const actions = within(header).getByRole('group', { name: 'Post actions' });
+    const controls = Array.from(actions.querySelectorAll('a, button'));
+    expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual(['Open original', 'Star', 'Copy text']);
+    for (const control of controls) {
+      // Icon only: the name comes from aria-label, no visible words.
+      expect(control.textContent).toBe('');
+      expect(control.querySelector('svg')).not.toBeNull();
+    }
+    // The actions sit on the line above the title, so they come before it in the header.
+    expect(actions.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull();
+    expect(screen.queryByText('Open original')).toBeNull();
+  });
+
+  it('shows a tooltip naming the action on hover', async () => {
     const user = userEvent.setup();
-    const getPostEvidence = vi.fn().mockResolvedValue({
-      success: true,
-      evidence: { post: { url_host: 'simonwillison.net', normalized_url: 'https://simonwillison.net/x' }, artifacts: [], relations: { outgoing: [], incoming: [] } },
-    });
-    render(baseApi(rssPost(), { getPostEvidence }));
+    render(baseApi(rssPost()));
+    await user.hover(await screen.findByRole('button', { name: 'Copy text' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy text');
+  });
+
+  it('stars with the s key as well as the button', async () => {
+    const user = userEvent.setup();
+    const togglePostFavorite = vi.fn().mockResolvedValue({ success: true, favorited: true });
+    render(baseApi(rssPost(), { togglePostFavorite }));
     await screen.findByRole('heading', { level: 1 });
-    expect(getPostEvidence).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).toBeNull();
-
-    await user.click(screen.getByRole('button', { name: 'Inspect' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Post intelligence' });
-    expect(getPostEvidence).toHaveBeenCalledWith(POST_ID);
-    expect(await within(sheet).findByText('https://simonwillison.net/x')).toBeInTheDocument();
-    expect(within(sheet).getByRole('tab', { name: 'evidence' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('s');
+    expect(togglePostFavorite).toHaveBeenCalledWith(POST_ID, true);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true'));
   });
-});
 
-describe('PostDetailPage highlights', () => {
-  it('marks highlights with a neutral tint and underlines the ones the summary used', async () => {
-    const api = makeFakeApi({
-      getPostDetail: vi.fn().mockResolvedValue({
-        success: true,
-        post: rssPost(),
-        summary: { summary_markdown: 'Short version.', model: 'test-model', one_sentence_takeaway: 'Agents won the year.' },
-        summary_references: [{ highlight_id: 'h2' }],
-        highlights: [
-          { id: 'h1', highlight_text: 'closing keynote' },
-          { id: 'h2', highlight_text: 'Agents shipped everywhere' },
-        ],
-        reader_state: null,
-      }),
-      getPostTimeline: vi.fn().mockResolvedValue({ success: true, timeline: null, related_candidates: [] }),
-      recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
-      recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
+  it('renders no summary, inspector, notes, chat, story or tags, and fetches none of them', async () => {
+    const user = userEvent.setup();
+    const api = baseApi(rssPost({ topics: [{ id: 't1', title: 'A briefing topic', date: '2026-09-27' }] }), {
+      getPostSummary: vi.fn(),
+      getPostHighlights: vi.fn(),
+      getPostEvidence: vi.fn(),
+      chatAboutPost: vi.fn(),
+      savePostNotes: vi.fn(),
+    });
+    vi.mocked(api.getPostDetail).mockResolvedValue({
+      success: true,
+      post: rssPost(),
+      summary: { summary_markdown: 'Short version.', model: 'm', one_sentence_takeaway: 'Agents won the year.' },
+      summary_references: [],
+      highlights: [{ id: 'h1', highlight_text: 'closing keynote' }],
+      reader_state: null,
     });
     render(api);
     const article = await screen.findByRole('article', { name: 'Post content' });
-    const marks = article.querySelectorAll('mark');
-    expect(Array.from(marks, (mark) => mark.textContent)).toEqual(['closing keynote', 'Agents shipped everywhere']);
-    expect(marks[0]).not.toHaveAttribute('data-used-in-summary');
-    expect(marks[1]).toHaveAttribute('data-used-in-summary', 'true');
-    for (const mark of marks) {
-      expect(mark.className).not.toMatch(/yellow|rgba/);
+    expect(screen.queryByText('Summary')).toBeNull();
+    expect(screen.queryByText('not generated yet')).toBeNull();
+    expect(screen.queryByText('Agents won the year.')).toBeNull();
+    expect(screen.queryByText('Story')).toBeNull();
+    expect(screen.queryByText('Tags and topics')).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Notes and chat' })).toBeNull();
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(article.querySelector('mark')).toBeNull();
+    // Nothing beside the text: the page is one column.
+    expect(article.closest('.grid')?.children).toHaveLength(1);
+    await user.keyboard('j');
+    for (const call of [api.getPostSummary, api.getPostHighlights, api.getPostEvidence, api.getPostTimeline, api.chatAboutPost]) {
+      expect(call).not.toHaveBeenCalled();
     }
-    // The summary is open because it exists, with its takeaway first.
-    expect(screen.getByText('Agents won the year.')).toBeVisible();
+  });
+});
+
+describe('PostDetailPage images', () => {
+  const IMAGES = [
+    { url: 'https://static.example.com/hero.webp' },
+    { url: 'https://static.example.com/inline.webp' },
+    { url: 'https://static.example.com/second.png' },
+  ];
+
+  it('shows the first image under the title, the rest after the text, skipping the ones the body shows', async () => {
+    const content_html = '<p>Look:</p><p><img src="https://static.example.com/inline.webp" alt="inline"></p>';
+    render(baseApi(rssPost({ content_html, images: IMAGES } as Partial<Post>)));
+    const heading = await screen.findByRole('heading', { level: 1 });
+    const figures = Array.from(document.querySelectorAll('[data-post-image]'));
+    expect(figures.map((figure) => figure.querySelector('img')!.getAttribute('src'))).toEqual([
+      'https://static.example.com/hero.webp',
+      'https://static.example.com/second.png',
+    ]);
+    const article = screen.getByRole('article', { name: 'Post content' });
+    expect(heading.compareDocumentPosition(figures[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(figures[0].compareDocumentPosition(article) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(article.compareDocumentPosition(figures[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The body keeps its own image, once.
+    expect(article.querySelectorAll('img')).toHaveLength(1);
+    for (const figure of figures) {
+      const img = figure.querySelector('img')!;
+      // Reserved space before load (no layout shift), lazy, and no grey filter.
+      expect((figure as HTMLElement).style.aspectRatio).toBe('16 / 10');
+      expect(img).toHaveAttribute('width');
+      expect(img).toHaveAttribute('height');
+      expect(img).toHaveAttribute('loading', 'lazy');
+      expect(img.className).not.toMatch(/grayscale/);
+    }
+  });
+
+  it('drops an image whose link is dead', async () => {
+    render(baseApi(rssPost({ images: [IMAGES[0]] } as Partial<Post>)));
+    await screen.findByRole('heading', { level: 1 });
+    const img = document.querySelector('[data-post-image] img')!;
+    fireEvent.error(img);
+    await waitFor(() => expect(document.querySelector('[data-post-image]')).toBeNull());
+  });
+
+  it('a YouTube post shows the player from the video field and no image hero', async () => {
+    const post = { ...youtubePost(), external_id: null, url: 'https://example.com/not-youtube', images: [IMAGES[0]], video: { provider: 'youtube', id: 'CIzgNnWNzII' } };
+    render(baseApi(post as Post));
+    const iframe = await screen.findByTitle(post.title!);
+    expect(iframe).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/CIzgNnWNzII');
+    expect(screen.queryByRole('button', { name: /watch guide/i })).toBeNull();
+    const figures = document.querySelectorAll('[data-post-image]');
+    expect(figures).toHaveLength(1);
+    const transcript = screen.getByRole('article', { name: 'Transcript' });
+    expect(transcript.compareDocumentPosition(figures[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -325,15 +329,6 @@ describe('PostDetailPage loading', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Update claude-api skill: Claude Opus 5.5 default, build-eval and hillclimb guides (#1930)' })).toBeInTheDocument();
   });
 
-  it('loads the story timeline only when its panel is opened', async () => {
-    const user = userEvent.setup();
-    const api = baseApi(rssPost());
-    render(api);
-    await screen.findByRole('heading', { level: 1 });
-    expect(api.getPostTimeline).not.toHaveBeenCalled();
-    await user.click(screen.getByText('Story'));
-    await waitFor(() => expect(api.getPostTimeline).toHaveBeenCalledWith(POST_ID, false));
-  });
 });
 
 describe('PostDetailPage feed context and keys', () => {

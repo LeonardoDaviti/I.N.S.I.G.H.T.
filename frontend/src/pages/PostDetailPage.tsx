@@ -8,14 +8,16 @@ import {
   ArrowUp,
   ArrowUpRight,
   Check,
-  Copy,
   Download,
   Loader2,
   PanelRight,
-  Star,
 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import PostIntelligenceInspector from '../components/PostIntelligenceInspector';
+import PostActions from '../components/post/PostActions';
+import { PostFigure, PostImageList } from '../components/post/PostImages';
+import { postMedia } from '../components/post/media';
+import { ANALYSIS_ENABLED } from '../lib/features';
 import {
   Button,
   Chip,
@@ -65,10 +67,12 @@ import type {
 } from '../services/api';
 
 /**
- * The post reading view (/posts/:id). Mark IX: a monochrome article first —
- * source, date and the original link over a 68ch reading column — and the
- * machine views second: the summary folds away, notes and chat sit in a quiet
- * side column, and the intelligence inspector opens in a sheet on demand.
+ * The post reading view (/posts/:id). Mark IX is reading-only (spec §9): one
+ * centred column — source and date, the title with three icon actions in its
+ * top-right corner (open original, star, copy), the images, the text — and
+ * nothing beside it. With `VITE_INSIGHT_ANALYSIS=on` the machine views come
+ * back: the folded summary, highlights, notes and chat in a side column, the
+ * story and related posts, and the intelligence inspector in a sheet.
  */
 
 type ChatMessage = {
@@ -472,9 +476,28 @@ function buildYouTubeTranscriptBlocks(
   });
 }
 
+/** The YouTube player, privacy-enhanced, in a reserved 16:9 frame. */
+function VideoPlayer({ videoId, title, className = '' }: { videoId: string; title: string; className?: string }) {
+  return (
+    <div className={`aspect-video w-full overflow-hidden rounded-md border border-line bg-black ${className}`}>
+      <iframe
+        src={`https://www.youtube-nocookie.com/embed/${videoId}`}
+        title={title}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+        loading="lazy"
+        className="h-full w-full"
+      />
+    </div>
+  );
+}
+
 /** The page frame, shared by the loading skeleton and the loaded post. */
 const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
-const GRID_CLASS = 'grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center';
+const GRID_CLASS = ANALYSIS_ENABLED
+  ? 'grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center'
+  // Reading-only: one column of ~70ch at the body size, centred, nothing beside it.
+  : 'grid grid-cols-[minmax(0,42rem)] justify-center';
 
 /** The loading frame: the same container, grid and column as the loaded page, so
  *  React swaps only the children on arrival (no width or padding jump). */
@@ -487,16 +510,14 @@ function PostSkeleton() {
           <div aria-hidden="true">
             <div className="mb-5 min-h-[2rem]" />
             <div className="mb-8">
-              <Skeleton className="h-3 w-48" />
-              <Skeleton className="mt-4 h-7 w-11/12" />
-              <Skeleton className="mt-2 h-7 w-2/3" />
-              <div className="mt-5 flex gap-2">
-                <Skeleton className="h-8 w-28" />
-                <Skeleton className="h-8 w-16" />
-                <Skeleton className="h-8 w-24" />
+              <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+                <Skeleton className="mt-1 h-3 w-48" />
+                <Skeleton className="h-6 w-24" />
               </div>
+              <Skeleton className="mt-2 h-7 w-11/12" />
+              <Skeleton className="mt-2 h-7 w-2/3" />
             </div>
-            <Skeleton className="mb-10 h-12 w-full" />
+            {ANALYSIS_ENABLED ? <Skeleton className="mb-10 h-12 w-full" /> : null}
             <div className="max-w-[68ch] space-y-3">
               {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
                 <Skeleton key={index} className={`h-3.5 ${width}`} />
@@ -903,7 +924,19 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   const categories = Array.isArray(post?.categories) ? post.categories : [];
   const topics = Array.isArray(post?.topics) ? post.topics : [];
   const platformLabel = typeof post?.platform === 'string' ? post.platform.toLowerCase() : '';
+  const renderContent = typeof post?.content_html === 'string'
+    ? post.content_html
+    : typeof post?.content === 'string'
+      ? post.content
+      : '';
+  // Images the body already shows stay inline; the rest: the first under the
+  // title, the others after the text. A video post shows its player instead.
+  const media = useMemo(() => postMedia(post, `${renderContent}\n${post.content || ''}`), [post, renderContent]);
   const isYouTubePost = post?.platform === 'youtube';
+  // A blog post that carries a YouTube video: the player stands in for the hero.
+  const embeddedVideoId = !isYouTubePost ? media.video?.id ?? null : null;
+  const heroImage = isYouTubePost || embeddedVideoId ? null : media.images[0] ?? null;
+  const moreImages = heroImage ? media.images.slice(1) : media.images;
   const youtubeMetadata = useMemo(() => {
     const metadata = post?.metadata;
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
@@ -911,7 +944,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     }
     return metadata as YouTubeMetadata;
   }, [post?.metadata]);
-  const youtubeVideoId = useMemo(() => extractYouTubeVideoId(post), [post]);
+  const youtubeVideoId = useMemo(() => media.video?.id ?? extractYouTubeVideoId(post), [media.video, post]);
   const youtubeVideoUrl = post?.url || (youtubeVideoId ? `https://www.youtube.com/watch?v=${youtubeVideoId}` : undefined);
   const youtubeDurationSeconds = Number(youtubeMetadata?.duration_seconds || 0) || null;
   const youtubeChapters = useMemo(
@@ -928,11 +961,6 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   ) || 0;
   const youtubeViewCount = formatCompactCount(youtubeMetadata?.view_count);
   const youtubeLikeCount = formatCompactCount(youtubeMetadata?.like_count);
-  const renderContent = typeof post?.content_html === 'string'
-    ? post.content_html
-    : typeof post?.content === 'string'
-      ? post.content
-      : '';
   const summaryReferenceHighlightIds = useMemo(
     () => new Set(
       summaryReferences
@@ -942,7 +970,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     [summaryReferences],
   );
   const contentHighlightRanges = useMemo(
-    () => buildResolvedHighlightRanges(post?.content || '', highlights, summaryReferenceHighlightIds),
+    () => (ANALYSIS_ENABLED ? buildResolvedHighlightRanges(post?.content || '', highlights, summaryReferenceHighlightIds) : []),
     [highlights, post?.content, summaryReferenceHighlightIds],
   );
   const highlightedContentBlock = useMemo(
@@ -1103,60 +1131,51 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             ) : null}
           </nav>
 
-          {/* ---- Header: source / platform / date, the title, the actions ---- */}
+          {/* ---- Header: source / platform / date and the actions on one line, then the title ---- */}
           <header className="mb-8">
-            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[0.8125rem] text-fg-2">
-              <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
-                {middleTruncate(sourceName, 40)}
-              </span>
-              {platformLabel ? (
-                <>
-                  <span aria-hidden="true" className="text-fg-3">/</span>
-                  <span>{platformLabel}</span>
-                </>
-              ) : null}
-              {publishedLabel ? (
-                <>
-                  <span aria-hidden="true" className="text-fg-3">/</span>
-                  <time dateTime={publishedIso} className="tabular-nums">{publishedLabel}</time>
-                </>
-              ) : null}
-            </p>
-            <h1 dir="auto" className="mt-3 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
+            <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
+              <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
+                <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
+                  {middleTruncate(sourceName, 40)}
+                </span>
+                {platformLabel ? (
+                  <>
+                    <span aria-hidden="true" className="text-fg-3">/</span>
+                    <span>{platformLabel}</span>
+                  </>
+                ) : null}
+                {publishedLabel ? (
+                  <>
+                    <span aria-hidden="true" className="text-fg-3">/</span>
+                    <time dateTime={publishedIso} className="tabular-nums">{publishedLabel}</time>
+                  </>
+                ) : null}
+              </p>
+              <PostActions
+                url={post.url}
+                starred={isFavorited}
+                starring={togglingFavorite}
+                onStar={() => void handleToggleFavorite()}
+                copied={copyState === 'copied'}
+                onCopy={() => void handleCopy()}
+              />
+            </div>
+            <h1 dir="auto" className="mt-2 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
               {displayTitle}
             </h1>
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              {post.url ? (
-                <Button asChild variant="primary" size="sm">
-                  <a href={post.url} target="_blank" rel="noopener noreferrer">
-                    Open original
-                    <ArrowUpRight aria-hidden="true" />
-                  </a>
+            {ANALYSIS_ENABLED ? (
+              <div className="mt-4">
+                <Button size="sm" variant="ghost" className="-ml-2.5" onClick={() => setInspectorOpen(true)} aria-haspopup="dialog">
+                  <PanelRight aria-hidden="true" />
+                  Inspect
                 </Button>
-              ) : null}
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleToggleFavorite}
-                disabled={togglingFavorite}
-                aria-pressed={isFavorited}
-              >
-                <Busy when={togglingFavorite}>
-                  <Star aria-hidden="true" className={isFavorited ? 'fill-current' : undefined} />
-                </Busy>
-                {isFavorited ? 'Starred' : 'Star'}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => void handleCopy()}>
-                {copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                {copyState === 'copied' ? 'Copied' : 'Copy text'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setInspectorOpen(true)} aria-haspopup="dialog">
-                <PanelRight aria-hidden="true" />
-                Inspect
-              </Button>
-              <span aria-live="polite" className="sr-only">{announcement}</span>
-            </div>
+              </div>
+            ) : null}
+            <span aria-live="polite" className="sr-only">{announcement}</span>
           </header>
+
+          {heroImage ? <PostFigure image={heroImage} className="mb-10" /> : null}
+          {embeddedVideoId ? <VideoPlayer videoId={embeddedVideoId} title={displayTitle} className="mb-10" /> : null}
 
           {error && (
             <Notice
@@ -1171,16 +1190,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
           {/* ---- YouTube watch mode ---- */}
           {isYouTubePost && youtubeVideoId && (
             <section aria-label="Video" className="mb-10 space-y-5">
-              <div className="aspect-video w-full overflow-hidden rounded-md border border-line bg-black">
-                <iframe
-                  src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}`}
-                  title={post.title || youtubeVideoId}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  loading="lazy"
-                  className="h-full w-full"
-                />
-              </div>
+              <VideoPlayer videoId={youtubeVideoId} title={post.title || youtubeVideoId} />
 
               <p className="flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
                 {youtubeDurationSeconds ? <span>{formatDurationLabel(youtubeDurationSeconds)}</span> : null}
@@ -1248,10 +1258,12 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     <Check aria-hidden="true" />
                     Mark complete
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void loadYouTubeEvaluation()} disabled={loadingYouTubeEvaluation}>
-                    <Busy when={loadingYouTubeEvaluation}>{null}</Busy>
-                    {youtubeEvaluation?.summary_markdown ? 'Refresh watch guide' : 'Generate watch guide'}
-                  </Button>
+                  {ANALYSIS_ENABLED ? (
+                    <Button size="sm" variant="secondary" onClick={() => void loadYouTubeEvaluation()} disabled={loadingYouTubeEvaluation}>
+                      <Busy when={loadingYouTubeEvaluation}>{null}</Busy>
+                      {youtubeEvaluation?.summary_markdown ? 'Refresh watch guide' : 'Generate watch guide'}
+                    </Button>
+                  ) : null}
                   {youtubeVideoUrl && (
                     <Button asChild size="sm" variant="ghost">
                       <a href={youtubeVideoUrl} target="_blank" rel="noopener noreferrer">
@@ -1306,7 +1318,8 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             </section>
           )}
 
-          {/* ---- Summary: folded, secondary to the text ---- */}
+          {/* ---- Summary: folded, secondary to the text (analysis only) ---- */}
+          {ANALYSIS_ENABLED ? (
           <details
             className="group mb-10 rounded-md border border-line"
             open={Boolean(summary) || loadingSummary || undefined}
@@ -1348,13 +1361,14 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
               </div>
             </div>
           </details>
+          ) : null}
 
           {/* ---- The article ---- */}
           <article aria-label={isYouTubePost ? 'Transcript' : 'Post content'} className="min-w-0">
-            {highlights.length || (isYouTubePost && youtubeTranscriptBlocks.length) ? (
+            {(ANALYSIS_ENABLED && highlights.length) || (isYouTubePost && youtubeTranscriptBlocks.length) ? (
               <p className="mb-5 flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
                 {isYouTubePost && youtubeTranscriptBlocks.length ? <span>{plural(youtubeTranscriptBlocks.length, 'transcript section')}</span> : null}
-                {highlights.length ? <span>{plural(highlights.length, 'highlight')} · {formatCount(mappedHighlightCount)} shown in the text</span> : null}
+                {ANALYSIS_ENABLED && highlights.length ? <span>{plural(highlights.length, 'highlight')} · {formatCount(mappedHighlightCount)} shown in the text</span> : null}
                 {summaryReferenceHighlightIds.size > 0 ? (
                   <span>
                     <span className="text-fg underline decoration-fg underline-offset-[0.22em]">underlined</span> = used in the summary
@@ -1409,13 +1423,15 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     <p className="text-[0.9375rem] text-fg-3">No transcript was stored for this video yet.</p>
                   )}
                 </div>
-              ) : highlights.length && post.content ? (
+              ) : ANALYSIS_ENABLED && highlights.length && post.content ? (
                 highlightedContentBlock
               ) : (
                 <MarkdownRenderer content={renderContent} />
               )}
             </div>
           </article>
+
+          <PostImageList images={moreImages} />
 
           {/* ---- Reddit discussion ---- */}
           {isRedditPost && (
@@ -1432,15 +1448,17 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                       <Busy when={loadingComments}>{null}</Busy>
                       {comments.length ? 'Refresh comments' : 'Fetch comments'}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => void generateCommentsBriefing(true)} disabled={loadingCommentsBriefing}>
-                      <Busy when={loadingCommentsBriefing}>{null}</Busy>
-                      {commentsBriefing ? 'Refresh briefing' : 'Brief the thread'}
-                    </Button>
+                    {ANALYSIS_ENABLED ? (
+                      <Button size="sm" variant="ghost" onClick={() => void generateCommentsBriefing(true)} disabled={loadingCommentsBriefing}>
+                        <Busy when={loadingCommentsBriefing}>{null}</Busy>
+                        {commentsBriefing ? 'Refresh briefing' : 'Brief the thread'}
+                      </Button>
+                    ) : null}
                   </>
                 )}
               />
               <span id="post-discussion" className="sr-only">Discussion</span>
-              {commentsBriefing ? (
+              {ANALYSIS_ENABLED && commentsBriefing ? (
                 <div className="mb-6 rounded-md border border-line p-4">
                   <h3 className="mb-2 text-[0.875rem] font-semibold text-fg">Thread briefing</h3>
                   <div className="text-[0.9375rem] leading-[1.6]">
@@ -1478,6 +1496,8 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             </section>
           )}
 
+          {ANALYSIS_ENABLED ? (
+          <>
           {/* ---- Story timeline: folded, loaded only when it is opened ---- */}
           <details
             className="group mt-14 rounded-md border border-line"
@@ -1630,9 +1650,12 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
               ) : null}
             </p>
           </section>
+          </>
+          ) : null}
         </div>
 
-        {/* ---- Notes and chat: a quiet side column on wide screens ---- */}
+        {/* ---- Notes and chat: a quiet side column on wide screens (analysis only) ---- */}
+        {ANALYSIS_ENABLED ? (
         <aside aria-label="Notes and chat" className="min-w-0 xl:sticky xl:top-[calc(var(--topbar-h)+1.5rem)] xl:self-start">
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'notes' | 'chat')}>
             <TabsList aria-label="Workspace">
@@ -1710,9 +1733,10 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             </TabsContent>
           </Tabs>
         </aside>
+        ) : null}
       </div>
 
-      {postId && (
+      {ANALYSIS_ENABLED && postId && (
         <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
           <SheetContent title="Post intelligence" className="w-[min(40rem,100vw)]">
             <PostDetailPageErrorBoundary>
