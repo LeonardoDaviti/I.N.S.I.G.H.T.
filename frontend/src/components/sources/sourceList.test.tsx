@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+
+import { healthRow } from '../ops/fixtures';
+import {
+  UNASSIGNED_KEY,
+  filterSources,
+  groupSources,
+  readSourcesView,
+  stepActive,
+  visibleRowKeys,
+  writeSourcesView,
+} from './sourceList';
+
+const ai = { id: 'f-ai', name: 'AI engineering' };
+const ar = { id: 'f-ar', name: 'AR glasses' };
+const empty = { id: 'f-empty', name: 'Empty track' };
+
+const rows = [
+  healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),
+  healthRow({ source_id: 'flaky', display_name: 'Flaky Feed', status: 'backoff', folders: [ai, ar] }),
+  healthRow({ source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', status: 'unavailable', folders: [] }),
+  healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [ar] }),
+];
+
+describe('readSourcesView / writeSourcesView', () => {
+  it('defaults to track grouping, no search, no status', () => {
+    expect(readSourcesView(new URLSearchParams(''))).toEqual({ q: '', status: null, group: 'track' });
+  });
+
+  it('maps the old ?tab=health to status grouping and keeps its ?status= filter', () => {
+    expect(readSourcesView(new URLSearchParams('tab=health&status=error'))).toEqual({ q: '', status: 'error', group: 'status' });
+  });
+
+  it('an explicit group wins over the legacy tab; unknown values fall back', () => {
+    expect(readSourcesView(new URLSearchParams('tab=health&group=platform')).group).toBe('platform');
+    expect(readSourcesView(new URLSearchParams('group=nope&status=bogus'))).toEqual({ q: '', status: null, group: 'track' });
+  });
+
+  it('writes only non-default values, drops the legacy tab and keeps other params', () => {
+    const next = writeSourcesView(new URLSearchParams('tab=health&data=worst'), { q: 'simon', status: null, group: 'track' });
+    expect(next.toString()).toBe('data=worst&q=simon');
+    expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'status' }).toString()).toBe('status=due&group=status');
+  });
+});
+
+describe('filterSources', () => {
+  it('searches names, platform and track names, case and accent insensitive', () => {
+    expect(filterSources(rows, { q: 'SIMON', status: null }).map((r) => r.source_id)).toEqual(['simon']);
+    expect(filterSources(rows, { q: 'telegram', status: null }).map((r) => r.source_id)).toEqual(['tg']);
+    expect(filterSources(rows, { q: 'ar glasses', status: null }).map((r) => r.source_id)).toEqual(['flaky', 'off']);
+  });
+
+  it('status error means failing (error or backoff) and combines with the search', () => {
+    expect(filterSources(rows, { q: '', status: 'error' }).map((r) => r.source_id)).toEqual(['flaky']);
+    expect(filterSources(rows, { q: 'simon', status: 'error' })).toEqual([]);
+  });
+});
+
+describe('groupSources', () => {
+  it('by track: every track in order (empty ones too), then the unassigned, a source in two tracks in both', () => {
+    const groups = groupSources(rows, 'track', [ai, ar, empty]);
+    expect(groups.map((g) => [g.label, g.rows.map((r) => r.source_id)])).toEqual([
+      ['AI engineering', ['flaky', 'simon']],
+      ['AR glasses', ['flaky', 'off']],
+      ['Empty track', []],
+      ['Not in a track', ['tg']],
+    ]);
+    expect(groups[0].folderId).toBe('f-ai');
+    expect(groups[3].key).toBe(UNASSIGNED_KEY);
+  });
+
+  it('drops empty tracks when asked (a search is on) and an empty unassigned group always', () => {
+    const groups = groupSources(rows.slice(0, 2), 'track', [ai, empty], { keepEmpty: false });
+    expect(groups.map((g) => g.label)).toEqual(['AI engineering']);
+  });
+
+  it('a source whose only track is unknown counts as unassigned', () => {
+    const groups = groupSources([healthRow({ source_id: 'x', folders: [{ id: 'gone', name: 'Gone' }] })], 'track', []);
+    expect(groups.map((g) => g.label)).toEqual(['Not in a track']);
+  });
+
+  it('by status: worst first, empty statuses dropped', () => {
+    expect(groupSources(rows, 'status').map((g) => g.label)).toEqual(['Backoff', 'Unavailable', 'Scheduled', 'Disabled']);
+  });
+
+  it('by platform and none', () => {
+    expect(groupSources(rows, 'platform').map((g) => [g.label, g.rows.length])).toEqual([['RSS', 3], ['Telegram', 1]]);
+    const all = groupSources(rows, 'none');
+    expect(all).toHaveLength(1);
+    expect(all[0].rows.map((r) => r.source_id)).toEqual(['flaky', 'tg', 'simon', 'off']);
+  });
+});
+
+describe('keyboard walk', () => {
+  const groups = groupSources(rows, 'track', [ai, ar]);
+
+  it('skips collapsed groups and keeps one key per group and source', () => {
+    const keys = visibleRowKeys(groups, new Set(['track:f-ai']));
+    expect(keys.map((k) => k.key)).toEqual(['track:f-ar/flaky', 'track:f-ar/off', `${UNASSIGNED_KEY}/tg`]);
+  });
+
+  it('j/k step and clamp; from nothing j starts at the top, k at the bottom', () => {
+    const keys = ['a', 'b', 'c'];
+    expect(stepActive(keys, null, 1)).toBe('a');
+    expect(stepActive(keys, null, -1)).toBe('c');
+    expect(stepActive(keys, 'a', 1)).toBe('b');
+    expect(stepActive(keys, 'c', 1)).toBe('c');
+    expect(stepActive(keys, 'a', -1)).toBe('a');
+    expect(stepActive([], 'a', 1)).toBeNull();
+  });
+});

@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { apiService } from '../services/api';
-import type { SourceWithSettings, Folder } from '../services/api';
+import type { SourceHealthRow, SourceWithSettings, Folder } from '../services/api';
 import { useApi } from '../services/ApiContext';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { errorMessage } from '../lib/apiError';
 import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
-import { Button, FilterChip, Input, Sheet, SheetContent, Switch } from './ui';
+import { useIngestionRun } from '../hooks/useIngestionRun';
+import { HEALTH_STATUS_LABELS, backoffLabel, formatDue } from '../lib/sourceSchedule';
+import { formatRelativeTime } from '../lib/dates';
+import { formatCount, plural } from '../lib/format';
+import { STATUS_GLYPH } from './sources/sourceList';
+import { Button, FilterChip, Input, Sheet, SheetContent, StatusGlyph, Switch } from './ui';
 import { Notice } from './states';
 import { sourceLabel } from '../lib/sourceLabel';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
@@ -16,6 +20,11 @@ interface SourceSettingsEditorProps {
   source: SourceWithSettings;
   onClose: () => void;
   onSave: () => void;
+  /** The row to show (the page passes it so fixtures and the list agree); else the cached health query. */
+  healthRow?: SourceHealthRow | null;
+  /** On/off and delete live in the sheet when the page provides them. */
+  onToggleEnabled?: (enabled: boolean) => void;
+  onDelete?: () => void;
 }
 
 /** Whole numbers in [min, max]; anything else is a field error (no silent `|| 0`). */
@@ -27,7 +36,38 @@ function parseWhole(text: string, min: number, max: number, label: string): { va
   return { value };
 }
 
-export default function SourceSettingsEditor({ source, onClose, onSave }: SourceSettingsEditorProps) {
+/** The source's state in words: status, what happens next, the last success and error. */
+function HealthSummary({ row, now }: { row: SourceHealthRow; now: Date }) {
+  const status = row.enabled ? row.status : 'disabled';
+  const backoff = backoffLabel(row, now);
+  const facts = [
+    row.enabled && !backoff && row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : null,
+    backoff ? `${backoff} · ${plural(row.consecutive_failures, 'failure')}` : null,
+    row.last_success_at ? `fetched ${formatRelativeTime(row.last_success_at, now)}` : 'never fetched',
+    plural(row.stored_posts, 'post'),
+    row.backlog_posts ? `${formatCount(row.backlog_posts)} in backlog` : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem]">
+        <StatusGlyph status={STATUS_GLYPH[status] ?? 'scheduled'} label={HEALTH_STATUS_LABELS[status] ?? status} />
+        <span className="tabular-nums text-fg-3">{facts.join(' · ')}</span>
+      </div>
+      {row.status === 'unavailable' && row.decision_detail ? (
+        <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.decision_detail}</p>
+      ) : null}
+      {row.last_error ? (
+        <p className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
+          <span aria-hidden="true" className="mr-1 font-semibold">×</span>
+          {row.last_error}
+          {row.last_error_at ? <span className="text-fg-3"> · {formatRelativeTime(row.last_error_at, now)}</span> : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export default function SourceSettingsEditor({ source, onClose, onSave, healthRow: givenRow, onToggleEnabled, onDelete }: SourceSettingsEditorProps) {
   const api = useApi();
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState(source.settings.display_name || '');
@@ -40,7 +80,11 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
 
   // Cadence and the main-digest flag come from the health row (one cached query for all sources).
   const health = useSourcesHealth();
-  const healthRow = health.data?.rows.find((row) => row.source_id === source.id) ?? null;
+  const healthRow = givenRow ?? health.data?.rows.find((row) => row.source_id === source.id) ?? null;
+  const { run, isRunning } = useIngestionRun();
+  const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
+  const fetching = isRunning(fetchTarget);
+  const enabled = healthRow?.enabled ?? source.enabled;
   const [inMainDigest, setInMainDigest] = useState<boolean | null>(null);
   const mainDigest = inMainDigest ?? healthRow?.in_main_digest ?? null;
   const [savingDigest, setSavingDigest] = useState(false);
@@ -73,8 +117,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
     let mounted = true;
     (async () => {
       const [allRes, mineRes] = await Promise.all([
-        apiService.getFolders(),
-        apiService.getSourceFolders(source.id),
+        api.getFolders(),
+        api.getSourceFolders(source.id),
       ]);
       if (!mounted) return;
       if (allRes.success) setFolders(allRes.folders);
@@ -82,7 +126,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
       setFoldersLoading(false);
     })();
     return () => { mounted = false; };
-  }, [source.id]);
+  }, [api, source.id]);
 
   const toggleFolder = async (folderId: string) => {
     const isMember = memberFolderIds.has(folderId);
@@ -92,8 +136,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
       return next;
     });
     const res = isMember
-      ? await apiService.removeSourceFromFolder(folderId, source.id)
-      : await apiService.addSourceToFolder(folderId, source.id);
+      ? await api.removeSourceFromFolder(folderId, source.id)
+      : await api.addSourceToFolder(folderId, source.id);
     if (!res.success) {
       setMemberFolderIds((prev) => {
         const next = new Set(prev);
@@ -118,7 +162,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
         max_posts_per_fetch: maxPostsPerFetch,
       };
 
-      const response = await apiService.updateSourceSettings(source.id, settingsToSave);
+      const response = await api.updateSourceSettings(source.id, settingsToSave);
 
       if (response.success) {
         onSave();
@@ -150,6 +194,28 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
       >
         {/* A div, not a form: the cadence editor below is its own form and forms cannot nest. */}
         <div className="space-y-6">
+          <div className="space-y-3">
+            {healthRow ? <HealthSummary row={healthRow} now={new Date()} /> : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void run(fetchTarget)}
+                disabled={fetching || !enabled}
+                aria-busy={fetching}
+                title="Fetch now (ignores cadence and backoff)"
+              >
+                {fetching ? 'Fetching…' : 'Fetch now'}
+              </Button>
+              {onToggleEnabled ? (
+                <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] text-fg-2">
+                  {enabled ? 'On' : 'Off'}
+                  <Switch checked={enabled} onCheckedChange={(next) => onToggleEnabled(next)} aria-label={enabled ? 'Disable this source' : 'Enable this source'} />
+                </label>
+              ) : null}
+            </div>
+          </div>
+
           <div>
             <label htmlFor="display_name" className={label}>Name</label>
             <Input
@@ -246,6 +312,9 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
           {error ? <Notice tone="error" title={error} /> : null}
 
           <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-line bg-bg px-5 py-3">
+            {onDelete ? (
+              <Button variant="ghost" onClick={onDelete} disabled={isSaving} className="mr-auto">Delete source…</Button>
+            ) : null}
             <Button variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
             <Button variant="primary" onClick={() => void handleSave()} disabled={isSaving || !formValid}>
               {isSaving ? 'Saving…' : 'Save'}
