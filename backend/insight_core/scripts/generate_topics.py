@@ -4,7 +4,6 @@ Generate topics from posts for a specific date and save to database.
 Usage: python backend/insight_core/scripts/generate_topics.py [YYYY-MM-DD]
 """
 import sys
-from functools import cached_property
 from pathlib import Path
 import time
 from datetime import date, datetime
@@ -17,7 +16,7 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.repo_topics import TopicsRepository
 from insight_core.services.topics_service import TopicsService
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
 DEBUG_MODE = True
@@ -30,11 +29,7 @@ class TopicGenerator:
     Generates topics from posts using AI and stores them in the database.
     """
     
-    @cached_property
-    def processor(self) -> GeminiProcessor:
-        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
-        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
-        return GeminiProcessor()
+    processor = lazy_gemini_processor()
 
     def __init__(self, db_url: str):
         self.db_url = db_url

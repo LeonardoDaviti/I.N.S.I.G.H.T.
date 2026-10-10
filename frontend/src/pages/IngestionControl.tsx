@@ -20,6 +20,7 @@ import {
 } from '../lib/ingestionNavigation';
 import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHealth } from '../lib/operationsOverview';
 import { asRunReport } from '../lib/runReport';
+import { formatJobDuration, formatJobTimestamp, jobGlyph } from '../lib/jobRuns';
 import { localDateISO } from '../lib/dates';
 import { formatTimeRemaining, schedulerStaleness } from '../lib/schedulerStatus';
 import { formatCount, plural } from '../lib/format';
@@ -29,13 +30,11 @@ import { useSourcesHealth } from '../hooks/useSourcesHealth';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import RunCycleButton from '../components/ops/RunCycleButton';
 import RunReportSummary from '../components/ops/RunReportSummary';
+import SchedulerDialog from '../components/sources/SchedulerDialog';
 import { getSourceDisplayName, getSourceHandleLabel } from '../lib/sourcePresentation';
 import SourceAvatar from '../components/SourceAvatar';
 import {
   Button,
-  Dialog,
-  DialogContent,
-  DialogFooter,
   Input,
   Page,
   PageHeader,
@@ -100,13 +99,6 @@ const LOG_LEVEL_GLYPH: Record<LogLevel, Status> = {
   error: 'failing',
 };
 
-/** Job status -> monochrome glyph (design doc §8). */
-function jobGlyph(status?: string | null): Status {
-  if (status === 'failed') return 'failing';
-  if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
-  return 'ok';
-}
-
 /** Archive status -> glyph + word: archived is full, partial is half, nothing is a ring. */
 function archiveGlyph(status?: string | null): { status: Status; label: string } {
   if (status === 'archived') return { status: 'ok', label: 'archived' };
@@ -127,29 +119,6 @@ function formatJson(data: Record<string, any> | null) {
     return 'Nothing run in this session yet.';
   }
   return JSON.stringify(data, null, 2);
-}
-
-function formatJobTimestamp(value?: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString();
-}
-
-function formatJobDuration(startedAt?: string | null, finishedAt?: string | null) {
-  if (!startedAt || !finishedAt) return null;
-  const started = new Date(startedAt).getTime();
-  const finished = new Date(finishedAt).getTime();
-  if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) return null;
-  const elapsedMs = finished - started;
-  if (elapsedMs < 1000) return '<1s';
-  const totalSeconds = Math.round(elapsedMs / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
 }
 
 function formatEstimatedTokens(value: unknown) {
@@ -189,95 +158,6 @@ function formatBacklog(entry?: ArchiveCatalogEntry | null) {
   return parts.length ? parts.join(' · ') : null;
 }
 
-function SchedulerSettingsModal({
-  open,
-  schedulerConfig,
-  schedulerDirty,
-  savingScheduler,
-  onClose,
-  onSave,
-  onIntervalChange,
-  onTickChange,
-  onToggle,
-}: {
-  open: boolean;
-  schedulerConfig: SchedulerConfig | null;
-  schedulerDirty: boolean;
-  savingScheduler: boolean;
-  onClose: () => void;
-  onSave: () => void;
-  onIntervalChange: (value: number) => void;
-  onTickChange: (value: number) => void;
-  onToggle: (key: keyof SchedulerConfig, checked: boolean) => void;
-}) {
-  if (!schedulerConfig) {
-    return null;
-  }
-  const label = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent title="Scheduler" description="How often the scheduler looks for due sources and writes briefings.">
-        <form className="mt-5 space-y-5" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="scheduler-tick" className={label}>Check for due sources every (minutes)</label>
-              <Input
-                id="scheduler-tick"
-                type="number"
-                min={15}
-                step={5}
-                value={schedulerConfig.ingest_tick_minutes ?? 60}
-                onChange={(e) => onTickChange(Math.max(15, Number(e.target.value) || 15))}
-                className="tabular-nums"
-              />
-              <p className="mt-1 text-[0.75rem] text-fg-3">At least 15. Each source still waits for its own cadence.</p>
-            </div>
-            <div>
-              <label htmlFor="scheduler-interval" className={label}>Write briefings every (hours)</label>
-              <Input
-                id="scheduler-interval"
-                type="number"
-                min={0.25}
-                step={0.25}
-                value={schedulerConfig.interval_hours}
-                onChange={(e) => onIntervalChange(Math.max(0.25, Number(e.target.value) || 0.25))}
-                className="tabular-nums"
-              />
-            </div>
-          </div>
-
-          <fieldset className="divide-y divide-line rounded-md border border-line">
-            <legend className="sr-only">Each cycle</legend>
-            {[
-              ['sync_sources_each_cycle', 'Sync sources.json every cycle'],
-              ['generate_daily_briefing', 'Write the daily briefing'],
-              ['generate_topic_briefing', 'Write the topic briefing'],
-            ].map(([key, text]) => (
-              <label key={key} className="flex min-h-[2.75rem] cursor-pointer items-center justify-between gap-3 px-3 text-[0.875rem] text-fg">
-                <span>{text}</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[rgb(var(--text))]"
-                  checked={Boolean(schedulerConfig[key as keyof SchedulerConfig])}
-                  onChange={(e) => onToggle(key as keyof SchedulerConfig, e.target.checked)}
-                />
-              </label>
-            ))}
-          </fieldset>
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={savingScheduler || !schedulerDirty}>
-              {savingScheduler ? 'Saving…' : 'Save'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export default function IngestionControl() {
   const { tab: tabParam } = useParams();
   const [searchParams] = useSearchParams();
@@ -293,8 +173,6 @@ export default function IngestionControl() {
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [loadingOverview, setLoadingOverview] = useState(false);
-  const [savingScheduler, setSavingScheduler] = useState(false);
-  const [schedulerDirty, setSchedulerDirty] = useState(false);
   const [cycleReport, setCycleReport] = useState<RunReport | null>(null);
   const [sourceFetchReport, setSourceFetchReport] = useState<RunReport | null>(null);
   const [schedulerState, setSchedulerState] = useState<SchedulerState | null>(null);
@@ -415,7 +293,7 @@ export default function IngestionControl() {
     }
 
     setOperationsOverview(compactOperationsOverview(response));
-    if (!schedulerDirty && response.scheduler) {
+    if (response.scheduler) {
       setSchedulerConfig(response.scheduler);
     }
     if (!selectedJobId && response.jobs?.[0]?.id) {
@@ -653,24 +531,16 @@ export default function IngestionControl() {
     }
   };
 
-  const saveSchedulerConfig = async () => {
-    if (!schedulerConfig) {
-      return false;
-    }
-
-    setSavingScheduler(true);
-    const response = await apiService.updateSchedulerConfig(schedulerConfig);
+  const saveSchedulerConfig = async (next: SchedulerConfig): Promise<boolean> => {
+    const response = await apiService.updateSchedulerConfig(next);
     if (!response.success || !response.scheduler) {
       setError(response.error || 'Failed to save scheduler config');
-      setSavingScheduler(false);
       return false;
     }
 
     setSchedulerConfig(response.scheduler);
-    setSchedulerDirty(false);
     appendLog('success', `Scheduler updated to ${response.scheduler.interval_hours} hour cycle`);
     await loadOperationsOverview({ silent: true });
-    setSavingScheduler(false);
     return true;
   };
 
@@ -1357,31 +1227,15 @@ export default function IngestionControl() {
         {activeTab === 'logs' && renderLogsSection()}
       </div>
 
-      <SchedulerSettingsModal
-        open={schedulerModalOpen}
-        schedulerConfig={schedulerConfig}
-        schedulerDirty={schedulerDirty}
-        savingScheduler={savingScheduler}
-        onClose={() => setSchedulerModalOpen(false)}
-        onSave={async () => {
-          const saved = await saveSchedulerConfig();
-          if (saved) {
-            setSchedulerModalOpen(false);
-          }
-        }}
-        onIntervalChange={(value) => {
-          setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({ ...prev, interval_hours: value }) : prev);
-        }}
-        onTickChange={(value) => {
-          setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({ ...prev, ingest_tick_minutes: value }) : prev);
-        }}
-        onToggle={(key, checked) => {
-          setSchedulerDirty(true);
-          setSchedulerConfig((prev) => prev ? ({ ...prev, [key]: checked }) as SchedulerConfig : prev);
-        }}
-      />
+      {schedulerConfig && schedulerModalOpen ? (
+        <SchedulerDialog
+          open
+          config={schedulerConfig}
+          analysis
+          onClose={() => setSchedulerModalOpen(false)}
+          onSave={saveSchedulerConfig}
+        />
+      ) : null}
     </Page>
   );
 }

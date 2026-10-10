@@ -1617,11 +1617,11 @@ class InsightApiBridge:
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "stories": []}
 
-    def get_post_timeline(self, post_id: str, refresh: bool = False) -> Dict[str, Any]:
+    def get_post_timeline(self, post_id: str, refresh: bool = False, read_only: bool = False) -> Dict[str, Any]:
         try:
             if refresh:
                 return self.story_timeline_service.refresh_post_timeline(post_id)
-            return self.story_timeline_service.get_post_timeline(post_id, refresh=False)
+            return self.story_timeline_service.get_post_timeline(post_id, refresh=False, read_only=read_only)
         except Exception as e:
             return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
 

@@ -188,6 +188,37 @@ class VerticalBriefingGetWhenOffTests(unittest.TestCase):
 
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping route tests")
+class PostTimelineGetTests(unittest.TestCase):
+    """GET /api/posts/item/{id}/timeline refreshes story candidates on a miss (a write); with
+    analysis off it only reads what is stored."""
+
+    def setUp(self):
+        self.original_bridge = main.api_bridge
+        self.calls = []
+        calls = self.calls
+
+        class Bridge:
+            def get_post_timeline(self, post_id, refresh=False, read_only=False):
+                calls.append((post_id, refresh, read_only))
+                return {"success": True, "post_id": post_id, "related_candidates": []}
+
+        main.api_bridge = Bridge()
+
+    def tearDown(self):
+        main.api_bridge = self.original_bridge
+
+    def test_off_reads_without_writing_candidates(self):
+        with _settings(OFF):
+            asyncio.run(main.get_post_timeline("post-1"))
+        self.assertEqual(self.calls, [("post-1", False, True)])
+
+    def test_on_keeps_refreshing_on_a_miss(self):
+        with _settings(ON):
+            asyncio.run(main.get_post_timeline("post-1"))
+        self.assertEqual(self.calls, [("post-1", False, False)])
+
+
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping route tests")
 class NoGeminiAtStartupTests(unittest.TestCase):
     def test_building_the_api_bridge_builds_no_gemini_client(self):
         from insight_api_bridge import InsightApiBridge

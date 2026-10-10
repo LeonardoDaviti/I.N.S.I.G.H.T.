@@ -75,7 +75,8 @@ describe('routes, analysis off (reading-only)', () => {
     ['/ingestion/main', '/settings/sources?tab=ingestion'],
     ['/ingestion/jobs', '/settings/sources?tab=ingestion&sub=jobs'],
     ['/ingestion/missions?job=j1', '/settings/sources?tab=ingestion&sub=jobs&job=j1'],
-    ['/ingestion/logs', '/settings/sources?tab=ingestion&sub=logs'],
+    ['/ingestion/logs', '/settings/sources?tab=ingestion'],
+    ['/ingestion/archive', '/settings/sources?tab=ingestion'],
   ])('%s moves to the sources ingestion tab, replacing the history entry', async (route, target) => {
     renderRoutes(route, false);
     expect(await screen.findByTestId('where')).toHaveTextContent(`sources at ${target} (REPLACE)`);

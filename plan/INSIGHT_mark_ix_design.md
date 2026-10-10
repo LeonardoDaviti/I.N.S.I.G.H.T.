@@ -17,7 +17,7 @@ Reference: `plan/design/reference-news-smol-ai-dark.png`. Before: `plan/design/b
 | --- | --- |
 | Near-black page (#171717), no gradients, no glow | `--bg` #121212, flat. Gradients are disabled in the Tailwind theme. |
 | Inverted wordmark: white block, black text | `INSIGHT` wordmark is an inverse block, top-left, links to `/`. |
-| Lowercase slash nav with underlines: `subscribe / issues / tags` | `feed / tracks / briefings / sources / ingestion`, underlined, current item bold with a solid underline. |
+| Lowercase slash nav with underlines: `subscribe / issues / tags` | `feed / sources` (the five words `feed / tracks / briefings / sources / ingestion` with `INSIGHT_ANALYSIS` on), underlined, current item bold with a solid underline. |
 | A `Search (Cmd+K)` box on the right | A `⌘K` quick switcher, **navigation only** (search stays deferred, spec §F.2). |
 | Rows: 1px grey border, ~6px radius, muted date column, bold title, chevron | `Row` primitive: date/meta column in `text-3` tabular nums, title weight 600, chevron on hover-capable pointers. |
 | A grotesk sans, generous whitespace, no accent colour | Inter if installed locally, else the system grotesk. One weight ramp. No hue anywhere. |
@@ -25,7 +25,7 @@ Reference: `plan/design/reference-news-smol-ai-dark.png`. Before: `plan/design/b
 ## 2. Principles (apple-design, emil-design-eng, break-ui applied to INSIGHT)
 
 1. **Reading first (Purpose, Simplicity).** `/` is the reader feed. The Mark VIII hub (`pages/Index.tsx`) is deleted: a page of cards that only link to other pages is navigation pretending to be content. Navigation lives in one top bar.
-2. **Wayfinding on every screen.** The top bar answers *where am I* (bold, underlined nav item + page title), *where can I go* (five nav words + ⌘K), *how do I get out* (the wordmark returns to the feed). Pages drop their bespoke "Back to hub" links over time.
+2. **Wayfinding on every screen.** The top bar answers *where am I* (bold, underlined nav item + page title), *where can I go* (the nav words + ⌘K), *how do I get out* (the wordmark returns to the feed). Pages drop their bespoke "Back to hub" links over time.
 3. **Hierarchy by weight, size, space and contrast — never hue.** Three text tones (`text`, `text-2`, `text-3`) and two border strengths carry all hierarchy. Emphasis is weight 600, not colour.
 4. **Status without colour.** Every state has a glyph (shape) + a word. The worst states are *inverted* (white block on black), so they are the loudest thing on screen without red.
 5. **Response (apple §1, emil "buttons must feel responsive").** Every pressable gives `:active` feedback on press: `scale(0.97)`, 120ms, transform only. Optimistic UI where the action is reversible.
@@ -163,6 +163,8 @@ always sits behind a `ConfirmDialog`; errors use `Notice tone="error"` (inverted
 | briefings | `/briefing` | `/briefing*`, `/stories`, `/inbox` |
 | sources | `/settings/sources` | `/settings/*` |
 | ingestion | `/ingestion` | `/ingestion*` |
+
+Reading-only (`INSIGHT_ANALYSIS` off, the default; reading-finish R3) the nav is `feed / sources`: `/tracks`, `/briefing*`, `/stories`, `/inbox` and `/experts` redirect to `/`, and ingestion is `/settings/sources?tab=ingestion`. The five words above come back with the flag on.
 
 - `/hub` and the old `/` hub are gone (`/hub` redirects to `/`).
 - **⌘K / Ctrl+K quick switcher**: a centered dialog listing every destination (feed, starred, unread, tracks,

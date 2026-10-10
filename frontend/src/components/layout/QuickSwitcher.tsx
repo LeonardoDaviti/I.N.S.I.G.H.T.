@@ -24,7 +24,8 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
   const analysisEnabled = useAnalysisEnabled();
-  const folders = useFolders();
+  // Per-track entries are reading-only (destinations() ignores them with analysis on).
+  const folders = useFolders({ enabled: !analysisEnabled });
   const items = useMemo(() => destinations(analysisEnabled, folders.data ?? []), [analysisEnabled, folders.data]);
 
   const options: Option[] = useMemo(() => {

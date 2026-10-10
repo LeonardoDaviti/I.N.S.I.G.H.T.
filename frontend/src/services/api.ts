@@ -411,7 +411,8 @@ export interface RunReport {
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
   post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
-  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | null;
+  /** Per-step counts, or why enrichment did not run (`{ skipped: 'analysis off' }`, reading-finish R3). */
+  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | { skipped: string } | null;
 }
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----

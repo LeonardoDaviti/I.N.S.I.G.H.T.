@@ -335,6 +335,15 @@ def _unavailable_or(result: Any) -> Any:
     return result
 
 
+ANALYSIS_DISABLED = "analysis_disabled"
+"""The error code the frontend and tests match while INSIGHT_ANALYSIS is off."""
+
+
+def analysis_disabled_response() -> JSONResponse:
+    """409 {"success": false, "error": "analysis_disabled"} (reading-finish R3)."""
+    return JSONResponse(status_code=409, content={"success": False, "error": ANALYSIS_DISABLED})
+
+
 def analysis_only(endpoint):
     """409 {"error": "analysis_disabled"} while INSIGHT_ANALYSIS is off (reading-finish R3).
 
@@ -344,7 +353,7 @@ def analysis_only(endpoint):
     @functools.wraps(endpoint)
     async def guarded(*args, **kwargs):
         if not get_settings().analysis_enabled:
-            return JSONResponse(status_code=409, content={"success": False, "error": "analysis_disabled"})
+            return analysis_disabled_response()
         return await endpoint(*args, **kwargs)
 
     return guarded
@@ -735,10 +744,12 @@ async def get_post_story(post_id: str):
 
 @app.get("/api/posts/item/{post_id}/timeline")
 async def get_post_timeline(post_id: str):
-    """Get the post-centric story timeline view."""
+    """Get the post-centric story timeline view. With INSIGHT_ANALYSIS off it only reads the
+    stored candidates; it never computes or writes new ones (reading-finish R3)."""
     try:
         logger.info(f"🕰️ Fetching post timeline: {post_id}")
-        return api_bridge.get_post_timeline(post_id, refresh=False)
+        return api_bridge.get_post_timeline(post_id, refresh=False,
+                                            read_only=not get_settings().analysis_enabled)
     except Exception as e:
         logger.exception("Failed to get post timeline")
         return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
@@ -2111,7 +2122,7 @@ async def get_source_vertical_briefing(
         if not get_settings().analysis_enabled:
             cached = None if asyncMode else api_bridge.get_cached_source_vertical_briefing(source_id, start, end)
             if cached is None:
-                return JSONResponse(status_code=409, content={"success": False, "error": "analysis_disabled"})
+                return analysis_disabled_response()
             return cached
         if asyncMode:
             job_id = api_bridge._start_job_safe(

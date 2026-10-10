@@ -27,7 +27,9 @@ class StoryTimelineService:
         self.stories_service = StoriesService(db_url)
         self.logger = get_component_logger("story_timeline_service")
 
-    def get_post_timeline(self, post_id: str, *, refresh: bool = False) -> Dict[str, Any]:
+    def get_post_timeline(self, post_id: str, *, refresh: bool = False, read_only: bool = False) -> Dict[str, Any]:
+        """The post's story timeline. A post with no stored candidates gets them computed and
+        written, unless `read_only` (INSIGHT_ANALYSIS off): then only stored ones are served."""
         source_post = self.post_detail_service.get_post_by_id(post_id)
         if not source_post:
             raise ValueError(f"Post {post_id} not found")
@@ -39,7 +41,7 @@ class StoryTimelineService:
             candidates = self._refresh_candidates(source_post, primary_story)
         else:
             candidates = self._load_candidates(post_id)
-            if not candidates:
+            if not candidates and not read_only:
                 candidates = self._refresh_candidates(source_post, primary_story)
 
         story_detail = None

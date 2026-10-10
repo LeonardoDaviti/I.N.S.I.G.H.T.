@@ -7,7 +7,6 @@ expert's own system prompt and focus.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from functools import cached_property
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -15,7 +14,7 @@ import psycopg
 from insight_core.db.repo_experts import ExpertsRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.observability.langfuse_tracer import trace_operation
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.folders_service import FoldersService
 from insight_core.services.posts_service import PostsService
@@ -24,11 +23,7 @@ from insight_core.services.posts_service import PostsService
 class ExpertsService:
     """Manage experts and generate their folder-scoped briefings."""
 
-    @cached_property
-    def processor(self) -> GeminiProcessor:
-        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
-        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
-        return GeminiProcessor()
+    processor = lazy_gemini_processor()
 
     def __init__(self, db_url: str):
         self.db_url = db_url

@@ -99,6 +99,12 @@ export function asRunReport(payload: unknown): RunReport | null {
   };
 }
 
+/** Why the run saved posts without enriching them ("analysis off"), or null when it enriched. */
+export function enrichmentSkipped(report: Pick<RunReport, 'enrichment'>): string | null {
+  const enrichment = report.enrichment;
+  return enrichment && 'skipped' in enrichment && typeof enrichment.skipped === 'string' ? enrichment.skipped : null;
+}
+
 function newPosts(count: number): string {
   return count === 0 ? 'No new posts' : plural(count, 'new post');
 }

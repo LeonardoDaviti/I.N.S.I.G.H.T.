@@ -23,7 +23,7 @@ import psycopg
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
-from insight_core.ingestion.enrichment import Enricher, SkippedEnricher
+from insight_core.ingestion.enrichment import enricher_for
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resume_counts
@@ -64,10 +64,7 @@ class SourceFetchService:
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
         # INSIGHT_ANALYSIS off: archived posts are saved but never enriched (reading-finish R3).
-        self.enricher = (
-            Enricher(self.memory_service, self.event_service)
-            if (settings or get_settings()).analysis_enabled else SkippedEnricher("analysis off")
-        )
+        self.enricher = enricher_for(settings or get_settings(), self.memory_service, self.event_service)
         self.availability = availability
 
     # ------------------------------------------------------------------ kinds

@@ -18,11 +18,12 @@ and related posts) is hidden, not deleted, behind one flag:
 
 - `useAnalysis()` / `useAnalysisEnabled()` (`hooks/useAnalysis.ts`) is the only way a component
   reads it. It asks the backend's `GET /api/config` → `{ analysis_enabled }` once, and that answer
-  wins. The build flag `VITE_INSIGHT_ANALYSIS=on|off` (`lib/features.ts`, `ANALYSIS_ENABLED`)
-  decides only until the backend answers, or when it can't. Don't read `ANALYSIS_ENABLED`
+  wins. The build flag `VITE_INSIGHT_ANALYSIS=on|off` (`lib/features.ts`, `ANALYSIS_ENABLED`;
+  it accepts the backend's words: `on`, `true`, `1`, `yes`) decides only until the backend answers, or when it can't. Don't read `ANALYSIS_ENABLED`
   directly in a component.
 - Routes: `App.tsx` wraps analysis pages in `<AnalysisOnly>`. With the flag off they redirect to
-  `/` (replace). `IngestionRoute` sends `/ingestion/:tab` to `/settings/sources?tab=ingestion&sub=<tab>`.
+  `/` (replace). `IngestionRoute` sends `/ingestion/:tab` to `/settings/sources?tab=ingestion`
+  (`sourcesIngestionHref`; `jobs`/`missions` add `&sub=jobs`, the only other view there).
   Both guards wait for `settled`, so a deep link isn't bounced before the runtime value is known.
 - Navigation: `navItems(analysisEnabled)` and the switcher list in
   `components/layout/navigation.ts`. Off, the top bar is `feed / sources`, and ⌘K drops the

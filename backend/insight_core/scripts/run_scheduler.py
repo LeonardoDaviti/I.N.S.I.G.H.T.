@@ -100,7 +100,7 @@ async def tick(
     config: Dict[str, Any],
     *,
     ingest: Callable[..., Awaitable[Any]],
-    daily_work: Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]],
+    daily_work: Callable[[Dict[str, Any]], Awaitable[Optional["DailyWorkSummary"]]],
     ops: Any,
 ) -> SchedulerState:
     """One scheduler wake-up: an ingestion run, then daily work when it is due."""
@@ -151,9 +151,8 @@ async def tick(
             summary = await daily_work(config)
             cycle_status, cycle_message = "success", "Daily work completed"
             if summary:
-                cycle_payload["daily_work"] = summary
-                if summary.get("skipped"):
-                    cycle_message += f" ({summary.get('reason')}: skipped {', '.join(summary['skipped'])})"
+                cycle_payload["daily_work"] = summary.as_payload()
+                cycle_message += summary.message_suffix()
         except Exception as exc:  # noqa: BLE001
             cycle_message = str(exc)
             logger.exception("Daily work failed")
@@ -183,13 +182,32 @@ async def tick(
 ANALYSIS_STEPS = ("experts", "daily_briefing", "topic_briefing")
 
 
+@dataclass(frozen=True)
+class DailyWorkSummary:
+    """What daily work left out and why, recorded on the scheduler_cycle job."""
+
+    skipped: tuple[str, ...] = ()
+    reason: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return bool(self.skipped)
+
+    def message_suffix(self) -> str:
+        """Appended to "Daily work completed", e.g. " (analysis off: skipped experts, ...)"."""
+        return f" ({self.reason}: skipped {', '.join(self.skipped)})" if self.skipped else ""
+
+    def as_payload(self) -> Dict[str, Any]:
+        return {"skipped": list(self.skipped), "reason": self.reason}
+
+
 async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dict[str, Any], *,
-                     settings: Optional["Settings"] = None) -> Optional[Dict[str, Any]]:
+                     settings: Optional["Settings"] = None) -> Optional[DailyWorkSummary]:
     """The Mark VIII cycle minus its ingest: prune, cadence, sync, experts, briefings.
 
     With INSIGHT_ANALYSIS off it stops after the upkeep (no ExpertsService, BriefingService or
     Gemini client is built) and returns which steps it skipped, for the scheduler_cycle job.
     """
+    from insight_core.ingestion.enrichment import ANALYSIS_OFF
     from insight_core.ingestion.ports import DbFetchStateStore
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.settings import get_settings
@@ -217,7 +235,7 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
 
     if not settings.analysis_enabled:
         logger.info("Analysis is off: skipping %s", ", ".join(ANALYSIS_STEPS))
-        return {"skipped": list(ANALYSIS_STEPS), "reason": "analysis off"}
+        return DailyWorkSummary(skipped=ANALYSIS_STEPS, reason=ANALYSIS_OFF)
 
     from insight_core.services.briefing_service import BriefingService
     from insight_core.services.experts_service import ExpertsService

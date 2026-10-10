@@ -1,39 +1,16 @@
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 
 import type { JobRun } from '../../services/api';
-import { useApi } from '../../services/ApiContext';
+import { useOperationJob } from '../../hooks/useOperations';
 import { asRunReport } from '../../lib/runReport';
 import { plural } from '../../lib/format';
 import { jobLabel } from '../../lib/operationsOverview';
-import { formatTimeRemaining } from '../../lib/schedulerStatus';
+import { formatJobDuration, formatJobTimestamp, jobGlyph } from '../../lib/jobRuns';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
 import { StatusGlyph } from '../ui';
-import type { Status } from '../ui';
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
-
-/** Job status -> monochrome glyph (design doc §8). */
-function jobGlyph(status?: string | null): Status {
-  if (status === 'failed') return 'failing';
-  if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
-  return 'ok';
-}
-
-function formatJobTimestamp(value?: string | null): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
-}
-
-function formatJobDuration(startedAt?: string | null, finishedAt?: string | null): string | null {
-  if (!startedAt || !finishedAt) return null;
-  const elapsed = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
-  if (Number.isNaN(elapsed) || elapsed < 0) return null;
-  if (elapsed < 1000) return '<1s';
-  return formatTimeRemaining(elapsed);
-}
 
 type JobEvent = { at?: string; level?: string; message?: string };
 
@@ -82,7 +59,6 @@ function JobDetail({ job }: { job: JobRun }) {
  * in full. The pick lives in `?job=`, so a run toast's "View job" opens it.
  */
 export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loading: boolean }) {
-  const api = useApi();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('job');
   const select = (id: string) => {
@@ -90,16 +66,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
     params.set('job', id);
     setSearchParams(params, { replace: true });
   };
-  const detail = useQuery({
-    queryKey: ['operations', 'job', selectedId],
-    queryFn: async () => {
-      const response = await api.getOperationJob(selectedId as string);
-      if (!response.success || !response.job) throw new Error(response.error || 'Could not load the job.');
-      return response.job;
-    },
-    enabled: Boolean(selectedId),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5_000 : false),
-  });
+  const detail = useOperationJob(selectedId);
 
   return (
     <div className="grid gap-8 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">

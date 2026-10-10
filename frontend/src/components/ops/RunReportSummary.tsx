@@ -1,5 +1,5 @@
 import type { RunReport } from '../../services/api';
-import { summarizeRunReport, type RunReportTone } from '../../lib/runReport';
+import { enrichmentSkipped, summarizeRunReport, type RunReportTone } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { StatusIcon } from '../ui';
@@ -56,6 +56,7 @@ export default function RunReportSummary({
   className?: string;
 }) {
   const summary = summarizeRunReport(report);
+  const skippedEnrichment = enrichmentSkipped(report);
   const duration = formatDuration(report.duration_s);
   const topSources = [...report.inserted_by_source].sort((a, b) => b.inserted - a.inserted).slice(0, 8);
 
@@ -119,6 +120,10 @@ export default function RunReportSummary({
         <p className="mt-2 text-[0.75rem] text-fg-2">
           {formatCount(report.post_failures.length)} post{report.post_failures.length === 1 ? '' : 's'} could not be saved; see the raw report.
         </p>
+      ) : null}
+
+      {skippedEnrichment ? (
+        <p className="mt-2 text-[0.75rem] text-fg-3">Enrichment skipped ({skippedEnrichment})</p>
       ) : null}
 
       {topSources.length ? (

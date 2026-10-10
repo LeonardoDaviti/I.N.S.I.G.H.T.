@@ -89,12 +89,22 @@ class Enricher:
         return StepReport(len(posts), chunks, failed)
 
 
+ANALYSIS_OFF = "analysis off"
+"""Why analysis work did not run while INSIGHT_ANALYSIS is off (run reports, scheduler cycles)."""
+
+
 class SkippedEnricher:
     """The enricher when INSIGHT_ANALYSIS is off: touches no entity or event memory, and
     reports why, so the run report reads "skipped (analysis off)" instead of zero counts."""
 
-    def __init__(self, reason: str = "analysis off") -> None:
+    def __init__(self, reason: str = ANALYSIS_OFF) -> None:
         self.reason = reason
 
     async def run(self, posts: Sequence[Mapping[str, Any]]) -> EnrichmentReport:
         return EnrichmentReport.skipped_because(self.reason)
+
+
+def enricher_for(settings: Any, entity: PostProcessor, event: PostProcessor) -> "Enricher | SkippedEnricher":
+    """The enricher a composition root wires in: the real one with analysis on, a
+    SkippedEnricher (no entity or event memory touched) with INSIGHT_ANALYSIS off."""
+    return Enricher(entity, event) if settings.analysis_enabled else SkippedEnricher(ANALYSIS_OFF)

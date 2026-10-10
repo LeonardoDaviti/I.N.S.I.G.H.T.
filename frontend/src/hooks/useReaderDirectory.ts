@@ -27,9 +27,10 @@ export function useReaderDirectory() {
 }
 
 /** The tracks (folders) in their sort order; the reader rail and ⌘K share the cache. */
-export function useFolders() {
+export function useFolders({ enabled = true }: { enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
+    enabled,
     queryKey: [...FOLDERS_KEY],
     queryFn: async (): Promise<Folder[]> => {
       const response = await api.getFolders();

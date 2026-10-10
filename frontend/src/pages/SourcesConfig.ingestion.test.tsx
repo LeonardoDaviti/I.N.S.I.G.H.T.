@@ -94,6 +94,20 @@ describe('Sources → ingestion tab', () => {
     expect((await within(lastRun).findAllByText(/21 new posts/)).length).toBeGreaterThan(0);
   });
 
+  it('reading-only, the last run says its enrichment was skipped', async () => {
+    setup({
+      overrides: {
+        getOperationsOverview: vi.fn().mockResolvedValue({
+          success: true,
+          alerts: [],
+          jobs: [job({ id: 'r1', payload: runReport({ enrichment: { skipped: 'analysis off' } }) })],
+        }),
+      },
+    });
+    const lastRun = await screen.findByRole('region', { name: 'Last run' });
+    expect(await within(lastRun).findByText('Enrichment skipped (analysis off)')).toBeInTheDocument();
+  });
+
   it('the scheduler status says how often it checks and when it next ticks', async () => {
     setup();
     const status = await screen.findByRole('region', { name: 'Scheduler' });

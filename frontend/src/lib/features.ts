@@ -8,4 +8,11 @@
  * `useAnalysisEnabled()` (hooks/useAnalysis.ts), where the backend's
  * GET /api/config answer wins over it.
  */
-export const ANALYSIS_ENABLED = import.meta.env.VITE_INSIGHT_ANALYSIS === 'on';
+const TRUTHY = new Set(['on', 'true', '1', 'yes']);
+
+/** The same words the backend's INSIGHT_ANALYSIS accepts (backend/insight_core/settings.py). */
+export function parseAnalysisFlag(raw: string | undefined | null): boolean {
+  return TRUTHY.has(String(raw ?? '').trim().toLowerCase());
+}
+
+export const ANALYSIS_ENABLED = parseAnalysisFlag(import.meta.env?.VITE_INSIGHT_ANALYSIS);

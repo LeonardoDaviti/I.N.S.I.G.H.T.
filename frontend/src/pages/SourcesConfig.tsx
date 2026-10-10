@@ -76,6 +76,11 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
   };
 }
 
+/** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
+const EXTRA_TABS = ['connections', 'ingestion'] as const;
+type ExtraTab = (typeof EXTRA_TABS)[number];
+const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
+
 /**
  * Settings → Sources: every source on one dense list (spec §9, reading-first).
  * The old Sources and Health tabs are one view now: the toolbar searches,
@@ -94,17 +99,17 @@ export default function SourcesConfig() {
   // Ingestion (?tab=ingestion, reading-finish R3). The legacy Health tab URL
   // becomes the status grouping it stood for.
   const tabParam = searchParams.get('tab');
-  const tab = tabParam === 'connections' || tabParam === 'ingestion' ? tabParam : 'sources';
+  const tab = isExtraTab(tabParam) ? tabParam : 'sources';
   useEffect(() => {
     const legacy = searchParams.get('tab');
-    if (legacy !== null && legacy !== 'connections' && legacy !== 'ingestion') setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
+    if (legacy !== null && !isExtraTab(legacy)) setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
   }, [searchParams, setSearchParams]);
   const setTab = (next: string) => {
     const params = new URLSearchParams(searchParams);
     params.delete('provider');
     params.delete('sub');
     params.delete('job');
-    if (next === 'connections' || next === 'ingestion') params.set('tab', next);
+    if (isExtraTab(next)) params.set('tab', next);
     else params.delete('tab');
     setSearchParams(params, { replace: true });
   };

@@ -8,8 +8,9 @@ with it is `FRONTEND.md`. This replaces the Mark VIII guide, which described a c
 ## The shell
 
 Every route renders under one top bar: the inverted `INSIGHT` wordmark, the lowercase slash nav
-(`feed / tracks / briefings / sources / ingestion`) with the current word marked, the theme toggle,
-and a Cmd/Ctrl+K switcher that only navigates. The bar is translucent; its hairline appears once
+(`feed / sources`; with `INSIGHT_ANALYSIS` on, `feed / tracks / briefings / sources / ingestion`)
+with the current word marked, the theme toggle, and a Cmd/Ctrl+K switcher that only navigates
+(reading-only it lists one entry per track, and "Ingestion" opens the sources tab). The bar is translucent; its hairline appears once
 content scrolls under it. Dark is the default theme; light has parity.
 
 ## Feed (`/`, `/read/:scopeKind/:scopeId`)
@@ -45,18 +46,25 @@ rows and counts follow).
 
 ## Sources (`/settings/sources`)
 
-The source list with one primary "Add source", tracks, and the health tab
-(`?tab=health`). The health table shows every source's status as glyph plus word, tier and
-interval, next due, backoff, last success and last error, with `Fetch now` and a cadence override
-per row. `?status=error` shows the failing sources (`error` and `backoff`). Deleting a source or a
-track asks first and says what goes with it.
+Three tabs: `sources / connections / ingestion`.
 
-## Ingestion (`/ingestion`)
+- **sources**: every source on one dense list with one primary "Add source". Search, a status
+  filter and grouping (by track, status or platform); each row shows its status as glyph plus
+  word and opens a detail sheet (settings, cadence override, `Fetch now`, delete). `?status=error`
+  shows the failing sources (`error` and `backoff`); the old `?tab=health` URL opens the list
+  grouped by status. Deleting a source or a track asks first and says what goes with it.
+- **connections** (`?tab=connections`): write-only credentials per provider.
+- **ingestion** (`?tab=ingestion`), two views as `?sub=`:
+  - `overview` (default): the scheduler (how often it checks, when it next ticks, "Change
+    interval"), `Run due sources` (runs what the next tick would) and the last run's readable
+    report (fetched, inserted, failed, per-source failures; "Enrichment skipped (analysis off)"
+    when posts were saved without analysis). A stopped scheduler shows as one clear warning line,
+    not quiet grey text. Raw payloads sit behind a closed disclosure.
+  - `jobs` (`?sub=jobs`): the job history; a job (`?job=`) opens its report and events.
 
-`Run due sources` runs what the next tick would; `Force all` ignores cadence and backoff after a
-confirmation. Each run gets a readable run report (fetched, inserted, failed, per-source failures).
-A stopped scheduler shows as one clear warning line, not quiet grey text. Raw payloads sit behind a
-closed disclosure.
+The old `/ingestion[/:tab]` URLs redirect here. With `INSIGHT_ANALYSIS` on, the ingestion tab also
+has "Write a briefing" and the `sources.json` ↔ database registry buttons, and the full ingestion
+page (`/ingestion`, with archive control and logs) comes back.
 
 ## Status words
 
@@ -66,6 +74,9 @@ Status is never colour alone: `ok`, `due`, `scheduled`, `backoff`, `failing`, `u
 
 ## Analysis pages
 
-Briefings, stories, inbox, vertical briefings and expert tracks share the same primitives. Under
-the reading-only scope (spec §9) they will be hidden behind `INSIGHT_ANALYSIS=off`; that switch is
-not built yet.
+Briefings, stories, inbox, vertical briefings and expert tracks share the same primitives. They are
+hidden, not deleted, behind one switch, `INSIGHT_ANALYSIS` (default off; the frontend asks the
+backend's `GET /api/config`, falling back to the build flag `VITE_INSIGHT_ANALYSIS`). Off, their
+routes redirect to the feed, the top bar is `feed / sources`, and the post page shows only the
+content. On, every surface comes back unchanged. See `FRONTEND.md` → "Three places, and the
+analysis flag".

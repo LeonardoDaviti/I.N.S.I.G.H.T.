@@ -44,17 +44,34 @@ export function getIngestionTabHref(tab: IngestionTabKey): string {
   return tab === 'main' ? '/ingestion' : `/ingestion/${tab}`;
 }
 
+/** The ingestion tab's views under sources, as `?sub=`: the overview (default) and the job history. */
+export const INGESTION_SUB_VIEWS = ['overview', 'jobs'] as const;
+export type IngestionSubView = (typeof INGESTION_SUB_VIEWS)[number];
+
+export function normalizeIngestionSubView(sub?: string | null): IngestionSubView {
+  return sub === 'jobs' ? 'jobs' : 'overview';
+}
+
+/** The old page's tabs -> the sub-view that holds what is left of them. Archive control
+ *  and logs have no view under sources (reading-finish as-built), so they open the overview. */
+const SUB_VIEW_FOR_TAB: Record<IngestionTabKey, IngestionSubView> = {
+  main: 'overview',
+  archive: 'overview',
+  missions: 'jobs',
+  logs: 'overview',
+};
+
 /**
  * Where an old `/ingestion[/:tab]` URL lives reading-only: the ingestion tab
- * under sources (reading-finish R3). The tab is carried across as `sub`
- * (missions and jobs are both `jobs`; the overview is the default), and the
- * rest of the query (a run toast's `?job=`) comes along.
+ * under sources (reading-finish R3). The tab is carried across as `sub` when
+ * the sources tab has that view (missions and jobs are both `jobs`); the
+ * overview is the default and needs none. The rest of the query (a run
+ * toast's `?job=`) comes along.
  */
 export function sourcesIngestionHref(tab?: string | null, search = ''): string {
   const params = new URLSearchParams({ tab: 'ingestion' });
-  const key = normalizeIngestionTab(tab);
-  const sub = key === 'missions' ? 'jobs' : key === 'main' ? null : key;
-  if (sub) params.set('sub', sub);
+  const sub = SUB_VIEW_FOR_TAB[normalizeIngestionTab(tab)];
+  if (sub !== 'overview') params.set('sub', sub);
   new URLSearchParams(search).forEach((value, name) => {
     if (name !== 'tab' && name !== 'sub') params.set(name, value);
   });

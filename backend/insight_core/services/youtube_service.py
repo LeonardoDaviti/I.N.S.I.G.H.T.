@@ -14,13 +14,12 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from functools import cached_property
 from typing import Any, Dict, List, Optional
 
 import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 
 
 class YouTubeService:
@@ -53,11 +52,7 @@ class YouTubeService:
         "part", "episode", "ep", "video", "new", "live", "podcast", "interview",
     }
 
-    @cached_property
-    def processor(self) -> GeminiProcessor:
-        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
-        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
-        return GeminiProcessor()
+    processor = lazy_gemini_processor()
 
     def __init__(self, db_url: str):
         self.db_url = db_url

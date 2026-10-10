@@ -101,8 +101,10 @@ export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef
     to: `/tracks/${encodeURIComponent(track.id)}`,
     keywords: 'track folder',
   }));
-  const firstSources = reading.findIndex((item) => item.group !== 'feed');
-  return [...reading.slice(0, firstSources), ...trackItems, ...reading.slice(firstSources)];
+  // Tracks go after the feed entries; with none after the feed, at the end.
+  const afterFeed = reading.findIndex((item) => item.group !== 'feed');
+  const at = afterFeed === -1 ? reading.length : afterFeed;
+  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at)];
 }
 
 /** Case-insensitive, every word must match label, group or keywords. Order is kept. */

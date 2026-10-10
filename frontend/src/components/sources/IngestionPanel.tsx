@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 
 import type { RunReport, SchedulerConfig } from '../../services/api';
 import { useAnalysisEnabled } from '../../hooks/useAnalysis';
+import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
+import { INGESTION_SUB_VIEWS, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
 import { useApi } from '../../services/ApiContext';
 import { asRunReport } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
@@ -11,13 +13,11 @@ import { formatTimeRemaining, schedulerStaleness } from '../../lib/schedulerStat
 import IngestionStatusNotice from '../ops/IngestionStatusNotice';
 import RunCycleButton from '../ops/RunCycleButton';
 import RunReportSummary from '../ops/RunReportSummary';
-import { Button, Dialog, DialogContent, DialogFooter, Input, tabTriggerClass } from '../ui';
+import { Button, tabTriggerClass } from '../ui';
+import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
 import IngestionAnalysisActions from './IngestionAnalysisActions';
 import { Notice } from '../states';
-
-export const OPERATIONS_OVERVIEW_KEY = ['operations', 'overview'] as const;
-export const SCHEDULER_KEY = ['operations', 'scheduler'] as const;
 
 /** Now, every 30 seconds while the page is visible: enough for a minute countdown. */
 function useClock(): number {
@@ -31,104 +31,7 @@ function useClock(): number {
   return now;
 }
 
-const fieldLabel = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
-
-/**
- * The scheduler's settings. Reading-only it is the tick interval and the
- * sources.json sync; with analysis on, the briefing interval and toggles too.
- * Numbers are edited as text and clamped on save, so clearing a field to type
- * a new value works.
- */
-function SchedulerDialog({
-  open,
-  config,
-  analysis,
-  onClose,
-  onSave,
-}: {
-  open: boolean;
-  config: SchedulerConfig;
-  analysis: boolean;
-  onClose: () => void;
-  onSave: (next: SchedulerConfig) => Promise<boolean>;
-}) {
-  const [tick, setTick] = useState(String(config.ingest_tick_minutes ?? 60));
-  const [interval, setIntervalHours] = useState(String(config.interval_hours));
-  const [toggles, setToggles] = useState(() => ({
-    sync_sources_each_cycle: config.sync_sources_each_cycle,
-    generate_daily_briefing: config.generate_daily_briefing,
-    generate_topic_briefing: config.generate_topic_briefing,
-  }));
-  const [saving, setSaving] = useState(false);
-  const rows: Array<[keyof typeof toggles, string]> = [
-    ['sync_sources_each_cycle', 'Sync sources.json every cycle'],
-    ...(analysis ? [
-      ['generate_daily_briefing', 'Write the daily briefing'],
-      ['generate_topic_briefing', 'Write the topic briefing'],
-    ] as Array<[keyof typeof toggles, string]> : []),
-  ];
-
-  const submit = async () => {
-    setSaving(true);
-    const saved = await onSave({
-      ...config,
-      ...toggles,
-      ingest_tick_minutes: Math.max(15, Math.round(Number(tick)) || 15),
-      interval_hours: Math.max(0.25, Number(interval) || 0.25),
-    });
-    setSaving(false);
-    if (saved) onClose();
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent
-        title="Scheduler"
-        description={analysis ? 'How often the scheduler looks for due sources and writes briefings.' : 'How often the scheduler looks for due sources.'}
-      >
-        <form className="mt-5 space-y-5" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="ingestion-tick" className={fieldLabel}>Check for due sources every (minutes)</label>
-              <Input id="ingestion-tick" type="number" min={15} step={5} value={tick} onChange={(e) => setTick(e.target.value)} className="tabular-nums" />
-              <p className="mt-1 text-[0.75rem] text-fg-3">At least 15. Each source still waits for its own cadence.</p>
-            </div>
-            {analysis ? (
-              <div>
-                <label htmlFor="ingestion-interval" className={fieldLabel}>Write briefings every (hours)</label>
-                <Input id="ingestion-interval" type="number" min={0.25} step={0.25} value={interval} onChange={(e) => setIntervalHours(e.target.value)} className="tabular-nums" />
-              </div>
-            ) : null}
-          </div>
-          <fieldset className="divide-y divide-line rounded-md border border-line">
-            <legend className="sr-only">Each cycle</legend>
-            {rows.map(([key, text]) => (
-              <label key={key} className="flex min-h-[2.75rem] cursor-pointer items-center justify-between gap-3 px-3 text-[0.875rem] text-fg">
-                <span>{text}</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[rgb(var(--text))]"
-                  checked={Boolean(toggles[key])}
-                  onChange={(e) => setToggles((prev) => ({ ...prev, [key]: e.target.checked }))}
-                />
-              </label>
-            ))}
-          </fieldset>
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
-
-/** The tab's two views, as `?sub=`: the overview (default) and the job history. */
-const SUB_VIEWS = ['overview', 'jobs'] as const;
-type SubView = (typeof SUB_VIEWS)[number];
 
 /**
  * Sources → ingestion (reading-finish R3, S4): the useful parts of the old
@@ -142,28 +45,11 @@ export default function IngestionPanel() {
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
-  const sub: SubView = searchParams.get('sub') === 'jobs' ? 'jobs' : 'overview';
+  const sub: IngestionSubView = normalizeIngestionSubView(searchParams.get('sub'));
 
-  const overview = useQuery({
-    queryKey: [...OPERATIONS_OVERVIEW_KEY],
-    queryFn: async () => {
-      const response = await api.getOperationsOverview();
-      if (response.success === false) throw new Error(response.error || 'Could not load the job history.');
-      return response;
-    },
-    refetchInterval: 15_000,
-  });
+  const overview = useOperationsOverview();
   const jobs = overview.data?.jobs ?? [];
-
-  const scheduler = useQuery({
-    queryKey: [...SCHEDULER_KEY],
-    queryFn: async () => {
-      const response = await api.getSchedulerConfig();
-      if (!response.success || !response.scheduler) throw new Error(response.error || 'Could not read the scheduler.');
-      return response.scheduler;
-    },
-    refetchInterval: 30_000,
-  });
+  const scheduler = useSchedulerConfig();
   const nowMs = useClock();
 
   // The newest stored ingestion run, so the report survives a reload.
@@ -214,7 +100,7 @@ export default function IngestionPanel() {
   return (
     <div className="space-y-8">
       <nav aria-label="Ingestion views" className="flex items-end gap-5 border-b border-line">
-        {SUB_VIEWS.map((key) => (
+        {INGESTION_SUB_VIEWS.map((key) => (
           <Link
             key={key}
             to={key === 'jobs' ? '?tab=ingestion&sub=jobs' : '?tab=ingestion'}

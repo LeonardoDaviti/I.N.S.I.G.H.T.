@@ -12,7 +12,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from insight_core.ingestion import FetchRequest, RunReport, SourceSelector, Trigger
 from unittest import mock
 
-from insight_core.scripts.run_scheduler import SchedulerState, daily_work, tick, tracked_job
+from insight_core.scripts.run_scheduler import DailyWorkSummary, SchedulerState, daily_work, tick, tracked_job
 from insight_core.settings import Settings
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
@@ -131,12 +131,13 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.next_tick_at, NOW + timedelta(minutes=15))
 
     async def test_skipped_daily_steps_are_recorded_on_the_scheduler_cycle_job(self):
-        skipped = {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"}
+        skipped = DailyWorkSummary(skipped=("experts", "daily_briefing", "topic_briefing"), reason="analysis off")
         await self._tick(SchedulerState(last_daily_work_at=NOW - timedelta(hours=21)), daily=FakeDailyWork(skipped))
         _, cycle = self.ops.finished[-1]
         self.assertEqual(cycle["status"], "success")
-        self.assertEqual(cycle["payload"]["daily_work"], skipped)
-        self.assertIn("skipped", cycle["message"])
+        self.assertEqual(cycle["payload"]["daily_work"],
+                         {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"})
+        self.assertEqual(cycle["message"], "Daily work completed (analysis off: skipped experts, daily_briefing, topic_briefing)")
 
     def test_state_round_trips_through_its_dict(self):
         state = SchedulerState(NOW, NOW + timedelta(hours=1), NOW - timedelta(hours=3), NOW + timedelta(hours=17))
@@ -174,7 +175,7 @@ class DailyWorkAnalysisOffTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cadence.call_count, 1)
         self.assertEqual(sync.call_count, 1)
         self.assertEqual(ops.job_types(), [], "no expert or briefing jobs start")
-        self.assertEqual(result, {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"})
+        self.assertEqual(result, DailyWorkSummary(skipped=("experts", "daily_briefing", "topic_briefing"), reason="analysis off"))
 
 
 class TrackedJobTests(unittest.IsolatedAsyncioTestCase):

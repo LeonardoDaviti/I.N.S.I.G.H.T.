@@ -44,7 +44,7 @@ def default_runner(db_url: Optional[str] = None, *, settings: "Optional[Settings
 
     from insight_core.db.ensure_db import ensure_database
     from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
-    from insight_core.ingestion.enrichment import Enricher, SkippedEnricher
+    from insight_core.ingestion.enrichment import enricher_for
     from insight_core.ingestion.gates import FetchGates
     from insight_core.ingestion.http import KindHttp
     from insight_core.ingestion.inspection import DbInspectionRefresher
@@ -75,10 +75,7 @@ def default_runner(db_url: Optional[str] = None, *, settings: "Optional[Settings
         catalog=DbSourceCatalog(db_url),
         state=DbFetchStateStore(db_url),
         saver=DbPostSaver(db_url),
-        enricher=(
-            Enricher(EntityMemoryService(db_url), EventMemoryService(db_url))
-            if settings.analysis_enabled else SkippedEnricher("analysis off")
-        ),
+        enricher=enricher_for(settings, EntityMemoryService(db_url), EventMemoryService(db_url)),
         inspections=DbInspectionRefresher(
             writer=ArchiveMetadataWriter(posts=PostsService(db_url), sources=SourcesService(db_url)),
             gates=gates,

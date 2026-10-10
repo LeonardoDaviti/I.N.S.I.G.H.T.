@@ -6,7 +6,6 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 import re
-from functools import cached_property
 from typing import Any, Dict, List
 
 import psycopg
@@ -16,7 +15,7 @@ from insight_core.db.repo_event_memory import EventMemoryRepository
 from insight_core.db.repo_memory import MemoryRepository
 from insight_core.db.repo_stories import StoriesRepository
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.gemini_processor import GeminiProcessor
+from insight_core.processors.ai.lazy import lazy_gemini_processor
 from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.briefings_store_service import BriefingsStoreService
 from insight_core.services.entity_memory_service import EntityMemoryService
@@ -32,11 +31,7 @@ class BriefingService:
 
     VERTICAL_BRIEFING_VERSION = 4
 
-    @cached_property
-    def processor(self) -> GeminiProcessor:
-        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
-        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
-        return GeminiProcessor()
+    processor = lazy_gemini_processor()
 
     def __init__(self, db_url: str):
         self.db_url = db_url
