@@ -1138,17 +1138,18 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
                   {middleTruncate(sourceName, 40)}
                 </span>
+                {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
                 {platformLabel ? (
-                  <>
-                    <span aria-hidden="true" className="text-fg-3">/</span>
-                    <span>{platformLabel}</span>
-                  </>
+                  <span className="whitespace-nowrap">
+                    <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+                    {platformLabel}
+                  </span>
                 ) : null}
                 {publishedLabel ? (
-                  <>
-                    <span aria-hidden="true" className="text-fg-3">/</span>
+                  <span className="whitespace-nowrap">
+                    <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
                     <time dateTime={publishedIso} className="tabular-nums">{publishedLabel}</time>
-                  </>
+                  </span>
                 ) : null}
               </p>
               <PostActions
@@ -1264,7 +1265,8 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                       {youtubeEvaluation?.summary_markdown ? 'Refresh watch guide' : 'Generate watch guide'}
                     </Button>
                   ) : null}
-                  {youtubeVideoUrl && (
+                  {/* Reading-only: the header's ↗ already opens the video. */}
+                  {ANALYSIS_ENABLED && youtubeVideoUrl && (
                     <Button asChild size="sm" variant="ghost">
                       <a href={youtubeVideoUrl} target="_blank" rel="noopener noreferrer">
                         Open on YouTube
@@ -1292,6 +1294,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 </div>
               ) : null}
 
+              {ANALYSIS_ENABLED || youtubeChapters.length ? (
               <div>
                 <h2 className="mb-2 text-[0.875rem] font-semibold text-fg">Chapters</h2>
                 {youtubeChapters.length ? (
@@ -1315,6 +1318,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                   <p className="text-[0.875rem] text-fg-3">No chapters were extracted for this video yet.</p>
                 )}
               </div>
+              ) : null}
             </section>
           )}
 
