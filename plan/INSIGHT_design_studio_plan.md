@@ -1,6 +1,6 @@
 # Design Studio — one structured home for INSIGHT's design
 
-Status: **draft** (2026-10-10). The owner delegated every decision ("all the decisions are up to you"). Building waits for the owner's go.
+Status: **approved** (owner "go", 2026-10-10). Built on the integration branch `design-studio`; issue 0003 is folded in as slice S7.
 Related: `plan/INSIGHT_mark_ix_design.md` (today's design language), `.claude/skills/{apple-design,emil-design-eng,break-ui}`, `plan/issues/`.
 
 ## Problem
@@ -148,3 +148,4 @@ S1 comes first. S2 and S5 can run in parallel. S3 needs S2, S4 needs S3, and S6 
 - The title-wrap prototype sits next to the current title. You pick one, and the choice lands in the decisions log.
 - `/tracks/:id` opens the reader scoped to that track.
 - Removing a page's doc, or adding a route without one, fails `npm test`.
+7. **S7 — Issue 0003:** source and track names link into Sources (`?source=` opens the sheet, `?track=` scrolls to and highlights the group; unknown id shows a quiet note). Runs with S5.
