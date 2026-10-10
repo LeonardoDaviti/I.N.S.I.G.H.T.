@@ -26,6 +26,13 @@ describe('PostDetailPage header', () => {
     expect(original).toHaveAttribute('target', '_blank');
   });
 
+  it('lets the title fill the reading column: pretty wrapping, not balanced into two short lines', async () => {
+    render(baseApi(rssPost()));
+    const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    expect(heading.className).toContain('text-pretty');
+    expect(heading.className).not.toContain('text-balance');
+  });
+
   it('renders indented feed HTML as paragraphs, not as a code block', async () => {
     render(baseApi(rssPost()));
     const article = await screen.findByRole('article', { name: 'Post content' });
@@ -256,6 +263,37 @@ describe('MarkdownRenderer', () => {
     for (const paragraph of container.querySelectorAll('p')) {
       expect(paragraph).toHaveAttribute('dir', 'auto');
     }
+  });
+
+  it('renders #### Codex voice mode as an h4 subheading, not body text', () => {
+    const { container } = rtlRender(<MarkdownRenderer content={'Intro.\n\n#### Codex voice mode\n\nBody.'} />);
+    const h4 = within(container).getByRole('heading', { level: 4, name: 'Codex voice mode' });
+    expect(h4.className).toContain('font-semibold');
+    expect(h4.className).toContain('text-pretty');
+    expect(h4).toHaveAttribute('dir', 'auto');
+    expect(h4.className).not.toBe(container.querySelector('p')!.className);
+  });
+
+  it('gives every heading level a semibold, pretty-wrapped style on one scale (h6 muted, never coloured)', () => {
+    const { container } = rtlRender(
+      <MarkdownRenderer content={'# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n\nBody.'} />,
+    );
+    const scale = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((h) => ({
+      tag: h.tagName.toLowerCase(),
+      dir: h.getAttribute('dir'),
+      semibold: h.className.includes('font-semibold'),
+      pretty: h.className.includes('text-pretty'),
+      size: /text-\[([\d.]+em)\]/.exec(h.className)?.[1],
+      tone: /\btext-(fg(?:-\d)?)\b/.exec(h.className)?.[1],
+    }));
+    expect(scale).toEqual([
+      { tag: 'h1', dir: 'auto', semibold: true, pretty: true, size: '1.5em', tone: 'fg' },
+      { tag: 'h2', dir: 'auto', semibold: true, pretty: true, size: '1.25em', tone: 'fg' },
+      { tag: 'h3', dir: 'auto', semibold: true, pretty: true, size: '1.05em', tone: 'fg' },
+      { tag: 'h4', dir: 'auto', semibold: true, pretty: true, size: '1em', tone: 'fg' },
+      { tag: 'h5', dir: 'auto', semibold: true, pretty: true, size: '0.95em', tone: 'fg' },
+      { tag: 'h6', dir: 'auto', semibold: true, pretty: true, size: '0.95em', tone: 'fg-2' },
+    ]);
   });
 
   it('dedents indented HTML so markdown does not read it as code', () => {

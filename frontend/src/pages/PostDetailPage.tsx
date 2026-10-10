@@ -1161,7 +1161,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 onCopy={() => void handleCopy()}
               />
             </div>
-            <h1 dir="auto" className="mt-2 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
+            <h1 dir="auto" className="mt-2 break-words text-pretty text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
               {displayTitle}
             </h1>
             {ANALYSIS_ENABLED ? (
