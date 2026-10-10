@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render as rtlRender, screen, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, useLocation } from 'react-router-dom';
 
-import PostDetailPage, { displaySourceName } from './PostDetailPage';
+import PostDetailPage from './PostDetailPage';
+import { postSourceName as displaySourceName } from '../lib/sourceLabel';
 import MarkdownRenderer, { normalizeRendererContent } from '../components/ui/MarkdownRenderer';
 import { makeFakeApi } from '../test/fakeApi';
-import { renderWithProviders } from '../test/render';
+import { makeTestQueryClient, renderWithProviders } from '../test/render';
+import { postKey } from '../hooks/usePost';
+import { feedItem, feedPage } from '../components/reader/fixtures';
 import type { Api, Post } from '../services/api';
 
 const POST_ID = '7dbe33ac-ddda-429f-a8a2-d51a05f5ecaf';
@@ -255,5 +258,138 @@ describe('MarkdownRenderer', () => {
     expect(normalizeRendererContent('\n    <p>Hello</p>\n    <p>World</p>')).toBe('\n<p>Hello</p>\n<p>World</p>');
     // Plain markdown with an indented code block is left alone.
     expect(normalizeRendererContent('Text\n\n    code')).toBe('Text\n\n    code');
+  });
+});
+
+// ---- Mark IX F3: the post page reads through usePost and follows the feed context ----
+
+const NEXT_ID = '9c1d5c1e-2f4b-4f3a-9a49-6f2b1d7e0a11';
+const PREV_ID = '1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d';
+const CTX = 'all:unread:';
+
+function detailFor(post: Post) {
+  return { success: true, post, notes: null, summary: null, summary_references: [], highlights: [], reader_state: null };
+}
+
+function contextApi(methods: Partial<Record<keyof Api, unknown>> = {}) {
+  const posts: Record<string, Post> = {
+    [PREV_ID]: rssPost({ id: PREV_ID, title: 'The newer post', source: 'newer-source', published_at: '2026-09-28T10:00:00+00:00' }),
+    [POST_ID]: rssPost(),
+    [NEXT_ID]: rssPost({ id: NEXT_ID, title: 'The older post', source: 'older-source', published_at: '2026-09-26T10:00:00+00:00' }),
+  };
+  return makeFakeApi({
+    getPostDetail: vi.fn((id: string) => Promise.resolve(detailFor(posts[id]))),
+    getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: PREV_ID, title: 'The newer post', sort_at: '2026-09-28T10:00:00+00:00' }),
+      feedItem({ id: POST_ID, title: '2026 in LLMs (so far)', sort_at: '2026-09-27T23:54:15+00:00' }),
+      feedItem({ id: NEXT_ID, title: 'The older post', sort_at: '2026-09-26T10:00:00+00:00' }),
+    ])),
+    getPostTimeline: vi.fn().mockResolvedValue({ success: true, primary_story: null, story: null, timeline: null, related_candidates: [] }),
+    recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
+    recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
+    setPostRead: vi.fn().mockResolvedValue({ success: true }),
+    getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+    ...methods,
+  });
+}
+
+function FeedProbe() {
+  const location = useLocation();
+  return <p data-testid="feed">{location.pathname + location.search}</p>;
+}
+
+function renderAt(api: Api, route: string, queryClient?: ReturnType<typeof makeTestQueryClient>) {
+  return renderWithProviders(
+    <Routes>
+      <Route path="/" element={<FeedProbe />} />
+      <Route path="/posts/:postId" element={<PostDetailPage />} />
+    </Routes>,
+    { api, route, queryClient },
+  );
+}
+
+describe('PostDetailPage loading', () => {
+  it('opens a post the feed prefetched straight from the cache: no skeleton, no second request', () => {
+    const api = contextApi();
+    const queryClient = makeTestQueryClient();
+    queryClient.setQueryData(postKey(POST_ID), detailFor(rssPost()));
+    renderAt(api, `/posts/${POST_ID}`, queryClient);
+    expect(screen.getByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).toBeInTheDocument();
+    expect(screen.queryByText('Loading post')).toBeNull();
+    expect(api.getPostDetail).not.toHaveBeenCalled();
+  });
+
+  it('a stored title cut with "…" shows the text’s whole first line', async () => {
+    const content = 'Update claude-api skill: Claude Opus 5.5 default, build-eval and hillclimb guides (#1930)\n\n* bump';
+    render(baseApi(rssPost({ title: 'Update claude-api skill: Claude Opus 5.5 default, …', content, content_html: undefined })));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Update claude-api skill: Claude Opus 5.5 default, build-eval and hillclimb guides (#1930)' })).toBeInTheDocument();
+  });
+
+  it('loads the story timeline only when its panel is opened', async () => {
+    const user = userEvent.setup();
+    const api = baseApi(rssPost());
+    render(api);
+    await screen.findByRole('heading', { level: 1 });
+    expect(api.getPostTimeline).not.toHaveBeenCalled();
+    await user.click(screen.getByText('Story'));
+    await waitFor(() => expect(api.getPostTimeline).toHaveBeenCalledWith(POST_ID, false));
+  });
+});
+
+describe('PostDetailPage feed context and keys', () => {
+  it('j and k follow the feed order from ?ctx=; each open is recorded with that post’s own metadata', async () => {
+    const user = userEvent.setup();
+    const api = contextApi();
+    renderAt(api, `/posts/${POST_ID}?ctx=${encodeURIComponent(CTX)}`);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+
+    await user.keyboard('j');
+    expect(await screen.findByRole('heading', { level: 1, name: 'The older post' })).toBeInTheDocument();
+    await user.keyboard('k');
+    expect(await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).toBeInTheDocument();
+
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalledTimes(3));
+    const opens = vi.mocked(api.recordPostOpen).mock.calls;
+    expect(opens[1]).toEqual([NEXT_ID, expect.objectContaining({ title: 'The older post', source: 'older-source' })]);
+    expect(opens[0]).toEqual([POST_ID, expect.objectContaining({ title: '2026 in LLMs (so far)' })]);
+    // Moving on within a second is not a reading session (no fake 1-second sessions).
+    expect(api.recordPostReadingSession).not.toHaveBeenCalled();
+  });
+
+  it('u goes back to the feed of the context; m toggles read; ? opens the shortcut help', async () => {
+    const user = userEvent.setup();
+    const api = contextApi();
+    renderAt(api, `/posts/${POST_ID}?ctx=${encodeURIComponent('all:starred:')}`);
+    await screen.findByRole('heading', { level: 1 });
+
+    // Opening marks the post read (server side, mirrored here), so m marks it unread.
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalled());
+    await user.keyboard('m');
+    await waitFor(() => expect(api.setPostRead).toHaveBeenCalledWith(POST_ID, false));
+    await user.keyboard('m');
+    await waitFor(() => expect(api.setPostRead).toHaveBeenLastCalledWith(POST_ID, true));
+
+    await user.keyboard('?');
+    const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });
+    expect(within(dialog).getByText('Next / previous post in the feed')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    await user.keyboard('u');
+    expect(await screen.findByTestId('feed')).toHaveTextContent('/?filter=starred');
+  });
+
+  it('without a context j does nothing and the way out is a visible "Back to feed"', async () => {
+    const user = userEvent.setup();
+    const api = contextApi();
+    renderAt(api, `/posts/${POST_ID}`);
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+    await user.keyboard('j');
+    expect(api.getFeed).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to feed' }));
+    expect(await screen.findByTestId('feed')).toHaveTextContent('/');
   });
 });

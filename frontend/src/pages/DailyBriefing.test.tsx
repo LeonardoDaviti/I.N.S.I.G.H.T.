@@ -63,7 +63,7 @@ describe('DailyBriefing (Mark IX)', () => {
     expect(screen.queryByText('I.N.S.I.G.H.T.')).not.toBeInTheDocument();
   });
 
-  it('without a newest post it opens on the local day and offers all posts when it is empty', async () => {
+  it('without a newest post it opens on the local day and points to the reader when it is empty', async () => {
     stubCommon();
     const daily = vi.spyOn(apiService, 'getDailyPosts').mockResolvedValue({ success: true, posts: [], total: 0, date: '', source: 'database' });
 
@@ -71,7 +71,8 @@ describe('DailyBriefing (Mark IX)', () => {
 
     await waitFor(() => expect(daily).toHaveBeenCalledWith(localDateISO()));
     expect(await screen.findByText(/^No posts on /)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show all posts' })).toBeInTheDocument();
+    // "All posts" is the reader now (one keyset query), not the per-source loader.
+    expect(screen.getByRole('button', { name: 'Open in reader' })).toBeInTheDocument();
   });
 
   it('shows failing sources as an inverted "×" status that links to the health table', async () => {

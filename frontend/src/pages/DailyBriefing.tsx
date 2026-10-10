@@ -639,7 +639,7 @@ export default function DailyBriefing() {
   });
   
   // Posts fetched by date state
-  const [databasePosts, setDatabasePosts] = useState<Post[]>([]);
+  const [, setDatabasePosts] = useState<Post[]>([]);
   const [databasePostsStats, setDatabasePostsStats] = useState<{
     total: number;
     date: string;
@@ -1053,94 +1053,9 @@ export default function DailyBriefing() {
     }
   };
 
-  const handleLoadAllPosts = async () => {
-    setActiveView('all-posts');
-    setSelectedSourceId(null);
-    setSourcePostsMeta({ total: 0, hasMore: false });
-    updateRouteState({
-      date: selectedDate,
-      view: 'all-posts',
-      mode: 'all-posts',
-      source: null,
-      topic: null,
-    });
-    
-    // 🔍 STEP 1: Check cache first
-    if (postsCache.allPosts && postsCache.allPosts.length > 0) {
-      console.log(`⚡ Using cached "All Posts" (${postsCache.allPosts.length} posts)`);
-      setDisplayedPosts(postsCache.allPosts);
-      setDatabasePosts([]);
-      setDatabasePostsStats(null);
-      return; // ✨ Done! No API call needed!
-    }
-    
-    // 📞 STEP 2: If not in cache, fetch from API
-    setIsLoadingPosts(true);
-    setError(null);
-    setDisplayedPosts([]);
-    setDatabasePosts([]);
-    setDatabasePostsStats(null);
-    
-    try {
-      console.log('📖 Loading all posts from database...');
-      
-      // Get all sources and fetch their posts
-      if (!sourcesData || !sourcesData.platforms) {
-        setError('No sources available');
-        return;
-      }
-      
-      const allPosts: Post[] = [];
-      
-      // Fetch posts from each source (using source cache if available)
-      for (const platform of Object.keys(sourcesData.platforms)) {
-        const platformData = sourcesData.platforms[platform];
-        for (const source of platformData.sources) {
-          // Check if we have this source cached
-          if (postsCache.bySource[source.id]) {
-            console.log(`⚡ Using cached posts for source: ${source.display_name || source.handle_or_url}`);
-            allPosts.push(...postsCache.bySource[source.id]);
-          } else {
-            const response = await apiService.getPostsBySource(source.id);
-            if (response.success) {
-              allPosts.push(...response.posts);
-              // Cache it for next time
-              setPostsCache(prev => ({
-                ...prev,
-                bySource: {
-                  ...prev.bySource,
-                  [source.id]: response.posts
-                }
-              }));
-            }
-          }
-        }
-      }
-      
-      // Sort by date descending
-      allPosts.sort((a, b) => {
-        const dateA = new Date(a.date || a.published_at || 0).getTime();
-        const dateB = new Date(b.date || b.published_at || 0).getTime();
-        return dateB - dateA;
-      });
-      
-      console.log(`✅ Loaded ${allPosts.length} total posts`);
-      
-      // 💾 STEP 3: Save to cache
-      setPostsCache(prev => ({
-        ...prev,
-        allPosts: allPosts
-      }));
-      
-      setDisplayedPosts(allPosts);
-      
-    } catch (error) {
-      console.error('❌ Failed to load all posts:', error);
-      setError(error instanceof Error ? error.message : 'Failed to load posts');
-    } finally {
-      setIsLoadingPosts(false);
-    }
-  };
+  // "All posts" (every source, one request per source) is the reader now: the
+  // feed at / reads every source in one keyset-paged query (spec §F.3).
+  const openReader = () => navigate('/');
 
   const handleLoadSourcePosts = async (
     sourceId: string,
@@ -1499,7 +1414,7 @@ export default function DailyBriefing() {
       return;
     }
     if (requestedView === 'all-posts' && mode === 'all-posts') {
-      handleLoadAllPosts();
+      navigate('/', { replace: true });
       return;
     }
     if (mode === 'db-posts' && requestedDate) {
@@ -1814,10 +1729,10 @@ export default function DailyBriefing() {
           title={isDatePosts ? `No posts on ${formatIssueLong(databasePostsStats?.date || selectedDate)}` : 'No posts found'}
           description={
             isDatePosts
-              ? 'Nothing was collected for this day. Pick another date, or read every source.'
+              ? 'Nothing was collected for this day. Pick another date, or read every source in the reader.'
               : 'Nothing stored for this view yet. It fills in after the next ingestion cycle.'
           }
-          action={isDatePosts ? { label: 'Show all posts', onClick: () => void handleLoadAllPosts() } : undefined}
+          action={isDatePosts ? { label: 'Open in reader', onClick: openReader } : undefined}
         />
       )}
     </div>

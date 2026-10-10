@@ -5,9 +5,9 @@ import {
   contextNeighbors,
   decodeFeedContext,
   decodeFeedCursor,
-  displaySourceName,
   encodeFeedContext,
   feedCursorFor,
+  neighborsAt,
   postHref,
   scopeFromRoute,
   scopePath,
@@ -96,10 +96,28 @@ test('scope paths and post links', () => {
   assert.equal(href, `/posts/${POST}?ctx=${encodeURIComponent('all:unread:')}`);
 });
 
-test('displaySourceName: URL-named feeds get a derived name (sourceLabel); names stay', () => {
-  assert.equal(displaySourceName('https://rss.arxiv.org/rss/cs.AI'), 'arXiv cs.AI');
-  assert.equal(displaySourceName('http://www.example.com/feed/'), 'example.com');
-  assert.equal(displaySourceName('r/EvenRealities'), 'r/EvenRealities');
-  assert.equal(displaySourceName('  '), 'Unknown source');
-  assert.equal(displaySourceName(null), 'Unknown source');
+
+test('neighborsAt: prev/next by sort key, the current post found or not', () => {
+  const entries = [
+    { id: 'c', sortAt: '2026-10-10T12:00:00Z', pageCursor: null },
+    { id: 'b', sortAt: '2026-10-10T11:00:00Z', pageCursor: null },
+    { id: 'a', sortAt: '2026-10-10T10:00:00Z', pageCursor: null },
+  ];
+  assert.deepEqual(neighborsAt(entries, { id: 'b', sortAt: '2026-10-10T11:00:00Z' }, 'more'), {
+    prev: { id: 'c', pageCursor: null }, next: { id: 'a', pageCursor: null }, loadNext: null,
+  });
+  // Read under the unread filter, so the reloaded page no longer holds it.
+  const without = entries.filter((entry) => entry.id !== 'b');
+  assert.deepEqual(neighborsAt(without, { id: 'b', sortAt: '2026-10-10T11:00:00Z' }, 'more'), {
+    prev: { id: 'c', pageCursor: null }, next: { id: 'a', pageCursor: null }, loadNext: null,
+  });
+  // Ties on the sort key go by id, descending.
+  assert.equal(neighborsAt(entries, { id: 'bb', sortAt: '2026-10-10T11:00:00Z' }, null).next?.id, 'b');
+});
+
+test('neighborsAt: at the first and the last loaded post', () => {
+  const entries = [{ id: 'c', sortAt: '2026-10-10T12:00:00Z', pageCursor: null }, { id: 'a', sortAt: '2026-10-10T10:00:00Z', pageCursor: null }];
+  assert.deepEqual(neighborsAt(entries, { id: 'c', sortAt: '2026-10-10T12:00:00Z' }, null), { prev: null, next: { id: 'a', pageCursor: null }, loadNext: null });
+  assert.deepEqual(neighborsAt(entries, { id: 'a', sortAt: '2026-10-10T10:00:00Z' }, 'cur2'), { prev: { id: 'c', pageCursor: null }, next: null, loadNext: 'cur2' });
+  assert.deepEqual(neighborsAt(entries, { id: 'a', sortAt: '2026-10-10T10:00:00Z' }, null), { prev: { id: 'c', pageCursor: null }, next: null, loadNext: null });
 });

@@ -1,4 +1,3 @@
-import { sourceLabel } from './sourceLabel.ts';
 /**
  * The feed context a post page carries in `?ctx=` (spec §F.3), so prev/next keep
  * following the feed order after a reload: `<scope>:<filter>:<cursor>`.
@@ -116,6 +115,41 @@ export function contextNeighbors(
   };
 }
 
+export interface SortedEntry extends ContextEntry {
+  /** The feed's sort key: published, else fetched (the backend's COALESCE). */
+  sortAt: string;
+}
+
+/** Feed order: newest first, ties by id, both descending (the backend's keyset). */
+function comesAfter(entry: { id: string; sortAt: string }, current: { id: string; sortAt: string }): boolean {
+  const a = Date.parse(entry.sortAt);
+  const b = Date.parse(current.sortAt);
+  if (a !== b) return a < b;
+  return entry.id < current.id;
+}
+
+/**
+ * Prev/next for `current` by its place in the feed order, whether or not the
+ * loaded entries still hold it: a post read under the `unread` filter drops out
+ * of a reloaded page, but its neighbours are still the posts around its sort key.
+ * After the last loaded entry, `loadNext` names the next page's cursor.
+ */
+export function neighborsAt(
+  entries: readonly SortedEntry[],
+  current: { id: string; sortAt: string },
+  nextCursor: string | null,
+): Omit<ContextNeighbors, 'found'> {
+  const others = entries.filter((entry) => entry.id !== current.id);
+  let index = others.findIndex((entry) => comesAfter(entry, current));
+  if (index < 0) index = others.length;
+  const strip = (entry: SortedEntry | undefined): ContextEntry | null => (entry ? { id: entry.id, pageCursor: entry.pageCursor } : null);
+  return {
+    prev: strip(others[index - 1]),
+    next: strip(others[index]),
+    loadNext: index === others.length ? nextCursor : null,
+  };
+}
+
 /** `/` for the main feed, `/read/<kind>/<id>` for a folder or source. */
 export function scopePath(scope: string): string {
   if (scope === 'all') return '/';
@@ -137,13 +171,4 @@ export function scopeFromRoute(kind: string | undefined, id: string | undefined)
 export function postHref(postId: string, ctx: FeedContext | null): string {
   const base = `/posts/${encodeURIComponent(postId)}`;
   return ctx ? `${base}?ctx=${encodeURIComponent(encodeFeedContext(ctx))}` : base;
-}
-
-/**
- * A source name for display. Feeds that never got a real name show their URL;
- * drop the scheme, "www." and a trailing slash so what remains is the part that
- * tells two feeds apart (callers middle-truncate it, design doc §F.7).
- */
-export function displaySourceName(name: string | null | undefined): string {
-  return sourceLabel(name);
 }

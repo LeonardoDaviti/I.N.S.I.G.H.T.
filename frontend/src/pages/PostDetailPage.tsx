@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, Component } from 'react';
 import type { ReactNode } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   ArrowUpRight,
   Check,
   Copy,
@@ -29,11 +32,26 @@ import { EmptyState, LoadingState, Notice } from '../components/states';
 import { useDevFixtureApi } from '../components/analysis/useDevFixtureApi';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import { POST_FIXTURE_NAMES, postFixtureApi } from './PostDetailPage.fixtures';
+import ShortcutHelp from '../components/reader/ShortcutHelp';
+import { usePost, usePrefetchPost } from '../hooks/usePost';
+import { usePostNeighbors } from '../hooks/usePostNeighbors';
+import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReaderMutations';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { useShortcutPreference } from '../hooks/useShortcutPreference';
+import { useIngestionRun } from '../hooks/useIngestionRun';
+import { decodeFeedContext, postHref, scopePath, type FeedContext } from '../lib/feedContext';
+import { rememberSelection } from '../lib/readerSelection';
+import { displayPostTitle } from '../lib/postTitle';
+import { postSourceName } from '../lib/sourceLabel';
+import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { formatCount, middleTruncate, plural } from '../lib/format';
 import type {
+  Api,
   BriefingReference,
+  FeedItem,
   Post,
+  PostDetailResponse,
   PostHighlight,
   PostTimelineResponse,
   ReaderState,
@@ -113,29 +131,6 @@ function defaultNotesTemplate(post?: Post | null) {
 ---
 
 **Tip:** Select text from the post and bring it into your notes deliberately.`;
-}
-
-/**
- * The name to show for a post's source. Feeds often store the feed URL as the
- * display name ("https://simonwillison.net/atom/everything/") and YouTube the
- * channel id; the host and the channel title read better.
- */
-// eslint-disable-next-line react-refresh/only-export-components
-export function displaySourceName(post: Pick<Post, 'source' | 'source_display_name' | 'platform'> & { metadata?: Record<string, unknown> | null }): string {
-  const channel = post.platform === 'youtube' && typeof post.metadata?.channel_title === 'string'
-    ? post.metadata.channel_title.trim()
-    : '';
-  if (channel) return channel;
-  const label = String(post.source_display_name || post.source || '').trim();
-  if (!label) return 'Unknown source';
-  if (/^https?:\/\//i.test(label)) {
-    try {
-      return new URL(label).hostname.replace(/^www\./, '');
-    } catch {
-      return label;
-    }
-  }
-  return label;
 }
 
 /** Plain text of a post for the clipboard: the stored text, else the HTML's text. */
@@ -481,36 +476,123 @@ function buildYouTubeTranscriptBlocks(
 const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
 const GRID_CLASS = 'grid gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,46rem)_18rem] xl:justify-center';
 
+/** The loading frame: the same container, grid and column as the loaded page, so
+ *  React swaps only the children on arrival (no width or padding jump). */
+function PostSkeleton() {
+  return (
+    <div className={PAGE_CLASS}>
+      <div className={GRID_CLASS}>
+        <div className="min-w-0" role="status" aria-busy="true" aria-live="polite">
+          <span className="sr-only">Loading post</span>
+          <div aria-hidden="true">
+            <div className="mb-5 min-h-[2rem]" />
+            <div className="mb-8">
+              <Skeleton className="h-3 w-48" />
+              <Skeleton className="mt-4 h-7 w-11/12" />
+              <Skeleton className="mt-2 h-7 w-2/3" />
+              <div className="mt-5 flex gap-2">
+                <Skeleton className="h-8 w-28" />
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-8 w-24" />
+              </div>
+            </div>
+            <Skeleton className="mb-10 h-12 w-full" />
+            <div className="max-w-[68ch] space-y-3">
+              {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
+                <Skeleton key={index} className={`h-3.5 ${width}`} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <DevDataSwitch options={POST_FIXTURE_NAMES} />
+    </div>
+  );
+}
+
+/**
+ * /posts/:id. The post loads through `usePost` (react-query, `['post', id]`), so
+ * a post the feed prefetched opens from cache with no skeleton (spec §F.3). Each
+ * post gets its own `PostView` (keyed by id): its state starts from that post and
+ * nothing of the previous post (metadata, reading time) carries over on j/k.
+ */
 export default function PostDetailPage() {
   const navigate = useNavigate();
-  const { api } = useDevFixtureApi(postFixtureApi);
-  const location = useLocation();
   const { postId } = useParams();
-  const [post, setPost] = useState<Post | null>(null);
-  const [notes, setNotes] = useState('');
-  const [summary, setSummary] = useState<string | null>(null);
-  const [summaryModel, setSummaryModel] = useState<string | null>(null);
-  const [summaryEstimatedTokens, setSummaryEstimatedTokens] = useState<number | null>(null);
-  const [summaryTakeaway, setSummaryTakeaway] = useState<string | null>(null);
-  const [highlights, setHighlights] = useState<PostHighlight[]>([]);
-  const [summaryReferences, setSummaryReferences] = useState<BriefingReference[]>([]);
-  const [readerState, setReaderState] = useState<ReaderState | null>(null);
+  const { api, fixture } = useDevFixtureApi(postFixtureApi);
+  const query = usePost(postId, { api, fixture });
+
+  if (postId && query.data?.post) {
+    return <PostView key={`${postId}:${fixture ?? ''}`} postId={postId} detail={query.data} api={api} fixture={fixture} />;
+  }
+  if (postId && query.isPending) return <PostSkeleton />;
+  return (
+    <div className={PAGE_CLASS}>
+      <div className={GRID_CLASS}>
+        <div className="min-w-0">
+          <div className="mb-5 min-h-[2rem]" aria-hidden="true" />
+          <EmptyState
+            title="Post not found"
+            description={postId ? errorMessage(query.error) : 'Missing post id'}
+            action={{ label: 'Back to the feed', onClick: () => navigate('/') }}
+          />
+        </div>
+      </div>
+      <DevDataSwitch options={POST_FIXTURE_NAMES} />
+    </div>
+  );
+}
+
+function initialComments(post: Post) {
+  const metadata = post.metadata && typeof post.metadata === 'object' && !Array.isArray(post.metadata)
+    ? post.metadata as Record<string, unknown>
+    : null;
+  const discussion = metadata?.reddit_discussion && typeof metadata.reddit_discussion === 'object' && !Array.isArray(metadata.reddit_discussion)
+    ? metadata.reddit_discussion as Record<string, unknown>
+    : null;
+  const briefing = discussion?.briefing && typeof discussion.briefing === 'object' && !Array.isArray(discussion.briefing)
+    ? discussion.briefing as Record<string, unknown>
+    : null;
+  return {
+    comments: Array.isArray(discussion?.comments) ? discussion.comments as RedditComment[] : [],
+    fetchedAt: typeof discussion?.fetched_at === 'string' ? discussion.fetched_at : null,
+    briefing: typeof briefing?.summary_markdown === 'string' ? briefing.summary_markdown : null,
+    briefingModel: typeof briefing?.model === 'string' ? briefing.model : null,
+    briefingTokens: typeof briefing?.estimated_tokens === 'number' ? briefing.estimated_tokens : null,
+  };
+}
+
+function PostView({ postId, detail, api, fixture }: { postId: string; detail: PostDetailResponse; api: Api; fixture: string | null }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
+  const [post, setPost] = useState<Post>(detail.post as Post);
+  const [notes, setNotes] = useState(() => detail.notes?.notes_markdown || defaultNotesTemplate(detail.post));
+  const [summary, setSummary] = useState<string | null>(detail.summary?.summary_markdown || null);
+  const [summaryModel, setSummaryModel] = useState<string | null>(detail.summary?.model || null);
+  const [summaryEstimatedTokens, setSummaryEstimatedTokens] = useState<number | null>(detail.summary?.estimated_tokens ?? null);
+  const [summaryTakeaway, setSummaryTakeaway] = useState<string | null>(detail.summary?.one_sentence_takeaway || null);
+  const [highlights, setHighlights] = useState<PostHighlight[]>(Array.isArray(detail.highlights) ? detail.highlights : []);
+  const [summaryReferences, setSummaryReferences] = useState<BriefingReference[]>(Array.isArray(detail.summary_references) ? detail.summary_references : []);
+  const [readerState, setReaderState] = useState<ReaderState | null>(detail.reader_state || null);
   const [storyPrimary, setStoryPrimary] = useState<StoryCard | null>(null);
   const [storyDetail, setStoryDetail] = useState<StoryDetail | null>(null);
   const [storyTimeline, setStoryTimeline] = useState<PostTimelineResponse['timeline'] | null>(null);
   const [storyCandidates, setStoryCandidates] = useState<StoryCandidateLink[]>([]);
+  const [timelineLoaded, setTimelineLoaded] = useState(false);
   const [youtubeEvaluation, setYouTubeEvaluation] = useState<YouTubeVideoEvaluationResponse | null>(null);
   const [youtubeProgress, setYouTubeProgress] = useState<YouTubeWatchProgress | null>(null);
   const [youtubeProgressDraft, setYouTubeProgressDraft] = useState(0);
-  const [comments, setComments] = useState<RedditComment[]>([]);
-  const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(null);
-  const [commentsBriefing, setCommentsBriefing] = useState<string | null>(null);
-  const [commentsBriefingModel, setCommentsBriefingModel] = useState<string | null>(null);
-  const [commentsBriefingEstimatedTokens, setCommentsBriefingEstimatedTokens] = useState<number | null>(null);
+  const [comments, setComments] = useState<RedditComment[]>(initial.comments);
+  const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(initial.fetchedAt);
+  const [commentsBriefing, setCommentsBriefing] = useState<string | null>(initial.briefing);
+  const [commentsBriefingModel, setCommentsBriefingModel] = useState<string | null>(initial.briefingModel);
+  const [commentsBriefingEstimatedTokens, setCommentsBriefingEstimatedTokens] = useState<number | null>(initial.briefingTokens);
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingHighlights, setLoadingHighlights] = useState(false);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
@@ -526,10 +608,14 @@ export default function PostDetailPage() {
   const [chatContext, setChatContext] = useState<PostChatContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+  const [announcement, setAnnouncement] = useState('');
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const sessionStartRef = useRef<number | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const openRecordedRef = useRef(false);
-
+  const mutations = useReaderMutations({ dryRun: Boolean(fixture) });
+  const { run: runIngestion, isRunning } = useIngestionRun();
+  const [shortcutsOn] = useShortcutPreference();
+  const prefetch = usePrefetchPost();
 
   const loadSummary = async (refresh = false) => {
     if (!postId) return;
@@ -582,6 +668,7 @@ export default function PostDetailPage() {
     setStoryDetail(response.story || null);
     setStoryTimeline(response.timeline || null);
     setStoryCandidates(Array.isArray(response.related_candidates) ? response.related_candidates : []);
+    setTimelineLoaded(true);
     setLoadingTimeline(false);
   };
 
@@ -639,139 +726,49 @@ export default function PostDetailPage() {
     setSavingYouTubeProgress(false);
   };
 
+  // YouTube posts only: the saved watch position.
   useEffect(() => {
-    let active = true;
-
-    const loadPost = async () => {
-      if (!postId) {
-        if (active) {
-          setError('Missing post id');
-          setLoading(false);
-        }
-        return;
-      }
-
-      if (active) {
-        setLoading(true);
-        setError(null);
-      }
-
-      const response = await api.getPostDetail(postId);
-      if (!active) {
-        return;
-      }
-
-      if (!response.success || !response.post) {
-        setError(response.error || 'Failed to load post');
-        setLoading(false);
-        return;
-      }
-
-      setPost(response.post);
-      setNotes(response.notes?.notes_markdown || defaultNotesTemplate(response.post));
-      setSummary(response.summary?.summary_markdown || null);
-      setSummaryModel(response.summary?.model || null);
-      setSummaryEstimatedTokens(response.summary?.estimated_tokens ?? null);
-      setSummaryTakeaway(response.summary?.one_sentence_takeaway || null);
-      setSummaryReferences(Array.isArray(response.summary_references) ? response.summary_references : []);
-      setHighlights(Array.isArray(response.highlights) ? response.highlights : []);
-      setReaderState(response.reader_state || null);
-      const metadata = response.post.metadata && typeof response.post.metadata === 'object' && !Array.isArray(response.post.metadata)
-        ? response.post.metadata as Record<string, unknown>
-        : null;
-      const discussion = metadata?.reddit_discussion && typeof metadata.reddit_discussion === 'object' && !Array.isArray(metadata.reddit_discussion)
-        ? metadata.reddit_discussion as Record<string, unknown>
-        : null;
-      setComments(Array.isArray(discussion?.comments) ? discussion.comments as RedditComment[] : []);
-      setCommentsFetchedAt(typeof discussion?.fetched_at === 'string' ? discussion.fetched_at : null);
-      const briefing = discussion?.briefing && typeof discussion.briefing === 'object' && !Array.isArray(discussion.briefing)
-        ? discussion.briefing as Record<string, unknown>
-        : null;
-      setCommentsBriefing(typeof briefing?.summary_markdown === 'string' ? briefing.summary_markdown : null);
-      setCommentsBriefingModel(typeof briefing?.model === 'string' ? briefing.model : null);
-      setCommentsBriefingEstimatedTokens(typeof briefing?.estimated_tokens === 'number' ? briefing.estimated_tokens : null);
-      setLoading(false);
-    };
-
-    void loadPost();
-    return () => {
-      active = false;
-    };
-  }, [postId, api]);
-
-  useEffect(() => {
-    void loadTimeline(false);
-  }, [postId]);
-
-  useEffect(() => {
-    const videoId = extractYouTubeVideoId(post);
-    if (post?.platform !== 'youtube' || !videoId) {
-      setYouTubeProgress(null);
-      setYouTubeProgressDraft(0);
-      return;
-    }
+    const videoId = extractYouTubeVideoId(detail.post);
+    if (detail.post?.platform !== 'youtube' || !videoId) return;
     void loadYouTubeWatchProgress(videoId);
-  }, [post?.platform, post?.external_id, post?.url]);
+    // Once per post: PostView is keyed by the post id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // Record the open and, on leaving, the reading time, both with this post's own
+  // metadata. A visit under a second (StrictMode's mount check, a j held down) is
+  // not reading and is not recorded.
   useEffect(() => {
-    setYouTubeEvaluation(null);
-  }, [postId]);
-
-  useEffect(() => {
-    sessionStartRef.current = Date.now();
-    openRecordedRef.current = false;
-  }, [postId]);
-
-  useEffect(() => {
-    if (!postId || !post) {
-      return undefined;
-    }
-
+    const startedAt = Date.now();
+    const meta = { title: detail.post?.title, source: detail.post?.source, platform: detail.post?.platform };
+    rememberSelection(postId);
     if (!openRecordedRef.current) {
       openRecordedRef.current = true;
-      void api.recordPostOpen(postId, {
-        title: post.title,
-        source: post.source,
-        platform: post.platform,
-      }).then((response) => {
-        if (!response.success) {
-          return;
-        }
+      void api.recordPostOpen(postId, meta).then((response) => {
+        if (!response.success) return;
+        // The server marks an opened post read: so do the cached feed and counts.
+        mutations.noteOpened(postId);
         const recordedAt = response.event?.created_at || new Date().toISOString();
-        setReaderState((current) => {
-          if (!current) {
-            return {
-              post_id: postId,
-              is_favorited: false,
-              open_count: 1,
-              first_opened_at: recordedAt,
-              last_opened_at: recordedAt,
-              total_read_seconds: 0,
-            };
-          }
-          return {
-            ...current,
-            open_count: (current.open_count || 0) + 1,
-            first_opened_at: current.first_opened_at || recordedAt,
-            last_opened_at: recordedAt,
-          };
-        });
+        setReaderState((current) => ({
+          ...current,
+          post_id: postId,
+          is_favorited: current?.is_favorited ?? false,
+          open_count: (current?.open_count || 0) + 1,
+          first_opened_at: current?.first_opened_at || recordedAt,
+          last_opened_at: recordedAt,
+          total_read_seconds: current?.total_read_seconds ?? 0,
+          read_at: current?.read_at || recordedAt,
+        }));
       });
     }
-
     return () => {
-      const startedAt = sessionStartRef.current;
-      if (!startedAt) {
-        return;
-      }
-      const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-      void api.recordPostReadingSession(postId, durationSeconds, {
-        title: post.title,
-        source: post.source,
-        platform: post.platform,
-      });
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      if (seconds < 1) return;
+      void api.recordPostReadingSession(postId, seconds, meta);
     };
-  }, [postId, post?.id]);
+    // Once per post: PostView is keyed by the post id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchComments = async (refresh = false) => {
     if (!postId) return;
@@ -858,8 +855,12 @@ export default function PostDetailPage() {
     if (response.reader_state) {
       setReaderState(response.reader_state);
     } else {
-      setReaderState((current) => current ? { ...current, is_favorited: response.favorited } : current);
+      setReaderState((current) => ({ ...current, post_id: postId, is_favorited: response.favorited }));
     }
+    // The feed shows the same star: keep its cached rows in step.
+    const starred = response.reader_state?.is_favorited ?? response.favorited ?? nextFavorited;
+    patchFeeds(queryClient, new Set([postId]), { starred_at: starred ? new Date().toISOString() : null });
+    setAnnouncement(starred ? 'Starred' : 'Removed star');
     setTogglingFavorite(false);
   };
 
@@ -921,8 +922,6 @@ export default function PostDetailPage() {
     () => buildYouTubeTranscriptBlocks(post?.content || '', youtubeDurationSeconds, youtubeChapters),
     [post?.content, youtubeDurationSeconds, youtubeChapters],
   );
-  const youtubeThumbnail = (youtubeMetadata?.thumbnails || [])[0]
-    || (youtubeVideoId ? `https://i.ytimg.com/vi/${youtubeVideoId}/hqdefault.jpg` : null);
   const youtubeProgressPercent = Number(
     youtubeProgress?.progress_percent
       ?? (youtubeDurationSeconds ? ((youtubeProgressDraft || 0) / youtubeDurationSeconds) * 100 : 0),
@@ -956,7 +955,8 @@ export default function PostDetailPage() {
     const body = typeof comment.body === 'string' ? comment.body : '';
     return body.slice(0, 24);
   };
-  const sourceName = post ? displaySourceName(post) : '';
+  const sourceName = postSourceName(post);
+  const displayTitle = useMemo(() => displayPostTitle(post.title, postPlainText(post)), [post]);
   const publishedLabel = formatPublished(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
 
@@ -965,24 +965,13 @@ export default function PostDetailPage() {
     try {
       await writeToClipboard(postPlainText(post));
       setCopyState('copied');
+      setAnnouncement('Post text copied to the clipboard');
       window.setTimeout(() => setCopyState('idle'), 2000);
     } catch {
       setError('Could not copy the post text in this browser.');
     }
   };
 
-  const goBack = () => {
-    const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
-    if (returnTo) {
-      navigate(returnTo);
-      return;
-    }
-    if (window.history.length > 1) {
-      navigate(-1);
-      return;
-    }
-    navigate('/');
-  };
 
   const renderTimelineUpdate = (update: StoryUpdateEntry, relationLabel: string) => (
     <li key={update.id} className="px-4 py-3">
@@ -1018,57 +1007,76 @@ export default function PostDetailPage() {
     </li>
   );
 
-  if (loading) {
-    // The same container, grid and column as the loaded page, so React swaps only
-    // the children on arrival: no width or padding jump (CLS) on a cold load.
-    return (
-      <div className={PAGE_CLASS}>
-        <div className={GRID_CLASS}>
-          <div className="min-w-0" role="status" aria-busy="true" aria-live="polite">
-            <span className="sr-only">Loading post</span>
-            <div aria-hidden="true">
-              <div className="mb-5 min-h-[2rem]" />
-              <div className="mb-8">
-                <Skeleton className="h-3 w-48" />
-                <Skeleton className="mt-4 h-7 w-11/12" />
-                <Skeleton className="mt-2 h-7 w-2/3" />
-                <div className="mt-5 flex gap-2">
-                  <Skeleton className="h-8 w-28" />
-                  <Skeleton className="h-8 w-16" />
-                  <Skeleton className="h-8 w-24" />
-                </div>
-              </div>
-              <Skeleton className="mb-10 h-12 w-full" />
-              <div className="max-w-[68ch] space-y-3">
-                {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
-                  <Skeleton key={index} className={`h-3.5 ${width}`} />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-        <DevDataSwitch options={POST_FIXTURE_NAMES} />
-      </div>
-    );
-  }
+  // ---- the feed context: prev/next, back, and the post page's keys (spec §F.5) ----
+  const ctx: FeedContext | null = useMemo(() => decodeFeedContext(searchParams.get('ctx')), [searchParams]);
+  const cachedItem = findFeedItems(queryClient, [postId]).get(postId);
+  const sortAt = cachedItem?.sort_at ?? post.published_at ?? post.fetched_at ?? null;
+  const neighbors = usePostNeighbors(api, ctx, { id: postId, sortAt });
 
-  if (!post) {
-    return (
-      <div className={PAGE_CLASS}>
-        <div className={GRID_CLASS}>
-          <div className="min-w-0">
-            <div className="mb-5 min-h-[2rem]" aria-hidden="true" />
-            <EmptyState
-              title="Post not found"
-              description={error || 'This post does not exist in the database.'}
-              action={{ label: 'Back to the feed', onClick: () => navigate('/') }}
-            />
-          </div>
-        </div>
-        <DevDataSwitch options={POST_FIXTURE_NAMES} />
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (fixture) return;
+    if (neighbors.next) prefetch(neighbors.next.id);
+    if (neighbors.prev) prefetch(neighbors.prev.id);
+  }, [fixture, neighbors.next, neighbors.prev, prefetch]);
+
+  const openNeighbor = (entry: { id: string; pageCursor: string | null } | null) => {
+    if (!entry || !ctx) return;
+    // Replace, so Back still leads to the feed rather than through every post read.
+    navigate(postHref(entry.id, { ...ctx, cursor: entry.pageCursor }), { replace: true, state: location.state });
+  };
+
+  const feedPath = ctx
+    ? `${scopePath(ctx.scope)}${ctx.filter === 'unread' ? '' : `?filter=${ctx.filter}`}`
+    : '/';
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+  // `default` is the key of the first entry: opened directly or reloaded, there is no in-app Back.
+  const hasHistory = location.key !== 'default';
+  const goBack = () => {
+    if (returnTo) navigate(returnTo);
+    else if (hasHistory) navigate(-1);
+    else navigate(feedPath);
+  };
+
+  const isRead = Boolean(readerState?.read_at);
+  const toggleRead = async () => {
+    const read = !isRead;
+    const previous = readerState?.read_at ?? null;
+    const item: FeedItem = cachedItem ?? {
+      id: postId, title: post.title ?? '', excerpt: '', url: post.url ?? '',
+      source_id: post.source_id ?? '', source_display_name: post.source_display_name ?? '', platform: post.platform ?? '',
+      sort_at: sortAt ?? '', published_at: post.published_at ?? null, read_at: previous, starred_at: null,
+      reading_minutes: null, duration_seconds: null, media_thumb: null,
+    };
+    setReaderState((current) => ({ ...current, post_id: postId, read_at: read ? new Date().toISOString() : null }));
+    try {
+      await mutations.setRead(item, read);
+      setAnnouncement(read ? 'Marked as read' : 'Marked as unread');
+    } catch (failure) {
+      setReaderState((current) => ({ ...current, post_id: postId, read_at: previous }));
+      setError(errorMessage(failure));
+    }
+  };
+
+  const sourceTarget = post.source_id ? { kind: 'source' as const, id: post.source_id, name: sourceName } : null;
+  const fetchSource = () => {
+    if (fixture) {
+      setAnnouncement('Demo data is showing; fetching is off.');
+      return;
+    }
+    if (!sourceTarget || isRunning(sourceTarget)) return;
+    void runIngestion(sourceTarget);
+  };
+
+  useKeyboardShortcuts({
+    j: ctx ? () => openNeighbor(neighbors.next) : undefined,
+    k: ctx ? () => openNeighbor(neighbors.prev) : undefined,
+    u: goBack,
+    Escape: goBack,
+    m: () => void toggleRead(),
+    s: () => void handleToggleFavorite(),
+    f: fetchSource,
+    '?': () => setHelpOpen(true),
+  }, { enabled: !helpOpen && !inspectorOpen, singleKeys: shortcutsOn });
 
   const hasReadingStats = readerState && (readerState.open_count || readerState.total_read_seconds || readerState.first_opened_at);
 
@@ -1076,10 +1084,24 @@ export default function PostDetailPage() {
     <div className={PAGE_CLASS}>
       <div className={GRID_CLASS}>
         <div className="min-w-0">
-          <Button variant="ghost" size="sm" onClick={goBack} className="-ml-2.5 mb-5">
-            <ArrowLeft aria-hidden="true" />
-            Back
-          </Button>
+          <nav aria-label="Post navigation" className="-ml-2.5 mb-5 flex min-h-[2rem] flex-wrap items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={goBack} title="Back (u)">
+              <ArrowLeft aria-hidden="true" />
+              {hasHistory || returnTo ? 'Back' : 'Back to feed'}
+            </Button>
+            {ctx ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => openNeighbor(neighbors.prev)} disabled={!neighbors.prev} title="Previous post (k)">
+                  <ArrowUp aria-hidden="true" />
+                  Previous
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => openNeighbor(neighbors.next)} disabled={!neighbors.next} title="Next post (j)">
+                  <ArrowDown aria-hidden="true" />
+                  Next
+                </Button>
+              </>
+            ) : null}
+          </nav>
 
           {/* ---- Header: source / platform / date, the title, the actions ---- */}
           <header className="mb-8">
@@ -1101,7 +1123,7 @@ export default function PostDetailPage() {
               ) : null}
             </p>
             <h1 dir="auto" className="mt-3 break-words text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
-              {post.title || 'Untitled post'}
+              {displayTitle}
             </h1>
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {post.url ? (
@@ -1132,7 +1154,7 @@ export default function PostDetailPage() {
                 <PanelRight aria-hidden="true" />
                 Inspect
               </Button>
-              <span aria-live="polite" className="sr-only">{copyState === 'copied' ? 'Post text copied to the clipboard' : ''}</span>
+              <span aria-live="polite" className="sr-only">{announcement}</span>
             </div>
           </header>
 
@@ -1456,19 +1478,29 @@ export default function PostDetailPage() {
             </section>
           )}
 
-          {/* ---- Story timeline ---- */}
-          <section className="mt-14">
-            <SectionHeading
-              title="Story"
-              meta={storyPrimary ? null : 'not attached to a story yet'}
-              actions={(
+          {/* ---- Story timeline: folded, loaded only when it is opened ---- */}
+          <details
+            className="group mt-14 rounded-md border border-line"
+            onToggle={(event) => {
+              if (event.currentTarget.open && !timelineLoaded && !loadingTimeline) void loadTimeline(false);
+            }}
+          >
+            <summary className="flex cursor-pointer list-none items-baseline gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+              <span aria-hidden="true" className="w-3 shrink-0 text-fg-3 group-open:rotate-90">›</span>
+              <span className="text-[0.9375rem] font-semibold text-fg">Story</span>
+              <span className="min-w-0 truncate text-[0.8125rem] text-fg-3">
+                {!timelineLoaded ? 'story and related posts' : storyPrimary ? storyPrimary.canonical_title : 'not attached to a story yet'}
+              </span>
+            </summary>
+            <div className="border-t border-line px-4 pb-4 pt-3">
+              <div className="mb-3 flex justify-end">
                 <Button size="sm" variant="ghost" onClick={() => void loadTimeline(true)} disabled={loadingTimeline}>
                   <Busy when={loadingTimeline}>{null}</Busy>
                   Refresh
                 </Button>
-              )}
-            />
-
+              </div>
+              {loadingTimeline && !timelineLoaded ? <LoadingState label="Loading the story" rows={2} /> : (
+              <>
             {storyPrimary ? (
               <div className="mb-5">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -1506,7 +1538,7 @@ export default function PostDetailPage() {
                         {candidate.candidate_post?.title || candidate.candidate_post_id}
                       </button>
                       <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[0.75rem] tabular-nums text-fg-3">
-                        <span className="[overflow-wrap:anywhere]">{candidate.candidate_post ? displaySourceName(candidate.candidate_post) : 'Unknown source'}</span>
+                        <span className="[overflow-wrap:anywhere]">{candidate.candidate_post ? postSourceName(candidate.candidate_post) : 'Unknown source'}</span>
                         <span>· {candidate.candidate_post?.platform || 'unknown'}</span>
                         <span>· {formatTimelineDate(candidate.candidate_post?.published_at || candidate.candidate_post?.fetched_at || null)}</span>
                         <span>· {candidate.retrieval_method}</span>
@@ -1546,7 +1578,10 @@ export default function PostDetailPage() {
             ) : (
               <p className="text-[0.875rem] text-fg-3">No related posts were found for this timeline window.</p>
             )}
-          </section>
+              </>
+              )}
+            </div>
+          </details>
 
           {/* ---- Tags, topics, reading stats ---- */}
           <section className="mt-14">
@@ -1686,6 +1721,7 @@ export default function PostDetailPage() {
           </SheetContent>
         </Sheet>
       )}
+      <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} />
       <DevDataSwitch options={POST_FIXTURE_NAMES} />
     </div>
   );
