@@ -1236,6 +1236,11 @@ export interface YouTubeWatchProgressResponse {
   progress?: YouTubeWatchProgress | null;
 }
 
+/** GET /api/config. */
+export interface AppConfig {
+  analysis_enabled: boolean;
+}
+
 class ApiService {
   /** One HTTP call. Non-2xx throws `ApiError` (status + the server's clean `detail`);
    *  a network failure throws `ApiError` with status 0. Mark VIII methods catch this
@@ -2058,6 +2063,12 @@ class ApiService {
         job: null,
       };
     }
+  }
+
+  /** What the backend runs (GET /api/config, reading-finish R3). Mark IX contract:
+   *  a failure throws, and `useAnalysis` falls back to the build flag. */
+  async getConfig(): Promise<AppConfig> {
+    return this.makeRequest<AppConfig>('/api/config');
   }
 
   async getStatus(): Promise<SystemStatusResponse> {

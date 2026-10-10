@@ -12,6 +12,7 @@ import { feedDateLabel, feedFullTime } from '../lib/feedDates';
 import { formatCount, middleTruncate, plural } from '../lib/format';
 import MilestonesRail from '../components/MilestonesRail';
 import TrackBriefingPanel from '../components/TrackBriefingPanel';
+import { useAnalysisEnabled } from '../hooks/useAnalysis';
 
 const PAGE_SIZE = 25;
 
@@ -98,6 +99,9 @@ export default function TrackPage() {
   };
 
   const isTrack = folder?.kind === 'track';
+  // Reading-only (Decision 2): no tracks list to go back to, no briefing panel,
+  // no milestones rail. The page is the track's posts.
+  const analysisEnabled = useAnalysisEnabled();
 
   // "Fetch this track": a forced fetch of every enabled member source. When it
   // brings new posts, the list reloads (this page has no unread pill).
@@ -117,8 +121,8 @@ export default function TrackPage() {
   ].filter(Boolean).join(' · ');
 
   return (
-    <Page width="wide" className="pt-6 sm:pt-8">
-      <BackLink to="/tracks" label="tracks" />
+    <Page width={analysisEnabled ? 'wide' : 'reading'} className="pt-6 sm:pt-8">
+      {analysisEnabled ? <BackLink to="/tracks" label="tracks" /> : <BackLink to="/" label="feed" />}
 
       <PageHeader
         title={(
@@ -163,11 +167,12 @@ export default function TrackPage() {
         )}
       />
 
-      {/* Two columns from lg up: reading feed left, milestones rail right.
-          The rail is LAST in the DOM, so on mobile it stacks below the feed. */}
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-10">
+      {/* Analysis on: two columns from lg up, reading feed left, milestones rail
+          right. The rail is LAST in the DOM, so on mobile it stacks below the
+          feed. Reading-only: one column of posts. */}
+      <div className={analysisEnabled ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-10' : undefined}>
         <div className="min-w-0">
-          <TrackBriefingPanel folderId={trackId} className="mb-6" />
+          {analysisEnabled ? <TrackBriefingPanel folderId={trackId} className="mb-6" /> : null}
 
           <div className="mb-2 flex items-center justify-between gap-3">
             <h2 className="text-[0.8125rem] lowercase text-fg-3">posts</h2>
@@ -256,9 +261,11 @@ export default function TrackPage() {
 
         {/* A long rail must not trap the page: it scrolls inside itself when it
             outgrows the viewport. */}
-        <div className="mt-10 lg:sticky lg:top-6 lg:mt-0 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
-          <MilestonesRail folderId={trackId} />
-        </div>
+        {analysisEnabled ? (
+          <div className="mt-10 lg:sticky lg:top-6 lg:mt-0 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+            <MilestonesRail folderId={trackId} />
+          </div>
+        ) : null}
       </div>
     </Page>
   );
