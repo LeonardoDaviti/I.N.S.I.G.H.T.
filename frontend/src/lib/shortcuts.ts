@@ -6,6 +6,5 @@ export const SHORTCUT_ROWS: ReadonlyArray<{ keys: string[]; feed: string; post: 
   { keys: ['m'], feed: 'Toggle read', post: 'Toggle read' },
   { keys: ['s'], feed: 'Toggle star', post: 'Toggle star' },
   { keys: ['Shift+A'], feed: 'Mark all read up to the selected item', post: '—' },
-  { keys: ['f'], feed: 'Fetch this feed’s sources', post: 'Fetch this post’s source' },
   { keys: ['?'], feed: 'Show this help', post: 'Show this help' },
 ];

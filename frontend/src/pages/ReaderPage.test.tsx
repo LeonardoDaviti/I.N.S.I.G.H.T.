@@ -23,12 +23,13 @@ function base(methods: Partial<Record<keyof Api, unknown>>) {
   });
 }
 
-function render(api: Api) {
+function render(api: Api, route?: string) {
   return renderWithProviders(
     <Routes>
       <Route path="/" element={<ReaderPage />} />
+      <Route path="/read/:scopeKind/:scopeId?" element={<ReaderPage />} />
     </Routes>,
-    { api },
+    { api, route },
   );
 }
 
@@ -139,5 +140,34 @@ describe('ReaderPage', () => {
     }));
     expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
     expect(screen.queryByTestId('reader-ingestion-stopped')).toBeNull();
+  });
+
+  it('offers no fetch: fetching is an ingestion job, not part of reading', async () => {
+    const user = userEvent.setup();
+    const fetchSourceNow = vi.fn();
+    const runIngestionCycle = vi.fn();
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+      fetchSourceNow, runIngestionCycle,
+    }));
+    await screen.findAllByRole('article');
+    expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
+    await user.keyboard('f');
+    expect(fetchSourceNow).not.toHaveBeenCalled();
+    expect(runIngestionCycle).not.toHaveBeenCalled();
+    await user.keyboard('?');
+    const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });
+    expect(within(dialog).queryByText(/fetch/i)).toBeNull();
+  });
+
+  it('an empty source says there are no posts yet and links quietly to Sources', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+    }), `/read/source/${ID(7)}?filter=all`);
+    expect(await screen.findByText('No posts here yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', '/settings/sources');
+    expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
   });
 });

@@ -31,8 +31,6 @@ export interface FeedListProps {
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: EmptyStateAction;
-  /** `f`: fetch the current scope. */
-  onFetch?: () => void;
   /** Controlled shortcut help (the toolbar's ? button); uncontrolled when omitted. */
   helpOpen?: boolean;
   onHelpOpenChange?: (open: boolean) => void;
@@ -52,7 +50,7 @@ const PREFETCH_DELAY_MS = 150;
  */
 function FeedList({
   scope, filter, view, density, fixture = null, emptyTitle, emptyDescription, emptyAction,
-  onFetch, helpOpen, onHelpOpenChange, onUnreadDelta,
+  helpOpen, onHelpOpenChange, onUnreadDelta,
 }: FeedListProps) {
   const feed = useFeed({ scope, filter, view, fixture });
   const announce = useAnnounce();
@@ -234,7 +232,6 @@ function FeedList({
     m: () => dispatch({ type: 'toggleRead' }),
     s: () => dispatch({ type: 'toggleStar' }),
     A: () => dispatch({ type: 'markThrough' }),
-    f: onFetch,
     '?': () => setHelp(true),
   }, { enabled: !confirm && !help, singleKeys: shortcutsOn });
 

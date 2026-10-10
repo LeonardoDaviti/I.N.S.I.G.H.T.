@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Loader2, RefreshCw, Zap } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { apiService, type Folder, type Post } from '../services/api';
-import { useIngestionRun } from '../hooks/useIngestionRun';
 import { EmptyState, ErrorState, LoadingState } from '../components/states';
 import { Button, Chip, Page, PageHeader, Row } from '../components/ui';
 import BackLink from '../components/ui/BackLink';
@@ -103,16 +102,6 @@ export default function TrackPage() {
   // no milestones rail. The page is the track's posts.
   const analysisEnabled = useAnalysisEnabled();
 
-  // "Fetch this track": a forced fetch of every enabled member source. When it
-  // brings new posts, the list reloads (this page has no unread pill).
-  const { run, isRunning } = useIngestionRun();
-  const trackTarget = { kind: 'folder' as const, id: trackId, name: folder?.name };
-  const fetchingTrack = isRunning(trackTarget);
-  const fetchTrack = async () => {
-    const report = await run(trackTarget);
-    if (report && report.posts_inserted > 0) await load();
-  };
-
   const windowValue: WindowValue = days === 7 ? '7' : days === 30 ? '30' : 'all';
   const meta = [
     plural(sourceCount, 'source'),
@@ -139,31 +128,18 @@ export default function TrackPage() {
             ) : null}
           </>
         )}
+        // No fetch here: fetching is an ingestion job (Sources → the track's ⋯ menu).
         actions={(
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void load()}
-              disabled={loading}
-              aria-label="Refresh"
-              title="Refresh this list"
-            >
-              <RefreshCw aria-hidden="true" className={loading ? 'motion-safe:animate-spin' : ''} />
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void fetchTrack()}
-              disabled={fetchingTrack || !trackId}
-              aria-busy={fetchingTrack}
-              title="Fetch every enabled source in this track now (ignores cadence and backoff)"
-            >
-              {fetchingTrack
-                ? <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />
-                : <Zap aria-hidden="true" />}
-              {fetchingTrack ? 'Fetching…' : 'Fetch this track'}
-            </Button>
-          </>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void load()}
+            disabled={loading}
+            aria-label="Refresh"
+            title="Refresh this list"
+          >
+            <RefreshCw aria-hidden="true" className={loading ? 'motion-safe:animate-spin' : ''} />
+          </Button>
         )}
       />
 
@@ -193,16 +169,16 @@ export default function TrackPage() {
 
           {!loading && posts.length === 0 && !error ? (
             <EmptyState
-              title="Nothing collected yet"
+              title="No posts yet"
               description={
                 sourceCount === 0
                   ? 'This track has no sources yet. Add some from Settings → Sources.'
-                  : `This track has ${plural(sourceCount, 'source')} but no posts${days ? ` in the last ${days} days` : ''}. New sources are collected on the next ingestion tick, or fetch them now.`
+                  : `This track has ${plural(sourceCount, 'source')} but no posts${days ? ` in the last ${days} days` : ''}. Posts appear once ingestion collects them.`
               }
               action={
                 sourceCount === 0
                   ? { label: 'Add a source', href: '/settings/sources' }
-                  : { label: fetchingTrack ? 'Fetching…' : 'Fetch this track', onClick: () => void fetchTrack(), disabled: fetchingTrack }
+                  : { label: 'This track in Sources', href: '/settings/sources', quiet: true }
               }
             />
           ) : null}

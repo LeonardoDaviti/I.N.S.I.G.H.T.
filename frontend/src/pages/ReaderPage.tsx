@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 
 import type { FeedFilter, FeedView } from '../services/api';
 import FeedList from '../components/reader/FeedList';
@@ -17,7 +16,6 @@ import type { EmptyStateAction } from '../components/states';
 import { feedKey, scopeUnreadCount, useUnreadCounts, type FeedFixture } from '../hooks/useFeed';
 import { useDensityPreference } from '../hooks/useShortcutPreference';
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
-import { useIngestionRun, type IngestionTarget } from '../hooks/useIngestionRun';
 import { scopeDelta, type UnreadChange } from '../hooks/useReaderMutations';
 import { isFeedFilter, scopeFromRoute } from '../lib/feedContext';
 import { formatCount } from '../lib/format';
@@ -129,24 +127,6 @@ function Reader({ scope }: { scope: string }) {
     return text ? `?${text}` : '';
   }, [dataName, filter, view]);
 
-  // ---- fetch this scope ----
-  const { run: runIngestion, isRunning } = useIngestionRun();
-  const target: IngestionTarget = useMemo(() => {
-    if (scope === 'all') return { kind: 'all' };
-    const [kind, id] = scope.split(':');
-    return kind === 'folder' ? { kind: 'folder', id, name: title } : { kind: 'source', id, name: title };
-  }, [scope, title]);
-  const fetchLabel = scope === 'all' ? 'Fetch due sources' : scope.startsWith('folder:') ? 'Fetch this track' : 'Fetch this source';
-  const fetching = isRunning(target);
-  const fetchScope = useCallback(() => {
-    if (fixture) {
-      toast('Demo data is showing; fetching is off. Switch to Live first.');
-      return;
-    }
-    if (isRunning(target)) return;
-    void runIngestion(target);
-  }, [fixture, isRunning, runIngestion, target]);
-
   const showNewPosts = useCallback(() => {
     void queryClient.resetQueries({ queryKey: currentKey, exact: true });
     newPosts.reset(scopeCount);
@@ -169,10 +149,15 @@ function Reader({ scope }: { scope: string }) {
       return { title: 'No starred posts', description: 'Press s on a post, or its star button, to keep it here.', action: { label: 'Show all', onClick: showAll } };
     }
     if (scope === 'all') {
-      return { title: 'No posts yet', description: 'Add a source and fetch it to start reading.', action: { label: 'Add a source', href: '/settings/sources' } };
+      return { title: 'No posts yet', description: 'Add a source to start reading. Ingestion collects its posts.', action: { label: 'Add a source', href: '/settings/sources' } };
     }
-    return { title: 'No posts here yet', action: { label: fetchLabel, onClick: fetchScope, disabled: fetching } };
-  }, [fetchLabel, fetchScope, fetching, filter, scope, showAll, stopped]);
+    // Fetching is an ingestion job, not part of reading: point at Sources, quietly.
+    return {
+      title: 'No posts here yet',
+      description: 'Posts appear once ingestion collects them.',
+      action: { label: scope.startsWith('folder:') ? 'This track in Sources' : 'This source in Sources', href: '/settings/sources', quiet: true },
+    };
+  }, [filter, scope, showAll, stopped]);
 
   const subtitle = scopeCount !== null ? `${formatCount(scopeCount)} unread` : null;
 
@@ -197,9 +182,6 @@ function Reader({ scope }: { scope: string }) {
             onViewChange={(value) => setParam('view', value === 'stream' ? null : value)}
             density={density}
             onDensityChange={setDensity}
-            onFetch={fetchScope}
-            fetching={fetching}
-            fetchLabel={fetchLabel}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
             pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
@@ -226,7 +208,6 @@ function Reader({ scope }: { scope: string }) {
               emptyTitle={empty.title}
               emptyDescription={empty.description}
               emptyAction={empty.action}
-              onFetch={fetchScope}
               helpOpen={helpOpen}
               onHelpOpenChange={setHelpOpen}
               onUnreadDelta={newPosts.onUnreadDelta}

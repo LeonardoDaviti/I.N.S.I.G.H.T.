@@ -7,11 +7,13 @@ export interface EmptyStateAction {
   /** Render the action as a link instead of a button. */
   href?: string;
   disabled?: boolean;
+  /** A plain text link instead of the inverted button (a pointer elsewhere, not the next step). */
+  quiet?: boolean;
 }
 
-/** A fetch that succeeded with nothing to show: copy plus one primary action
- *  ("Fetch this track", "Show all", "Add a source"), Mark IX §F.6. Quiet: a
- *  hairline box, a short headline, the action as the one inverted button. */
+/** A load that succeeded with nothing to show: copy plus one action ("Show all",
+ *  "Add a source", or a quiet link to Sources), Mark IX §F.6. Quiet: a hairline
+ *  box, a short headline, the action as the one inverted button or a text link. */
 export default function EmptyState({
   title,
   description,
@@ -31,7 +33,11 @@ export default function EmptyState({
       {description ? <div className="mx-auto mt-1.5 max-w-prose text-[0.875rem] text-fg-2">{description}</div> : null}
       {action ? (
         <div className="mt-5">
-          {action.href ? (
+          {action.href && action.quiet ? (
+            <a href={action.href} className="text-[0.875rem] text-fg-2 underline decoration-line-strong underline-offset-4 hover:text-fg">
+              {action.label}
+            </a>
+          ) : action.href ? (
             <Button asChild variant="primary">
               <a href={action.href}>{action.label}</a>
             </Button>

@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 
 /** Every key the reader binds (spec §F.5). `A` means Shift+A. */
-export type ShortcutKey = 'j' | 'k' | 'o' | 'Enter' | 'm' | 's' | 'u' | 'Escape' | 'A' | 'f' | '?';
+export type ShortcutKey = 'j' | 'k' | 'o' | 'Enter' | 'm' | 's' | 'u' | 'Escape' | 'A' | '?';
 
 export type ShortcutBindings = Partial<Record<ShortcutKey, () => void>>;
 
-const BOUND = new Set<string>(['j', 'k', 'o', 'Enter', 'm', 's', 'u', 'Escape', 'A', 'f', '?']);
+const BOUND = new Set<string>(['j', 'k', 'o', 'Enter', 'm', 's', 'u', 'Escape', 'A', '?']);
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

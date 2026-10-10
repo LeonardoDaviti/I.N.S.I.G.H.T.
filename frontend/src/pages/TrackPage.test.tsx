@@ -7,7 +7,6 @@ import TrackPage from './TrackPage';
 import { apiService, type Post } from '../services/api';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
-import { runReport } from '../components/ops/fixtures';
 
 const TRACK = 'f8571844-1065-4d96-85b5-1dfd9dc7b111';
 
@@ -119,18 +118,18 @@ describe('TrackPage', () => {
     expect(screen.getByText('This week only')).toBeInTheDocument();
   });
 
-  it('Fetch this track reloads with the window chosen while it ran', async () => {
-    const user = userEvent.setup();
-    const report = deferred<unknown>();
-    const spy = vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue(page([post('p1', 'Claude Code ships hooks')]));
-    renderTrack(`/tracks/${TRACK}`, makeFakeApi({ fetchFolderNow: vi.fn().mockReturnValue(report.promise) }));
+  it('offers no fetch: an empty track says there are no posts yet and links quietly to Sources', async () => {
+    vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue(page([]));
+    renderTrack();
+    expect(await screen.findByText('No posts yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', '/settings/sources');
+    expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
+  });
+
+  it('shows no fetch button next to the posts', async () => {
+    vi.spyOn(apiService, 'getFolderPosts').mockResolvedValue(page([post('p1', 'Claude Code ships hooks')]));
+    renderTrack();
     await screen.findByText('Claude Code ships hooks');
-
-    await user.click(screen.getByRole('button', { name: /Fetch this track/ }));
-    await user.click(within(screen.getByRole('radiogroup', { name: 'Time window' })).getByRole('radio', { name: '30d' }));
-    report.resolve(runReport({ posts_inserted: 3, selector: { kind: 'folder', id: TRACK } }));
-
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(3));
-    expect(spy).toHaveBeenLastCalledWith(TRACK, expect.objectContaining({ days: 30 }));
+    expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
   });
 });

@@ -406,6 +406,7 @@ describe('PostDetailPage feed context and keys', () => {
     await user.keyboard('?');
     const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });
     expect(within(dialog).getByText('Next / previous post in the feed')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/fetch/i)).toBeNull();     // fetching lives in Sources
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 

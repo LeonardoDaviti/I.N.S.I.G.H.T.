@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, RefreshCw } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 import type { FeedFilter, FeedView } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
@@ -33,9 +33,6 @@ export interface FeedToolbarProps {
   onViewChange: (view: FeedView) => void;
   density: FeedDensity;
   onDensityChange: (density: FeedDensity) => void;
-  onFetch?: () => void;
-  fetching?: boolean;
-  fetchLabel: string;
   /** Below md the title is the button that opens the feeds drawer. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
@@ -45,14 +42,14 @@ export interface FeedToolbarProps {
 
 /**
  * The reader's sticky toolbar, under the app's one top bar: the scope title and
- * its unread count, the scope fetch and the shortcut help as labelled text
- * actions, then the filter, view and density as slash-separated words. The theme toggle, the
+ * its unread count and the shortcut help as a labelled text action (fetching is
+ * an ingestion job and lives in Sources), then the filter, view and density as slash-separated words. The theme toggle, the
  * wordmark and the app menu live in the top bar only. Below md the title opens
  * the feeds drawer (a chevron says so), so there is no second hamburger.
  */
 export default function FeedToolbar({
   title, subtitle, filter, onFilterChange, view, onViewChange, density, onDensityChange,
-  onFetch, fetching = false, fetchLabel, onOpenNav, onOpenHelp, pill,
+  onOpenNav, onOpenHelp, pill,
 }: FeedToolbarProps) {
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
   return (
@@ -74,13 +71,6 @@ export default function FeedToolbar({
             {subtitle ? <span className="hidden shrink-0 whitespace-nowrap text-[0.8125rem] font-normal tabular-nums text-fg-3 sm:inline">{subtitle}</span> : null}
           </h1>
           <div className="flex shrink-0 items-center gap-3">
-            {onFetch ? (
-              <button type="button" onClick={onFetch} disabled={fetching} aria-label={fetchLabel} title={`${fetchLabel} (f)`} className={TEXT_ACTION}>
-                <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${fetching ? 'motion-safe:animate-spin' : ''}`} />
-                <span className="sm:hidden">{fetching ? 'fetching…' : 'fetch'}</span>
-                <span className="hidden sm:inline">{fetching ? 'fetching…' : fetchLabel}</span>
-              </button>
-            ) : null}
             <button type="button" onClick={onOpenHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" className={`${TEXT_ACTION} hidden sm:inline-flex`}>
               shortcuts
               <kbd aria-hidden="true" className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-[0.25rem] border border-line-strong px-1 font-sans text-[0.75rem] not-italic text-fg-2 no-underline">?</kbd>

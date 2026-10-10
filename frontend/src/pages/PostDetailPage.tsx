@@ -40,7 +40,6 @@ import { usePostNeighbors } from '../hooks/usePostNeighbors';
 import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
-import { useIngestionRun } from '../hooks/useIngestionRun';
 import { decodeFeedContext, postHref, scopePath, type FeedContext } from '../lib/feedContext';
 import { rememberSelection } from '../lib/readerSelection';
 import { displayPostTitle } from '../lib/postTitle';
@@ -637,7 +636,6 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   const [helpOpen, setHelpOpen] = useState(false);
   const openRecordedRef = useRef(false);
   const mutations = useReaderMutations({ dryRun: Boolean(fixture) });
-  const { run: runIngestion, isRunning } = useIngestionRun();
   const [shortcutsOn] = useShortcutPreference();
   const prefetch = usePrefetchPost();
 
@@ -1088,16 +1086,6 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     }
   };
 
-  const sourceTarget = post.source_id ? { kind: 'source' as const, id: post.source_id, name: sourceName } : null;
-  const fetchSource = () => {
-    if (fixture) {
-      setAnnouncement('Demo data is showing; fetching is off.');
-      return;
-    }
-    if (!sourceTarget || isRunning(sourceTarget)) return;
-    void runIngestion(sourceTarget);
-  };
-
   useKeyboardShortcuts({
     j: ctx ? () => openNeighbor(neighbors.next) : undefined,
     k: ctx ? () => openNeighbor(neighbors.prev) : undefined,
@@ -1105,7 +1093,6 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     Escape: goBack,
     m: () => void toggleRead(),
     s: () => void handleToggleFavorite(),
-    f: fetchSource,
     '?': () => setHelpOpen(true),
   }, { enabled: !helpOpen && !inspectorOpen, singleKeys: shortcutsOn });
 
