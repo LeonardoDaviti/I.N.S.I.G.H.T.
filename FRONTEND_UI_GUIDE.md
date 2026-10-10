@@ -17,8 +17,12 @@ content scrolls under it. Dark is the default theme; light has parity.
 - Opens on the unread feed of the main digest. The rail lists tracks and sources with unread
   counts; below `md` it is a drawer opened from the scope title.
 - Rows: a muted date column, a bold title (wraps to two lines, never ellipsised to one), and a
-  one-line meta with the source name (`sourceLabel()`, never a raw URL). Day headers group the rows.
-  Read and star sit side by side and are always visible on touch.
+  one-line meta with an unread dot and the source name (`sourceLabel()`, never a raw URL). Day
+  headers group the rows (drawn for the eye; each row reads its day out with its time, so the ARIA
+  feed holds articles only). Read and star sit side by side, always visible on touch (phones
+  included), revealed instantly on hover with a mouse.
+- When no enabled source has been fetched for a day, a "stopped" notice sits above the list and an
+  empty unread feed says "ingestion has stopped" instead of "all caught up".
 - Toolbar: `unread / starred / all`, `stream / by source`, and density `comfortable / compact`
   (persisted), as slash-separated words.
 - New posts never reorder the loaded list; a "N new posts" pill appears instead.
@@ -29,10 +33,15 @@ content scrolls under it. Dark is the default theme; light has parity.
 
 ## Post (`/posts/:postId`)
 
-A reading column of about 68ch: the full title, the original content first as wrapped prose
-(monospace only for real code blocks), then the secondary panels collapsed. Prev/next follow the
-feed order, carried in `?ctx=` so a reload keeps them; `u`/Esc returns to the feed with scroll and
-selection restored. Opening a post marks it read.
+A reading column of about 68ch: the full title (a stored title cut with "…" shows the text's
+whole first line), the original content first as wrapped prose (monospace only for real code
+blocks), then the secondary panels collapsed; the story timeline loads only when its panel opens.
+The post loads through `usePost`, so a post the feed prefetched opens without a skeleton.
+Prev/next (buttons and `j`/`k`) follow the feed order, carried in `?ctx=` so a reload keeps them;
+without a context there is no prev/next and the way out reads "Back to feed". `u`/Esc returns to
+the feed, which selects and scrolls to the post read last. `m` toggles read, `s` star, `f` fetches
+the post's source, `?` shows the shortcut table. Opening a post marks it read (the feed's cached
+rows and counts follow).
 
 ## Sources (`/settings/sources`)
 

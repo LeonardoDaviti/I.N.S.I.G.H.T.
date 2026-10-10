@@ -48,7 +48,13 @@ pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyp
 4. **Pure logic** goes in `lib/` with a `*.test.ts` next to it. Components get a `*.test.tsx`
    rendered with `renderWithProviders` and a fake API through `ApiProvider`.
 5. **Lists and rows** ship worst / empty / one / huge fixtures behind the dev-only `?data=` switch
-   (`components/ops/DevDataSwitch.tsx`), and are checked at 375px.
+   (`components/ops/DevDataSwitch.tsx`), and are checked at 375px. Import fixture data lazily
+   behind `import.meta.env.DEV` (see `ReaderPage`'s `useDevFeedFixture`), so it never ships in the
+   production bundle; only the names live in a small module.
+6. **Query keys** are exported constants (`FEED_ROOT_KEY`, `UNREAD_COUNTS_KEY`,
+   `SOURCES_HEALTH_KEY`, `FOLDERS_KEY`, `postKey`), never repeated as string literals. A failed
+   background refetch keeps the loaded data on screen with a notice; only a failed first load
+   renders `ErrorState`.
 
 ## Styling
 
@@ -57,9 +63,16 @@ pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyp
 - Pages use `<Page width="reading|ops">` and `<PageHeader title meta actions>`. One primary
   (inverted) button per view.
 - Buttons: `<Button variant="primary|secondary|ghost|danger" size="sm|md|lg|icon">`. Icon-only
-  buttons need an `aria-label`; `icon` gives a 44px hit area on touch.
+  buttons need an `aria-label`; `icon` gives a 44px hit area on touch. `danger` is the inverted
+  block with an inner hairline and a leading "×" (added by `<Button>`), so it never looks like the
+  primary action.
 - Destructive actions (delete a source or folder, force a full run, mark all read) confirm first
-  with `components/ops/ConfirmDialog.tsx`, and the dialog says what cascades.
+  with `components/ops/ConfirmDialog.tsx` (or a `Dialog` with a `danger` button), and the dialog
+  says what cascades (deleting a track also deletes its experts and its milestone lanes).
+- Dialogs, key caps and switches: `Dialog`/`DialogContent`, `Kbd` and `Switch` from
+  `components/ui`; never a hand-built overlay, `<kbd>` or `role="switch"` button.
+- Sticky chrome under the top bar says so in markup: `sticky top-topbar` (and
+  `h-[calc(100dvh-var(--topbar-h))]` for a full-height rail), not a CSS override.
 - Toasts: `sonner` through `components/ui/Toaster`, monochrome. Say the outcome and link to the job.
 - Motion: short (under 200ms), ease-out, nothing on actions repeated many times a day, and
   fade-only under `prefers-reduced-motion`.
