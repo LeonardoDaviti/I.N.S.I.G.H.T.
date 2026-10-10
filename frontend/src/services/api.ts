@@ -417,7 +417,7 @@ export interface RunReport {
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | 'gemini' | 'langfuse' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -425,13 +425,12 @@ export interface CredentialField {
   hint: string;
   /** False: set only by a flow (the Telegram session). */
   writable: boolean;
-  /** The environment fallback's name (SUBSTACK_SID), or null. */
-  env: string | null;
   set: boolean;
   /** The last 4 characters of the saved value (null for the session). Never the value. */
   last4: string | null;
   updated_at: string | null;
-  source: 'db' | 'env' | 'file' | 'none';
+  /** 'db' when stored in Connections (the only place secrets live), else 'none'. */
+  source: 'db' | 'none';
   error: string | null;
 }
 
@@ -450,6 +449,8 @@ export interface CredentialProviderView {
   needed: boolean;
   testable: boolean;
   sign_in: boolean;
+  /** Gemini, Langfuse: shown only while analysis is on. */
+  analysis_only: boolean;
   configured: boolean;
   fields: CredentialField[];
   test: CredentialTest | null;

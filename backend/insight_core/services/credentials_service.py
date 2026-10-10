@@ -90,7 +90,6 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
         "Optional tracing of the analysis features' Gemini calls.",
         (FieldSpec("public_key", "Public key", "Langfuse → Project settings → API keys (pk-lf-…)."),
          FieldSpec("secret_key", "Secret key", "Shown once when the key pair is created (sk-lf-…).")),
-        needed=False,
         analysis_only=True,
     ),
 )

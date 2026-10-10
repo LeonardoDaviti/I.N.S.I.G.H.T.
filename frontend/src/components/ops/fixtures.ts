@@ -125,7 +125,7 @@ export function worstHealthRows(now: Date = new Date()): SourceHealthRow[] {
       kind: 'telegram_mtproto',
       status: 'unavailable',
       decision: 'skip_unavailable',
-      decision_detail: 'No Telegram session: run `python -m insight_core.scripts.telegram_login` on the server',
+      decision_detail: 'no Telegram session; sign in under Sources → Connections',
       tier: 'unknown',
       mean_gap_hours: null,
       interval_hours: 24,

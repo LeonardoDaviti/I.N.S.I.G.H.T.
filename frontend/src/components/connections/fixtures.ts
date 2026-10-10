@@ -9,7 +9,6 @@ export function field(overrides: Partial<CredentialField> & { key: string }): Cr
     label: overrides.key,
     hint: '',
     writable: true,
-    env: null,
     set: false,
     last4: null,
     updated_at: null,
@@ -24,7 +23,6 @@ export function substackView(overrides: Partial<CredentialProviderView> = {}, si
     key: 'sid',
     label: 'Session cookie (substack.sid)',
     hint: 'Log into substack.com, open DevTools → Application → Cookies → substack.com and copy the value of substack.sid. It lasts months.',
-    env: 'SUBSTACK_SID',
     ...sid,
   });
   return {
@@ -34,6 +32,7 @@ export function substackView(overrides: Partial<CredentialProviderView> = {}, si
     needed: true,
     testable: true,
     sign_in: false,
+    analysis_only: false,
     configured: sidField.set,
     fields: [sidField],
     test: null,
@@ -46,8 +45,8 @@ export function telegramView(
   { apiSet = false, session = false, ...overrides }: Partial<CredentialProviderView> & { apiSet?: boolean; session?: boolean } = {},
 ): CredentialProviderView {
   const fields = [
-    field({ key: 'api_id', label: 'API ID', hint: 'The number shown at my.telegram.org → API development tools.', env: 'TELEGRAM_API_ID', ...(apiSet ? { set: true, last4: '4821', source: 'db' as const, updated_at: '2026-10-09T10:00:00Z' } : {}) }),
-    field({ key: 'api_hash', label: 'API hash', hint: 'The 32-character hash next to the API ID.', env: 'TELEGRAM_API_HASH', ...(apiSet ? { set: true, last4: '9e1c', source: 'db' as const, updated_at: '2026-10-09T10:00:00Z' } : {}) }),
+    field({ key: 'api_id', label: 'API ID', hint: 'The number shown at my.telegram.org → API development tools.', ...(apiSet ? { set: true, last4: '4821', source: 'db' as const, updated_at: '2026-10-09T10:00:00Z' } : {}) }),
+    field({ key: 'api_hash', label: 'API hash', hint: 'The 32-character hash next to the API ID.', ...(apiSet ? { set: true, last4: '9e1c', source: 'db' as const, updated_at: '2026-10-09T10:00:00Z' } : {}) }),
     field({ key: 'session', label: 'Session', hint: 'Created by signing in with your phone number.', writable: false, ...(session ? { set: true, source: 'db' as const } : {}) }),
   ];
   return {
@@ -57,6 +56,7 @@ export function telegramView(
     needed: true,
     testable: true,
     sign_in: true,
+    analysis_only: false,
     configured: fields.every((f) => f.set),
     fields,
     test: null,
@@ -73,10 +73,48 @@ export function publicView(provider: 'reddit' | 'youtube'): CredentialProviderVi
     needed: false,
     testable: false,
     sign_in: false,
+    analysis_only: false,
     configured: false,
     fields: [],
     test: null,
     login: null,
+  };
+}
+
+export function geminiView(overrides: Partial<CredentialProviderView> = {}): CredentialProviderView {
+  return {
+    provider: 'gemini',
+    label: 'Gemini',
+    description: 'The Google AI key the analysis features (briefings, topics, post analysis) call.',
+    needed: true,
+    testable: false,
+    sign_in: false,
+    analysis_only: true,
+    configured: false,
+    fields: [field({ key: 'api_key', label: 'API key', hint: 'Create one at aistudio.google.com → Get API key.' })],
+    test: null,
+    login: null,
+    ...overrides,
+  };
+}
+
+export function langfuseView(overrides: Partial<CredentialProviderView> = {}): CredentialProviderView {
+  return {
+    provider: 'langfuse',
+    label: 'Langfuse',
+    description: 'Optional tracing of the analysis features’ Gemini calls.',
+    needed: true,
+    testable: false,
+    sign_in: false,
+    analysis_only: true,
+    configured: false,
+    fields: [
+      field({ key: 'public_key', label: 'Public key', hint: 'Langfuse → Project settings → API keys (pk-lf-…).' }),
+      field({ key: 'secret_key', label: 'Secret key', hint: 'Shown once when the key pair is created (sk-lf-…).' }),
+    ],
+    test: null,
+    login: null,
+    ...overrides,
   };
 }
 

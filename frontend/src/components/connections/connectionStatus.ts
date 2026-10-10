@@ -37,13 +37,11 @@ export function providerStatus(view: CredentialProviderView): ProviderStatus {
   return { glyph: 'scheduled', label: 'not set' };
 }
 
-/** "set · ••••a3f · updated 2026-10-10" (or "from .env"). Never the value: only its last 4. */
+/** "set · ••••a3f · updated 2026-10-10". Never the value: only its last 4. */
 export function fieldSummary(field: CredentialField): string {
   const parts = ['set'];
   if (field.last4) parts.push(`••••${field.last4}`);
-  if (field.source === 'env') parts.push(`from .env${field.env ? ` (${field.env})` : ''}`);
-  else if (field.source === 'file') parts.push('from the session file');
-  else if (field.updated_at) {
+  if (field.updated_at) {
     const date = new Date(field.updated_at);
     if (!Number.isNaN(date.getTime())) parts.push(`updated ${localDateISO(date)}`);
   }

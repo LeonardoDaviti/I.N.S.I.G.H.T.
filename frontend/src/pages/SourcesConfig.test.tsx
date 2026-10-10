@@ -222,8 +222,8 @@ describe('SourcesConfig', () => {
     const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
     const tg = healthRow({
       source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable',
-      decision: 'skip_unavailable', decision_detail: 'TELEGRAM_API_ID is not set; add it in Sources → Connections',
-      unavailable_reason: 'TELEGRAM_API_ID is not set; add it in Sources → Connections', folders: [],
+      decision: 'skip_unavailable', decision_detail: 'Telegram API ID is not set; add it in Sources → Connections',
+      unavailable_reason: 'Telegram API ID is not set; add it in Sources → Connections', folders: [],
     });
     setup('/settings/sources', { getCredentials, getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([tg])) });
     await userEvent.click(await screen.findByRole('button', { name: 'ai_newz' }));

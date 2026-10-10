@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import ConnectionsPanel from './ConnectionsPanel';
 import ConnectionsLink from './ConnectionsLink';
 import AddSourceModal from '../AddSourceModal';
-import { credentials, demoCredentials, publicView, substackView, telegramView } from './fixtures';
+import { credentials, demoCredentials, geminiView, langfuseView, publicView, substackView, telegramView } from './fixtures';
 import { cookieValue, isSubstackUrl, missingCredentialProvider, providerStatus } from './connectionStatus';
 import { healthRow } from '../ops/fixtures';
 import { makeFakeApi } from '../../test/fakeApi';
@@ -100,11 +100,25 @@ describe('ConnectionsPanel', () => {
     expect(screen.getByLabelText('Session cookie (substack.sid)')).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('an .env value shows as from .env, with replace but no remove', async () => {
-    setup({ getCredentials: vi.fn().mockResolvedValue(credentials(substackView({}, { set: true, last4: '77b2', source: 'env' }))) }, 'substack');
-    expect(await screen.findByTestId('field-summary')).toHaveTextContent('set · ••••77b2 · from .env (SUBSTACK_SID)');
-    expect(screen.getByRole('button', { name: 'replace' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'remove' })).not.toBeInTheDocument();
+  it('a field is either set (stored, with remove) or not set; nothing mentions .env', async () => {
+    setup({ getCredentials: vi.fn().mockResolvedValue(credentials(savedSubstack(), telegramView())) }, 'substack');
+    expect(await screen.findByTestId('field-summary')).toHaveTextContent('set · ••••a3f9 · updated 2026-10-10');
+    expect(screen.getByRole('button', { name: 'remove' })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/\.env/);
+  });
+
+  it('shows the Gemini and Langfuse connections only with analysis on', async () => {
+    const getCredentials = vi.fn().mockResolvedValue(credentials(savedSubstack(), geminiView(), langfuseView()));
+    const { unmount } = setup({ getCredentials, getConfig: vi.fn().mockResolvedValue({ analysis_enabled: false }) });
+    expect(await screen.findByText('Substack')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Gemini')).not.toBeInTheDocument());
+    expect(screen.queryByText('Langfuse')).not.toBeInTheDocument();
+    unmount();
+
+    setup({ getCredentials, getConfig: vi.fn().mockResolvedValue({ analysis_enabled: true }) }, 'gemini');
+    expect(await screen.findByText('Gemini')).toBeInTheDocument();
+    expect(screen.getByText('Langfuse')).toBeInTheDocument();
+    expect(await screen.findByLabelText('API key')).toHaveAttribute('type', 'password');
   });
 
   it('test: disabled with nothing set, testing… while running, then the inline result', async () => {
@@ -200,7 +214,7 @@ describe('ConnectionsLink', () => {
   it('links an unavailable telegram source to its connection; nothing for other reasons', () => {
     const api = makeFakeApi({});
     const { unmount } = renderWithProviders(
-      <ConnectionsLink row={healthRow({ platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', unavailable_reason: 'TELEGRAM_API_ID is not set; add it in Sources → Connections' })} />,
+      <ConnectionsLink row={healthRow({ platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', unavailable_reason: 'Telegram API ID is not set; add it in Sources → Connections' })} />,
       { api },
     );
     expect(screen.getByRole('link', { name: 'add in Connections' })).toHaveAttribute('href', '/settings/sources?tab=connections&provider=telegram');

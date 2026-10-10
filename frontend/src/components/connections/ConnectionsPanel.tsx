@@ -10,6 +10,7 @@ import TelegramSignIn from './TelegramSignIn';
 import TestButton from './TestButton';
 import { providerStatus } from './connectionStatus';
 import { useConnections } from './useConnections';
+import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 
 const ROW = 'flex w-full min-w-0 items-start gap-3 px-1 py-3 text-left';
 
@@ -79,6 +80,7 @@ function ProviderSection({ view, open, onToggle }: { view: CredentialProviderVie
  */
 export default function ConnectionsPanel({ initialOpen }: { initialOpen?: string | null }) {
   const query = useConnections();
+  const analysisEnabled = useAnalysisEnabled();
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(initialOpen ? [initialOpen] : []));
 
   if (query.isPending) return <LoadingState label="Loading connections" rows={4} />;
@@ -88,10 +90,10 @@ export default function ConnectionsPanel({ initialOpen }: { initialOpen?: string
   return (
     <section aria-label="Connections" className="max-w-[44rem]">
       <p className="mb-3 text-[0.8125rem] text-fg-2">
-        Secrets some sources need. They are stored encrypted on this machine and never shown again after saving; .env values still work as a fallback.
+        Secrets some sources need. This is the only place they live: stored encrypted on this machine and never shown again after saving.
       </p>
       <ul className="border-t border-line">
-        {query.data.providers.map((view) => (
+        {query.data.providers.filter((view) => analysisEnabled || !view.analysis_only).map((view) => (
           <ProviderSection
             key={view.provider}
             view={view}

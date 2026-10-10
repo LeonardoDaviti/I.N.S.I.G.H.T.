@@ -80,7 +80,7 @@ export default function ConnectionField({
             placeholder={placeholder ?? (field.set ? 'New value' : 'Paste the value')}
             autoComplete="off"
             spellCheck={false}
-            aria-describedby={[hideHint && field.source !== 'env' ? null : hintId, error ? errorId : null].filter(Boolean).join(' ') || undefined}
+            aria-describedby={[hideHint ? null : hintId, error ? errorId : null].filter(Boolean).join(' ') || undefined}
             aria-invalid={error ? true : undefined}
             className="min-w-[12rem] flex-1 font-mono"
             autoFocus={editing}
@@ -116,12 +116,7 @@ export default function ConnectionField({
           ) : null}
         </div>
       )}
-      {hideHint && field.source !== 'env' ? null : (
-        <p id={hintId} className="text-[0.75rem] text-fg-3">
-          {hideHint ? '' : field.hint}
-          {field.source === 'env' && field.writable ? `${hideHint ? '' : ' '}Saving here overrides .env.` : ''}
-        </p>
-      )}
+      {hideHint ? null : <p id={hintId} className="text-[0.75rem] text-fg-3">{field.hint}</p>}
       {field.error ? <p className="text-[0.75rem] text-fg">{field.error}</p> : null}
       {error ? (
         <p id={errorId} role="alert" className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
