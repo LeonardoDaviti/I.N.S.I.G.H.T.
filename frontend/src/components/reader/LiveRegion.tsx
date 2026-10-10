@@ -12,7 +12,7 @@ export function LiveRegionProvider({ children }: { children: ReactNode }) {
   const flip = useRef(false);
   const announce = useCallback((next: string) => {
     flip.current = !flip.current;
-    setMessage(flip.current ? next : `${next} `);
+    setMessage(flip.current ? next : `${next}\u00a0`);
   }, []);
   return (
     <AnnounceContext.Provider value={announce}>

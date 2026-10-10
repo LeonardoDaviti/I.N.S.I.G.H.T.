@@ -159,7 +159,7 @@ export default function ReaderNavRail({ scope, filter, counts, search, drawerOpe
 }) {
   return (
     <>
-      <aside className="reader-rail sticky top-0 hidden h-dvh w-60 shrink-0 flex-col overflow-y-auto border-r border-line pt-2 md:flex lg:w-64">
+      <aside className="reader-rail sticky top-topbar hidden h-[calc(100dvh-var(--topbar-h))] w-60 shrink-0 flex-col overflow-y-auto border-r border-line pt-2 md:flex lg:w-64">
         <RailContent scope={scope} filter={filter} counts={counts} search={search} />
       </aside>
       <Dialog.Root open={drawerOpen} onOpenChange={onDrawerOpenChange}>

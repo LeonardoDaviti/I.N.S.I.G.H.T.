@@ -20,7 +20,7 @@ export type NavAction =
   | { type: 'sync'; ids: readonly string[]; hasMore: boolean }
   | { type: 'next' }
   | { type: 'prev' }
-  | { type: 'select'; id: string }
+  | { type: 'select'; id: string; /** Also focus and scroll to it (coming back from a post). */ focus?: boolean }
   | { type: 'open' }
   | { type: 'toggleRead' }
   | { type: 'toggleStar' }
@@ -95,6 +95,7 @@ export function feedNavigation(state: NavState, action: NavAction): NavState {
     }
     case 'select':
       if (!state.ids.includes(action.id)) return { ...state, intent: null };
+      if (action.focus) return moveTo(state, action.id);
       return { ...state, selectedId: action.id, pendingAdvance: false, intent: null };
     case 'open':
       return selectedIntent(state, 'open');

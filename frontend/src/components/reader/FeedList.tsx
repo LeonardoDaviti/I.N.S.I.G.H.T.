@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import type { FeedFilter, FeedItem as FeedItemData, FeedView } from '../../services/api';
 import { useFeed, type FeedFixture } from '../../hooks/useFeed';
 import { usePrefetchPost } from '../../hooks/usePost';
-import { useReaderMutations } from '../../hooks/useReaderMutations';
+import { useReaderMutations, type UnreadChange } from '../../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { useShortcutPreference, type FeedDensity } from '../../hooks/useShortcutPreference';
 import { feedNavigation, initialNavState, type NavAction, type NavIntent } from '../../lib/feedNavigation';
@@ -15,7 +15,9 @@ import { plural } from '../../lib/format';
 import { feedDayHeading, feedDayKey } from '../../lib/feedDates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 import ConfirmDialog from '../ops/ConfirmDialog';
-import FeedItem, { feedItemDomId } from './FeedItem';
+import FeedItem from './FeedItem';
+import { feedItemDomId } from '../../lib/feedItem';
+import { recallSelection, rememberSelection } from '../../lib/readerSelection';
 import FeedGroup from './FeedGroup';
 import ShortcutHelp from './ShortcutHelp';
 import { useAnnounce } from './LiveRegion';
@@ -34,8 +36,8 @@ export interface FeedListProps {
   /** Controlled shortcut help (the toolbar's ? button); uncontrolled when omitted. */
   helpOpen?: boolean;
   onHelpOpenChange?: (open: boolean) => void;
-  /** Each local change of the unread total (for the "N new posts" pill). */
-  onUnreadDelta?: (delta: number) => void;
+  /** Each local change applied to the cached unread counts (for the "N new posts" pill). */
+  onUnreadDelta?: (change: UnreadChange) => void;
 }
 
 const UNDO_MS = 5_000;
@@ -56,7 +58,7 @@ function FeedList({
   const announce = useAnnounce();
   const navigate = useNavigate();
   const prefetch = usePrefetchPost();
-  const mutations = useReaderMutations({ dryRun: Boolean(fixture), onUnreadDelta });
+  const mutations = useReaderMutations({ dryRun: Boolean(fixture), onUnreadDelta, scope });
   const [shortcutsOn] = useShortcutPreference();
   const [internalHelp, setInternalHelp] = useState(false);
   const help = helpOpen ?? internalHelp;
@@ -69,17 +71,16 @@ function FeedList({
   // re-rendered once more) on every toggle.
   const idsKey = useMemo(() => items.map((item) => item.id).join('\n'), [items]);
   const ids = useMemo(() => (idsKey ? idsKey.split('\n') : []), [idsKey]);
-  // Day headers for the stream: the index of each day's first row and its heading,
-  // computed once per items array instead of twice per row per render.
-  const dayHeadings = useMemo(() => {
-    const headings = new Map<number, string>();
+  // Day headers for the stream: each row's day heading, and whether the row is the
+  // first of its day (where the header is drawn), computed once per items array.
+  const days = useMemo(() => {
     let previous: string | null = null;
-    items.forEach((item, index) => {
-      const day = feedDayKey(item.sort_at);
-      if (day !== previous) headings.set(index, feedDayHeading(item.sort_at));
-      previous = day;
+    return items.map((item) => {
+      const key = feedDayKey(item.sort_at);
+      const first = key !== previous;
+      previous = key;
+      return { label: feedDayHeading(item.sort_at), first };
     });
-    return headings;
   }, [items]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -118,6 +119,8 @@ function FeedList({
   }, [announce, mutations]);
 
   const openItem = useCallback((item: FeedItemData) => {
+    // Coming back to the feed (u, Back) selects the post that was read last.
+    rememberSelection(item.id);
     if (!item.read_at) {
       mutations.setRead(item, true).catch(() => {
         // Opening the post records the open (and sets read_at) server-side as well.
@@ -210,6 +213,15 @@ function FeedList({
     dispatch({ type: 'sync', ids, hasMore: Boolean(feed.hasNextPage) });
   }, [dispatch, feed.hasNextPage, ids]);
 
+  // Back from a post: select (and scroll to) the post read last, once it is loaded.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !ids.length) return;
+    restored.current = true;
+    const last = recallSelection();
+    if (last && ids.includes(last)) dispatch({ type: 'select', id: last, focus: true });
+  }, [dispatch, ids]);
+
   const select = useCallback((id: string) => {
     if (navRef.current.selectedId !== id) dispatch({ type: 'select', id });
   }, [dispatch]);
@@ -280,33 +292,40 @@ function FeedList({
   } else {
     body = (
       <>
-        <div role="feed" aria-label="Posts" aria-busy={isFetchingNextPage} className={view === 'by_source' ? 'flex flex-col gap-6' : `flex flex-col ${density === 'compact' ? 'gap-1' : 'gap-2'}`}>
-          {view === 'by_source'
-            ? groups.map((group) => (
+        {view === 'by_source' ? (
+          // One section per source, each with its heading; the rows are articles inside.
+          <div aria-label="Posts by source" role="region" aria-busy={isFetchingNextPage} className="flex flex-col gap-6">
+            {groups.map((group) => (
               <FeedGroup key={group.source_id} group={group} tabbableId={tabbableId} itemHref={itemHref} {...shared} />
-            ))
-            : items.map((item, index) => {
-              const heading = dayHeadings.get(index);
-              return (
-                <Fragment key={item.id}>
-                  {heading ? (
-                    <h2 className={`px-1 pb-0.5 text-[0.8125rem] font-semibold tracking-[-0.006em] text-fg-2 ${index === 0 ? '' : 'pt-5'}`}>
-                      {heading}
-                    </h2>
-                  ) : null}
-                  <FeedItem
-                    item={item}
-                    selected={item.id === selectedId}
-                    tabbable={item.id === tabbableId}
-                    href={itemHref(item)}
-                    onMarkThrough={askMarkThrough}
-                    dateColumn="time"
-                    {...shared}
-                  />
-                </Fragment>
-              );
-            })}
-        </div>
+            ))}
+          </div>
+        ) : (
+          // An ARIA feed owns articles only: the day headers are drawn for the eye
+          // (aria-hidden) and each row reads its own day out with its time.
+          <div role="feed" aria-label="Posts" aria-busy={isFetchingNextPage} className={`flex flex-col ${density === 'compact' ? 'gap-1' : 'gap-2'}`}>
+            {items.map((item, index) => (
+              <Fragment key={item.id}>
+                {days[index].first ? (
+                  <div aria-hidden="true" data-day-header className={`px-1 pb-0.5 text-[0.8125rem] font-semibold tracking-[-0.006em] text-fg-2 ${index === 0 ? '' : 'pt-5'}`}>
+                    {days[index].label}
+                  </div>
+                ) : null}
+                <FeedItem
+                  item={item}
+                  selected={item.id === selectedId}
+                  tabbable={item.id === tabbableId}
+                  href={itemHref(item)}
+                  onMarkThrough={askMarkThrough}
+                  dateColumn="time"
+                  dayLabel={days[index].label}
+                  position={index + 1}
+                  setSize={hasNextPage ? -1 : items.length}
+                  {...shared}
+                />
+              </Fragment>
+            ))}
+          </div>
+        )}
         <div ref={sentinel} aria-hidden="true" className="h-px" />
         <div className="flex flex-col items-center gap-2 py-6">
           {isFetchNextPageError ? (

@@ -7,7 +7,7 @@ import ReaderPage from './ReaderPage';
 import { feedItem, feedPage } from '../components/reader/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
-import { healthResponse } from '../components/ops/fixtures';
+import { healthResponse, healthRow } from '../components/ops/fixtures';
 import { feedCursorFor } from '../lib/feedContext';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import type { Api } from '../services/api';
@@ -115,5 +115,29 @@ describe('ReaderPage', () => {
     expect(getFeed).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('radio', { name: 'Starred' }));
     await waitFor(() => expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'starred' })));
+  });
+
+  it('says ingestion has stopped instead of "all caught up" when nothing was fetched for a day', async () => {
+    const twoDaysAgo = new Date(Date.now() - 48 * 3_600_000).toISOString();
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+      getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([healthRow({ source_id: 's1', last_attempt_at: twoDaysAgo, last_success_at: twoDaysAgo })])),
+    }));
+    const notice = await screen.findByTestId('reader-ingestion-stopped');
+    expect(notice).toHaveTextContent(/not running/i);
+    expect(notice).toHaveTextContent(/last fetch was 2d ago/);
+    expect(await screen.findByText(/No new posts: ingestion has stopped/)).toBeInTheDocument();
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+  });
+
+  it('a recent fetch keeps the calm "all caught up"', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+      getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([healthRow({ source_id: 's1', last_attempt_at: new Date().toISOString() })])),
+    }));
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('reader-ingestion-stopped')).toBeNull();
   });
 });

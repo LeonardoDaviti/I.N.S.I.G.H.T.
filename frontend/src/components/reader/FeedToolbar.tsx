@@ -56,7 +56,7 @@ export default function FeedToolbar({
 }: FeedToolbarProps) {
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
   return (
-    <div className="reader-material reader-edge sticky top-0 z-30">
+    <div className="reader-material reader-edge sticky top-topbar z-30">
       <div className="w-full max-w-5xl px-4 pb-2 pt-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="flex min-w-0 flex-1 items-baseline gap-2" title={title}>

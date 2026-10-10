@@ -10,6 +10,7 @@ import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import { resetStoredChoices, SHORTCUTS_KEY } from '../../hooks/useShortcutPreference';
 import { ApiError } from '../../lib/apiError';
+import { rememberSelection } from '../../lib/readerSelection';
 import type { Api } from '../../services/api';
 
 const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
@@ -50,6 +51,7 @@ const liveRegion = () => document.getElementById('reader-live-region') as HTMLEl
 beforeEach(() => {
   window.localStorage.clear();
   resetStoredChoices();
+  rememberSelection('');
 });
 
 describe('FeedList', () => {
@@ -71,12 +73,42 @@ describe('FeedList', () => {
     const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     expect(within(oldOne).queryByText(shortDate)).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+[hd] ago/)).not.toBeInTheDocument();
-    const headings = screen.getAllByRole('heading', { level: 2 });
-    expect(headings).toHaveLength(2);
-    expect(headings[1]).toHaveTextContent(shortDate);
+    // The day headers are drawn for the eye only: the ARIA feed owns articles, and
+    // each row reads its day out with its time.
+    const headers = Array.from(document.querySelectorAll('[data-day-header]'));
+    expect(headers).toHaveLength(2);
+    expect(headers[1]).toHaveTextContent(shortDate);
+    expect(headers[1]).toHaveAttribute('aria-hidden', 'true');
+    expect(Array.from(screen.getByRole('feed').children).every((child) => child.tagName === 'ARTICLE' || child.hasAttribute('data-day-header'))).toBe(true);
+    expect(oldOne.querySelector('time')).toHaveTextContent(`${shortDate}, ${clock(old)}`);
     expect(screen.getByText('anthropics/claude-code')).toBeInTheDocument();
     expect(screen.getByText('arXiv cs.CL')).toBeInTheDocument();
     expect(screen.queryByText(/github\.com|rss\.arxiv/)).not.toBeInTheDocument();
+  });
+
+  it('numbers the articles for the feed; the set size is unknown while more pages can load', async () => {
+    setup({ getFeed: vi.fn().mockResolvedValue({ ...feedPage(items()), next_cursor: 'more' }) });
+    const articles = await screen.findAllByRole('article');
+    expect(articles.map((a) => a.getAttribute('aria-posinset'))).toEqual(['1', '2', '3']);
+    expect(articles.every((a) => a.getAttribute('aria-setsize') === '-1')).toBe(true);
+  });
+
+  it('marks unread rows with the unread dot', async () => {
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Unread one', read_at: null }),
+      feedItem({ id: ID(2), title: 'Read one', read_at: new Date().toISOString() }),
+    ])) });
+    const [unread, read] = await screen.findAllByRole('article');
+    expect(unread.querySelector('[data-glyph="unread"]')).not.toBeNull();
+    expect(read.querySelector('[data-glyph="unread"]')).toBeNull();
+  });
+
+  it('coming back from a post selects and focuses the post read last', async () => {
+    rememberSelection(ID(2));
+    setup();
+    const articles = await screen.findAllByRole('article');
+    await waitFor(() => expect(articles[1]).toHaveAttribute('aria-current', 'true'));
+    expect(document.activeElement).toBe(articles[1]);
   });
 
   it('renders one article per item with exactly one link each', async () => {

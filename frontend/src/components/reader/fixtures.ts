@@ -11,12 +11,10 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export type FeedFixtureName = 'worst' | 'empty' | 'one' | 'huge';
-export const FEED_FIXTURE_NAMES: readonly FeedFixtureName[] = ['worst', 'empty', 'one', 'huge'];
+import type { FeedFixtureName } from './fixtureNames';
 
-export function isFeedFixtureName(value: string | null | undefined): value is FeedFixtureName {
-  return FEED_FIXTURE_NAMES.includes(value as FeedFixtureName);
-}
+export { FEED_FIXTURE_NAMES, isFeedFixtureName } from './fixtureNames';
+export type { FeedFixtureName } from './fixtureNames';
 
 function at(now: Date, offsetMs: number): string {
   return new Date(now.getTime() + offsetMs).toISOString();

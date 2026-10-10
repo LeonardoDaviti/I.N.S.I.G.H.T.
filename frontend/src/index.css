@@ -234,15 +234,10 @@
     }
   }
 
-  /* Sticky page chrome sits under the app top bar, never behind it. */
-  .reader-material.sticky,
+  /* Sticky page chrome sits under the app top bar, never behind it. (The reader's
+     toolbar and rail say so in their markup: `top-topbar`.) */
   .sticky-under-bar {
     top: var(--topbar-h);
-  }
-
-  .reader-rail.sticky {
-    top: var(--topbar-h);
-    height: calc(100dvh - var(--topbar-h));
   }
 
   /* A soft scroll-edge instead of a hard divider under sticky toolbars. */

@@ -7,21 +7,9 @@ import type { FeedDensity } from '../../hooks/useShortcutPreference';
 import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/feedDates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
+import { feedItemDomId, formatDuration } from '../../lib/feedItem';
+import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
-
-export function feedItemDomId(id: string) {
-  return `feed-item-${id}`;
-}
-
-/** 4:02:07 / 12:34 / 0:45 for video durations. */
-export function formatDuration(seconds: number): string {
-  const total = Math.max(0, Math.round(seconds));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatDuration(item.duration_seconds);
@@ -60,6 +48,11 @@ export interface FeedItemProps {
    * so the column does not repeat the header on every row.
    */
   dateColumn?: 'date' | 'time';
+  /** With `dateColumn="time"`: the day the visual header names ("Today"), read out with the time. */
+  dayLabel?: string;
+  /** Position in the feed (1-based) and its size, -1 while more pages can load (ARIA feed). */
+  position?: number;
+  setSize?: number;
   now?: Date;
 }
 
@@ -71,7 +64,7 @@ export interface FeedItemProps {
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, dateColumn = 'date', now,
+  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, dateColumn = 'date', dayLabel, position, setSize, now,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -101,13 +94,12 @@ function FeedItem({
   );
   const fullTime = useMemo(() => feedFullTime(time), [time]);
   const source = sourceLabel(item.source_display_name);
-  // On a real pointer the actions wait for hover or focus; on touch, and on the
-  // selected row, they stay visible (lead review #1).
-  // Below sm the title needs the width, so only the selected row (a tap selects)
-  // carries them.
+  // On a real pointer the actions wait for hover or focus; on touch (phones
+  // included), and on the selected row, they stay visible (lead review #1). The
+  // reveal is instant: hovering rows happens hundreds of times a day.
   const actionsReveal = selected
-    ? 'flex'
-    : 'hidden sm:flex [@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100';
+    ? ''
+    : '[@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100';
 
   return (
     <article
@@ -115,6 +107,8 @@ function FeedItem({
       tabIndex={tabbable ? 0 : -1}
       aria-current={selected ? 'true' : undefined}
       aria-labelledby={titleId}
+      aria-posinset={position}
+      aria-setsize={position ? setSize : undefined}
       data-read={isRead ? 'true' : 'false'}
       onClick={selectFromClick}
       onFocus={(event) => { if (event.target === event.currentTarget) onSelect(item.id); }}
@@ -125,6 +119,7 @@ function FeedItem({
         title={fullTime}
         className={`shrink-0 text-[0.75rem] leading-6 tabular-nums text-fg-3 sm:whitespace-nowrap sm:text-[0.8125rem] ${dateColumn === 'time' ? 'w-[2.25rem] sm:w-[2.75rem]' : 'w-[3.25rem] sm:w-[4.25rem]'}`}
       >
+        {dayLabel && dateColumn === 'time' ? <span className="sr-only">{dayLabel}, </span> : null}
         {timeLabel}
       </time>
       <div className={`min-w-0 flex-1 ${compact ? 'sm:flex sm:items-baseline sm:gap-3' : ''}`}>
@@ -142,6 +137,7 @@ function FeedItem({
           </Link>
         </h3>
         <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
+          {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
           <span className="min-w-0 truncate" title={item.source_display_name}>
             {middleTruncate(source, compact ? 32 : 56)}
@@ -176,7 +172,7 @@ function FeedItem({
           />
         </div>
       ) : null}
-      <div className={`shrink-0 items-center gap-0.5 transition-opacity duration-100 ease-out coarse:-my-2.5 ${actionsReveal}`}>
+      <div className={`flex shrink-0 items-center gap-0.5 coarse:-my-2.5 ${actionsReveal}`}>
         {selected && onMarkThrough ? (
           <button
             type="button"

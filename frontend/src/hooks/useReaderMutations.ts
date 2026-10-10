@@ -1,13 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
 import type { FeedItem, SourcesHealthResponse, UnreadCounts } from '../services/api';
 import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 import { feedCursorFor } from '../lib/feedContext';
-import { UNREAD_COUNTS_KEY, type AnyFeedPage, type FeedData } from './useFeed';
-
-type Snapshot = Array<[QueryKey, unknown]>;
+import { FEED_ROOT_KEY, UNREAD_COUNTS_KEY, type AnyFeedPage, type FeedData } from './useFeed';
 
 function patchPage(page: AnyFeedPage, ids: ReadonlySet<string>, patch: Partial<FeedItem>): AnyFeedPage {
   const patchItems = (items: FeedItem[]) => items.map((item) => (ids.has(item.id) ? { ...item, ...patch } : item));
@@ -16,8 +14,8 @@ function patchPage(page: AnyFeedPage, ids: ReadonlySet<string>, patch: Partial<F
 }
 
 /** Apply `patch` to the given posts in every cached feed (both views, every scope). */
-function patchFeeds(queryClient: QueryClient, ids: ReadonlySet<string>, patch: Partial<FeedItem>) {
-  queryClient.setQueriesData<FeedData>({ queryKey: ['feed'] }, (data) => (
+export function patchFeeds(queryClient: QueryClient, ids: ReadonlySet<string>, patch: Partial<FeedItem>) {
+  queryClient.setQueriesData<FeedData>({ queryKey: [...FEED_ROOT_KEY] }, (data) => (
     data?.pages ? { ...data, pages: data.pages.map((page) => patchPage(page, ids, patch)) } : data
   ));
 }
@@ -26,7 +24,7 @@ function patchFeeds(queryClient: QueryClient, ids: ReadonlySet<string>, patch: P
 export function findFeedItems(queryClient: QueryClient, ids: readonly string[]): Map<string, FeedItem> {
   const wanted = new Set(ids);
   const found = new Map<string, FeedItem>();
-  for (const [, data] of queryClient.getQueriesData<FeedData>({ queryKey: ['feed'] })) {
+  for (const [, data] of queryClient.getQueriesData<FeedData>({ queryKey: [...FEED_ROOT_KEY] })) {
     for (const page of data?.pages ?? []) {
       const items = 'groups' in page ? page.groups.flatMap((group) => group.items) : page.items;
       for (const item of items) if (wanted.has(item.id) && !found.has(item.id)) found.set(item.id, item);
@@ -35,35 +33,73 @@ export function findFeedItems(queryClient: QueryClient, ids: readonly string[]):
   return found;
 }
 
-/** Shift the unread counts by `deltaBySource` (clamped at 0). Folder counts follow the
- *  sources' folder membership from the cached health rows, when they are loaded. */
-function patchCounts(queryClient: QueryClient, deltaBySource: Map<string, number>) {
-  let total = 0;
-  for (const delta of deltaBySource.values()) total += delta;
-  if (!total) return;
+/** What a local read change did to the cached unread counts: the shift actually
+ *  applied to the total and to each source and folder count. */
+export interface UnreadChange {
+  total: number;
+  bySource: Record<string, number>;
+  byFolder: Record<string, number>;
+}
+
+const NO_CHANGE: UnreadChange = { total: 0, bySource: {}, byFolder: {} };
+
+/** The part of `change` that moved `scope`'s count (`all`, `source:<id>`, `folder:<id>`). */
+export function scopeDelta(change: UnreadChange, scope: string): number {
+  if (scope === 'all') return change.total;
+  const [kind, id] = scope.split(':');
+  return (kind === 'folder' ? change.byFolder[id] : change.bySource[id]) ?? 0;
+}
+
+function diff(before: Record<string, number> = {}, after: Record<string, number> = {}): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const delta = (after[key] ?? 0) - (before[key] ?? 0);
+    if (delta) out[key] = delta;
+  }
+  return out;
+}
+
+/** Shift the unread counts by `deltaBySource` (clamped at 0) and report what moved.
+ *  Folder counts follow the sources' folder membership from the cached health rows,
+ *  when they are loaded; a folder count that did not move reports no change.
+ *  `scopeFolderId` is the track the posts were read in: every one of them belongs
+ *  to it, so its count moves even before the health rows have loaded. */
+function patchCounts(queryClient: QueryClient, deltaBySource: Map<string, number>, scopeFolderId: string | null): UnreadChange {
+  if (!sum(deltaBySource)) return NO_CHANGE;
+  // A counts refetch already in flight would land on top of the optimistic patch.
+  void queryClient.cancelQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
   const health = queryClient.getQueryData<SourcesHealthResponse>([...SOURCES_HEALTH_KEY]);
-  const foldersOf = new Map((health?.rows ?? []).map((row) => [row.source_id, row.folders ?? []]));
+  const membership = new Map((health?.rows ?? []).map((row) => [row.source_id, (row.folders ?? []).map((folder) => folder.id)]));
+  const foldersOf = (sourceId: string) => {
+    const ids = new Set(membership.get(sourceId) ?? []);
+    if (scopeFolderId) ids.add(scopeFolderId);
+    return ids;
+  };
+  let change: UnreadChange = NO_CHANGE;
   queryClient.setQueriesData<UnreadCounts>({ queryKey: [...UNREAD_COUNTS_KEY] }, (counts) => {
     if (!counts || typeof counts.total !== 'number') return counts;
     const bySource = { ...counts.by_source };
     const byFolder = { ...counts.by_folder };
     for (const [sourceId, delta] of deltaBySource) {
       bySource[sourceId] = Math.max(0, (bySource[sourceId] ?? 0) + delta);
-      for (const folder of foldersOf.get(sourceId) ?? []) byFolder[folder.id] = Math.max(0, (byFolder[folder.id] ?? 0) + delta);
+      for (const folderId of foldersOf(sourceId)) byFolder[folderId] = Math.max(0, (byFolder[folderId] ?? 0) + delta);
     }
-    return { ...counts, total: Math.max(0, counts.total + total), by_source: bySource, by_folder: byFolder };
+    const next = { ...counts, total: Math.max(0, counts.total + sum(deltaBySource)), by_source: bySource, by_folder: byFolder };
+    // Every cached copy (live, or the one dev fixture) moves the same way: report the first.
+    if (change === NO_CHANGE) {
+      change = { total: next.total - counts.total, bySource: diff(counts.by_source, bySource), byFolder: diff(counts.by_folder, byFolder) };
+    }
+    return next;
   });
+  return change;
 }
 
-function snapshot(queryClient: QueryClient): Snapshot {
-  return [
-    ...queryClient.getQueriesData({ queryKey: ['feed'] }),
-    ...queryClient.getQueriesData({ queryKey: [...UNREAD_COUNTS_KEY] }),
-  ];
+function negate(deltas: Map<string, number>): Map<string, number> {
+  return new Map([...deltas].map(([key, delta]) => [key, -delta]));
 }
 
-function restore(queryClient: QueryClient, saved: Snapshot) {
-  for (const [key, data] of saved) queryClient.setQueryData(key, data);
+function isChange(change: UnreadChange) {
+  return change.total !== 0 || Object.keys(change.bySource).length > 0 || Object.keys(change.byFolder).length > 0;
 }
 
 /** Unread delta per source when `items` all become read (`read`) or unread. */
@@ -84,52 +120,61 @@ function sum(deltas: Map<string, number>) {
 
 /**
  * Optimistic read, star and mark-read-through for the reader (spec §F.3): the
- * cached feeds and counts change at once, roll back when the request fails (the
- * error is rethrown for the caller to announce), and the counts are refetched
- * afterwards. `onUnreadDelta` reports each local change of the unread total, so
- * the "N new posts" pill can tell our own mark-unread from new arrivals.
+ * cached feeds and counts change at once and the counts are refetched afterwards.
+ * A failed request undoes only its own patch (the inverse change), so other
+ * optimistic changes made meanwhile survive; the error is rethrown for the caller
+ * to announce. `onUnreadDelta` reports each change actually applied to the cached
+ * counts, so the "N new posts" pill can tell our own reads from new arrivals.
+ * `scope` is the feed the changes come from (`all`, `folder:<id>`, `source:<id>`).
  * `dryRun` (the dev-only `?data=` fixtures) skips the API.
  */
-export function useReaderMutations({ dryRun = false, onUnreadDelta }: {
-  dryRun?: boolean; onUnreadDelta?: (delta: number) => void;
+export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all' }: {
+  dryRun?: boolean; onUnreadDelta?: (change: UnreadChange) => void; scope?: string;
 } = {}) {
   const api = useApi();
   const queryClient = useQueryClient();
+  const scopeFolderId = scope.startsWith('folder:') ? scope.slice('folder:'.length) : null;
 
   const refreshCounts = useCallback(() => {
     if (!dryRun) void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
   }, [dryRun, queryClient]);
 
+  const shiftCounts = useCallback((deltas: Map<string, number>) => {
+    const change = patchCounts(queryClient, deltas, scopeFolderId);
+    if (isChange(change)) onUnreadDelta?.(change);
+  }, [onUnreadDelta, queryClient, scopeFolderId]);
+
+  /** Mark `items` read or unread in the cache; resolves the undo for exactly this change. */
   const applyRead = useCallback((items: FeedItem[], read: boolean) => {
     const deltas = readDeltas(items, read);
+    const previous = items.map((item) => [item.id, item.read_at ?? null] as const);
     patchFeeds(queryClient, new Set(items.map((item) => item.id)), { read_at: read ? new Date().toISOString() : null });
-    patchCounts(queryClient, deltas);
-    const delta = sum(deltas);
-    if (delta) onUnreadDelta?.(delta);
-    return delta;
-  }, [onUnreadDelta, queryClient]);
+    shiftCounts(deltas);
+    return () => {
+      for (const [id, readAt] of previous) patchFeeds(queryClient, new Set([id]), { read_at: readAt });
+      shiftCounts(negate(deltas));
+    };
+  }, [queryClient, shiftCounts]);
 
   const setRead = useCallback(async (item: FeedItem, read: boolean) => {
-    const saved = snapshot(queryClient);
-    const delta = applyRead([item], read);
+    const undo = applyRead([item], read);
     try {
       if (!dryRun) await api.setPostRead(item.id, read);
     } catch (error) {
-      restore(queryClient, saved);
-      if (delta) onUnreadDelta?.(-delta);
+      undo();
       throw error;
     } finally {
       refreshCounts();
     }
-  }, [api, applyRead, dryRun, onUnreadDelta, queryClient, refreshCounts]);
+  }, [api, applyRead, dryRun, refreshCounts]);
 
   const setStarred = useCallback(async (item: FeedItem, starred: boolean) => {
-    const saved = snapshot(queryClient);
+    const previous = item.starred_at ?? null;
     patchFeeds(queryClient, new Set([item.id]), { starred_at: starred ? new Date().toISOString() : null });
     try {
       if (!dryRun) await api.setPostStarred(item.id, starred);
     } catch (error) {
-      restore(queryClient, saved);
+      patchFeeds(queryClient, new Set([item.id]), { starred_at: previous });
       throw error;
     }
   }, [api, dryRun, queryClient]);
@@ -152,20 +197,28 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta }: {
   /** The Undo of a mark-through: back to unread. */
   const markUnread = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
-    const saved = snapshot(queryClient);
-    const delta = applyRead([...findFeedItems(queryClient, ids).values()], false);
+    const undo = applyRead([...findFeedItems(queryClient, ids).values()], false);
     try {
       if (!dryRun) await api.setPostsRead(ids, false);
     } catch (error) {
-      restore(queryClient, saved);
-      if (delta) onUnreadDelta?.(-delta);
+      undo();
       throw error;
     } finally {
       refreshCounts();
     }
-  }, [api, applyRead, dryRun, onUnreadDelta, queryClient, refreshCounts]);
+  }, [api, applyRead, dryRun, queryClient, refreshCounts]);
+
+  /** The post page recorded an open (the server marks the post read): mirror it in the cache. */
+  const noteOpened = useCallback((postId: string) => {
+    const item = findFeedItems(queryClient, [postId]).get(postId);
+    if (item && !item.read_at) applyRead([item], true);
+    refreshCounts();
+  }, [applyRead, queryClient, refreshCounts]);
 
   // A stable object: the list's toggle handlers depend on it, and a new one per
   // render would re-render every memoised row on each key press.
-  return useMemo(() => ({ setRead, setStarred, markReadThrough, markUnread }), [setRead, setStarred, markReadThrough, markUnread]);
+  return useMemo(
+    () => ({ setRead, setStarred, markReadThrough, markUnread, noteOpened }),
+    [setRead, setStarred, markReadThrough, markUnread, noteOpened],
+  );
 }

@@ -107,3 +107,9 @@ test('sync never replays a pending intent, even when the ids are equal', () => {
   assert.equal(synced.intent, null);
   assert.equal(synced.selectedId, 'a');
 });
+
+test('select with focus (back from a post) selects and asks for focus', () => {
+  const next = feedNavigation(at(['a', 'b'], null), { type: 'select', id: 'b', focus: true });
+  assert.equal(next.selectedId, 'b');
+  assert.deepEqual(next.intent, { kind: 'focus', id: 'b' });
+});

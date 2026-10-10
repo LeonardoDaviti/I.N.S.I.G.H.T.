@@ -11,7 +11,12 @@ const listeners = new Set<() => void>();
 function subscribe(listener: () => void) {
   listeners.add(listener);
   const onStorage = (event: StorageEvent) => {
-    if (event.key?.startsWith('insight.reader.')) listener();
+    if (!event.key?.startsWith('insight.reader.')) return;
+    // Another tab wrote it: its value replaces ours, so the in-memory copy
+    // (kept only for when storage throws) must not shadow it.
+    if (event.newValue === null) memory.delete(event.key);
+    else memory.set(event.key, event.newValue);
+    listener();
   };
   window.addEventListener('storage', onStorage);
   return () => {
