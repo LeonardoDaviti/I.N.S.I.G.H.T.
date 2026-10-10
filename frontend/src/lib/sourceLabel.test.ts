@@ -16,6 +16,12 @@ const DERIVED: Array<[string, string]> = [
   ['simonwillison.net/atom/everything', 'simonwillison.net'],
   ['https://www.seangoedecke.com/rss.xml', 'seangoedecke.com'],
   ['https://karpathy.bearblog.dev/feed/', 'karpathy.bearblog.dev'],
+  ['https://export.arxiv.org/api/query?search_query=cat:physics.optics+OR+cat:cs.CV&max_results=200', 'arXiv physics.optics'],
+  ['https://tg.i-c-a.su/rss/seeallochnaya?limit=50', '@seeallochnaya'],
+  ['https://rsshub.app/telegram/channel/durov', '@durov'],
+  ['https://t.me/s/durov', '@durov'],
+  ['https://medium.com/@karpathy/feed', '@karpathy'],
+  ['https://feeds.feedburner.com/oreilly/radar', 'oreilly'],
 ];
 
 test('sourceLabel: a feed URL (with or without its scheme) becomes a derived name', () => {
@@ -31,6 +37,12 @@ test('sourceLabel: real names stay as they are', () => {
 test('sourceLabel: the first real display name wins over a URL', () => {
   assert.equal(sourceLabel('https://rss.arxiv.org/rss/cs.AI', 'arXiv AI'), 'arXiv AI');
   assert.equal(sourceLabel(null, '', 'https://rss.arxiv.org/rss/cs.AI'), 'arXiv cs.AI');
+});
+
+test('sourceLabel: every page derives the same name (the briefing helper and the post page included)', async () => {
+  const { readableSourceName } = await import('./briefingPage.ts');
+  for (const [raw, label] of DERIVED) assert.equal(readableSourceName(raw), label, raw);
+  assert.equal(readableSourceName(null, ''), '');
 });
 
 test('sourceLabel: a missing name says so', () => {

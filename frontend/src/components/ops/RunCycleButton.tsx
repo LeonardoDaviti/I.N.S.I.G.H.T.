@@ -47,7 +47,7 @@ export default function RunCycleButton({
         disabled={running}
         aria-busy={running}
       >
-        {running ? null : <Play aria-hidden="true" />}
+        {running || force ? null : <Play aria-hidden="true" />}
         {label}
       </Button>
       <label htmlFor={forceId} className="inline-flex min-h-[2.25rem] cursor-pointer select-none items-center gap-2 text-[0.8125rem] text-fg-2 coarse:min-h-[2.75rem]">

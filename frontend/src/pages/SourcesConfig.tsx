@@ -7,9 +7,10 @@ import AddSourceModal from '../components/AddSourceModal';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import SourceHealthTable from '../components/ops/SourceHealthTable';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
-import { Button, Input, Page, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../components/ui';
+import { Button, Input, Page, PageHeader, Switch, Tabs, TabsContent, TabsList, TabsTrigger, TextLink } from '../components/ui';
 import { EmptyState, LoadingState, Notice } from '../components/states';
-import { middleTruncate, plural, sourceLabel } from '../lib/format';
+import { middleTruncate, plural } from '../lib/format';
+import { sourceLabel } from '../lib/sourceLabel';
 import { getPlatformLabel } from '../lib/sourcePresentation';
 
 type SourcesTab = 'sources' | 'health';
@@ -19,27 +20,15 @@ function sourceName(source: SourceWithSettings): string {
   return sourceLabel(source.settings?.display_name, source.handle_or_url);
 }
 
-/** The on/off switch: an inverted pill when on, a hairline when off (no green). */
+/** A source's on/off switch (the shared Switch primitive). */
 function EnabledSwitch({ enabled, name, onToggle }: { enabled: boolean; name: string; onToggle: () => void }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
+    <Switch
+      checked={enabled}
+      onCheckedChange={() => onToggle()}
       aria-label={`${enabled ? 'Disable' : 'Enable'} ${name}`}
       title={enabled ? 'Enabled' : 'Disabled'}
-      onClick={onToggle}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-[120ms] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg motion-reduce:transition-none ${
-        enabled ? 'border-inverse bg-inverse' : 'border-line-strong bg-transparent'
-      }`}
-    >
-      <span
-        aria-hidden="true"
-        className={`absolute h-3.5 w-3.5 rounded-full transition-transform duration-[120ms] ease-out motion-reduce:transition-none ${
-          enabled ? 'translate-x-[1.125rem] bg-inverse-fg' : 'translate-x-[0.1875rem] bg-fg-3'
-        }`}
-      />
-    </button>
+    />
   );
 }
 

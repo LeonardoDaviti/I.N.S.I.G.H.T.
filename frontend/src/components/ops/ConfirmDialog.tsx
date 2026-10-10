@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { ReactNode } from 'react';
-import { buttonVariants } from '../ui';
+import { Button } from '../ui';
 
 /**
  * A confirmation for a consequential action (a forced run, a delete). Modal,
@@ -50,22 +50,12 @@ export default function ConfirmDialog({
             <div className="mt-2 break-words text-[0.875rem] text-fg-2">{description}</div>
           </Dialog.Description>
           <div className="mt-5 flex flex-wrap justify-end gap-2">
-            <button
-              type="button"
-              data-cancel
-              onClick={onCancel}
-              className={buttonVariants({ variant: 'secondary' })}
-            >
+            <Button variant="secondary" data-cancel onClick={onCancel}>
               Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              className={buttonVariants({ variant: destructive ? 'danger' : 'primary' })}
-            >
-              {destructive ? <span aria-hidden="true" className="mr-1.5">×</span> : null}
+            </Button>
+            <Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm}>
               {confirmLabel}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

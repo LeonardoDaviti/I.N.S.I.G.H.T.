@@ -45,7 +45,11 @@ function deriveFromUrl(raw: string): string {
   }
   if (host.endsWith('reddit.com') && parts[0] === 'r' && parts[1]) return `r/${parts[1]}`;
   if (host === 'tg.i-c-a.su' && parts[0] === 'rss' && parts[1]) return `@${parts[1]}`;
+  // RSSHub's Telegram bridge: rsshub.app/telegram/channel/<channel>.
+  if (host.includes('rsshub') && parts[0] === 'telegram' && parts.length >= 3) return `@${parts[parts.length - 1]}`;
   if (host === 't.me' && parts[0]) return `@${parts[parts.length - 1]}`;
+  if (host === 'medium.com' && parts.some((part) => part.startsWith('@'))) return parts.find((part) => part.startsWith('@'))!;
+  if (host === 'feeds.feedburner.com' && parts[0]) return parts[0];
   if (host.endsWith('youtube.com')) return 'YouTube channel';
   return host || raw;
 }
@@ -56,4 +60,18 @@ export function sourceLabel(...candidates: Array<string | null | undefined>): st
   const named = values.find((value) => !looksLikeUrl(value));
   if (named) return named;
   return deriveFromUrl(values[0]);
+}
+
+/**
+ * A post's source name on the post page: a YouTube post names its channel (the
+ * stored source is the channel id); everything else goes through `sourceLabel`.
+ */
+export function postSourceName(post: {
+  source?: string | null;
+  source_display_name?: string | null;
+  platform?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): string {
+  const channel = post.platform === 'youtube' && typeof post.metadata?.channel_title === 'string' ? post.metadata.channel_title : null;
+  return sourceLabel(channel, post.source_display_name, post.source);
 }

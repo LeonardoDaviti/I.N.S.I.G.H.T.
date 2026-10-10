@@ -7,7 +7,9 @@ import { cn } from '../../lib/utils';
 /**
  * The one button. Monochrome (design doc §11): `primary` is the inverted block
  * (one per view), `secondary` an outline, `ghost` text-only, `danger` an
- * inverted block reserved for confirmed destructive actions. Press feedback is
+ * inverted block with an inner hairline (and, from <Button/>, a leading "×"),
+ * reserved for confirmed destructive actions, so it never passes for the
+ * primary action without a hue. Press feedback is
  * instant (`scale(0.97)`, 120ms, transform only); hover only on fine pointers.
  */
 export const buttonVariants = cva(
@@ -25,7 +27,7 @@ export const buttonVariants = cva(
         primary: 'border-inverse bg-inverse text-inverse-fg hover:bg-inverse/85',
         secondary: 'border-line-strong bg-transparent text-fg hover:bg-raised',
         ghost: 'border-transparent bg-transparent text-fg-2 hover:bg-raised hover:text-fg',
-        danger: 'border-inverse bg-inverse text-inverse-fg font-semibold hover:bg-inverse/85',
+        danger: 'border-inverse bg-inverse text-inverse-fg font-semibold shadow-[inset_0_0_0_2px_rgb(var(--inverse)),inset_0_0_0_3px_rgb(var(--inverse-text))] hover:bg-inverse/85',
       },
       size: {
         sm: 'min-h-[2rem] px-2.5 text-[0.8125rem]',

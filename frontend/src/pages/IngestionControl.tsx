@@ -21,7 +21,8 @@ import {
 import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHealth } from '../lib/operationsOverview';
 import { asRunReport } from '../lib/runReport';
 import { localDateISO } from '../lib/dates';
-import { formatCount, plural, sourceLabel } from '../lib/format';
+import { formatCount, plural } from '../lib/format';
+import { sourceLabel } from '../lib/sourceLabel';
 import { HEALTH_STATUS_LABELS, sortHealthRows, summarizeHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
 import { useSourcesHealth } from '../hooks/useSourcesHealth';
 import { useIngestionRun } from '../hooks/useIngestionRun';

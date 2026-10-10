@@ -55,6 +55,19 @@ describe('ExpertsPage (tracks)', () => {
     expect(deleteFolder).toHaveBeenCalledWith('folder-2');
   });
 
+  it('deleting a track says what goes with it: its experts and its milestone lanes; the button is the × danger', async () => {
+    const user = userEvent.setup();
+    render(api(folders, [expert(), expert({ id: 'expert-2', name: 'Second' })]));
+    await user.click(await screen.findByRole('button', { name: 'Delete track Agentic News' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText(/Delete track “Agentic News”\?/)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(/2 experts.*deleted/);
+    expect(dialog).toHaveTextContent(/milestone lanes/);
+    expect(dialog).toHaveTextContent(/sources stay/i);
+    const confirm = within(dialog).getByRole('button', { name: 'Delete track' });
+    expect(confirm.querySelector('[data-danger-mark]')).toHaveTextContent('×');
+  });
+
   it('Run writes a briefing and opens it', async () => {
     const user = userEvent.setup();
     const runExpert = vi.fn().mockResolvedValue(briefing({ cached: false }));

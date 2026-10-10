@@ -88,11 +88,18 @@ describe('StatusGlyph: status without colour', () => {
     expect(container.firstElementChild).toHaveClass('bg-inverse', 'text-inverse-fg');
   });
 
-  it('hideLabel keeps the word for screen readers and drops the chip', () => {
+  it('hideLabel keeps the word for screen readers; failing keeps its inverted square', () => {
     const { container } = render(<StatusGlyph status="failing" hideLabel />);
     const word = screen.getByText('failing');
     expect(word).toHaveClass('sr-only');
-    expect(container.firstElementChild).not.toHaveClass('bg-inverse');
+    expect(container.firstElementChild).toHaveClass('bg-inverse', 'text-inverse-fg');
+  });
+
+  it('hideLabel drops the border chips of backoff and unavailable', () => {
+    const { container } = render(<><StatusGlyph status="backoff" hideLabel /><StatusGlyph status="ok" hideLabel /></>);
+    const [backoff, ok] = Array.from(container.children);
+    expect(backoff).not.toHaveClass('border');
+    expect(ok).not.toHaveClass('bg-inverse');
   });
 
   it('a custom label replaces the word', () => {
@@ -119,6 +126,16 @@ describe('Button', () => {
     const link = screen.getByRole('link', { name: 'Sources' });
     expect(link).toHaveClass('border-line-strong');
     expect(link).not.toHaveAttribute('type');
+  });
+
+  it('danger is not the primary block: an inner hairline and a leading × mark', () => {
+    render(<><Button variant="primary">Save</Button><Button variant="danger">Delete track</Button></>);
+    const primary = screen.getByRole('button', { name: 'Save' });
+    const danger = screen.getByRole('button', { name: 'Delete track' });
+    expect(danger.className).not.toBe(primary.className);
+    expect(danger.querySelector('[data-danger-mark]')).toHaveTextContent('×');
+    expect(danger.querySelector('[data-danger-mark]')).toHaveAttribute('aria-hidden', 'true');
+    expect(primary.querySelector('[data-danger-mark]')).toBeNull();
   });
 
   it('fires onClick and respects disabled', async () => {

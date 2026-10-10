@@ -62,11 +62,14 @@ const TONE: Record<Status, string> = {
   starred: 'text-fg',
 };
 
-/** Without a visible word there is no chip to invert, so the glyph alone carries it. */
+/**
+ * Without a visible word the chips shrink to the glyph, but `failing` keeps its
+ * inverted square: it stays the loudest thing in a dense row, not a twin of `ok`.
+ */
 const GLYPH_ONLY_TONE: Record<Status, string> = {
   ...TONE,
   backoff: 'text-fg',
-  failing: 'text-fg',
+  failing: 'bg-inverse text-inverse-fg rounded-sm p-[0.1875rem]',
   unavailable: 'text-fg-2',
 };
 

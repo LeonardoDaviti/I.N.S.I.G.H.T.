@@ -1,6 +1,7 @@
 import type { RunReport } from '../../services/api';
 import { summarizeRunReport, type RunReportTone } from '../../lib/runReport';
-import { formatCount, sourceLabel } from '../../lib/format';
+import { formatCount } from '../../lib/format';
+import { sourceLabel } from '../../lib/sourceLabel';
 import { StatusIcon } from '../ui';
 import type { Status } from '../ui';
 

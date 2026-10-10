@@ -6,9 +6,10 @@ import { useApi } from '../services/ApiContext';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { errorMessage } from '../lib/apiError';
 import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
-import { Button, FilterChip, Input, Sheet, SheetContent } from './ui';
+import { Button, FilterChip, Input, Sheet, SheetContent, Switch } from './ui';
 import { Notice } from './states';
-import { sourceLabel } from '../lib/format';
+import { sourceLabel } from '../lib/sourceLabel';
+import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { getPlatformLabel } from '../lib/sourcePresentation';
 
 interface SourceSettingsEditorProps {
@@ -52,7 +53,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
     try {
       await api.setSourceMainDigest(source.id, next);
       void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
-      void queryClient.invalidateQueries({ queryKey: ['unread-counts'] });
+      void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
     } catch (err) {
       setInMainDigest(!next);
       setError(errorMessage(err));
@@ -185,20 +186,13 @@ export default function SourceSettingsEditor({ source, onClose, onSave }: Source
                 Off keeps it fetched and readable through its tracks, but out of the feed and the daily briefing. Saves instantly.
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={mainDigest ?? false}
+            <Switch
+              checked={mainDigest ?? false}
               aria-labelledby="main_digest_label"
               disabled={mainDigest === null || savingDigest}
-              onClick={() => void toggleMainDigest()}
-              className={`relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-[120ms] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg disabled:opacity-40 motion-reduce:transition-none ${mainDigest ? 'border-inverse bg-inverse' : 'border-line-strong'}`}
-            >
-              <span
-                aria-hidden="true"
-                className={`absolute h-3.5 w-3.5 rounded-full transition-transform duration-[120ms] ease-out motion-reduce:transition-none ${mainDigest ? 'translate-x-[1.125rem] bg-inverse-fg' : 'translate-x-[0.1875rem] bg-fg-3'}`}
-              />
-            </button>
+              onCheckedChange={() => void toggleMainDigest()}
+              className="mt-0.5"
+            />
           </div>
 
           <div className="rounded-md border border-line p-3">

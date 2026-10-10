@@ -37,20 +37,30 @@ import { TRACKS_FIXTURE_NAMES, tracksFixtureApi } from '../pages/ExpertsPage.fix
 
 const EMPTY_FORM = { name: '', folder_id: '', system_prompt: '', focus_instructions: '', lookback_days: 7, schedule: '' };
 
-type PendingDelete = { kind: 'folder' | 'expert'; id: string; name: string } | null;
+type PendingDelete =
+  | { kind: 'folder'; id: string; name: string; isTrack: boolean; expertCount: number }
+  | { kind: 'expert'; id: string; name: string }
+  | null;
+
+/** What a delete takes with it (the database cascades: experts, a track's milestone lanes). */
+function deleteConsequence(pending: NonNullable<PendingDelete>): string {
+  if (pending.kind === 'expert') return 'Its saved briefings stop updating. This cannot be undone.';
+  const word = pending.isTrack ? 'track' : 'folder';
+  const experts = pending.expertCount
+    ? `Its ${plural(pending.expertCount, 'expert')} and their briefings are deleted with it, as are the ${word}’s own milestone lanes.`
+    : `The ${word}’s own milestone lanes are deleted with it.`;
+  return `${experts} Its sources stay; they are only unassigned. This cannot be undone.`;
+}
 
 function ConfirmDelete({ pending, onConfirm, onCancel }: { pending: PendingDelete; onConfirm: () => void; onCancel: () => void }) {
+  const word = pending?.kind === 'folder' ? (pending.isTrack ? 'track' : 'folder') : 'expert';
   return (
     <Dialog open={pending !== null} onOpenChange={(open) => { if (!open) onCancel(); }}>
       {pending ? (
         <DialogContent
           role="alertdialog"
-          title={`Delete ${pending.kind} “${pending.name}”?`}
-          description={
-            pending.kind === 'folder'
-              ? 'Its sources stay; they are only unassigned from this folder. This cannot be undone.'
-              : 'Its saved briefings stop updating. This cannot be undone.'
-          }
+          title={`Delete ${word} “${pending.name}”?`}
+          description={deleteConsequence(pending)}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             (event.currentTarget as HTMLElement | null)?.querySelector<HTMLButtonElement>('[data-cancel]')?.focus();
@@ -58,7 +68,7 @@ function ConfirmDelete({ pending, onConfirm, onCancel }: { pending: PendingDelet
         >
           <DialogFooter>
             <Button variant="ghost" data-cancel onClick={onCancel}>Cancel</Button>
-            <Button variant="danger" onClick={onConfirm}>Delete {pending.kind}</Button>
+            <Button variant="danger" onClick={onConfirm}>Delete {word}</Button>
           </DialogFooter>
         </DialogContent>
       ) : null}
@@ -440,7 +450,10 @@ export default function FoldersExpertsPanel() {
                     key={f.id}
                     folder={f}
                     unread={unread[f.id] ?? 0}
-                    onDelete={() => setPendingDelete({ kind: 'folder', id: f.id, name: f.name })}
+                    onDelete={() => setPendingDelete({
+                      kind: 'folder', id: f.id, name: f.name, isTrack: f.kind === 'track',
+                      expertCount: experts.filter((ex) => ex.folder_id === f.id).length,
+                    })}
                   />
                 ))}
               </ul>

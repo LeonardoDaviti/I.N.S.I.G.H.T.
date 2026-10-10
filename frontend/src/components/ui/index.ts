@@ -15,4 +15,6 @@ export { Sheet, SheetTrigger, SheetClose, SheetContent } from './Sheet';
 export { default as Toaster } from './Toaster';
 export { default as Skeleton } from './Skeleton';
 export { default as Kbd } from './Kbd';
+export { default as Switch } from './Switch';
+export type { SwitchProps } from './Switch';
 export { default as PageHeader, Page } from './PageHeader';
