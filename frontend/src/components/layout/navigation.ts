@@ -90,7 +90,10 @@ export interface TrackRef {
  */
 export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef[] = []): Destination[] {
   if (analysisEnabled) return [...DESTINATIONS];
-  const reading = DESTINATIONS.filter((item) => !ANALYSIS_DESTINATION_IDS.has(item.id));
+  // Reading-only, ingestion is a tab under sources (reading-finish R3).
+  const reading = DESTINATIONS
+    .filter((item) => !ANALYSIS_DESTINATION_IDS.has(item.id))
+    .map((item) => (item.id === 'ingestion' ? { ...item, group: 'sources', to: '/settings/sources?tab=ingestion' } : item));
   const trackItems = tracks.map((track): Destination => ({
     id: `track-${track.id}`,
     label: track.name,

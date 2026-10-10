@@ -70,6 +70,17 @@ describe('routes, analysis off (reading-only)', () => {
     expect(await screen.findByTestId('where')).toHaveTextContent(`${text} (POP)`);
   });
 
+  it.each([
+    ['/ingestion', '/settings/sources?tab=ingestion'],
+    ['/ingestion/main', '/settings/sources?tab=ingestion'],
+    ['/ingestion/jobs', '/settings/sources?tab=ingestion&sub=jobs'],
+    ['/ingestion/missions?job=j1', '/settings/sources?tab=ingestion&sub=jobs&job=j1'],
+    ['/ingestion/logs', '/settings/sources?tab=ingestion&sub=logs'],
+  ])('%s moves to the sources ingestion tab, replacing the history entry', async (route, target) => {
+    renderRoutes(route, false);
+    expect(await screen.findByTestId('where')).toHaveTextContent(`sources at ${target} (REPLACE)`);
+  });
+
   it('with no runtime answer, the build flag (off in tests) decides', async () => {
     renderRoutes('/stories', null);
     expect(await screen.findByTestId('where')).toHaveTextContent('reader at / (REPLACE)');
@@ -80,6 +91,11 @@ describe('routes, analysis on', () => {
   it.each(ANALYSIS_ROUTES)('%s renders %s', async (route, page) => {
     renderRoutes(route, true);
     expect(await screen.findByTestId('where')).toHaveTextContent(`${page} at ${route} (POP)`);
+  });
+
+  it.each(['/ingestion', '/ingestion/jobs'])('%s still renders the ingestion page', async (route) => {
+    renderRoutes(route, true);
+    expect(await screen.findByTestId('where')).toHaveTextContent(`ingestion at ${route} (POP)`);
   });
 
   it('the runtime value wins over the build flag: a deep link waits for it instead of bouncing', async () => {

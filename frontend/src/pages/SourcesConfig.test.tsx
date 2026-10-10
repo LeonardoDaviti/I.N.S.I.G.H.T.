@@ -64,10 +64,10 @@ const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`l
 describe('SourcesConfig', () => {
   beforeEach(() => { vi.mocked(renameTrack).mockClear(); vi.mocked(setTrackMainDigest).mockClear(); });
 
-  it('is one list grouped by track: sources and connections tabs only, no expert labels, one line per source', async () => {
+  it('is one list grouped by track: sources, connections and ingestion tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'connections']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'connections', 'ingestion']);
     expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
     expect(groupNames()).toEqual(['AI engineering2', 'AR glasses2', 'Not in a track1']);

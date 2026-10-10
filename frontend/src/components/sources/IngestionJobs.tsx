@@ -1,0 +1,151 @@
+import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+
+import type { JobRun } from '../../services/api';
+import { useApi } from '../../services/ApiContext';
+import { asRunReport } from '../../lib/runReport';
+import { plural } from '../../lib/format';
+import { jobLabel } from '../../lib/operationsOverview';
+import { formatTimeRemaining } from '../../lib/schedulerStatus';
+import { sourceLabel } from '../../lib/sourceLabel';
+import RunReportSummary from '../ops/RunReportSummary';
+import { StatusGlyph } from '../ui';
+import type { Status } from '../ui';
+
+const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
+
+/** Job status -> monochrome glyph (design doc §8). */
+function jobGlyph(status?: string | null): Status {
+  if (status === 'failed') return 'failing';
+  if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
+  return 'ok';
+}
+
+function formatJobTimestamp(value?: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+}
+
+function formatJobDuration(startedAt?: string | null, finishedAt?: string | null): string | null {
+  if (!startedAt || !finishedAt) return null;
+  const elapsed = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (Number.isNaN(elapsed) || elapsed < 0) return null;
+  if (elapsed < 1000) return '<1s';
+  return formatTimeRemaining(elapsed);
+}
+
+type JobEvent = { at?: string; level?: string; message?: string };
+
+/** One job: what it was, how it went, its run report and its events. */
+function JobDetail({ job }: { job: JobRun }) {
+  const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
+  const events: JobEvent[] = Array.isArray(job.payload?.events) ? job.payload.events : [];
+  const facts: Array<[string, React.ReactNode]> = [
+    ['Status', <StatusGlyph key="s" status={jobGlyph(job.status)} label={job.status} />],
+    ['Source', job.source_display_name ? sourceLabel(job.source_display_name) : 'All sources'],
+    ['Started', formatJobTimestamp(job.started_at) || '—'],
+    ['Duration', formatJobDuration(job.started_at, job.finished_at) || (job.finished_at ? '—' : 'still running')],
+  ];
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4">
+        {facts.map(([term, value]) => (
+          <div key={term} className="min-w-0 border-l border-line pl-3">
+            <dt className="text-[0.75rem] text-fg-3">{term}</dt>
+            <dd className="break-words text-[0.8125rem] tabular-nums text-fg [overflow-wrap:anywhere]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {report ? <RunReportSummary report={report} /> : job.message ? (
+        <p className="text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p>
+      ) : null}
+      {events.length ? (
+        <ol aria-label="Events" className="max-h-[18rem] divide-y divide-line overflow-y-auto rounded-md border border-line font-mono text-[0.75rem] leading-5">
+          {events.map((event, index) => (
+            <li key={`${event.at ?? 'event'}-${index}`} className="flex min-w-0 gap-3 px-3 py-1.5">
+              <span className="shrink-0 tabular-nums text-fg-3">{formatJobTimestamp(event.at) || '—'}</span>
+              <span className={`shrink-0 ${event.level === 'error' ? 'font-semibold text-fg' : 'text-fg-3'}`}>
+                {event.level === 'error' ? '× error' : event.level || 'info'}
+              </span>
+              <span className="min-w-0 break-words text-fg-2 [overflow-wrap:anywhere]">{event.message || 'No message'}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The job history under Sources → ingestion: recent jobs, and the one picked
+ * in full. The pick lives in `?job=`, so a run toast's "View job" opens it.
+ */
+export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loading: boolean }) {
+  const api = useApi();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedId = searchParams.get('job');
+  const select = (id: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('job', id);
+    setSearchParams(params, { replace: true });
+  };
+  const detail = useQuery({
+    queryKey: ['operations', 'job', selectedId],
+    queryFn: async () => {
+      const response = await api.getOperationJob(selectedId as string);
+      if (!response.success || !response.job) throw new Error(response.error || 'Could not load the job.');
+      return response.job;
+    },
+    enabled: Boolean(selectedId),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5_000 : false),
+  });
+
+  return (
+    <div className="grid gap-8 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+      <section aria-labelledby="ingestion-jobs" className="min-w-0 space-y-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 id="ingestion-jobs" className={sectionTitle}>Recent jobs</h2>
+          <span className="text-[0.75rem] tabular-nums text-fg-3">{loading && !jobs.length ? 'Loading…' : plural(jobs.length, 'job')}</span>
+        </div>
+        <ul className="divide-y divide-line border-y border-line">
+          {jobs.map((job) => {
+            const selected = job.id === selectedId;
+            const when = [formatJobTimestamp(job.started_at), formatJobDuration(job.started_at, job.finished_at)].filter(Boolean).join(' · ');
+            return (
+              <li key={job.id}>
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => select(job.id)}
+                  className={`w-full min-w-0 px-2 py-2.5 text-left text-[0.8125rem] transition-colors duration-[120ms] hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg motion-reduce:transition-none ${selected ? 'bg-raised' : ''}`}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0 break-words font-medium text-fg [overflow-wrap:anywhere]">
+                      {jobLabel(job)}
+                      {job.source_display_name ? <span className="font-normal text-fg-2"> · {sourceLabel(job.source_display_name)}</span> : null}
+                    </div>
+                    <StatusGlyph status={jobGlyph(job.status)} label={job.status} />
+                  </div>
+                  {job.message ? <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p> : null}
+                  {when ? <p className="mt-0.5 text-[0.75rem] tabular-nums text-fg-3">{when}</p> : null}
+                </button>
+              </li>
+            );
+          })}
+          {!jobs.length && !loading ? (
+            <li className="px-2 py-8 text-center text-[0.8125rem] text-fg-3">No jobs yet. Run due sources and the run shows up here.</li>
+          ) : null}
+        </ul>
+      </section>
+      <section aria-labelledby="ingestion-job-detail" className="min-w-0 space-y-4">
+        <h2 id="ingestion-job-detail" className={sectionTitle}>{detail.data ? jobLabel(detail.data) : 'Job detail'}</h2>
+        {detail.data ? <JobDetail job={detail.data} /> : detail.isError ? (
+          <p className="text-[0.8125rem] text-fg-2">Could not load this job.</p>
+        ) : (
+          <p className="text-[0.8125rem] text-fg-3">{selectedId ? 'Loading…' : 'Choose a job to see its report and events.'}</p>
+        )}
+      </section>
+    </div>
+  );
+}
