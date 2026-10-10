@@ -93,19 +93,37 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             </p>
           ),
           h1: ({ children }) => (
-            <h1 dir="auto" className="mb-[0.6em] mt-[1.6em] text-[1.5em] font-semibold leading-[1.2] tracking-[-0.02em] text-fg first:mt-0">
+            <h1 dir="auto" className="text-pretty mb-[0.6em] mt-[1.6em] text-[1.5em] font-semibold leading-[1.2] tracking-[-0.02em] text-fg first:mt-0">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 dir="auto" className="mb-[0.5em] mt-[1.5em] text-[1.25em] font-semibold leading-[1.25] tracking-[-0.015em] text-fg first:mt-0">
+            <h2 dir="auto" className="text-pretty mb-[0.5em] mt-[1.5em] text-[1.25em] font-semibold leading-[1.25] tracking-[-0.015em] text-fg first:mt-0">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 dir="auto" className="mb-[0.4em] mt-[1.3em] text-[1.05em] font-semibold leading-[1.35] tracking-[-0.01em] text-fg first:mt-0">
+            <h3 dir="auto" className="text-pretty mb-[0.4em] mt-[1.3em] text-[1.05em] font-semibold leading-[1.35] tracking-[-0.01em] text-fg first:mt-0">
               {children}
             </h3>
+          ),
+          // Feeds often mark sections with h4–h6 ("Codex voice mode"). Tailwind's reset
+          // would leave them as body text; keep them on the same scale, by size, weight
+          // and spacing only.
+          h4: ({ children }) => (
+            <h4 dir="auto" className="text-pretty mb-[0.35em] mt-[1.2em] text-[1em] font-semibold leading-[1.4] tracking-[-0.01em] text-fg first:mt-0">
+              {children}
+            </h4>
+          ),
+          h5: ({ children }) => (
+            <h5 dir="auto" className="text-pretty mb-[0.3em] mt-[1.1em] text-[0.95em] font-semibold leading-[1.4] text-fg first:mt-0">
+              {children}
+            </h5>
+          ),
+          h6: ({ children }) => (
+            <h6 dir="auto" className="text-pretty mb-[0.3em] mt-[1.1em] text-[0.95em] font-semibold leading-[1.4] text-fg-2 first:mt-0">
+              {children}
+            </h6>
           ),
           strong: ({ children }) => (
             <strong className="font-semibold text-fg">
