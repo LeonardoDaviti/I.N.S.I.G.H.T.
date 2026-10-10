@@ -22,7 +22,6 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 from insight_core.ingestion.credentials import (
-    EnvCredentials,
     MappingCredentials,
     SecretBox,
     SecretKeyMissing,
@@ -92,23 +91,32 @@ class SecretBoxTests(unittest.TestCase):
 # --------------------------------------------------------------------------- provider
 
 
-class ProviderPrecedenceTests(unittest.TestCase):
-    def test_a_stored_value_wins_over_the_environment(self):
-        creds = StoredCredentials(load=lambda: {("substack", "sid"): "from-db"}, env={"SUBSTACK_SID": "from-env"})
+class ProviderStoreOnlyTests(unittest.TestCase):
+    def test_a_stored_value_is_returned(self):
+        creds = StoredCredentials(load=lambda: {("substack", "sid"): "from-db"})
         self.assertEqual(creds.get("substack", "sid"), "from-db")
 
-    def test_the_environment_is_the_fallback(self):
-        creds = StoredCredentials(load=lambda: {}, env={"SUBSTACK_SID": " from-env ", "TELEGRAM_API_ID": "7"})
-        self.assertEqual(creds.get("substack", "sid"), "from-env")
-        self.assertEqual(creds.get("telegram", "api_id"), "7")
-        self.assertIsNone(creds.get("telegram", "session"))   # no env name: file fallback only
+    def test_the_environment_is_never_read(self):
+        env = {"SUBSTACK_SID": "from-env", "TELEGRAM_API_ID": "7", "TELEGRAM_API_HASH": HASH,
+               "GEMINI_API_KEY": "g", "LANGFUSE_SECRET_KEY": "l"}
+        creds = StoredCredentials(load=lambda: {}, env=env)
+        saved = dict(os.environ)
+        os.environ.update(env)
+        try:
+            self.assertIsNone(creds.get("substack", "sid"))
+            self.assertIsNone(creds.get("telegram", "api_id"))
+            self.assertIsNone(creds.get("gemini", "api_key"))
+            self.assertIsNone(creds.get("langfuse", "secret_key"))
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
 
-    def test_a_broken_store_reads_as_empty_not_as_an_error(self):
+    def test_a_broken_store_reads_as_not_set(self):
         def boom():
             raise psycopg.OperationalError("db down")
 
         creds = StoredCredentials(load=boom, env={"SUBSTACK_SID": "env"})
-        self.assertEqual(creds.get("substack", "sid"), "env")
+        self.assertIsNone(creds.get("substack", "sid"))
 
     def test_values_are_cached_until_the_ttl_or_an_invalidate(self):
         now = [0.0]
@@ -218,16 +226,17 @@ class TelegramSeamTests(unittest.TestCase):
             credentials=MappingCredentials({("telegram", "api_id"): "12", ("telegram", "api_hash"): HASH}))
         self.assertEqual((api_id, api_hash, reason), (12, HASH, None))
         _, _, reason = telegram_credentials(credentials=MappingCredentials())
-        self.assertIn("TELEGRAM_API_ID", reason)
+        self.assertIn("API ID", reason)
+        self.assertNotIn("TELEGRAM_API_ID", reason)
         self.assertIn("Sources → Connections", reason)
 
     def test_a_stored_session_string_makes_telegram_available_without_a_file(self):
         creds = MappingCredentials({("telegram", "api_id"): "12", ("telegram", "api_hash"): HASH,
                                     ("telegram", "session"): "1abc"})
-        availability = availability_from_env({}, exists=lambda _p: False, credentials=creds)
+        availability = availability_from_env({}, credentials=creds)
         self.assertTrue(availability.telegram_credentials)
         creds.values.pop(("telegram", "session"))
-        availability = availability_from_env({}, exists=lambda _p: False, credentials=creds)
+        availability = availability_from_env({}, credentials=creds)
         self.assertFalse(availability.telegram_credentials)
         self.assertIn("Sources → Connections", availability.telegram_reason)
 
@@ -239,23 +248,23 @@ class TelegramSeamTests(unittest.TestCase):
         client = TelethonClientFactory(credentials=creds).create()
         self.assertIsInstance(client.telethon.session, StringSession)
 
-    def test_without_a_string_session_the_file_is_still_the_fallback(self):
+    def test_without_a_stored_session_telegram_is_unavailable_even_with_a_session_file(self):
         from insight_core.ingestion.kinds.base import KindUnavailable
 
         creds = MappingCredentials({("telegram", "api_id"): "12", ("telegram", "api_hash"): HASH})
-        os.environ["TELEGRAM_SESSION_PATH"] = "/tmp/insight-no-such-session-x"
-        try:
-            with self.assertRaises(KindUnavailable) as caught:
-                TelethonClientFactory(credentials=creds).create()
-        finally:
-            os.environ.pop("TELEGRAM_SESSION_PATH")
-        self.assertIn("no Telegram session", caught.exception.reason)
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "x.session")
             Path(path).touch()
-            client = TelethonClientFactory(credentials=creds, session_path=path).create()
-            self.assertEqual(type(client.telethon.session).__name__, "SQLiteSession")
-            client.telethon.session.close()
+            os.environ["TELEGRAM_SESSION_PATH"] = path
+            try:
+                with self.assertRaises(KindUnavailable) as caught:
+                    TelethonClientFactory(credentials=creds).create()
+                availability = availability_from_env({"TELEGRAM_SESSION_PATH": path}, credentials=creds)
+            finally:
+                os.environ.pop("TELEGRAM_SESSION_PATH")
+        self.assertIn("Sources → Connections", caught.exception.reason)
+        self.assertFalse(availability.telegram_credentials)
+        self.assertIn("Sources → Connections", availability.telegram_reason)
 
     def test_telethon_sign_in_errors_become_clear_messages(self):
         from telethon import errors
@@ -388,7 +397,7 @@ class CredentialsServiceTests(unittest.TestCase):
     def setUp(self):
         _wipe()
         self.addCleanup(_wipe)
-        self.env = {"TELEGRAM_SESSION_PATH": "/tmp/insight-no-such-session-y"}
+        self.env = {}
         self.box = SecretBox(SecretBox.generate_key())
         self.checks = []
         FakeLoginClient.instances = []
@@ -421,12 +430,31 @@ class CredentialsServiceTests(unittest.TestCase):
 
     def test_listing_names_every_provider_and_public_feeds_need_nothing(self):
         listing = self.service.list()
-        self.assertEqual([p["provider"] for p in listing["providers"]], ["substack", "telegram", "reddit", "youtube"])
+        self.assertEqual([p["provider"] for p in listing["providers"]],
+                         ["substack", "telegram", "reddit", "youtube", "gemini", "langfuse"])
         reddit = self._provider(listing, "reddit")
         self.assertFalse(reddit["needed"])
         self.assertEqual(reddit["fields"], [])
         sid = self._field(self._provider(listing, "substack"), "sid")
-        self.assertEqual((sid["set"], sid["source"], sid["last4"], sid["env"]), (False, "none", None, "SUBSTACK_SID"))
+        self.assertEqual((sid["set"], sid["source"], sid["last4"]), (False, "none", None))
+        self.assertNotIn("env", sid)
+
+    def test_gemini_and_langfuse_are_analysis_only_connections(self):
+        listing = self.service.list()
+        flags = {p["provider"]: p["analysis_only"] for p in listing["providers"]}
+        self.assertEqual(flags, {"substack": False, "telegram": False, "reddit": False, "youtube": False,
+                                 "gemini": True, "langfuse": True})
+        self.assertEqual([f["key"] for f in self._provider(listing, "gemini")["fields"]], ["api_key"])
+        self.assertEqual([f["key"] for f in self._provider(listing, "langfuse")["fields"]],
+                         ["public_key", "secret_key"])
+        view = self.service.put("gemini", "api_key", " AIzaSyExampleKey1234 ")
+        self.assertEqual((self._field(view, "api_key")["set"], self._field(view, "api_key")["last4"]), (True, "1234"))
+        self.assertTrue(view["configured"])
+        self.assertNotIn("AIzaSyExampleKey1234", json.dumps(self.service.list()))
+        self.assertEqual(self.service.credentials.get("gemini", "api_key"), "AIzaSyExampleKey1234")
+        self.service.put("langfuse", "public_key", "pk-lf-1")
+        self.service.put("langfuse", "secret_key", "sk-lf-2")
+        self.assertTrue(self.service.provider("langfuse")["configured"])
 
     def test_a_saved_value_is_encrypted_and_never_echoed(self):
         view = self.service.put("substack", "sid", f"substack.sid={SID}")
@@ -443,15 +471,15 @@ class CredentialsServiceTests(unittest.TestCase):
         self.assertEqual(self.box.decrypt(ciphertext), SID)
         self.assertEqual(self.service.credentials.get("substack", "sid"), SID)
 
-    def test_the_database_wins_over_env_and_delete_falls_back_to_env(self):
+    def test_env_values_are_ignored_and_delete_leaves_the_field_not_set(self):
         self.env["SUBSTACK_SID"] = "env-cookie-value-1234"
         service = self._service()
-        self.assertEqual(self._field(service.provider("substack"), "sid")["source"], "env")
+        self.assertEqual(self._field(service.provider("substack"), "sid")["set"], False)
         service.put("substack", "sid", SID)
         self.assertEqual(service.credentials.get("substack", "sid"), SID)
         view = service.delete("substack", "sid")
-        self.assertEqual((self._field(view, "sid")["source"], self._field(view, "sid")["last4"]), ("env", "1234"))
-        self.assertEqual(service.credentials.get("substack", "sid"), "env-cookie-value-1234")
+        self.assertEqual((self._field(view, "sid")["set"], self._field(view, "sid")["source"]), (False, "none"))
+        self.assertIsNone(service.credentials.get("substack", "sid"))
 
     def test_a_value_saved_with_another_key_reads_as_unreadable(self):
         self.service.put("substack", "sid", SID)
@@ -482,11 +510,6 @@ class CredentialsServiceTests(unittest.TestCase):
         fresh = self._service()      # persisted, not only in this process
         self.assertTrue(fresh.provider("substack")["test"]["ok"])
         self.assertNotIn(SID, json.dumps(view))
-
-    def test_an_env_only_value_keeps_its_test_in_memory(self):
-        self.env["SUBSTACK_SID"] = SID
-        view = run(self._service().test("substack"))
-        self.assertTrue(view["test"]["ok"])
 
     def test_the_telegram_test_connects_and_names_the_account(self):
         view = run(self.service.test("telegram"))

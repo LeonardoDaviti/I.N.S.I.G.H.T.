@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +19,7 @@ from unittest import mock
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from insight_core.ingestion.credentials import MappingCredentials
 from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.gates import HOST_FLOORS, FetchGates
 from insight_core.ingestion.inspection import DbInspectionRefresher
@@ -34,8 +34,6 @@ from insight_core.ingestion.kinds.telegram_mtproto import (
 from insight_core.ingestion.kinds.telegram_session import (
     TelegramChannelError,
     TelegramFloodWait,
-    TelethonClientFactory,
-    telegram_session_path,
     translate_telethon_error,
 )
 from insight_core.ingestion.runner import IngestionRunner
@@ -403,75 +401,65 @@ class NonInteractiveAuthTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AvailabilityTests(unittest.TestCase):
-    ENV = {"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "abc"}
+    STORED = {("telegram", "api_id"): "12345", ("telegram", "api_hash"): "abc", ("telegram", "session"): "1abc"}
+
+    def creds(self, **drop_or_set):
+        values = dict(self.STORED)
+        for key, value in drop_or_set.items():
+            if value is None:
+                values.pop(("telegram", key), None)
+            else:
+                values[("telegram", key)] = value
+        return MappingCredentials(values)
 
     def decide(self, availability: Availability):
         source = tg_source("ai_newz")
         return decide_fetch(cadence_stats(source, None), TelegramKind().profile, NOW, force=True,
                             availability=availability)
 
-    def test_no_api_id_is_unavailable_with_the_variable_named_even_when_forced(self):
-        availability = availability_from_env({"TELEGRAM_API_HASH": "abc"}, exists=lambda _p: True)
+    def test_no_api_id_is_unavailable_with_connections_named_even_when_forced(self):
+        availability = availability_from_env({}, credentials=self.creds(api_id=None))
         self.assertFalse(availability.telegram_credentials)
-        self.assertIn("TELEGRAM_API_ID", availability.telegram_reason)
+        self.assertIn("API ID", availability.telegram_reason)
+        self.assertIn("Sources → Connections", availability.telegram_reason)
         decision = self.decide(availability)
         self.assertEqual(decision.kind, DecisionKind.SKIP_UNAVAILABLE)
-        self.assertIn("TELEGRAM_API_ID", decision.detail)
+        self.assertIn("API ID", decision.detail)
+
+    def test_env_variables_are_not_credentials(self):
+        env = {"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "abc"}
+        availability = availability_from_env(env, credentials=MappingCredentials())
+        self.assertFalse(availability.telegram_credentials)
 
     def test_a_non_integer_api_id_is_unavailable(self):
-        availability = availability_from_env({**self.ENV, "TELEGRAM_API_ID": "abc"}, exists=lambda _p: True)
+        availability = availability_from_env({}, credentials=self.creds(api_id="abc"))
         self.assertFalse(availability.telegram_credentials)
-        self.assertIn("TELEGRAM_API_ID", availability.telegram_reason)
+        self.assertIn("API ID", availability.telegram_reason)
 
     def test_no_api_hash_is_unavailable(self):
-        availability = availability_from_env({"TELEGRAM_API_ID": "1"}, exists=lambda _p: True)
-        self.assertIn("TELEGRAM_API_HASH", availability.telegram_reason)
+        availability = availability_from_env({}, credentials=self.creds(api_hash=None))
+        self.assertIn("API hash", availability.telegram_reason)
 
-    def test_credentials_without_a_session_file_are_unavailable(self):
-        availability = availability_from_env(self.ENV, exists=lambda _p: False)
+    def test_credentials_without_a_stored_session_are_unavailable(self):
+        availability = availability_from_env({}, credentials=self.creds(session=None))
         self.assertFalse(availability.telegram_credentials)
         self.assertIn("no Telegram session", availability.telegram_reason)
         decision = self.decide(availability)
         self.assertEqual(decision.kind, DecisionKind.SKIP_UNAVAILABLE)
         self.assertIn("no Telegram session", decision.detail)
 
-    def test_credentials_and_a_session_file_are_available(self):
-        seen = []
-        availability = availability_from_env(self.ENV, exists=lambda p: seen.append(p) or True)
+    def test_credentials_and_a_stored_session_are_available(self):
+        availability = availability_from_env({}, credentials=self.creds())
         self.assertTrue(availability.telegram_credentials)
         self.assertIsNone(availability.telegram_reason)
-        self.assertEqual(seen, [telegram_session_path(self.ENV)])
         self.assertEqual(self.decide(availability).kind, DecisionKind.FETCH_FORCED)
 
-    def test_the_session_path_defaults_into_the_mounted_config_dir(self):
-        self.assertEqual(telegram_session_path({}), "/app/insight_core/config/telegram/insight.session")
-        self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": "/tmp/x.session"}), "/tmp/x.session")
-
-    def test_the_session_path_gets_the_suffix_telethon_adds(self):
-        # Telethon's SQLiteSession appends ".session" to a bare name, so the login script
-        # writes /tmp/x.session; the existence checks must look there too.
-        self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": "/tmp/x"}), "/tmp/x.session")
-        self.assertEqual(telegram_session_path({"TELEGRAM_SESSION_PATH": " /tmp/x "}), "/tmp/x.session")
-        env = {**self.ENV, "TELEGRAM_SESSION_PATH": "/tmp/x"}
-        availability = availability_from_env(env, exists=lambda p: p == "/tmp/x.session")
-        self.assertTrue(availability.telegram_credentials)
-        self.assertIsNone(availability.telegram_reason)
-
-    def test_the_login_script_and_the_factory_use_the_normalised_path(self):
-        from insight_core.ingestion.kinds.telegram_session import normalise_session_path
-        self.assertEqual(normalise_session_path("/tmp/x"), "/tmp/x.session")
-        self.assertEqual(normalise_session_path("/tmp/x.session"), "/tmp/x.session")
-        factory = TelethonClientFactory(api_id=12345, api_hash="abc", session_path="/tmp/insight-no-such-session")
-        with self.assertRaises(KindUnavailable) as ctx:
-            factory.create()
-        self.assertIn("/tmp/insight-no-such-session.session", str(ctx.exception))
-
     def test_the_ytdlp_switch_is_still_read(self):
-        self.assertFalse(availability_from_env({"INSIGHT_YTDLP_ENABLED": "0"}).ytdlp_enabled)
-        self.assertTrue(availability_from_env({}).ytdlp_enabled)
+        self.assertFalse(availability_from_env({"INSIGHT_YTDLP_ENABLED": "0"}, credentials=MappingCredentials()).ytdlp_enabled)
+        self.assertTrue(availability_from_env({}, credentials=MappingCredentials()).ytdlp_enabled)
 
     def test_the_health_row_shows_the_unavailable_reason_not_an_error(self):
-        availability = availability_from_env(self.ENV, exists=lambda _p: False)
+        availability = availability_from_env({}, credentials=self.creds(session=None))
         kind = TelegramKind()
         enabled = health_row({**tg_source("ai_newz"), "state": None}, kind, availability, NOW)
         self.assertEqual(enabled["status"], "unavailable")
@@ -671,15 +659,19 @@ class TelethonTranslationTests(unittest.IsolatedAsyncioTestCase):
         other = RuntimeError("x")
         self.assertIs(translate_telethon_error(other), other)
 
-    async def test_the_factory_builds_a_non_sleeping_client_on_the_session_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "insight.session")
-            Path(path).touch()   # an empty SQLite file: what telegram_login leaves before sign-in
-            client = TelethonClientFactory(api_id=1, api_hash="abc", session_path=path).create()
-            try:
-                self.assertEqual(client.telethon.flood_sleep_threshold, 0)
-            finally:
-                client.telethon.session.close()
+    async def test_the_factory_builds_a_non_sleeping_client_on_the_stored_session(self):
+        from telethon.crypto import AuthKey
+        from telethon.sessions import StringSession
+
+        from insight_core.ingestion.kinds.telegram_session import TelethonClientFactory
+
+        session = StringSession()
+        session.set_dc(2, "149.154.167.51", 443)
+        session.auth_key = AuthKey(os.urandom(256))
+        creds = MappingCredentials({("telegram", "api_id"): "1", ("telegram", "api_hash"): "abc",
+                                    ("telegram", "session"): session.save()})
+        client = TelethonClientFactory(credentials=creds).create()
+        self.assertEqual(client.telethon.flood_sleep_threshold, 0)
 
     async def test_the_wrapper_translates_errors_raised_by_telethon(self):
         from telethon.errors import ChannelPrivateError, FloodWaitError

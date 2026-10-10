@@ -1,15 +1,17 @@
 """Connections: the secrets the owner adds in Sources → Connections (Mark IX §10.1).
 
-Write-only. The API shows, per field, whether a value is set, its last 4 characters, when
-it was saved and where it comes from (db, env, file or none). It never returns a stored
-value, a ciphertext or a Telegram session, and nothing here logs one.
+Write-only. The API shows, per field, whether a value is set (stored here: source "db",
+else "none"), its last 4 characters and when it was saved. No secret is read from the
+environment. It never returns a stored value, a ciphertext or a Telegram session, and
+nothing here logs one.
 
 Providers:
 - substack {sid}: the substack.sid cookie of the owner's logged-in browser.
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
-  the browser sign-in (login_start -> login_code -> login_password); the session file of
-  scripts/telegram_login stays a fallback.
+  the browser sign-in (login_start -> login_code -> login_password), the only session.
 - reddit, youtube: public feeds, nothing to add.
+- gemini {api_key}, langfuse {public_key, secret_key}: analysis_only, shown by the frontend
+  only while INSIGHT_ANALYSIS is on. Read by the lazy Gemini client and the Langfuse tracer.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
 substack.com whether the cookie is signed in); telegram connects and calls get_me.
@@ -26,8 +28,6 @@ import psycopg
 
 from insight_core.db.repo_credentials import CredentialRow, CredentialsRepository
 from insight_core.ingestion.credentials import (
-    ENV_NAMES,
-    EnvCredentials,
     SecretBox,
     SecretKeyMissing,
     StoredCredentials,
@@ -55,6 +55,7 @@ class ProviderSpec:
     needed: bool = True
     testable: bool = False
     sign_in: bool = False
+    analysis_only: bool = False
 
 
 PROVIDERS: Tuple[ProviderSpec, ...] = (
@@ -78,6 +79,20 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
     ),
     ProviderSpec("reddit", "Reddit", "Not needed: public feeds.", needed=False),
     ProviderSpec("youtube", "YouTube", "Not needed: public feeds.", needed=False),
+    ProviderSpec(
+        "gemini", "Gemini",
+        "The Google AI key the analysis features (briefings, topics, post analysis) call.",
+        (FieldSpec("api_key", "API key", "Create one at aistudio.google.com → Get API key."),),
+        analysis_only=True,
+    ),
+    ProviderSpec(
+        "langfuse", "Langfuse",
+        "Optional tracing of the analysis features' Gemini calls.",
+        (FieldSpec("public_key", "Public key", "Langfuse → Project settings → API keys (pk-lf-…)."),
+         FieldSpec("secret_key", "Secret key", "Shown once when the key pair is created (sk-lf-…).")),
+        needed=False,
+        analysis_only=True,
+    ),
 )
 _SPECS = {spec.provider: spec for spec in PROVIDERS}
 
@@ -156,7 +171,6 @@ class CredentialsService:
     box: Optional[SecretBox] = None
     env: Optional[Dict[str, str]] = None
     credentials: Optional[StoredCredentials] = None
-    session_file_exists: Optional[Callable[[], bool]] = None
     substack_checker: Optional[Callable[[Any, Optional[dict]], Any]] = None   # (provider, source) -> (ok, msg)
     telegram_clients: Optional[Callable[[Any], Any]] = None                  # (provider) -> TelegramClientFactory
     telegram_lock: Any = None
@@ -190,16 +204,13 @@ class CredentialsService:
 
     def _provider_view(self, spec: ProviderSpec, rows: Dict[Tuple[str, str], CredentialRow],
                        readable: Dict[Tuple[str, str], str]) -> Dict[str, Any]:
-        env = EnvCredentials(self.env)
         fields: List[Dict[str, Any]] = []
         for field_spec in spec.fields:
             ident = (spec.provider, field_spec.key)
             row = rows.get(ident)
-            env_name = ENV_NAMES.get(ident)
-            env_value = env.get(*ident)
             view: Dict[str, Any] = {
                 "key": field_spec.key, "label": field_spec.label, "hint": field_spec.hint,
-                "writable": field_spec.writable, "env": env_name,
+                "writable": field_spec.writable,
                 "set": False, "last4": None, "updated_at": None, "source": "none", "error": None,
             }
             if row is not None:
@@ -207,15 +218,12 @@ class CredentialsService:
                             last4=row.last4 if field_spec.show_last4 else None)
                 if ident not in readable:
                     view["error"] = "The saved value cannot be read (the secret key changed); save it again"
-                    view["set"] = bool(env_value)
-            elif env_value:
-                view.update(set=True, source="env", last4=_last4(env_value) if field_spec.show_last4 else None)
-            elif ident == ("telegram", "session") and self._session_file_exists():
-                view.update(set=True, source="file")
+                    view["set"] = False
             fields.append(view)
         return {
             "provider": spec.provider, "label": spec.label, "description": spec.description,
             "needed": spec.needed, "testable": spec.testable, "sign_in": spec.sign_in,
+            "analysis_only": spec.analysis_only,
             "configured": bool(fields) and all(f["set"] for f in fields),
             "fields": fields,
             "test": self._test_view(spec.provider, rows),
@@ -237,15 +245,6 @@ class CredentialsService:
     def _login_view(self) -> Optional[Dict[str, Any]]:
         pending = self._live_pending()
         return {"stage": pending.stage} if pending else None
-
-    def _session_file_exists(self) -> bool:
-        if self.session_file_exists is not None:
-            return self.session_file_exists()
-        import os
-
-        from insight_core.ingestion.kinds.telegram_session import telegram_session_path
-
-        return os.path.exists(telegram_session_path(self.env))
 
     @staticmethod
     def _spec(provider: str) -> ProviderSpec:

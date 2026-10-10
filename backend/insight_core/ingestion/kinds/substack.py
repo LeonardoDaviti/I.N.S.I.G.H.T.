@@ -5,7 +5,7 @@ request carries a subscriber's session cookie (substack.sid): /api/v1/archive li
 newest first (body_html empty), /api/v1/posts/<slug> returns the body the account can read.
 
 The cookie is read through the credential seam (ingestion/credentials.py): the value saved
-in Sources → Connections, else env SUBSTACK_SID. It is read at request time, so a new cookie
+in Sources → Connections (never the environment). It is read at request time, so a new cookie
 applies on the next fetch without a restart. Without one the public (truncated) body is
 stored with metadata.paywalled=true.
 With it, a rejected cookie (401/403) or an only_paid post that still comes back truncated

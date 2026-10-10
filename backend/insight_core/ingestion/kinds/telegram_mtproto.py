@@ -7,8 +7,8 @@ Built from the Mark VIII Telegram connector (spec §B8, §D.2):
 - TelegramSession: its connect(), minus the interactive stdin login. One session per run, opened
   lazily by the runner before the first due telegram source and closed in a finally. open()
   takes the session lock, connects and checks is_user_authorized(); it never calls
-  client.start(), send_code_request or a stdin prompt. Authorisation is the operator CLI
-  scripts/telegram_login.py.
+  client.start(), send_code_request or a stdin prompt. Authorisation is the browser sign-in
+  in Sources → Connections, which stores the session encrypted.
 
 Flood wait: the client never sleeps one itself (flood_sleep_threshold=0). A wait of at most
 MAX_INLINE_FLOOD_WAIT_S is slept through KindHttp.sleep and the request retried once; a

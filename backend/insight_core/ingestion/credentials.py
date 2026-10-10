@@ -1,14 +1,14 @@
 """The credential seam (Mark IX §10.1): where a source kind reads a secret.
 
 The owner adds secrets in Sources → Connections; they are stored encrypted in the
-`credentials` table (db/repo_credentials.py). The environment stays a fallback, so an
-existing .env (SUBSTACK_SID, TELEGRAM_API_ID, TELEGRAM_API_HASH) keeps working.
+`credentials` table (db/repo_credentials.py). That store is the only place a secret is
+read from: no API key comes from the environment. A one-off move of an old .env into the
+store is scripts/import_env_secrets.py.
 
 - CredentialProvider: get(provider, key) -> the plaintext value, or None. Kinds hold one and
   call it at request time, so a value saved in the UI applies without a restart.
-- EnvCredentials: the environment only (tests, scripts, an explicit env mapping).
 - MappingCredentials: a fixed {(provider, key): value} (tests).
-- StoredCredentials: the database first, then the environment. Decrypted values are cached
+- StoredCredentials: the database only. Decrypted values are cached
   for a few seconds per process; the API process invalidates its cache on every write.
 - SecretBox: Fernet over INSIGHT_SECRET_KEY, or a key generated once into
   /app/secrets/secret.key (a named volume shared by the API and ingestion containers).
@@ -30,14 +30,6 @@ DEFAULT_SECRET_KEY_PATH = "/app/secrets/secret.key"
 CACHE_TTL_S = 15.0
 CONNECTIONS_HINT = "Sources → Connections"
 
-# (provider, key) -> the environment variable it falls back to.
-ENV_NAMES: Dict[Tuple[str, str], str] = {
-    ("substack", "sid"): "SUBSTACK_SID",
-    ("telegram", "api_id"): "TELEGRAM_API_ID",
-    ("telegram", "api_hash"): "TELEGRAM_API_HASH",
-}
-
-
 class CredentialProvider(Protocol):
     def get(self, provider: str, key: str) -> Optional[str]: ...
 
@@ -45,20 +37,6 @@ class CredentialProvider(Protocol):
 def _clean(value: Any) -> Optional[str]:
     text = str(value or "").strip()
     return text or None
-
-
-class EnvCredentials:
-    """The environment only (the Mark VIII behaviour)."""
-
-    def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
-        self.env = env
-
-    def get(self, provider: str, key: str) -> Optional[str]:
-        name = ENV_NAMES.get((provider, key))
-        if not name:
-            return None
-        env = os.environ if self.env is None else self.env
-        return _clean(env.get(name))
 
 
 class MappingCredentials:
@@ -145,8 +123,8 @@ def _create_key(path: str) -> bytes:
 
 
 class StoredCredentials:
-    """Database first, then the environment. Any database or key problem reads as "not
-    stored" (logged without values), so a fetch falls back to the environment."""
+    """The database only. Any database or key problem reads as "not stored" (logged without
+    values). `env` is read for the secret key (INSIGHT_SECRET_KEY / _PATH) only."""
 
     def __init__(
         self,
@@ -161,7 +139,6 @@ class StoredCredentials:
         self.db_url = db_url
         self.box = box
         self._env_mapping = env
-        self.env = EnvCredentials(env)
         self.ttl_s = ttl_s
         self.clock = clock
         self._load = load or self._load_from_db
@@ -170,16 +147,15 @@ class StoredCredentials:
         self._lock = threading.Lock()
 
     def get(self, provider: str, key: str) -> Optional[str]:
-        stored = self.stored().get((provider, key))
-        return stored if stored else self.env.get(provider, key)
+        return self.stored().get((provider, key)) or None
 
     def stored(self) -> Dict[Tuple[str, str], str]:
         with self._lock:
             if self._cache is None or self.clock() - self._loaded_at >= self.ttl_s:
                 try:
                     self._cache = self._load()
-                except Exception as exc:  # noqa: BLE001 - fall back to the environment
-                    logger.warning("Stored credentials unavailable (%s); using the environment",
+                except Exception as exc:  # noqa: BLE001 - reads as "not set"
+                    logger.warning("Stored credentials unavailable (%s); reading as not set",
                                    type(exc).__name__)
                     self._cache = {}
                 self._loaded_at = self.clock()
@@ -234,8 +210,6 @@ def default_credentials() -> StoredCredentials:
 __all__ = [
     "CONNECTIONS_HINT",
     "CredentialProvider",
-    "ENV_NAMES",
-    "EnvCredentials",
     "MappingCredentials",
     "SecretBox",
     "SecretKeyMissing",

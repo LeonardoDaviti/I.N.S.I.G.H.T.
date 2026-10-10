@@ -8,82 +8,59 @@ the kinds or this module never pulls Telethon into sys.modules.
   get_entity, get_messages). The test adapter is tests/test_telegram_kind.FakeTelegramClient.
 - TelethonClientFactory: builds a TelethonClient (the port over telethon.TelegramClient),
   with flood_sleep_threshold=0 so every FloodWaitError reaches the kind instead of being
-  slept inside Telethon. Credentials come through the credential seam (Sources →
-  Connections, else TELEGRAM_API_ID / TELEGRAM_API_HASH). The session is the StringSession
-  saved by the browser sign-in when there is one, else the file at telegram_session_path()
-  (scripts/telegram_login.py). It never calls client.start().
+  slept inside Telethon. Credentials and the session come through the credential seam
+  (Sources → Connections only): the session is the StringSession saved by the browser
+  sign-in. It never calls client.start().
 - TelethonLoginClient: the browser sign-in's port (send code, sign in with the code, then
   the 2FA password), its Telethon errors turned into TelegramLoginError messages.
 - TelegramFloodWait / TelegramChannelError: what Telethon's errors become. A channel error
   is the channel's problem (source error, backoff applies); a flood wait is the account's.
-- PgAdvisorySessionLock: Telethon's SQLite session file cannot be shared by two processes,
-  and config/ (where it lives) is bind-mounted into both the API and ingestion containers,
-  so a session is only opened under pg_try_advisory_lock(hashtext('insight.telegram_session')).
+- PgAdvisorySessionLock: one Telegram session must not be used by two processes at once
+  (the API's test and an ingestion run), so a session is only opened under
+  pg_try_advisory_lock(hashtext('insight.telegram_session')).
 """
 from __future__ import annotations
 
 import contextlib
 import os
-from typing import Any, AsyncIterator, Mapping, Optional, Protocol, Sequence
+from typing import Any, AsyncIterator, Optional, Protocol, Sequence
 
 from insight_core.ingestion.kinds.base import KindUnavailable
 
-DEFAULT_SESSION_PATH = "/app/insight_core/config/telegram/insight.session"
 SESSION_LOCK_KEY = "insight.telegram_session"
 LOGIN_HINT = "sign in under Sources → Connections"
 CREDENTIALS_HINT = "add it in Sources → Connections"
 
 
-SESSION_SUFFIX = ".session"
-
-
-def normalise_session_path(path: str) -> str:
-    """The file Telethon actually uses: SQLiteSession appends ".session" to a bare name.
-
-    The login script, the client factory and the availability probe all go through this,
-    so `TELEGRAM_SESSION_PATH=/x/insight` is checked as the /x/insight.session it writes.
-    """
-    path = path.strip()
-    return path if path.endswith(SESSION_SUFFIX) else path + SESSION_SUFFIX
-
-
-def telegram_session_path(env: Optional[Mapping[str, str]] = None) -> str:
-    """TELEGRAM_SESSION_PATH, default inside the bind-mounted config/ (survives rebuilds)."""
-    env = os.environ if env is None else env
-    return normalise_session_path((env.get("TELEGRAM_SESSION_PATH") or "").strip() or DEFAULT_SESSION_PATH)
-
-
-def _provider(env: Optional[Mapping[str, str]], credentials: Any) -> Any:
+def _provider(credentials: Any) -> Any:
     if credentials is not None:
         return credentials
-    from insight_core.ingestion.credentials import EnvCredentials
+    from insight_core.ingestion.credentials import default_credentials
 
-    return EnvCredentials(env)
+    return default_credentials()
 
 
-def telegram_credentials(env: Optional[Mapping[str, str]] = None, *,
-                         credentials: Any = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
+def telegram_credentials(*, credentials: Any = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
     """(api_id, api_hash, reason): reason names what is missing, None when both are usable.
 
-    Read from `credentials` (a CredentialProvider: Connections, then env) or, without one,
-    from `env` / os.environ only.
+    Read from `credentials` (a CredentialProvider), default the Connections store.
     """
-    provider = _provider(env, credentials)
+    provider = _provider(credentials)
     raw_id = (provider.get("telegram", "api_id") or "").strip()
     if not raw_id:
-        return None, None, f"Telegram API ID (TELEGRAM_API_ID) is not set; {CREDENTIALS_HINT}"
+        return None, None, f"Telegram API ID is not set; {CREDENTIALS_HINT}"
     try:
         api_id = int(raw_id)
     except ValueError:
-        return None, None, f"Telegram API ID (TELEGRAM_API_ID) is not an integer; {CREDENTIALS_HINT}"
+        return None, None, f"Telegram API ID is not an integer; {CREDENTIALS_HINT}"
     api_hash = (provider.get("telegram", "api_hash") or "").strip()
     if not api_hash:
-        return None, None, f"Telegram API hash (TELEGRAM_API_HASH) is not set; {CREDENTIALS_HINT}"
+        return None, None, f"Telegram API hash is not set; {CREDENTIALS_HINT}"
     return api_id, api_hash, None
 
 
 def telegram_session_string(credentials: Any) -> Optional[str]:
-    """The StringSession saved by the browser sign-in, or None (then the file is used)."""
+    """The StringSession saved by the browser sign-in, or None (no session: unavailable)."""
     if credentials is None:
         return None
     return (credentials.get("telegram", "session") or "").strip() or None
@@ -182,24 +159,17 @@ class TelethonClient:
 
 
 class TelethonClientFactory:
-    """Builds the real client. Credentials and the session are read at create() time.
-
-    An explicit session_path pins the file (tests, the login script). Otherwise the stored
-    StringSession wins over the file.
-    """
+    """Builds the real client. Credentials and the session are read at create() time."""
 
     def __init__(self, *, api_id: Optional[int] = None, api_hash: Optional[str] = None,
-                 session_path: Optional[str] = None, credentials: Any = None) -> None:
+                 credentials: Any = None) -> None:
         self.api_id = api_id
         self.api_hash = api_hash
-        self.session_path = session_path
         self.credentials = credentials
 
     def _credentials(self) -> Any:
         if self.credentials is None:
-            from insight_core.ingestion.credentials import default_credentials
-
-            self.credentials = default_credentials()
+            self.credentials = _provider(None)
         return self.credentials
 
     def create(self) -> TelethonClient:
@@ -208,19 +178,12 @@ class TelethonClientFactory:
             api_id, api_hash, reason = telegram_credentials(credentials=self._credentials())
             if reason:
                 raise KindUnavailable(reason)
-        session: Any = None
-        if not self.session_path:
-            string = telegram_session_string(self._credentials())
-            if string:
-                from telethon.sessions import StringSession
+        string = telegram_session_string(self._credentials())
+        if not string:
+            raise KindUnavailable(f"no Telegram session; {LOGIN_HINT}")
+        from telethon.sessions import StringSession
 
-                session = StringSession(string)
-        if session is None:
-            path = normalise_session_path(self.session_path) if self.session_path else telegram_session_path()
-            if not os.path.exists(path):
-                raise KindUnavailable(f"no Telegram session at {path}; {LOGIN_HINT}")
-            session = path
-
+        session = StringSession(string)
         from telethon import TelegramClient
 
         client = TelegramClient(
@@ -339,7 +302,6 @@ class PgAdvisorySessionLock:
 
 
 __all__ = [
-    "DEFAULT_SESSION_PATH",
     "PgAdvisorySessionLock",
     "TelegramChannelError",
     "TelegramClientFactory",
@@ -351,7 +313,6 @@ __all__ = [
     "TelethonClientFactory",
     "TelethonLoginClient",
     "telegram_credentials",
-    "telegram_session_path",
     "telegram_session_string",
     "translate_login_error",
     "translate_telethon_error",
