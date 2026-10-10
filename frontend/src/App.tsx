@@ -20,6 +20,7 @@ const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
 const TrackPage = lazy(() => import('./pages/TrackPage'));
+const BlogPage = lazy(() => import('./pages/BlogPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -86,6 +87,8 @@ export function AppRoutes() {
       <Route path="/tracks" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/tracks/:trackId" element={<TrackPage />} />
+      <Route path="/blog" element={<BlogPage />} />
+      <Route path="/blog/:slug" element={<BlogPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
