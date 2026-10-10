@@ -46,8 +46,8 @@ services:
       # pages actually return to the OS instead of being pinned by fragmentation.
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
-    # Non-secret settings (LANGFUSE_ENABLED, LANGFUSE_BASE_URL, ...) come from .env directly.
-    # API keys are not read from the environment: add them in Sources → Connections.
+    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
+    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:
       - .env
     extra_hosts:
@@ -95,8 +95,8 @@ services:
       # pages actually return to the OS instead of being pinned by fragmentation.
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
-    # Non-secret settings (LANGFUSE_ENABLED, LANGFUSE_BASE_URL, ...) come from .env directly.
-    # API keys are not read from the environment: add them in Sources → Connections.
+    # Langfuse keys come from .env directly (env_file), not ${..} substitution,
+    # so a shell-exported LANGFUSE_* (e.g. from another extension) can't override them.
     env_file:
       - .env
     extra_hosts:

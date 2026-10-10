@@ -11,7 +11,7 @@ docker compose ps             # postgres, backend, ingestion and frontend should
 ```
 
 Open `http://localhost:${FRONTEND_PORT}`. API keys never go in `.env`: add them in the app under
-**Sources → Connections** (Telegram, Substack; with analysis on, Gemini and Langfuse). They are
+**Sources → Connections** (Telegram, Substack; with analysis on, Gemini). They are
 stored encrypted in the database. Coming from an older `.env` that still holds keys? Run
 `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once, then delete those lines.
 

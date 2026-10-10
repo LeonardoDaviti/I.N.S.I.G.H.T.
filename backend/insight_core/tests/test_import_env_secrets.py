@@ -18,8 +18,6 @@ FULL_ENV = {
     "TELEGRAM_API_HASH": HASH,
     "SUBSTACK_SID": "s%3AcookieValue.abcd",
     "GEMINI_API_KEY": "AIzaGeminiKey9876",
-    "LANGFUSE_PUBLIC_KEY": "pk-lf-public-1",
-    "LANGFUSE_SECRET_KEY": "sk-lf-secret-2",
 }
 
 
@@ -43,8 +41,6 @@ class ImportEnvSecretsTests(unittest.TestCase):
             ("telegram", "api_hash"): HASH,
             ("substack", "sid"): "s%3AcookieValue.abcd",
             ("gemini", "api_key"): "AIzaGeminiKey9876",
-            ("langfuse", "public_key"): "pk-lf-public-1",
-            ("langfuse", "secret_key"): "sk-lf-secret-2",
         })
         self.assertEqual(sorted(stored), sorted(FULL_ENV))
         self.assertEqual(skipped, [])
@@ -61,8 +57,7 @@ class ImportEnvSecretsTests(unittest.TestCase):
             "TELEGRAM_API_HASH": "your_api_hash",
             "SUBSTACK_SID": "  ",
             "GEMINI_API_KEY": "your_gemini_api_key_here",
-            "LANGFUSE_PUBLIC_KEY": "pk-lf-xxx",
-            "LANGFUSE_SECRET_KEY": "CHANGEME",
+            "GOOGLE_API_KEY": "AIza-xxx",
         }
         store = FakeStore()
         stored, skipped = import_env_secrets(env, store)
@@ -70,7 +65,12 @@ class ImportEnvSecretsTests(unittest.TestCase):
         self.assertEqual(stored, [])
         self.assertEqual({name for name, _reason in skipped},
                          {"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "SUBSTACK_SID", "GEMINI_API_KEY",
-                          "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"})
+                          "GOOGLE_API_KEY"})
+
+    def test_changeme_is_a_placeholder_in_any_case(self):
+        store = FakeStore()
+        _, skipped = import_env_secrets({"SUBSTACK_SID": "ChangeMe"}, store)
+        self.assertEqual((store.values, skipped), ({}, [("SUBSTACK_SID", "placeholder")]))
 
     def test_a_non_integer_telegram_api_id_is_skipped(self):
         store = FakeStore()
@@ -88,12 +88,12 @@ class ImportEnvSecretsTests(unittest.TestCase):
     def test_main_prints_names_and_never_values(self):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = main(env={**FULL_ENV, "LANGFUSE_SECRET_KEY": "your_secret"}, store=FakeStore())
+            code = main(env={**FULL_ENV, "GOOGLE_API_KEY": "changeme-later"}, store=FakeStore())
         text = out.getvalue()
         self.assertEqual(code, 0)
         for name in FULL_ENV:
             self.assertIn(name, text)
-        for value in [*FULL_ENV.values(), "your_secret"]:
+        for value in [*FULL_ENV.values(), "changeme-later"]:
             self.assertNotIn(value, text)
 
 

@@ -42,10 +42,10 @@ Secrets are added in the UI, **Sources → Connections**, and stored encrypted i
 `credentials` table (spec `plan/INSIGHT_mark_ix_plan.md` §10.1). No API ever returns a
 saved value; the UI shows whether it is set and its last 4 characters. It is the only place
 a secret is read from: no API key comes from `.env`. Providers: Telegram, Substack and, shown
-only with analysis on, Gemini (`api_key`) and Langfuse (`public_key`, `secret_key`).
+only with analysis on, Gemini (`api_key`).
 
 To move the keys of an older `.env` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`,
-`GEMINI_API_KEY` or `GOOGLE_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) into the
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`) into the
 store once:
 
 ```bash

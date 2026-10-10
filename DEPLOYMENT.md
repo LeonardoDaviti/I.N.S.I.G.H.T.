@@ -41,10 +41,10 @@ stored encrypted in the `credentials` table with the key in the `insight_secrets
   https://my.telegram.org, then sign in there with your phone number. The session is saved
   encrypted; until then those sources show as unavailable in the health table, not as failing.
 - **Substack** (paid posts in full, optional): the `substack.sid` cookie.
-- **Gemini** and **Langfuse**: shown only with analysis on.
+- **Gemini**: shown only with analysis on.
 
-Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`,
-`GEMINI_API_KEY`, `LANGFUSE_PUBLIC_KEY` or `LANGFUSE_SECRET_KEY`? Copy them into the store once,
+Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`
+or `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)? Copy them into the store once,
 then delete those lines from `.env`:
 
 ```bash

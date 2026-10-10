@@ -151,7 +151,7 @@ Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/C
 - `/tracks/:trackId`: one track's reading view. ⌘K has one "Tracks…" entry per track. Fetch, rename, main digest and delete are in the track group's ⋯ menu on the sources list.
 - `/settings/sources`: three tabs, `sources / connections / ingestion`.
   - `sources`: the list, add/edit, tracks, health and cadence. The old `?tab=health` URL still works and opens the list grouped by status.
-  - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram, Substack and, with analysis on, Gemini and Langfuse. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
+  - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram, Substack and, with analysis on, Gemini. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
   - `ingestion` (`?tab=ingestion`): the run report, `Run due sources`, the scheduler interval and status, and the job history (`&sub=jobs`; `&job=<id>` opens one job).
 
 With analysis off, `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.

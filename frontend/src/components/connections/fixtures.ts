@@ -98,26 +98,6 @@ export function geminiView(overrides: Partial<CredentialProviderView> = {}): Cre
   };
 }
 
-export function langfuseView(overrides: Partial<CredentialProviderView> = {}): CredentialProviderView {
-  return {
-    provider: 'langfuse',
-    label: 'Langfuse',
-    description: 'Optional tracing of the analysis features’ Gemini calls.',
-    needed: true,
-    testable: false,
-    sign_in: false,
-    analysis_only: true,
-    configured: false,
-    fields: [
-      field({ key: 'public_key', label: 'Public key', hint: 'Langfuse → Project settings → API keys (pk-lf-…).' }),
-      field({ key: 'secret_key', label: 'Secret key', hint: 'Shown once when the key pair is created (sk-lf-…).' }),
-    ],
-    test: null,
-    login: null,
-    ...overrides,
-  };
-}
-
 export function credentials(...providers: CredentialProviderView[]): CredentialsResponse {
   return { providers };
 }

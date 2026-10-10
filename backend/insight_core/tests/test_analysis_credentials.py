@@ -1,9 +1,8 @@
-"""Gemini and Langfuse read their keys from Connections, never from the environment (S6)."""
+"""The Gemini client reads its key from Connections, never from the environment (S6)."""
 from __future__ import annotations
 
 import os
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,8 +12,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.ingestion.credentials import MappingCredentials
 
-ENV_KEYS = {"GEMINI_API_KEY": "env-gemini", "GOOGLE_API_KEY": "env-google",
-            "LANGFUSE_PUBLIC_KEY": "pk-env", "LANGFUSE_SECRET_KEY": "sk-env"}
+ENV_KEYS = {"GEMINI_API_KEY": "env-gemini", "GOOGLE_API_KEY": "env-google"}
 
 
 class GeminiKeyTests(unittest.TestCase):
@@ -43,40 +41,6 @@ class GeminiKeyTests(unittest.TestCase):
             processor = lazy._build_gemini_processor(object())
             self.assertTrue(processor.setup_processor())
         self.assertEqual(processor.api_key, "shared-key")
-
-
-class LangfuseKeyTests(unittest.TestCase):
-    def setUp(self):
-        from insight_core.observability import langfuse_tracer
-
-        self.tracer = langfuse_tracer
-        self.addCleanup(self._reset)
-        self._reset()
-        self.built = []
-        fake = types.ModuleType("langfuse")
-        fake.Langfuse = lambda **kwargs: self.built.append(kwargs) or object()
-        patcher = mock.patch.dict(sys.modules, {"langfuse": fake})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def _reset(self):
-        self.tracer._client = None
-        self.tracer._initialized = False
-
-    def env(self):
-        return mock.patch.dict(os.environ, {**ENV_KEYS, "LANGFUSE_ENABLED": "true",
-                                            "LANGFUSE_BASE_URL": "https://cloud.langfuse.com"})
-
-    def test_keys_come_from_the_store(self):
-        creds = MappingCredentials({("langfuse", "public_key"): "pk-db", ("langfuse", "secret_key"): "sk-db"})
-        with self.env():
-            self.assertIsNotNone(self.tracer.get_client(credentials=creds))
-        self.assertEqual((self.built[0]["public_key"], self.built[0]["secret_key"]), ("pk-db", "sk-db"))
-
-    def test_env_keys_alone_leave_tracing_off(self):
-        with self.env():
-            self.assertIsNone(self.tracer.get_client(credentials=MappingCredentials()))
-        self.assertEqual(self.built, [])
 
 
 if __name__ == "__main__":

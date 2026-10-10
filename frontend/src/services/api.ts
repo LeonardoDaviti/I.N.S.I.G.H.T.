@@ -417,7 +417,7 @@ export interface RunReport {
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | 'gemini' | 'langfuse' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | 'gemini' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -449,7 +449,7 @@ export interface CredentialProviderView {
   needed: boolean;
   testable: boolean;
   sign_in: boolean;
-  /** Gemini, Langfuse: shown only while analysis is on. */
+  /** Gemini: shown only while analysis is on. */
   analysis_only: boolean;
   configured: boolean;
   fields: CredentialField[];

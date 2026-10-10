@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import ConnectionsPanel from './ConnectionsPanel';
 import ConnectionsLink from './ConnectionsLink';
 import AddSourceModal from '../AddSourceModal';
-import { credentials, demoCredentials, geminiView, langfuseView, publicView, substackView, telegramView } from './fixtures';
+import { credentials, demoCredentials, geminiView, publicView, substackView, telegramView } from './fixtures';
 import { cookieValue, isSubstackUrl, missingCredentialProvider, providerStatus } from './connectionStatus';
 import { healthRow } from '../ops/fixtures';
 import { makeFakeApi } from '../../test/fakeApi';
@@ -107,17 +107,15 @@ describe('ConnectionsPanel', () => {
     expect(document.body).not.toHaveTextContent(/\.env/);
   });
 
-  it('shows the Gemini and Langfuse connections only with analysis on', async () => {
-    const getCredentials = vi.fn().mockResolvedValue(credentials(savedSubstack(), geminiView(), langfuseView()));
+  it('shows the Gemini connection only with analysis on', async () => {
+    const getCredentials = vi.fn().mockResolvedValue(credentials(savedSubstack(), geminiView()));
     const { unmount } = setup({ getCredentials, getConfig: vi.fn().mockResolvedValue({ analysis_enabled: false }) });
     expect(await screen.findByText('Substack')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Gemini')).not.toBeInTheDocument());
-    expect(screen.queryByText('Langfuse')).not.toBeInTheDocument();
     unmount();
 
     setup({ getCredentials, getConfig: vi.fn().mockResolvedValue({ analysis_enabled: true }) }, 'gemini');
     expect(await screen.findByText('Gemini')).toBeInTheDocument();
-    expect(screen.getByText('Langfuse')).toBeInTheDocument();
     expect(await screen.findByLabelText('API key')).toHaveAttribute('type', 'password');
   });
 

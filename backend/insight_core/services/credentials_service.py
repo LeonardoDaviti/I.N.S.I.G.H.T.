@@ -10,8 +10,8 @@ Providers:
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
   the browser sign-in (login_start -> login_code -> login_password), the only session.
 - reddit, youtube: public feeds, nothing to add.
-- gemini {api_key}, langfuse {public_key, secret_key}: analysis_only, shown by the frontend
-  only while INSIGHT_ANALYSIS is on. Read by the lazy Gemini client and the Langfuse tracer.
+- gemini {api_key}: analysis_only, shown by the frontend only while INSIGHT_ANALYSIS is on.
+  Read by the lazy Gemini client.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
 substack.com whether the cookie is signed in); telegram connects and calls get_me.
@@ -83,13 +83,6 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
         "gemini", "Gemini",
         "The Google AI key the analysis features (briefings, topics, post analysis) call.",
         (FieldSpec("api_key", "API key", "Create one at aistudio.google.com → Get API key."),),
-        analysis_only=True,
-    ),
-    ProviderSpec(
-        "langfuse", "Langfuse",
-        "Optional tracing of the analysis features' Gemini calls.",
-        (FieldSpec("public_key", "Public key", "Langfuse → Project settings → API keys (pk-lf-…)."),
-         FieldSpec("secret_key", "Secret key", "Shown once when the key pair is created (sk-lf-…).")),
         analysis_only=True,
     ),
 )

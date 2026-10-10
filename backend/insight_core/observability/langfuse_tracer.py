@@ -84,38 +84,24 @@ def _configure_exporter_tls() -> None:
     os.environ.setdefault("REQUESTS_CA_BUNDLE", bundle)
 
 
-def _keys(credentials: Any) -> tuple[Optional[str], Optional[str]]:
-    """The key pair saved in Sources → Connections → Langfuse (never the environment)."""
-    if credentials is None:
-        from insight_core.ingestion.credentials import default_credentials
-
-        credentials = default_credentials()
-    return credentials.get("langfuse", "public_key"), credentials.get("langfuse", "secret_key")
-
-
-def get_client(credentials: Any = None) -> Optional[Any]:
-    """Lazily build the Langfuse v4 client. Returns None if disabled/misconfigured.
-
-    LANGFUSE_ENABLED and LANGFUSE_BASE_URL come from the environment; the keys from the
-    Connections store. Missing keys are re-checked on the next call, so keys added in
-    the UI start tracing without a restart.
-    """
+def get_client() -> Optional[Any]:
+    """Lazily build the Langfuse v4 client. Returns None if disabled/misconfigured."""
     global _client, _initialized
     if _initialized:
         return _client
+    _initialized = True
 
     if not is_enabled():
-        _initialized = True
         _client = None
         return None
 
-    public_key, secret_key = _keys(credentials)
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
     host = _host()
     if not (public_key and secret_key and host):
-        logger.debug("Langfuse enabled but the keys (Sources → Connections) or host are missing")
+        logger.warning("Langfuse enabled but public/secret key or host missing; tracing disabled")
         _client = None
         return None
-    _initialized = True
 
     # Must run before the SDK builds its OTLP exporter.
     _configure_exporter_tls()
