@@ -43,3 +43,20 @@ export function normalizeIngestionTab(tab?: string | null): IngestionTabKey {
 export function getIngestionTabHref(tab: IngestionTabKey): string {
   return tab === 'main' ? '/ingestion' : `/ingestion/${tab}`;
 }
+
+/**
+ * Where an old `/ingestion[/:tab]` URL lives reading-only: the ingestion tab
+ * under sources (reading-finish R3). The tab is carried across as `sub`
+ * (missions and jobs are both `jobs`; the overview is the default), and the
+ * rest of the query (a run toast's `?job=`) comes along.
+ */
+export function sourcesIngestionHref(tab?: string | null, search = ''): string {
+  const params = new URLSearchParams({ tab: 'ingestion' });
+  const key = normalizeIngestionTab(tab);
+  const sub = key === 'missions' ? 'jobs' : key === 'main' ? null : key;
+  if (sub) params.set('sub', sub);
+  new URLSearchParams(search).forEach((value, name) => {
+    if (name !== 'tab' && name !== 'sub') params.set(name, value);
+  });
+  return `/settings/sources?${params.toString()}`;
+}

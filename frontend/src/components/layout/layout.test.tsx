@@ -90,6 +90,13 @@ describe('navigation model', () => {
     ]);
   });
 
+  it('reading-only, Ingestion in the switcher opens the ingestion tab under sources', () => {
+    const ingestion = destinations(false).find((d) => d.id === 'ingestion');
+    expect(ingestion?.to).toBe('/settings/sources?tab=ingestion');
+    expect(ingestion?.group).toBe('sources');
+    expect(destinations(true).find((d) => d.id === 'ingestion')?.to).toBe('/ingestion');
+  });
+
   it('the ingestion tab under sources is the sources word', () => {
     expect(activeNavKey('/settings/sources?tab=ingestion')).toBe('sources');
   });

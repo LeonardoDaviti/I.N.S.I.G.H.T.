@@ -1,5 +1,5 @@
 import { Suspense, lazy, type ReactNode } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './components/ThemeProvider';
 import AppErrorBoundary from './components/AppErrorBoundary';
@@ -7,6 +7,7 @@ import AppShell from './components/layout/AppShell';
 import { LoadingState } from './components/states';
 import { ApiProvider } from './services/ApiContext';
 import { useAnalysis } from './hooks/useAnalysis';
+import { sourcesIngestionHref } from './lib/ingestionNavigation';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
@@ -49,6 +50,18 @@ function AnalysisOnly({ children }: { children: ReactNode }) {
 }
 
 /**
+ * The old ingestion page: itself with analysis on; reading-only it moved to the
+ * ingestion tab under sources (reading-finish R3), carrying the tab and query.
+ */
+function IngestionRoute() {
+  const { enabled, settled } = useAnalysis();
+  const { tab } = useParams();
+  const location = useLocation();
+  if (!settled) return <RouteFallback />;
+  return enabled ? <IngestionControl /> : <Navigate to={sourcesIngestionHref(tab, location.search)} replace />;
+}
+
+/**
  * Routes (design doc §9). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
  * Reading-only, the app is feed / sources / post, and `/tracks/:id` stays as
@@ -64,8 +77,8 @@ export function AppRoutes() {
       <Route path="/briefing/vertical" element={<AnalysisOnly><VerticalBriefingPage /></AnalysisOnly>} />
       <Route path="/briefing/vertical/source/:sourceId" element={<AnalysisOnly><VerticalBriefingPage /></AnalysisOnly>} />
       <Route path="/briefing/topics" element={<AnalysisOnly><DailyBriefing /></AnalysisOnly>} />
-      <Route path="/ingestion" element={<IngestionControl />} />
-      <Route path="/ingestion/:tab" element={<IngestionControl />} />
+      <Route path="/ingestion" element={<IngestionRoute />} />
+      <Route path="/ingestion/:tab" element={<IngestionRoute />} />
       <Route path="/stories" element={<AnalysisOnly><StoriesExplorerPage /></AnalysisOnly>} />
       <Route path="/inbox" element={<AnalysisOnly><AnalystInboxPage /></AnalysisOnly>} />
       <Route path="/posts/:postId" element={<PostDetailPage />} />

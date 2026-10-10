@@ -21,6 +21,7 @@ import {
 import { compactJobRun, compactOperationsOverview, jobLabel, normalizeSourceHealth } from '../lib/operationsOverview';
 import { asRunReport } from '../lib/runReport';
 import { localDateISO } from '../lib/dates';
+import { formatTimeRemaining, schedulerStaleness } from '../lib/schedulerStatus';
 import { formatCount, plural } from '../lib/format';
 import { sourceLabel } from '../lib/sourceLabel';
 import { HEALTH_STATUS_LABELS, sortHealthRows, summarizeHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
@@ -121,19 +122,6 @@ const TAB_WORDS: Record<string, string> = {
   logs: 'logs',
 };
 
-/** A scheduler that has not ticked for two tick intervals (or ever) is stalled. */
-function schedulerStaleness(state: SchedulerState | null, tickMinutes: number, nowMs: number): string | null {
-  if (state === null) return null;
-  const last = state.last_tick_at ? new Date(state.last_tick_at).getTime() : NaN;
-  if (Number.isNaN(last)) {
-    return 'The scheduler has not recorded a tick. Nothing is fetched automatically until the ingestion service runs.';
-  }
-  if (nowMs - last > Math.max(2 * tickMinutes, 90) * 60_000) {
-    return `The scheduler last ticked ${formatTimeRemaining(nowMs - last).replace(/ \d+s$/, '')} ago. Automatic fetching looks stalled; check the ingestion service.`;
-  }
-  return null;
-}
-
 function formatJson(data: Record<string, any> | null) {
   if (!data) {
     return 'Nothing run in this session yet.';
@@ -168,19 +156,6 @@ function formatEstimatedTokens(value: unknown) {
   const num = Number(value || 0);
   if (!Number.isFinite(num) || num <= 0) return null;
   return num.toLocaleString();
-}
-
-function formatTimeRemaining(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
 }
 
 function extractEstimatedTokens(payload?: Record<string, any> | null) {
