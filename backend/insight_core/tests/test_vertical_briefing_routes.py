@@ -3,11 +3,13 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import main
+from insight_core.settings import Settings
 
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
@@ -70,15 +72,17 @@ class VerticalBriefingRouteTests(unittest.TestCase):
         self.assertFalse(result["cached"])
 
     def test_refresh_source_vertical_briefing_sets_refresh_flag(self):
-        result = asyncio.run(
-            main.refresh_source_vertical_briefing(
-                source_id="source-123",
-                background_tasks=main.BackgroundTasks(),
-                start="2026-03-01",
-                end="2026-03-31",
-                asyncMode=False,
+        # Refreshing writes a briefing, so it is an analysis endpoint (409 while off).
+        with mock.patch.object(main, "get_settings", return_value=Settings(analysis_enabled=True)):
+            result = asyncio.run(
+                main.refresh_source_vertical_briefing(
+                    source_id="source-123",
+                    background_tasks=main.BackgroundTasks(),
+                    start="2026-03-01",
+                    end="2026-03-31",
+                    asyncMode=False,
+                )
             )
-        )
 
         self.assertEqual(self.calls[0], ("source-123", "2026-03-01", "2026-03-31", True))
         self.assertEqual(result["source_id"], "source-123")

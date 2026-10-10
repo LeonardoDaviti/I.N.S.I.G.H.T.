@@ -4,6 +4,7 @@ Post-level intelligence workspace: detail retrieval, notes, summaries, and chat.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import cached_property
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -20,10 +21,15 @@ from insight_core.utils.media import post_media
 class PostDetailService:
     """Serve rich detail views for a single post."""
 
+    @cached_property
+    def processor(self) -> GeminiProcessor:
+        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
+        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
+        return GeminiProcessor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.logger = get_component_logger("post_detail_service")
-        self.processor = GeminiProcessor()
         self.posts_service = PostsService(db_url)
         self.source_fetch_service = SourceFetchService(db_url)
         self.explainability_service = ExplainabilityService(db_url)

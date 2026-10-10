@@ -11,6 +11,8 @@ Two clocks:
   and the daily / topic briefings - in the Mark VIII order, with the briefing code
   untouched. On the first tick after deploy last_daily_work_at is seeded from the newest
   successful scheduler_cycle job, so a deploy does not produce an extra briefing.
+  With INSIGHT_ANALYSIS off only the upkeep runs; experts and briefings are skipped and
+  recorded as skipped on the scheduler_cycle job.
 
 tick() is the testable unit: it takes its collaborators as arguments.
 """
@@ -23,7 +25,7 @@ import sys
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -31,6 +33,9 @@ sys.path.insert(0, str(BACKEND_DIR))
 from insight_core.ingestion import FetchRequest, SourceSelector, Trigger  # noqa: E402
 from insight_core.ingestion.ports import JobProgressSink  # noqa: E402
 from insight_core.logs.core.logger_config import get_component_logger, setup_logging  # noqa: E402
+
+if TYPE_CHECKING:
+    from insight_core.settings import Settings
 
 logger = get_component_logger("run_scheduler")
 
@@ -95,7 +100,7 @@ async def tick(
     config: Dict[str, Any],
     *,
     ingest: Callable[..., Awaitable[Any]],
-    daily_work: Callable[[Dict[str, Any]], Awaitable[None]],
+    daily_work: Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]],
     ops: Any,
 ) -> SchedulerState:
     """One scheduler wake-up: an ingestion run, then daily work when it is due."""
@@ -141,9 +146,14 @@ async def tick(
         except Exception:  # noqa: BLE001
             logger.exception("Could not start the scheduler_cycle job")
         cycle_status, cycle_message = "failed", "Daily work did not finish"
+        cycle_payload: Dict[str, Any] = {"scheduler": config}
         try:
-            await daily_work(config)
+            summary = await daily_work(config)
             cycle_status, cycle_message = "success", "Daily work completed"
+            if summary:
+                cycle_payload["daily_work"] = summary
+                if summary.get("skipped"):
+                    cycle_message += f" ({summary.get('reason')}: skipped {', '.join(summary['skipped'])})"
         except Exception as exc:  # noqa: BLE001
             cycle_message = str(exc)
             logger.exception("Daily work failed")
@@ -151,7 +161,7 @@ async def tick(
             if cycle_job_id:
                 try:
                     ops.finish_job(cycle_job_id, status=cycle_status, message=cycle_message,
-                                   payload={"scheduler": config})
+                                   payload=cycle_payload)
                 except Exception:  # noqa: BLE001
                     logger.exception("Could not finish the scheduler_cycle job")
         # Advanced even when it failed: a broken briefing must not retry every tick.
@@ -170,12 +180,21 @@ async def tick(
     return new_state
 
 
-async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dict[str, Any]) -> None:
-    """The Mark VIII cycle minus its ingest: prune, cadence, sync, experts, briefings."""
+ANALYSIS_STEPS = ("experts", "daily_briefing", "topic_briefing")
+
+
+async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dict[str, Any], *,
+                     settings: Optional["Settings"] = None) -> Optional[Dict[str, Any]]:
+    """The Mark VIII cycle minus its ingest: prune, cadence, sync, experts, briefings.
+
+    With INSIGHT_ANALYSIS off it stops after the upkeep (no ExpertsService, BriefingService or
+    Gemini client is built) and returns which steps it skipped, for the scheduler_cycle job.
+    """
     from insight_core.ingestion.ports import DbFetchStateStore
-    from insight_core.services.briefing_service import BriefingService
-    from insight_core.services.experts_service import ExpertsService
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
+    from insight_core.settings import get_settings
+
+    settings = settings or get_settings()
 
     try:
         pruned = operations_service.prune_job_runs(int(os.environ.get("INSIGHT_JOB_RUNS_RETAIN_DAYS", "30")))
@@ -195,6 +214,13 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
         sync_service = SourceConfigSyncService(db_url)
         sync_result = sync_service.sync_json_to_db(mirror=True)
         logger.info("sources.json -> DB sync result: %s", sync_result)
+
+    if not settings.analysis_enabled:
+        logger.info("Analysis is off: skipping %s", ", ".join(ANALYSIS_STEPS))
+        return {"skipped": list(ANALYSIS_STEPS), "reason": "analysis off"}
+
+    from insight_core.services.briefing_service import BriefingService
+    from insight_core.services.experts_service import ExpertsService
 
     # Scheduled experts: each enabled expert with a non-empty schedule runs every cycle.
     # One failing expert is logged and contained; the briefings still run.
@@ -280,8 +306,8 @@ async def main() -> None:
         if state.next_tick_at is None or now >= state.next_tick_at:
             config = operations_service.get_scheduler_config()
 
-            async def daily(cfg: Dict[str, Any]) -> None:
-                await daily_work(db_url, operations_service, cfg)
+            async def daily(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                return await daily_work(db_url, operations_service, cfg)
 
             state = await tick(now, state, config, ingest=run_ingestion, daily_work=daily, ops=operations_service)
             logger.info("Next ingestion tick at %s", state.next_tick_at.isoformat() if state.next_tick_at else "?")

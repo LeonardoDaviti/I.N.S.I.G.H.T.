@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 import re
+from functools import cached_property
 from typing import Any, Dict, List
 
 import psycopg
@@ -31,6 +32,12 @@ class BriefingService:
 
     VERTICAL_BRIEFING_VERSION = 4
 
+    @cached_property
+    def processor(self) -> GeminiProcessor:
+        """Built on first use, never at construction: with INSIGHT_ANALYSIS off no path the
+        reading app takes reaches it, so no Gemini client is created. Assignable (tests)."""
+        return GeminiProcessor()
+
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.posts_service = PostsService(db_url)
@@ -44,7 +51,6 @@ class BriefingService:
         self.store_service = BriefingsStoreService(db_url)
         self.topics_service = TopicsService(db_url)
         self.explainability_service = ExplainabilityService(db_url)
-        self.processor = GeminiProcessor()
         self.logger = get_component_logger("briefing_service")
 
     def _briefing_artifact_type(self, subject_type: str, variant: str) -> str:
