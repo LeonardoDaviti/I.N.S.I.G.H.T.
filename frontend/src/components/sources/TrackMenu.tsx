@@ -8,13 +8,14 @@ const ITEM =
 
 /**
  * The ⋯ menu beside a track title: rare actions live here, off the scanning
- * path (rename, the main-digest switch, delete). A small hand-rolled menu
+ * path (rename, the main-digest switch, delete; on a phone also fetch now). A small hand-rolled menu
  * (button + role="menu"): arrows and Home/End move, Escape, outside click and
  * Tab close it, focus moves into it on open and back to ⋯ on close.
  */
 export default function TrackMenu({
   name,
   inMainDigest,
+  onFetch,
   onRename,
   onMainDigest,
   onDelete,
@@ -22,6 +23,8 @@ export default function TrackMenu({
   name: string;
   /** null while unknown: the switch item is disabled. */
   inMainDigest: boolean | null;
+  /** Phones only: the header has no room for its own fetch button there. */
+  onFetch?: () => void;
   onRename: () => void;
   onMainDigest: (on: boolean) => void;
   onDelete: () => void;
@@ -30,10 +33,13 @@ export default function TrackMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  // Items hidden at this width (display: none) have no layout box and are skipped.
+  const visibleItems = () => [...(rootRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? [])]
+    .filter((item) => getComputedStyle(item).display !== 'none');
 
   useEffect(() => {
     if (!open) return undefined;
-    rootRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    visibleItems()[0]?.focus();
     const onPointer = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -50,7 +56,7 @@ export default function TrackMenu({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
     if (event.key === 'Tab') { close(false); return; }
-    const items = [...(rootRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? [])];
+    const items = visibleItems();
     const at = items.indexOf(document.activeElement as HTMLElement);
     const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
     if (next === undefined || !items.length) return;
@@ -81,6 +87,12 @@ export default function TrackMenu({
           onKeyDown={onKeyDown}
           className="absolute right-0 origin-top-right motion-safe:animate-[pop-in_150ms_cubic-bezier(0.23,1,0.32,1)] top-full z-30 mt-1 min-w-[13.5rem] rounded-md border border-line-strong bg-raised p-1 text-[0.8125rem] text-fg shadow-overlay"
         >
+          {onFetch ? (
+            <button type="button" role="menuitem" onClick={pick(onFetch)} className={`${ITEM} sm:hidden`}>
+              <span aria-hidden="true" className="w-3" />
+              Fetch now
+            </button>
+          ) : null}
           <button type="button" role="menuitem" onClick={pick(onRename)} className={ITEM}>
             <span aria-hidden="true" className="w-3" />
             Rename…

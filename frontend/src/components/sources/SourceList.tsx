@@ -118,7 +118,7 @@ export default function SourceList({
           <section key={group.key} aria-labelledby={showHeaders ? headerId : undefined} aria-label={showHeaders ? undefined : group.label} className="min-w-0">
             {showHeaders ? (
               <div
-                className="group/row material sticky top-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] z-10 flex h-9 min-w-0 items-center gap-3 border-b border-line px-3"
+                className="group/row material sticky top-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] z-10 flex has-[[role=menu]]:z-[15] h-9 min-w-0 items-center gap-3 border-b border-line px-3"
               >
                 <input
                   type="checkbox"
@@ -150,7 +150,7 @@ export default function SourceList({
                       aria-busy={track.isFetching(group.folderId)}
                       aria-label={`Fetch track ${group.label}`}
                       title="Fetch this track now"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:cursor-default disabled:text-fg-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11 coarse:w-11"
+                      className="hidden h-8 w-8 sm:inline-flex items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:cursor-default disabled:text-fg-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11 coarse:w-11"
                     >
                       <RefreshCw aria-hidden="true" className={cn('h-3.5 w-3.5', track.isFetching(group.folderId) && 'motion-safe:animate-spin')} />
                     </button>
@@ -165,6 +165,7 @@ export default function SourceList({
                     <TrackMenu
                       name={group.label}
                       inMainDigest={track.inMainDigest(group.folderId)}
+                      onFetch={track.isFetching(group.folderId) ? undefined : () => track.fetch(group.folderId!, group.label)}
                       onRename={() => track.rename(group.folderId!, group.label)}
                       onMainDigest={(on) => track.setMainDigest(group.folderId!, group.label, on)}
                       onDelete={() => track.remove(group.folderId!, group.label)}

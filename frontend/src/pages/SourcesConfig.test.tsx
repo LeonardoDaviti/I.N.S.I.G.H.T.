@@ -341,6 +341,11 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(fetchFolderNow).toHaveBeenCalledWith('f-ai', expect.any(Object)));
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
+    // Phones fetch from the menu (the header button is hidden there); arrows move between items.
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Fetch now', 'Rename…', '×Delete track…']);
+    expect(screen.getByRole('menuitem', { name: 'Fetch now' })).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Rename…' })).toHaveFocus();
     await userEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     const rename = await screen.findByRole('dialog', { name: 'Rename track' });
     const field = within(rename).getByRole('textbox', { name: 'Track name' });
