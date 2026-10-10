@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
 import { STATUS_GLYPH, compactAge, kindLabel, lastPostAt, rowFact, rowName, type SourceGroup } from './sourceList';
+import { folderReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
 const CHECKBOX =
@@ -58,6 +59,8 @@ export interface SourceListProps {
   showHeaders: boolean;
   /** Focus the active row's name when activeKey changes by keyboard. */
   focusToken: number;
+  /** The track a deep link (`?track=`) points at, highlighted briefly. */
+  highlightFolderId?: string | null;
 }
 
 /**
@@ -82,6 +85,7 @@ export default function SourceList({
   now,
   showHeaders,
   focusToken,
+  highlightFolderId = null,
 }: SourceListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const firstGroup = groups.find((g) => !collapsed.has(g.key) && g.rows.length);
@@ -115,7 +119,15 @@ export default function SourceList({
         const picked = ids.filter((id) => selected.has(id)).length;
         const headerId = `group-${group.key}`;
         return (
-          <section key={group.key} aria-labelledby={showHeaders ? headerId : undefined} aria-label={showHeaders ? undefined : group.label} className="min-w-0">
+          <section
+            key={group.key}
+            aria-labelledby={showHeaders ? headerId : undefined}
+            aria-label={showHeaders ? undefined : group.label}
+            data-folder-id={group.folderId ?? undefined}
+            data-highlighted={group.folderId && group.folderId === highlightFolderId ? 'true' : undefined}
+            // Scrolled to below the sticky top bar and toolbar; the highlight fades out (instantly with reduced motion).
+            className="min-w-0 scroll-mt-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] rounded-md motion-safe:transition-colors motion-safe:duration-700 data-[highlighted=true]:bg-raised"
+          >
             {showHeaders ? (
               <div
                 className="group/row material sticky top-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] z-10 flex has-[[role=menu]]:z-[15] h-9 min-w-0 items-center gap-3 border-b border-line px-3"
@@ -155,7 +167,7 @@ export default function SourceList({
                       <RefreshCw aria-hidden="true" className={cn('h-3.5 w-3.5', track.isFetching(group.folderId) && 'motion-safe:animate-spin')} />
                     </button>
                     <Link
-                      to={`/tracks/${encodeURIComponent(group.folderId)}`}
+                      to={folderReadPath(group.folderId)}
                       aria-label={`Open track ${group.label}`}
                       title="Open track"
                       className="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11 coarse:w-11"

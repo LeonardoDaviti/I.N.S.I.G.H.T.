@@ -76,11 +76,11 @@ describe('navigation model', () => {
     expect(items.find((d) => d.to === '/tracks')).toBeUndefined();
     const tracks = items.filter((d) => d.group === 'tracks');
     expect(tracks.map((d) => [d.label, d.to])).toEqual([
-      ['Agentic News', '/tracks/a1'],
-      ['مراجعة', '/tracks/b%202'],
+      ['Agentic News', '/read/folder/a1'],
+      ['مراجعة', '/read/folder/b%202'],
     ]);
-    expect(filterDestinations('agentic', items).map((d) => d.to)).toEqual(['/tracks/a1']);
-    expect(filterDestinations('track', items).map((d) => d.to)).toEqual(['/tracks/a1', '/tracks/b%202']);
+    expect(filterDestinations('agentic', items).map((d) => d.to)).toEqual(['/read/folder/a1']);
+    expect(filterDestinations('track', items).map((d) => d.to)).toEqual(['/read/folder/a1', '/read/folder/b%202']);
   });
 
   it('with analysis on the switcher is unchanged', () => {
@@ -176,7 +176,7 @@ describe('AppShell', () => {
     expect(labels.join(' ')).not.toMatch(/briefing|Stories|inbox/i);
     await user.type(screen.getByRole('combobox'), 'security');
     await user.keyboard('{Enter}');
-    expect(screen.getByTestId('where')).toHaveTextContent('/tracks/b2');
+    expect(screen.getByTestId('where')).toHaveTextContent('/read/folder/b2');
   });
 
   it('Ctrl+K opens the quick switcher; typing filters; Enter navigates', async () => {

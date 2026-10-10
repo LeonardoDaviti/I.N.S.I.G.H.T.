@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
@@ -10,7 +10,7 @@ import { renderWithProviders } from '../test/render';
 import { healthResponse, healthRow } from '../components/ops/fixtures';
 import { feedCursorFor } from '../lib/feedContext';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
-import type { Api } from '../services/api';
+import { apiService, type Api } from '../services/api';
 
 const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
 
@@ -167,7 +167,80 @@ describe('ReaderPage', () => {
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
     }), `/read/source/${ID(7)}?filter=all`);
     expect(await screen.findByText('No posts here yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', '/settings/sources');
+    expect(screen.getByRole('link', { name: /sources/i })).toHaveAttribute('href', `/settings/sources?source=${ID(7)}`);
     expect(screen.queryByRole('button', { name: /fetch/i })).toBeNull();
+  });
+});
+
+// The retired track page's analysis surfaces (Design Studio D5): with analysis on,
+// a folder scope carries the track briefing and the milestones rail.
+describe('ReaderPage, folder scope', () => {
+  const FOLDER = ID(5);
+  const scoped = (analysis: boolean) => base({
+    getConfig: vi.fn().mockResolvedValue({ analysis_enabled: analysis }),
+    getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'Claude Code ships hooks' })])),
+    getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+  });
+
+  beforeEach(() => {
+    vi.spyOn(apiService, 'getMilestones').mockResolvedValue({ success: true } as never);
+    vi.spyOn(apiService, 'getExperts').mockResolvedValue({ success: true, experts: [] });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('with analysis on, shows the track briefing and the milestones rail for that folder', async () => {
+    render(scoped(true), `/read/folder/${FOLDER}`);
+    await screen.findByText('Claude Code ships hooks');
+    expect(await screen.findByRole('complementary', { name: 'Milestones' })).toBeInTheDocument();
+    await waitFor(() => expect(apiService.getMilestones).toHaveBeenCalledWith({ folderId: FOLDER }));
+    await waitFor(() => expect(apiService.getExperts).toHaveBeenCalled());
+  });
+
+  it('reading-only, a folder is just its posts: no briefing, no milestones', async () => {
+    render(scoped(false), `/read/folder/${FOLDER}`);
+    await screen.findByText('Claude Code ships hooks');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('complementary', { name: 'Milestones' })).toBeNull();
+    expect(apiService.getMilestones).not.toHaveBeenCalled();
+    expect(apiService.getExperts).not.toHaveBeenCalled();
+  });
+
+  it('with analysis on, a source scope adds nothing', async () => {
+    render(scoped(true), `/read/source/${ID(6)}`);
+    await screen.findByText('Claude Code ships hooks');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('complementary', { name: 'Milestones' })).toBeNull();
+    expect(apiService.getMilestones).not.toHaveBeenCalled();
+  });
+});
+
+// Issue 0003: the scope name is one click from where the source is managed.
+describe('ReaderPage, the scope name links into Sources', () => {
+  const api = () => base({
+    getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])),
+    getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+  });
+
+  it.each([
+    [`/read/source/${ID(7)}`, `/settings/sources?source=${ID(7)}`],
+    [`/read/folder/${ID(5)}`, `/settings/sources?track=${ID(5)}`],
+  ])('%s links its name to %s', async (route, href) => {
+    render(api(), route);
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(within(heading).getByRole('link')).toHaveAttribute('href', href);
+  });
+
+  it('the main feed name is plain text', async () => {
+    render(api());
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(within(heading).queryByRole('link')).toBeNull();
+  });
+
+  it('an empty scope points at that source in Sources', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
+    }), `/read/folder/${ID(5)}?filter=all`);
+    expect(await screen.findByRole('link', { name: 'This track in Sources' })).toHaveAttribute('href', `/settings/sources?track=${ID(5)}`);
   });
 });

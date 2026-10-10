@@ -40,7 +40,8 @@ import { usePostNeighbors } from '../hooks/usePostNeighbors';
 import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
-import { decodeFeedContext, postHref, scopePath, type FeedContext } from '../lib/feedContext';
+import { decodeFeedContext, postHref, scopePath, sourceSettingsHref, type FeedContext } from '../lib/feedContext';
+import TextLink from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { displayPostTitle } from '../lib/postTitle';
 import { postSourceName } from '../lib/sourceLabel';
@@ -1125,9 +1126,20 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
           <header className="mb-8">
             <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
               <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
-                <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
-                  {middleTruncate(sourceName, 40)}
-                </span>
+                {/* The source name links quietly to where it is managed (issue 0003). */}
+                {post.source_id ? (
+                  <TextLink
+                    to={sourceSettingsHref(post.source_id)}
+                    className="min-w-0 font-medium decoration-transparent [overflow-wrap:anywhere] hover:decoration-fg-3"
+                    title={post.source_display_name || post.source}
+                  >
+                    {middleTruncate(sourceName, 40)}
+                  </TextLink>
+                ) : (
+                  <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
+                    {middleTruncate(sourceName, 40)}
+                  </span>
+                )}
                 {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
                 {platformLabel ? (
                   <span className="whitespace-nowrap">

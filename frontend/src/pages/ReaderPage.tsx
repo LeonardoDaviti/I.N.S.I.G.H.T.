@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -17,10 +17,16 @@ import { feedKey, scopeUnreadCount, useUnreadCounts, type FeedFixture } from '..
 import { useDensityPreference } from '../hooks/useShortcutPreference';
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { scopeDelta, type UnreadChange } from '../hooks/useReaderMutations';
-import { isFeedFilter, scopeFromRoute } from '../lib/feedContext';
+import { isFeedFilter, scopeFromRoute, scopeSettingsHref } from '../lib/feedContext';
 import { formatCount } from '../lib/format';
 import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
+import { useAnalysisEnabled } from '../hooks/useAnalysis';
+
+// Analysis-only surfaces of a folder scope (the retired track page, Design Studio
+// D5). Loaded on demand, so the reading-only reader never pays for them.
+const TrackBriefingPanel = lazy(() => import('../components/TrackBriefingPanel'));
+const MilestonesRail = lazy(() => import('../components/MilestonesRail'));
 
 /**
  * How many posts arrived since the feed was loaded, from the scope's unread count.
@@ -155,9 +161,14 @@ function Reader({ scope }: { scope: string }) {
     return {
       title: 'No posts here yet',
       description: 'Posts appear once ingestion collects them.',
-      action: { label: scope.startsWith('folder:') ? 'This track in Sources' : 'This source in Sources', href: '/settings/sources', quiet: true },
+      action: { label: scope.startsWith('folder:') ? 'This track in Sources' : 'This source in Sources', href: scopeSettingsHref(scope) ?? '/settings/sources', quiet: true },
     };
   }, [filter, scope, showAll, stopped]);
+
+  // With analysis on, a folder scope is what the track page was: its briefing
+  // above the posts and its milestones rail beside them. Reading-only, nothing extra.
+  const analysisEnabled = useAnalysisEnabled();
+  const trackId = analysisEnabled && scope.startsWith('folder:') ? scope.slice('folder:'.length) : null;
 
   const subtitle = scopeCount !== null ? `${formatCount(scopeCount)} unread` : null;
 
@@ -175,6 +186,7 @@ function Reader({ scope }: { scope: string }) {
         <div className="min-w-0 flex-1">
           <FeedToolbar
             title={filter === 'starred' && scope === 'all' ? 'Starred' : title}
+            titleHref={scopeSettingsHref(scope)}
             subtitle={subtitle}
             filter={filter}
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
@@ -186,33 +198,49 @@ function Reader({ scope }: { scope: string }) {
             onOpenHelp={() => setHelpOpen(true)}
             pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
           />
-          <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
-            {stopped ? (
-              <IngestionStatusNotice
-                state="stopped"
-                testId="reader-ingestion-stopped"
-                linkToIngestion
-                className="mb-3"
-                message={activity?.lastAttemptAt
-                  ? `The last fetch was ${formatRelativeTime(activity.lastAttemptAt)}. New posts arrive only once ingestion runs again.`
-                  : 'No source has been fetched yet. New posts arrive only once ingestion runs.'}
+          <div className={`w-full px-3 pb-32 pt-3 sm:px-6 lg:px-8 ${trackId ? 'max-w-7xl lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:gap-10' : 'max-w-5xl'}`}>
+            <div className="min-w-0">
+              {trackId ? (
+                <Suspense fallback={null}>
+                  <TrackBriefingPanel folderId={trackId} className="mb-6" />
+                </Suspense>
+              ) : null}
+              {stopped ? (
+                <IngestionStatusNotice
+                  state="stopped"
+                  testId="reader-ingestion-stopped"
+                  linkToIngestion
+                  className="mb-3"
+                  message={activity?.lastAttemptAt
+                    ? `The last fetch was ${formatRelativeTime(activity.lastAttemptAt)}. New posts arrive only once ingestion runs again.`
+                    : 'No source has been fetched yet. New posts arrive only once ingestion runs.'}
+                />
+              ) : null}
+              {fixturePending ? <LoadingState label="Loading demo data" rows={6} /> : (
+              <FeedList
+                scope={scope}
+                filter={filter}
+                view={view}
+                density={density}
+                fixture={fixture}
+                emptyTitle={empty.title}
+                emptyDescription={empty.description}
+                emptyAction={empty.action}
+                helpOpen={helpOpen}
+                onHelpOpenChange={setHelpOpen}
+                onUnreadDelta={newPosts.onUnreadDelta}
               />
+              )}
+            </div>
+            {/* The rail is LAST in the DOM, so on phones it stacks below the feed.
+                A long rail scrolls inside itself instead of trapping the page. */}
+            {trackId ? (
+              <div className="mt-10 lg:sticky lg:top-[calc(var(--topbar-h)+1.5rem)] lg:mt-0 lg:max-h-[calc(100dvh-var(--topbar-h)-3rem)] lg:overflow-y-auto">
+                <Suspense fallback={null}>
+                  <MilestonesRail folderId={trackId} />
+                </Suspense>
+              </div>
             ) : null}
-            {fixturePending ? <LoadingState label="Loading demo data" rows={6} /> : (
-            <FeedList
-              scope={scope}
-              filter={filter}
-              view={view}
-              density={density}
-              fixture={fixture}
-              emptyTitle={empty.title}
-              emptyDescription={empty.description}
-              emptyAction={empty.action}
-              helpOpen={helpOpen}
-              onHelpOpenChange={setHelpOpen}
-              onUnreadDelta={newPosts.onUnreadDelta}
-            />
-            )}
           </div>
         </div>
       </div>

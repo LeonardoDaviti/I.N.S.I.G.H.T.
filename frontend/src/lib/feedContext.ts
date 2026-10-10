@@ -157,6 +157,29 @@ export function scopePath(scope: string): string {
   return `/read/${kind}/${id}`;
 }
 
+/** The reader scoped to one folder (a track): where every track link goes (Design Studio D5). */
+export function folderReadPath(folderId: string): string {
+  return `/read/folder/${encodeURIComponent(folderId)}`;
+}
+
+/** Where a source is managed: Sources with its detail sheet open (issue 0003). */
+export function sourceSettingsHref(sourceId: string): string {
+  return `/settings/sources?source=${encodeURIComponent(sourceId)}`;
+}
+
+/** Where a track is managed: Sources scrolled to its group (issue 0003). */
+export function trackSettingsHref(folderId: string): string {
+  return `/settings/sources?track=${encodeURIComponent(folderId)}`;
+}
+
+/** Where a reader scope is managed; null for the main feed. */
+export function scopeSettingsHref(scope: string): string | null {
+  const [kind, id] = scope.split(':');
+  if (kind === 'source' && id) return sourceSettingsHref(id);
+  if (kind === 'folder' && id) return trackSettingsHref(id);
+  return null;
+}
+
 /** The route params of `/read/:scopeKind/:scopeId?` as an API scope; null when invalid. */
 export function scopeFromRoute(kind: string | undefined, id: string | undefined): string | null {
   if (!kind) return 'all';
