@@ -108,10 +108,7 @@ python backend/insight_core/tests/test_generate_topics.py 2025-11-16
 
 ## Prerequisites
 
-1. **Environment Variables:**
-   ```bash
-   export GEMINI_API_KEY="your-api-key"
-   ```
+1. **Gemini API key:** saved in Sources → Connections → Gemini (shown with analysis on).
 
 2. **Database Setup:**
    - Run migration `0003_topics.sql`

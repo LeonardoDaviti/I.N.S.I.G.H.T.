@@ -18,7 +18,7 @@ feature overview; this file covers deploying, updating and troubleshooting.
 ## First deploy
 
 ```bash
-cp .env.example .env        # then edit it: DB_*, ports, GEMINI_API_KEY, TELEGRAM_* if used
+cp .env.example .env        # then edit it: DB_*, ports, CORS, intervals (no API keys)
 docker compose up -d --build
 docker compose ps
 docker compose logs -f backend ingestion
@@ -31,20 +31,28 @@ migrations are recorded and never re-run.
 Open `http://<host>:${FRONTEND_PORT}`. `/` is the reader. API docs are at
 `http://<host>:${BACKEND_PORT}/docs`.
 
-### Telegram channels over MTProto (optional)
+### API keys and sessions: Sources → Connections
 
-Bare-handle Telegram sources need `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and a session file.
-Create the session once, interactively:
+No API key is read from `.env`. Add them in the app under **Sources → Connections**; they are
+stored encrypted in the `credentials` table with the key in the `insight_secrets` volume (or
+`INSIGHT_SECRET_KEY`). Back that volume up with the database.
+
+- **Telegram** (bare-handle channels over MTProto, optional): the API ID and hash from
+  https://my.telegram.org, then sign in there with your phone number. The session is saved
+  encrypted; until then those sources show as unavailable in the health table, not as failing.
+- **Substack** (paid posts in full, optional): the `substack.sid` cookie.
+- **Gemini** and **Langfuse**: shown only with analysis on.
+
+Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`,
+`GEMINI_API_KEY`, `LANGFUSE_PUBLIC_KEY` or `LANGFUSE_SECRET_KEY`? Copy them into the store once,
+then delete those lines from `.env`:
 
 ```bash
-docker compose exec ingestion python -m insight_core.scripts.telegram_login
-docker compose exec ingestion python -m insight_core.scripts.telegram_login --check
+docker compose exec backend python -m insight_core.scripts.import_env_secrets
 ```
 
-The session is written to `TELEGRAM_SESSION_PATH` (default
-`/app/insight_core/config/telegram/insight.session`, inside the bind-mounted `config/`, so it
-survives rebuilds). A path without the `.session` suffix gets it added, as Telethon does. Until a
-session exists those sources show as unavailable in the health table, not as failing.
+It prints only the names it stored or skipped (empty values, template placeholders, values
+already stored), never a value. An older Telegram session file is not imported: sign in again.
 
 ## Updating
 

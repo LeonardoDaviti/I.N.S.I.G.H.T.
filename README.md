@@ -67,7 +67,8 @@ This lets you keep editing `sources.json` manually without losing DB-backed beha
 Notes:
 
 - RSS-based Telegram sources do not require Telegram API credentials.
-- Bare-handle Telegram sources need `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and a session file. Create it once with `docker compose exec ingestion python -m insight_core.scripts.telegram_login` (see `backend/insight_core/scripts/README.md`). Until then those sources show as unavailable, not failing.
+- Bare-handle Telegram sources need the Telegram API ID and hash and a signed-in session, all added under Sources → Connections → Telegram (see `backend/insight_core/scripts/README.md`). Until then those sources show as unavailable, not failing.
+- Reddit is read through its public RSS/JSON feeds and needs no account or API key.
 - Self-hosted `.local` HTTPS feeds are fetched with TLS verification disabled automatically. You can also set `RSS_SKIP_TLS_VERIFY_HOSTS` for additional internal hosts.
 
 Archive behavior:
@@ -101,7 +102,7 @@ Archive is never run automatically; it is a manual action only. Backend and inge
 cp .env.example .env
 ```
 
-2. Edit `.env` for your server.
+2. Edit `.env` for your server. It holds infrastructure only (database, ports, CORS, intervals, model names, switches); API keys are added in the app under **Sources → Connections** and stored encrypted.
 
 Important values:
 
@@ -111,7 +112,6 @@ Important values:
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
 - `INSIGHT_ANALYSIS` and `VITE_INSIGHT_ANALYSIS`: `off` (the default) for the reading-only app, `on` for the analysis layer
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`, only needed with analysis on
 - `INSIGHT_SOURCES_JSON_PATH`
 
 3. Optional: edit `backend/insight_core/config/sources.json` before first boot if you want some sources preloaded without using the frontend.
@@ -151,7 +151,7 @@ Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/C
 - `/tracks/:trackId`: one track's reading view. ⌘K has one "Tracks…" entry per track. Fetch, rename, main digest and delete are in the track group's ⋯ menu on the sources list.
 - `/settings/sources`: three tabs, `sources / connections / ingestion`.
   - `sources`: the list, add/edit, tracks, health and cadence. The old `?tab=health` URL still works and opens the list grouped by status.
-  - `connections` (`?tab=connections`): provider credentials, one row per provider.
+  - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram, Substack and, with analysis on, Gemini and Langfuse. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
   - `ingestion` (`?tab=ingestion`): the run report, `Run due sources`, the scheduler interval and status, and the job history (`&sub=jobs`; `&job=<id>` opens one job).
 
 With analysis off, `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.

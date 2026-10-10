@@ -40,8 +40,20 @@ process cannot fetch (yt-dlp off, no usable Telegram session) answers 409.
 
 Secrets are added in the UI, **Sources → Connections**, and stored encrypted in the
 `credentials` table (spec `plan/INSIGHT_mark_ix_plan.md` §10.1). No API ever returns a
-saved value; the UI shows whether it is set, its last 4 characters and where it comes from
-(`db`, `env`, `file` or `none`). `.env` stays a fallback: a value saved in Connections wins.
+saved value; the UI shows whether it is set and its last 4 characters. It is the only place
+a secret is read from: no API key comes from `.env`. Providers: Telegram, Substack and, shown
+only with analysis on, Gemini (`api_key`) and Langfuse (`public_key`, `secret_key`).
+
+To move the keys of an older `.env` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`,
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) into the
+store once:
+
+```bash
+docker compose exec backend python -m insight_core.scripts.import_env_secrets
+```
+
+It skips empty values, template placeholders and anything already stored, and prints only
+names, never values. Then delete those lines from `.env`.
 
 The encryption key is `INSIGHT_SECRET_KEY` (a Fernet key) if set, else
 `/app/secrets/secret.key`, generated on the first save into the `insight_secrets` volume that
@@ -55,21 +67,11 @@ are read over MTProto by the `telegram_mtproto` kind. The fetcher never prompts 
 it needs an already-authorised session.
 
 1. In Sources → Connections → Telegram, add the API ID (an integer) and API hash from
-   https://my.telegram.org (or `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` in `.env`).
+   https://my.telegram.org.
 2. Sign in there: phone number, the code Telegram sends, then the 2FA password if the
    account has one. The session is saved encrypted (a Telethon StringSession).
 
-The operator CLI still works and writes a session **file**, used only when no session is
-saved in Connections:
-
-```bash
-docker compose run --rm -it backend python -m insight_core.scripts.telegram_login
-# --check only reports whether the session is authorised
-```
-
-The file goes to `TELEGRAM_SESSION_PATH`, default
-`/app/insight_core/config/telegram/insight.session` = `backend/insight_core/config/telegram/`
-on the host (bind-mounted into both containers, git-ignored; delete it to log out).
+That saved session is the only one used; there is no session file.
 
 One fetch run (or archive run) at a time holds the session, under the Postgres advisory lock
 `hashtext('insight.telegram_session')`; the run opens it before its first due telegram
@@ -80,8 +82,8 @@ What the unavailable reasons mean (the source is skipped, never put into backoff
 
 | Reason | Meaning / fix |
 |---|---|
-| `Telegram API ID (TELEGRAM_API_ID) is not set` / `is not an integer`, `Telegram API hash (TELEGRAM_API_HASH) is not set` | add it in Sources → Connections (or fix `.env` and restart the containers) |
-| `no Telegram session at <path>; sign in under Sources → Connections` | no saved session and no session file: sign in |
+| `Telegram API ID is not set` / `is not an integer`, `Telegram API hash is not set` | add it in Sources → Connections |
+| `no Telegram session; sign in under Sources → Connections` | no saved session: sign in |
 | `Telegram session not authorised; sign in under Sources → Connections` | the session is logged out (revoked, or the sign-in was not finished): sign in again |
 | `Telegram session in use by another run` | another run (the scheduler or the API) holds the session; the next tick retries |
 | `Telegram flood wait until <time>` | Telegram asked the account to wait longer than 60s; the source that hit it is an error (normal backoff), the rest of the run's telegram sources are skipped |
@@ -95,7 +97,7 @@ backoff: the channel is the problem, not the account.
 `*.substack.com` sources (and a custom domain with `settings.substack: true`) use the
 `substack` kind: newest posts from `/api/v1/archive` (RSS `/feed` as fallback), each body from
 `/api/v1/posts/<slug>`. Paid posts come in full only with the owner's `substack.sid` cookie,
-pasted into Sources → Connections → Substack (`SUBSTACK_SID` in `.env` is the fallback; see
+pasted into Sources → Connections → Substack (see
 `plan/INSIGHT_mark_ix_plan.md` §10 for how to copy it). The Test button reads the newest paid
 post of a Substack source. Without a cookie the teaser is stored with
 `metadata.paywalled = true` and the health row's `credential_notice` says so. All Substack sources share host key

@@ -10,7 +10,10 @@ docker compose up -d --build
 docker compose ps             # postgres, backend, ingestion and frontend should be up
 ```
 
-Open `http://localhost:${FRONTEND_PORT}`.
+Open `http://localhost:${FRONTEND_PORT}`. API keys never go in `.env`: add them in the app under
+**Sources → Connections** (Telegram, Substack; with analysis on, Gemini and Langfuse). They are
+stored encrypted in the database. Coming from an older `.env` that still holds keys? Run
+`docker compose exec backend python -m insight_core.scripts.import_env_secrets` once, then delete those lines.
 
 ## Without Docker (development)
 
@@ -41,7 +44,7 @@ The top bar reads `feed / sources`.
 That is the reading-only app, and it is the default. Briefings, stories, the inbox and experts sit
 behind one switch, `INSIGHT_ANALYSIS`. To bring them back, set `INSIGHT_ANALYSIS=on` and
 `VITE_INSIGHT_ANALYSIS=on` in `.env`, then run `docker compose up -d --build`. They also need
-`GEMINI_API_KEY`. The README's "Analysis switch" section has the details. Nothing is deleted
+a Gemini API key, added in Sources → Connections → Gemini. The README's "Analysis switch" section has the details. Nothing is deleted
 either way.
 
 ## First steps in the app
