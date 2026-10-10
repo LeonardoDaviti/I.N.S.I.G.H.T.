@@ -14,7 +14,6 @@ vi.mock('./pages/VerticalBriefingPage', () => ({ default: () => <Where page="ver
 vi.mock('./pages/StoriesExplorerPage', () => ({ default: () => <Where page="stories" /> }));
 vi.mock('./pages/AnalystInboxPage', () => ({ default: () => <Where page="inbox" /> }));
 vi.mock('./pages/ExpertsPage', () => ({ default: () => <Where page="experts" /> }));
-vi.mock('./pages/TrackPage', () => ({ default: () => <Where page="track" /> }));
 vi.mock('./pages/IngestionControl', () => ({ default: () => <Where page="ingestion" /> }));
 vi.mock('./pages/SourcesConfig', () => ({ default: () => <Where page="sources" /> }));
 vi.mock('./pages/PostDetailPage', () => ({ default: () => <Where page="post" /> }));
@@ -56,9 +55,14 @@ describe('routes, analysis off (reading-only)', () => {
     expect(await screen.findByTestId('where')).toHaveTextContent('reader at / (REPLACE)');
   });
 
-  it('a track keeps its reading view', async () => {
+  it('a track opens the reader scoped to it, replacing the history entry', async () => {
     renderRoutes('/tracks/t1', false);
-    expect(await screen.findByTestId('where')).toHaveTextContent('track at /tracks/t1 (POP)');
+    expect(await screen.findByTestId('where')).toHaveTextContent('reader at /read/folder/t1 (REPLACE)');
+  });
+
+  it('a track link keeps the reader params and drops the old time window', async () => {
+    renderRoutes('/tracks/t%201?days=7&filter=all&view=by_source', false);
+    expect(await screen.findByTestId('where')).toHaveTextContent('reader at /read/folder/t%201?filter=all&view=by_source (REPLACE)');
   });
 
   it.each([
@@ -92,6 +96,11 @@ describe('routes, analysis on', () => {
   it.each(ANALYSIS_ROUTES)('%s renders %s', async (route, page) => {
     renderRoutes(route, true);
     expect(await screen.findByTestId('where')).toHaveTextContent(`${page} at ${route} (POP)`);
+  });
+
+  it('a track opens the reader scoped to it too', async () => {
+    renderRoutes('/tracks/t1?days=30', true);
+    expect(await screen.findByTestId('where')).toHaveTextContent('reader at /read/folder/t1 (REPLACE)');
   });
 
   it.each(['/ingestion', '/ingestion/jobs'])('%s still renders the ingestion page', async (route) => {
