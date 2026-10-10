@@ -38,6 +38,14 @@ from datetime import datetime, date
 
 from typing import List, Dict, Any
 
+
+def _gemini_configured() -> bool:
+    """A Gemini key is saved in Sources → Connections (never read from the environment)."""
+    from insight_core.ingestion.credentials import default_credentials
+
+    return bool(default_credentials().get("gemini", "api_key"))
+
+
 class InsightApiBridge:
     def __init__(self):
         self.db = ensure_database()
@@ -650,8 +658,6 @@ class InsightApiBridge:
 
     def get_status(self) -> Dict[str, Any]:
         """Unified machine-readable system state for agents and observability."""
-        import os
-
         counts = self.operations_service.get_database_counts()
         freshness = self.operations_service.get_corpus_freshness()
         scheduler = self.operations_service.get_scheduler_config()
@@ -677,7 +683,7 @@ class InsightApiBridge:
         return {
             "success": True,
             "healthy": True,
-            "gemini_configured": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
+            "gemini_configured": _gemini_configured(),
             "generated_at": datetime.now().isoformat(),
             "corpus": {**counts, "total_sources": len(all_sources), **freshness},
             "scheduler": scheduler,

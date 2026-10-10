@@ -214,7 +214,10 @@ def _parse_csv_env(name: str) -> list[str]:
 class GeminiProcessor:
     """Thin async wrapper around Gemini with Roberto-style model fallback handling."""
 
-    def __init__(self):
+    def __init__(self, credentials: Any = None):
+        # A CredentialProvider; default the Connections store. The key is never read from
+        # the environment.
+        self.credentials = credentials
         self.api_key: Optional[str] = None
         self.model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
         self.model_name = self.model
@@ -245,10 +248,14 @@ class GeminiProcessor:
         self.llm: Any | None = None
 
     def setup_processor(self) -> bool:
-        """Configure Gemini using GEMINI_API_KEY or GOOGLE_API_KEY."""
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        """Configure Gemini with the API key saved in Sources → Connections → Gemini."""
+        if self.credentials is None:
+            from insight_core.ingestion.credentials import default_credentials
+
+            self.credentials = default_credentials()
+        api_key = self.credentials.get("gemini", "api_key")
         if not api_key:
-            self.logger.error("GEMINI_API_KEY or GOOGLE_API_KEY environment variable not set")
+            self.logger.error("No Gemini API key; add it in Sources → Connections")
             return False
 
         try:
