@@ -12,4 +12,5 @@ google-genai
 fastapi
 uvicorn
 psycopg[binary]
+cryptography
 langfuse>=4,<5

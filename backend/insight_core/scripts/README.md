@@ -36,27 +36,40 @@ Each answers `202 {job_id, job_type: "ingestion_run"}` and runs in the backgroun
 cannot be tracked the answer is 503 and nothing runs. An archive plan or run on a kind the
 process cannot fetch (yt-dlp off, no usable Telegram session) answers 409.
 
+### Connections (credentials)
+
+Secrets are added in the UI, **Sources → Connections**, and stored encrypted in the
+`credentials` table (spec `plan/INSIGHT_mark_ix_plan.md` §10.1). No API ever returns a
+saved value; the UI shows whether it is set, its last 4 characters and where it comes from
+(`db`, `env`, `file` or `none`). `.env` stays a fallback: a value saved in Connections wins.
+
+The encryption key is `INSIGHT_SECRET_KEY` (a Fernet key) if set, else
+`/app/secrets/secret.key`, generated on the first save into the `insight_secrets` volume that
+the backend and ingestion containers share. Back that volume up with the database: without
+the key, saved values are unreadable and must be saved again.
+
 ### Telegram session
 
 The bare-handle Telegram sources (platform `telegram`, a handle such as `ai_newz`, no URL)
-are read over MTProto by the `telegram_mtproto` kind. The server never prompts for a login:
-it needs an already-authorised session, created once by an operator.
+are read over MTProto by the `telegram_mtproto` kind. The fetcher never prompts for a login:
+it needs an already-authorised session.
 
-1. Put `TELEGRAM_API_ID` (an integer) and `TELEGRAM_API_HASH` from https://my.telegram.org
-   in `.env`.
-2. Log in once:
+1. In Sources → Connections → Telegram, add the API ID (an integer) and API hash from
+   https://my.telegram.org (or `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` in `.env`).
+2. Sign in there: phone number, the code Telegram sends, then the 2FA password if the
+   account has one. The session is saved encrypted (a Telethon StringSession).
 
-   ```bash
-   docker compose run --rm -it backend python -m insight_core.scripts.telegram_login
-   # --check only reports whether the session is authorised
-   ```
+The operator CLI still works and writes a session **file**, used only when no session is
+saved in Connections:
 
-   It asks for the phone number, the code Telegram sends and the 2FA password (if any).
-3. The session is written to `TELEGRAM_SESSION_PATH`, default
-   `/app/insight_core/config/telegram/insight.session` = `backend/insight_core/config/telegram/`
-   on the host. `config/` is bind-mounted into the backend and ingestion containers, so the
-   session survives rebuilds and both use it. It is a credential: the directory is
-   git-ignored; delete it to log out.
+```bash
+docker compose run --rm -it backend python -m insight_core.scripts.telegram_login
+# --check only reports whether the session is authorised
+```
+
+The file goes to `TELEGRAM_SESSION_PATH`, default
+`/app/insight_core/config/telegram/insight.session` = `backend/insight_core/config/telegram/`
+on the host (bind-mounted into both containers, git-ignored; delete it to log out).
 
 One fetch run (or archive run) at a time holds the session, under the Postgres advisory lock
 `hashtext('insight.telegram_session')`; the run opens it before its first due telegram
@@ -67,9 +80,9 @@ What the unavailable reasons mean (the source is skipped, never put into backoff
 
 | Reason | Meaning / fix |
 |---|---|
-| `TELEGRAM_API_ID is not set` / `is not an integer`, `TELEGRAM_API_HASH is not set` | fix `.env` and restart the containers |
-| `no Telegram session at <path>; run scripts/telegram_login` | no session file yet: run the login above |
-| `Telegram session not authorised; run scripts/telegram_login` | the file exists but is logged out (revoked, or the login was not finished): log in again |
+| `Telegram API ID (TELEGRAM_API_ID) is not set` / `is not an integer`, `Telegram API hash (TELEGRAM_API_HASH) is not set` | add it in Sources → Connections (or fix `.env` and restart the containers) |
+| `no Telegram session at <path>; sign in under Sources → Connections` | no saved session and no session file: sign in |
+| `Telegram session not authorised; sign in under Sources → Connections` | the session is logged out (revoked, or the sign-in was not finished): sign in again |
 | `Telegram session in use by another run` | another run (the scheduler or the API) holds the session; the next tick retries |
 | `Telegram flood wait until <time>` | Telegram asked the account to wait longer than 60s; the source that hit it is an error (normal backoff), the rest of the run's telegram sources are skipped |
 | `Telegram connect failed: ...` / `Telegram session lock unavailable: ...` | network or database trouble opening the session; retried next run |
@@ -81,14 +94,16 @@ backoff: the channel is the problem, not the account.
 
 `*.substack.com` sources (and a custom domain with `settings.substack: true`) use the
 `substack` kind: newest posts from `/api/v1/archive` (RSS `/feed` as fallback), each body from
-`/api/v1/posts/<slug>`. Paid posts come in full only with the owner's session cookie in
-`SUBSTACK_SID` (`.env`; see `plan/INSIGHT_mark_ix_plan.md` §10 for how to copy it). Without
-it the teaser is stored with `metadata.paywalled = true`. All Substack sources share host key
+`/api/v1/posts/<slug>`. Paid posts come in full only with the owner's `substack.sid` cookie,
+pasted into Sources → Connections → Substack (`SUBSTACK_SID` in `.env` is the fallback; see
+`plan/INSIGHT_mark_ix_plan.md` §10 for how to copy it). The Test button reads the newest paid
+post of a Substack source. Without a cookie the teaser is stored with
+`metadata.paywalled = true` and the health row's `credential_notice` says so. All Substack sources share host key
 `substack.com` (2s floor); post requests within a source are 1s apart.
 
 | Reason | Meaning / fix |
 |---|---|
-| `Substack session expired — update SUBSTACK_SID` | the cookie was rejected (401/403) or a paid post still came back truncated: copy a fresh `substack.sid` into `.env` and restart the backend and ingestion containers. Unavailable, never backoff. |
+| `Substack session expired — update it in Sources → Connections` | the cookie was rejected (401/403) or a paid post still came back truncated: paste a fresh `substack.sid` in Connections (applies on the next fetch, no restart). Unavailable, never backoff. |
 
 ### How a source is decided
 

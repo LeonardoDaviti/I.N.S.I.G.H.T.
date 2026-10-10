@@ -31,6 +31,7 @@ from insight_core.services.explainability_service import ExplainabilityService
 from insight_core.services.stories_service import StoriesService
 from insight_core.services.story_timeline_service import StoryTimelineService
 from insight_core.services.youtube_service import YouTubeService
+from insight_core.services.credentials_service import CredentialsService
 
 
 from datetime import datetime, date
@@ -73,6 +74,34 @@ class InsightApiBridge:
             post_detail_service=self.post_detail_service,
         )
         self.youtube_service = YouTubeService(self.db)
+        self.credentials_service = CredentialsService(self.db)
+
+    # ============= CONNECTIONS (credentials) =============
+    # Write-only: these return the CredentialsService views, never a value.
+
+    def get_credentials(self) -> Dict[str, Any]:
+        return self.credentials_service.list()
+
+    def put_credential(self, provider: str, key: str, value: Any) -> Dict[str, Any]:
+        return self.credentials_service.put(provider, key, value)
+
+    def delete_credential(self, provider: str, key: str) -> Dict[str, Any]:
+        return self.credentials_service.delete(provider, key)
+
+    async def test_credentials(self, provider: str) -> Dict[str, Any]:
+        return await self.credentials_service.test(provider)
+
+    async def telegram_login_start(self, phone: Any) -> Dict[str, Any]:
+        return await self.credentials_service.login_start(phone)
+
+    async def telegram_login_code(self, code: Any) -> Dict[str, Any]:
+        return await self.credentials_service.login_code(code)
+
+    async def telegram_login_password(self, password: Any) -> Dict[str, Any]:
+        return await self.credentials_service.login_password(password)
+
+    def telegram_login_cancel(self) -> Dict[str, Any]:
+        return self.credentials_service.login_cancel()
 
     def _start_job_safe(self, *args, **kwargs) -> str | None:
         try:

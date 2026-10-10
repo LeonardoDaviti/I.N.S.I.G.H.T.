@@ -128,6 +128,16 @@ def health_status(enabled: bool, decision: FetchDecision, consecutive_failures: 
     return HealthStatus.DUE.value if decision.fetch else HealthStatus.DEFERRED.value
 
 
+def _credential_notice(kind: Any) -> Optional[str]:
+    notice = getattr(kind, "credential_notice", None)
+    if not callable(notice):
+        return None
+    try:
+        return notice()
+    except Exception:  # noqa: BLE001 - a notice never breaks the health table
+        return None
+
+
 def health_row(source: Dict[str, Any], kind: Any, availability: Availability, now: datetime) -> Dict[str, Any]:
     """One SourceHealthRow: the schedule view row + decide_fetch(force=False)."""
     state: Optional[FetchStateRow] = source.get("state")
@@ -167,6 +177,9 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
         "unavailable_reason": unavailable,
+        # A kind that still fetches but would fetch more with a credential (Substack
+        # without a session: teasers only) says so here; None otherwise.
+        "credential_notice": _credential_notice(kind),
         "status": health_status(enabled, decision, failures, state),
         "last_attempt_at": _iso(state.last_attempt_at if state else None),
         "last_success_at": _iso(state.last_success_at if state else None),

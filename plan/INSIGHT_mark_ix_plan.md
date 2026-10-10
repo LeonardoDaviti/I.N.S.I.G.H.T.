@@ -1924,14 +1924,30 @@ The owner pays for The Kaitchup (`https://kaitchup.substack.com/`) and wants the
   - Live fetch lists the newest posts from `/api/v1/archive?sort=new&offset=N&limit=12` (RSS `/feed` if the archive API fails) and reads each body from `/api/v1/posts/<slug>`.
   - The archive pages the same API by offset (checkpoint mode `substack_offset`).
   - All Substack sources share host key `substack.com` with a 2s floor; post requests inside one source are 1s apart.
-- **Credential:** env `SUBSTACK_SID`, the `substack.sid` cookie of the owner's logged-in browser. It is read from the environment only. It is never logged, never stored in the database and never committed.
-- **Without the cookie:** paid posts are stored as the public teaser, with `metadata.paywalled = true`.
-- **Expired cookie:** Substack answers 200 with the teaser for a stale cookie. So a 401/403, or an `only_paid` post that still comes back truncated (fewer than 60% of its `wordcount` words), makes the source **Unavailable** with "Substack session expired — update SUBSTACK_SID". Unavailable never counts as backoff. Founding-only posts the plan does not cover stay paywalled and do not trip it.
+- **Credential:** the `substack.sid` cookie of the owner's logged-in browser, saved in **Sources → Connections** (§10.1); env `SUBSTACK_SID` is the fallback when nothing is saved there. It is read at request time, so a new cookie applies on the next fetch without a restart. It is never logged and never returned by any API.
+- **Without the cookie:** paid posts are stored as the public teaser, with `metadata.paywalled = true`, and the source's health row carries `credential_notice` "Paid posts arrive as teasers. Add your Substack session in Sources → Connections".
+- **Expired cookie:** Substack answers 200 with the teaser for a stale cookie. So a 401/403, or an `only_paid` post that still comes back truncated (fewer than 60% of its `wordcount` words), makes the source **Unavailable** with "Substack session expired — update it in Sources → Connections". Unavailable never counts as backoff. Founding-only posts the plan does not cover stay paywalled and do not trip it.
 - **How the owner provides the cookie:**
   1. Log into substack.com in the browser.
   2. Open DevTools → Application → Cookies → `https://substack.com`, and copy the value of `substack.sid`.
-  3. Edit `.env` directly (don't paste the cookie in chat or anywhere else) and add `SUBSTACK_SID=<value>`.
-  4. Restart the backend and ingestion containers.
-  The cookie lasts months. When it expires, the source health shows the reason above; repeat the steps.
+  3. Paste it into Sources → Connections → Substack and press Test (don't paste it in chat or anywhere else). A pasted `substack.sid=<value>` pair is accepted; only the value is kept.
+  The cookie lasts months. When it expires, the source health shows the reason above; repeat the steps. `.env` (`SUBSTACK_SID=`, then restart the backend and ingestion containers) still works as a fallback.
 - **Use:** personal reading of the owner's own subscription only.
 - Posts already stored as teasers get the full body when they are fetched again with a valid cookie (the save upserts by url). Older teasers need an archive run.
+
+### 10.1 Connections: credentials from the UI (owner request, 2026-10-10)
+
+The owner adds secrets in Sources → Connections instead of editing `.env`.
+
+- **Store:** table `credentials(provider, key, ciphertext bytea, last4, updated_at, last_tested_at, last_test_ok, last_test_message, PRIMARY KEY(provider, key))` (migration 0024, `db/repo_credentials.py`). Values are Fernet-encrypted (`cryptography`); plaintext is never stored.
+- **Key:** env `INSIGHT_SECRET_KEY` (a Fernet key), else `/app/secrets/secret.key` (override `INSIGHT_SECRET_KEY_PATH`), generated once on the first save (O_EXCL, mode 0600). `/app/secrets` is the named volume `insight_secrets`, mounted in both the backend and ingestion containers so both decrypt the same values. Losing the key makes saved values unreadable: the field shows "save it again" and the environment fallback applies.
+- **Seam:** `ingestion/credentials.py` — `CredentialProvider.get(provider, key)`; `StoredCredentials` reads the database first, then the environment (`SUBSTACK_SID`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`), cached 15s per process (the API invalidates on every write). Any database or key problem reads as "not stored". The substack kind, the Telegram client factory and `availability_from_env` read through it.
+- **Providers:** `substack {sid}`; `telegram {api_id, api_hash, session}` — `session` is a Telethon StringSession saved by the browser sign-in; it wins over the session file, which stays the fallback (`scripts/telegram_login`); `reddit` and `youtube`: "Not needed: public feeds", no fields.
+- **API** (write-only: no route returns a value, a ciphertext or a session):
+  - `GET /api/credentials` → `{providers: [{provider, label, description, needed, testable, sign_in, configured, fields: [{key, label, hint, writable, env, set, last4, updated_at, source: db|env|file|none, error}], test: {ok, message, tested_at} | null, login: {stage} | null}]}`. `last4` is null for the session.
+  - `PUT /api/credentials/{provider}/{key}` `{value}` → that provider's view. Validated (API id digits, API hash 32 hex, cookie charset); errors never echo the value. A new value clears the provider's test. The session is not writable (400).
+  - `DELETE /api/credentials/{provider}/{key}` → the provider's view (the env fallback, if any, shows again).
+  - `POST /api/credentials/{provider}/test` → substack: the newest `only_paid` post of the first Substack source must come back in full (else "expired"); no source or no paid post: `substack.com/api/v1/subscriptions` must answer signed in. telegram: under the session lock, connect, `is_user_authorized`, `get_me` → "Signed in as @user". The result is stored on the provider's rows (in memory when only env values exist).
+  - Telegram sign-in: `POST /api/credentials/telegram/login/start {phone}` → `{stage: "code"}`; `.../login/code {code}` → `{stage: "password"}` (two-step verification) or `{stage: "done", account}`; `.../login/password {password}` → `{stage: "done", account}`; `.../login/cancel`. The pending sign-in (phone, phone_code_hash, the unauthorised auth key) lives in the API process memory for 10 minutes; each step reconnects on it. On success the StringSession is saved encrypted and the provider test is recorded ok. Errors: 400 with a clear message (wrong code — retry allowed; expired code — start again; wrong password; invalid phone), a flood wait is 429 with `Retry-After` and "Telegram asks to wait N seconds".
+- **Health reasons:** missing Telegram API values say "...; add it in Sources → Connections", a missing session "no Telegram session at <path>; sign in under Sources → Connections", an expired Substack cookie "Substack session expired — update it in Sources → Connections".
+

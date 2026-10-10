@@ -4,11 +4,14 @@ The public RSS feed truncates paid posts. The publication's JSON API does not wh
 request carries a subscriber's session cookie (substack.sid): /api/v1/archive lists posts
 newest first (body_html empty), /api/v1/posts/<slug> returns the body the account can read.
 
-Without SUBSTACK_SID the public (truncated) body is stored with metadata.paywalled=true.
+The cookie is read through the credential seam (ingestion/credentials.py): the value saved
+in Sources → Connections, else env SUBSTACK_SID. It is read at request time, so a new cookie
+applies on the next fetch without a restart. Without one the public (truncated) body is
+stored with metadata.paywalled=true.
 With it, a rejected cookie (401/403) or an only_paid post that still comes back truncated
 (Substack answers 200 with the teaser for a stale cookie) means the session expired: the
-source is UNAVAILABLE (never backoff) until the owner updates the cookie. The cookie is read
-from the environment only; it is never logged, stored or put in an error message.
+source is UNAVAILABLE (never backoff) until the owner updates the cookie. The cookie is
+never logged or put in an error message.
 
 All Substack publications share one host key (one backend), floored in gates.HOST_FLOORS;
 post requests within a source are spaced by the profile's page delay.
@@ -17,11 +20,11 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
+from insight_core.ingestion.credentials import CredentialProvider, MappingCredentials
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
@@ -38,7 +41,9 @@ from insight_core.ingestion.kinds.base import (
 SUBSTACK_HOST_KEY = "substack.com"
 SUBSTACK_PROFILE = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=1)
 ARCHIVE_PAGE_SIZE = 12
-EXPIRED_REASON = "Substack session expired — update SUBSTACK_SID"
+EXPIRED_REASON = "Substack session expired — update it in Sources → Connections"
+MISSING_NOTICE = "Paid posts arrive as teasers. Add your Substack session in Sources → Connections"
+SUBSCRIPTIONS_URL = "https://substack.com/api/v1/subscriptions"
 PAID_AUDIENCES = frozenset({"only_paid", "founding"})
 # A paid body with fewer words than this share of the post's wordcount is the teaser.
 TRUNCATED_RATIO = 0.6
@@ -71,9 +76,27 @@ class SubstackKind(BaseKind):
     name = "substack"
     profile = SUBSTACK_PROFILE
 
-    def __init__(self, http: KindHttp, *, sid: Optional[str] = None) -> None:
+    def __init__(self, http: KindHttp, *, sid: Optional[str] = None,
+                 credentials: Optional[CredentialProvider] = None) -> None:
         self.http = http
-        self._sid = (os.getenv("SUBSTACK_SID", "") if sid is None else sid).strip()
+        if sid is not None:
+            credentials = MappingCredentials({("substack", "sid"): sid})
+        self.credentials = credentials
+
+    @property
+    def _sid(self) -> str:
+        provider = self.credentials
+        if provider is None:
+            from insight_core.ingestion.credentials import default_credentials
+
+            provider = self.credentials = default_credentials()
+        value = provider.get("substack", "sid") or ""
+        # Pasted as "substack.sid=<value>" from a cookie header: keep the value only.
+        return value.split("=", 1)[1] if value.startswith("substack.sid=") else value
+
+    def credential_notice(self) -> Optional[str]:
+        """Why paid posts would come back as teasers (the health table's notice), or None."""
+        return None if self._sid else MISSING_NOTICE
 
     def matches(self, source: Source) -> bool:
         if (source.get("settings") or {}).get("substack") is True:
@@ -129,10 +152,42 @@ class SubstackKind(BaseKind):
             if collected < target:
                 await self.http.sleep(rate.delay_after(pages_fetched))
 
+    async def check_session(self, source: Optional[Source] = None) -> tuple[bool, str]:
+        """The connection test: is the cookie set and does it still read paid posts?
+
+        With a source, the newest only_paid post of its archive is read: a full body is ok,
+        a teaser or a 401/403 is "expired". Without a source, or when its latest page has no
+        paid post, substack.com's subscriptions API says whether the cookie is signed in.
+        The message never contains the cookie.
+        """
+        sid = self._sid
+        if not sid:
+            return False, "No Substack session set"
+        try:
+            if source is not None:
+                base = publication_base(source)
+                items = await self._archive_page(base, 0, ARCHIVE_PAGE_SIZE)
+                paid = next((item for item in items if item.get("audience") == "only_paid"), None)
+                if paid is not None:
+                    detail = await self._get_json(f"{base}/api/v1/posts/{paid['slug']}")
+                    post = self._to_post(source, base, {**paid, **(detail if isinstance(detail, dict) else {})})
+                    return True, f"Full text readable: “{post['title'] or paid['slug']}”"
+            data = await self._get_json(SUBSCRIPTIONS_URL)
+            if isinstance(data, dict) and data.get("subscriptions") is not None:
+                count = len(data.get("subscriptions") or [])
+                return True, f"Signed in to Substack ({count} subscription{'s' if count != 1 else ''})"
+            return False, EXPIRED_REASON
+        except KindUnavailable as exc:
+            return False, exc.reason
+        except Exception as exc:  # noqa: BLE001 - reported, never raised to the route
+            message = str(exc).replace(sid, "…") if sid else str(exc)
+            return False, f"Could not check the Substack session: {message[:200]}"
+
     # ------------------------------------------------------------------ requests
 
     def _headers(self) -> Dict[str, str]:
-        return {"Cookie": f"substack.sid={self._sid}"} if self._sid else {}
+        sid = self._sid
+        return {"Cookie": f"substack.sid={sid}"} if sid else {}
 
     async def _get_json(self, url: str) -> Any:
         try:

@@ -6,10 +6,14 @@ the kinds or this module never pulls Telethon into sys.modules.
 
 - TelegramClientPort: the small async surface the kind uses (connect, authorisation check,
   get_entity, get_messages). The test adapter is tests/test_telegram_kind.FakeTelegramClient.
-- TelethonClientFactory: builds a TelethonClient (the port over telethon.TelegramClient)
-  on the session file at telegram_session_path(), with flood_sleep_threshold=0 so every
-  FloodWaitError reaches the kind instead of being slept inside Telethon. It never calls
-  client.start(): authorisation happens only in scripts/telegram_login.py.
+- TelethonClientFactory: builds a TelethonClient (the port over telethon.TelegramClient),
+  with flood_sleep_threshold=0 so every FloodWaitError reaches the kind instead of being
+  slept inside Telethon. Credentials come through the credential seam (Sources →
+  Connections, else TELEGRAM_API_ID / TELEGRAM_API_HASH). The session is the StringSession
+  saved by the browser sign-in when there is one, else the file at telegram_session_path()
+  (scripts/telegram_login.py). It never calls client.start().
+- TelethonLoginClient: the browser sign-in's port (send code, sign in with the code, then
+  the 2FA password), its Telethon errors turned into TelegramLoginError messages.
 - TelegramFloodWait / TelegramChannelError: what Telethon's errors become. A channel error
   is the channel's problem (source error, backoff applies); a flood wait is the account's.
 - PgAdvisorySessionLock: Telethon's SQLite session file cannot be shared by two processes,
@@ -26,7 +30,8 @@ from insight_core.ingestion.kinds.base import KindUnavailable
 
 DEFAULT_SESSION_PATH = "/app/insight_core/config/telegram/insight.session"
 SESSION_LOCK_KEY = "insight.telegram_session"
-LOGIN_HINT = "run scripts/telegram_login"
+LOGIN_HINT = "sign in under Sources → Connections"
+CREDENTIALS_HINT = "add it in Sources → Connections"
 
 
 SESSION_SUFFIX = ".session"
@@ -48,20 +53,40 @@ def telegram_session_path(env: Optional[Mapping[str, str]] = None) -> str:
     return normalise_session_path((env.get("TELEGRAM_SESSION_PATH") or "").strip() or DEFAULT_SESSION_PATH)
 
 
-def telegram_credentials(env: Optional[Mapping[str, str]] = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
-    """(api_id, api_hash, reason): reason names what is missing, None when both are usable."""
-    env = os.environ if env is None else env
-    raw_id = (env.get("TELEGRAM_API_ID") or "").strip()
+def _provider(env: Optional[Mapping[str, str]], credentials: Any) -> Any:
+    if credentials is not None:
+        return credentials
+    from insight_core.ingestion.credentials import EnvCredentials
+
+    return EnvCredentials(env)
+
+
+def telegram_credentials(env: Optional[Mapping[str, str]] = None, *,
+                         credentials: Any = None) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    """(api_id, api_hash, reason): reason names what is missing, None when both are usable.
+
+    Read from `credentials` (a CredentialProvider: Connections, then env) or, without one,
+    from `env` / os.environ only.
+    """
+    provider = _provider(env, credentials)
+    raw_id = (provider.get("telegram", "api_id") or "").strip()
     if not raw_id:
-        return None, None, "TELEGRAM_API_ID is not set"
+        return None, None, f"Telegram API ID (TELEGRAM_API_ID) is not set; {CREDENTIALS_HINT}"
     try:
         api_id = int(raw_id)
     except ValueError:
-        return None, None, "TELEGRAM_API_ID is not an integer"
-    api_hash = (env.get("TELEGRAM_API_HASH") or "").strip()
+        return None, None, f"Telegram API ID (TELEGRAM_API_ID) is not an integer; {CREDENTIALS_HINT}"
+    api_hash = (provider.get("telegram", "api_hash") or "").strip()
     if not api_hash:
-        return None, None, "TELEGRAM_API_HASH is not set"
+        return None, None, f"Telegram API hash (TELEGRAM_API_HASH) is not set; {CREDENTIALS_HINT}"
     return api_id, api_hash, None
+
+
+def telegram_session_string(credentials: Any) -> Optional[str]:
+    """The StringSession saved by the browser sign-in, or None (then the file is used)."""
+    if credentials is None:
+        return None
+    return (credentials.get("telegram", "session") or "").strip() or None
 
 
 class TelegramFloodWait(Exception):
@@ -86,6 +111,8 @@ class TelegramClientPort(Protocol):
     async def disconnect(self) -> None: ...
 
     async def is_user_authorized(self) -> bool: ...
+
+    async def get_me(self) -> Any: ...
 
     async def get_entity(self, handle: str) -> Any: ...       # raises TelegramChannelError / TelegramFloodWait
 
@@ -132,6 +159,9 @@ class TelethonClient:
     async def is_user_authorized(self) -> bool:
         return bool(await self.telethon.is_user_authorized())
 
+    async def get_me(self) -> Any:
+        return await self.telethon.get_me()
+
     async def get_entity(self, handle: str) -> Any:
         try:
             return await self.telethon.get_entity(handle)
@@ -152,34 +182,138 @@ class TelethonClient:
 
 
 class TelethonClientFactory:
-    """Builds the real client. Credentials and the session path are read at create() time."""
+    """Builds the real client. Credentials and the session are read at create() time.
+
+    An explicit session_path pins the file (tests, the login script). Otherwise the stored
+    StringSession wins over the file.
+    """
 
     def __init__(self, *, api_id: Optional[int] = None, api_hash: Optional[str] = None,
-                 session_path: Optional[str] = None) -> None:
+                 session_path: Optional[str] = None, credentials: Any = None) -> None:
         self.api_id = api_id
         self.api_hash = api_hash
         self.session_path = session_path
+        self.credentials = credentials
+
+    def _credentials(self) -> Any:
+        if self.credentials is None:
+            from insight_core.ingestion.credentials import default_credentials
+
+            self.credentials = default_credentials()
+        return self.credentials
 
     def create(self) -> TelethonClient:
         api_id, api_hash = self.api_id, self.api_hash
         if api_id is None or not api_hash:
-            api_id, api_hash, reason = telegram_credentials()
+            api_id, api_hash, reason = telegram_credentials(credentials=self._credentials())
             if reason:
                 raise KindUnavailable(reason)
-        path = normalise_session_path(self.session_path) if self.session_path else telegram_session_path()
-        if not os.path.exists(path):
-            raise KindUnavailable(f"no Telegram session at {path}; {LOGIN_HINT}")
+        session: Any = None
+        if not self.session_path:
+            string = telegram_session_string(self._credentials())
+            if string:
+                from telethon.sessions import StringSession
+
+                session = StringSession(string)
+        if session is None:
+            path = normalise_session_path(self.session_path) if self.session_path else telegram_session_path()
+            if not os.path.exists(path):
+                raise KindUnavailable(f"no Telegram session at {path}; {LOGIN_HINT}")
+            session = path
 
         from telethon import TelegramClient
 
         client = TelegramClient(
-            path,
+            session,
             api_id,
             api_hash,
             flood_sleep_threshold=0,    # every FloodWaitError reaches the kind (bounded rule, §D.2)
             receive_updates=False,      # a fetcher, not a chat client
         )
         return TelethonClient(client)
+
+
+class TelegramLoginError(Exception):
+    """A sign-in step failed; `message` is safe to show. retry_after: a flood wait's seconds."""
+
+    def __init__(self, message: str, *, retry_after: Optional[int] = None, restart: bool = False) -> None:
+        super().__init__(message)
+        self.message = message
+        self.retry_after = retry_after
+        self.restart = restart          # the pending sign-in is dead: start again
+
+
+class TelegramPasswordNeeded(Exception):
+    """The account has two-step verification: the password step comes next."""
+
+
+def translate_login_error(exc: BaseException) -> BaseException:
+    """Telethon's sign-in errors -> TelegramPasswordNeeded / TelegramLoginError."""
+    from telethon import errors
+
+    if isinstance(exc, errors.SessionPasswordNeededError):
+        return TelegramPasswordNeeded()
+    if isinstance(exc, errors.FloodWaitError):
+        seconds = int(getattr(exc, "seconds", 0) or 0)
+        return TelegramLoginError(f"Telegram asks to wait {seconds} seconds before trying again",
+                                  retry_after=seconds)
+    if isinstance(exc, errors.PhoneNumberInvalidError):
+        return TelegramLoginError("That phone number is not valid; use the international format, e.g. +15551234567")
+    if isinstance(exc, errors.PhoneNumberBannedError):
+        return TelegramLoginError("Telegram has banned this phone number", restart=True)
+    if isinstance(exc, errors.PhoneCodeInvalidError):
+        return TelegramLoginError("That code is not right; check it and try again")
+    if isinstance(exc, errors.PhoneCodeExpiredError):
+        return TelegramLoginError("That code has expired; start the sign-in again", restart=True)
+    if isinstance(exc, errors.PasswordHashInvalidError):
+        return TelegramLoginError("That password is not right; try again")
+    if isinstance(exc, errors.ApiIdInvalidError):
+        return TelegramLoginError("Telegram rejected the API ID and hash; check them", restart=True)
+    if isinstance(exc, errors.RPCError):
+        return TelegramLoginError(f"Telegram refused the sign-in: {type(exc).__name__}", restart=True)
+    return exc
+
+
+class TelethonLoginClient:
+    """The browser sign-in's port over a telethon.TelegramClient on a StringSession."""
+
+    def __init__(self, api_id: int, api_hash: str, session: str = "") -> None:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+
+        self.telethon = TelegramClient(StringSession(session or None), api_id, api_hash,
+                                       flood_sleep_threshold=0, receive_updates=False)
+
+    async def _call(self, awaitable: Any) -> Any:
+        try:
+            return await awaitable
+        except Exception as exc:  # noqa: BLE001 - translated, or re-raised unchanged
+            translated = translate_login_error(exc)
+            if translated is exc:
+                raise
+            raise translated from None
+
+    async def connect(self) -> None:
+        await self.telethon.connect()
+
+    async def disconnect(self) -> None:
+        await self.telethon.disconnect()
+
+    async def send_code(self, phone: str) -> str:
+        sent = await self._call(self.telethon.send_code_request(phone))
+        return sent.phone_code_hash
+
+    async def sign_in_code(self, phone: str, code: str, phone_code_hash: str) -> None:
+        await self._call(self.telethon.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash))
+
+    async def sign_in_password(self, password: str) -> None:
+        await self._call(self.telethon.sign_in(password=password))
+
+    async def get_me(self) -> Any:
+        return await self.telethon.get_me()
+
+    def session_string(self) -> str:
+        return self.telethon.session.save()
 
 
 class PgAdvisorySessionLock:
@@ -211,9 +345,14 @@ __all__ = [
     "TelegramClientFactory",
     "TelegramClientPort",
     "TelegramFloodWait",
+    "TelegramLoginError",
+    "TelegramPasswordNeeded",
     "TelethonClient",
     "TelethonClientFactory",
+    "TelethonLoginClient",
     "telegram_credentials",
     "telegram_session_path",
+    "telegram_session_string",
+    "translate_login_error",
     "translate_telethon_error",
 ]

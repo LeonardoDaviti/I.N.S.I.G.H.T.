@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
+from insight_core.services.credentials_service import CredentialInvalid, CredentialNotFound, LoginFailed
 from insight_core.services.operations_service import (
     CADENCE_OVERRIDE_MAX_HOURS,
     CADENCE_OVERRIDE_MIN_HOURS,
@@ -1693,6 +1694,121 @@ async def set_source_cadence(source_id: str, request: CadenceOverrideRequest):
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception:
         raise _server_error("set the cadence override")
+
+
+# ============= CONNECTIONS (credentials, Mark IX §10.1) =============
+# Write-only: no route returns a stored value, a ciphertext or a Telegram session, and none
+# logs a request body. Request fields are typed Any so a malformed body is rejected by the
+# service with a message that never echoes it (a 422 would).
+
+
+class CredentialValueRequest(BaseModel):
+    value: Any = None
+
+
+class TelegramLoginStartRequest(BaseModel):
+    phone: Any = None
+
+
+class TelegramLoginCodeRequest(BaseModel):
+    code: Any = None
+
+
+class TelegramLoginPasswordRequest(BaseModel):
+    password: Any = None
+
+
+def _credential_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, CredentialNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, CredentialInvalid):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, LoginFailed):
+        if exc.retry_after:
+            return HTTPException(status_code=429, detail=exc.message,
+                                 headers={"Retry-After": str(exc.retry_after)})
+        return HTTPException(status_code=400, detail=exc.message)
+    return _server_error("update the connection")
+
+
+_CREDENTIAL_ERRORS = (CredentialNotFound, CredentialInvalid, LoginFailed)
+
+
+@app.get("/api/credentials")
+async def get_credentials():
+    """Every connection: per field {set, last4, updated_at, source}, the last test, sign-in stage."""
+    try:
+        return api_bridge.get_credentials()
+    except Exception:
+        raise _server_error("load the connections")
+
+
+@app.put("/api/credentials/{provider}/{key}")
+async def put_credential(provider: str, key: str, request: CredentialValueRequest):
+    try:
+        return api_bridge.put_credential(provider, key, request.value)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("save the connection")
+
+
+@app.delete("/api/credentials/{provider}/{key}")
+async def delete_credential(provider: str, key: str):
+    try:
+        return api_bridge.delete_credential(provider, key)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("remove the connection")
+
+
+@app.post("/api/credentials/{provider}/test")
+async def test_credential(provider: str):
+    try:
+        return await api_bridge.test_credentials(provider)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("test the connection")
+
+
+@app.post("/api/credentials/telegram/login/start")
+async def telegram_login_start(request: TelegramLoginStartRequest):
+    """Send the login code to the phone. -> {stage: "code"}"""
+    try:
+        return await api_bridge.telegram_login_start(request.phone)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("start the Telegram sign-in")
+
+
+@app.post("/api/credentials/telegram/login/code")
+async def telegram_login_code(request: TelegramLoginCodeRequest):
+    """-> {stage: "password"} (two-step verification) or {stage: "done", account}"""
+    try:
+        return await api_bridge.telegram_login_code(request.code)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("check the Telegram code")
+
+
+@app.post("/api/credentials/telegram/login/password")
+async def telegram_login_password(request: TelegramLoginPasswordRequest):
+    """-> {stage: "done", account}"""
+    try:
+        return await api_bridge.telegram_login_password(request.password)
+    except _CREDENTIAL_ERRORS as exc:
+        raise _credential_error(exc)
+    except Exception:
+        raise _server_error("check the Telegram password")
+
+
+@app.post("/api/credentials/telegram/login/cancel")
+async def telegram_login_cancel():
+    return api_bridge.telegram_login_cancel()
 
 
 # Briefing generation endpoints

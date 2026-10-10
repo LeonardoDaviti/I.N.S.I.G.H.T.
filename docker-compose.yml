@@ -56,6 +56,9 @@ services:
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs
+      # The credentials secret key (generated once unless INSIGHT_SECRET_KEY is set in .env),
+      # shared by the API and ingestion so both decrypt the same Connections values.
+      - insight_secrets:/app/secrets
     command: ["/app/docker/start-backend.sh"]
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -103,6 +106,9 @@ services:
     volumes:
       - ./backend/insight_core/config:/app/insight_core/config
       - insight_logs:/app/logs
+      # The credentials secret key (generated once unless INSIGHT_SECRET_KEY is set in .env),
+      # shared by the API and ingestion so both decrypt the same Connections values.
+      - insight_secrets:/app/secrets
     command: ["/app/docker/start-ingestion.sh"]
     # The image's HEALTHCHECK curls localhost:8000/health, which only exists in the API
     # container. Inherited here it can never pass, so this service reported "unhealthy"
@@ -139,6 +145,8 @@ volumes:
   postgres_data:
     driver: local
   insight_logs:
+    driver: local
+  insight_secrets:
     driver: local
 
 networks:

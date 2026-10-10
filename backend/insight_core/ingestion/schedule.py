@@ -123,24 +123,37 @@ def availability_from_env(
     env: Mapping[str, str] | None = None,
     *,
     exists: Callable[[str], bool] = os.path.exists,
+    credentials: Any = None,
 ) -> Availability:
-    """What this process can fetch, read from the environment. Injected into callers as a
-    callable, so the runner and its tests never read env themselves.
+    """What this process can fetch. Injected into callers as a callable, so the runner and
+    its tests never read env or credentials themselves.
 
     - INSIGHT_YTDLP_ENABLED (default on)
-    - telegram_mtproto: TELEGRAM_API_ID (an int), TELEGRAM_API_HASH and the authorised
-      session file at telegram_session_path(); telegram_reason names what is missing.
+    - telegram_mtproto: an API id (an int) and hash, and a session: the one saved by the
+      browser sign-in, else the file at telegram_session_path(); telegram_reason names what
+      is missing. Credentials come from `credentials` (a CredentialProvider); with an
+      explicit `env` and none, from that env only; with neither, from the process-wide
+      provider (Sources → Connections, then the environment).
     """
     from insight_core.ingestion.kinds.telegram_session import (
         LOGIN_HINT,
         telegram_credentials,
         telegram_session_path,
+        telegram_session_string,
     )
 
+    if credentials is None and env is None:
+        from insight_core.ingestion.credentials import default_credentials
+
+        credentials = default_credentials()
     env = os.environ if env is None else env
+    if credentials is None:
+        from insight_core.ingestion.credentials import EnvCredentials
+
+        credentials = EnvCredentials(env)
     ytdlp = str(env.get("INSIGHT_YTDLP_ENABLED", "1")).strip().lower() not in _TRUTHY_OFF
-    _api_id, _api_hash, reason = telegram_credentials(env)
-    if reason is None:
+    _api_id, _api_hash, reason = telegram_credentials(credentials=credentials)
+    if reason is None and not telegram_session_string(credentials):
         path = telegram_session_path(env)
         if not exists(path):
             reason = f"no Telegram session at {path}; {LOGIN_HINT}"
