@@ -5,7 +5,7 @@ The shortest path from a clone to reading your sources. `DEPLOYMENT.md` has the 
 ## With Docker (recommended)
 
 ```bash
-cp .env.example .env          # set DB_*, BACKEND_PORT, FRONTEND_PORT; GEMINI_API_KEY is optional
+cp .env.example .env          # set DB_*, BACKEND_PORT, FRONTEND_PORT; leave INSIGHT_ANALYSIS=off
 docker compose up -d --build
 docker compose ps             # postgres, backend, ingestion and frontend should be up
 ```
@@ -29,23 +29,40 @@ cd frontend && npm install && npm run dev
 Open `http://localhost:5173`. Run the scheduler too (`python backend/insight_core/scripts/run_scheduler.py`)
 if you want sources fetched on their cadence.
 
+## The app: three places
+
+The top bar reads `feed / sources`.
+
+- **feed** (`/`): every source in one reading flow. The rail holds tracks and sources.
+- **post** (`/posts/:id`): the content only, with open original, star and copy.
+- **sources** (`/settings/sources`): tabs `sources / connections / ingestion`. The `ingestion`
+  tab holds the run report, `Run due sources`, the scheduler status and the job history.
+
+That is the reading-only app, and it is the default. Briefings, stories, the inbox and experts sit
+behind one switch, `INSIGHT_ANALYSIS`. To bring them back, set `INSIGHT_ANALYSIS=on` and
+`VITE_INSIGHT_ANALYSIS=on` in `.env`, then run `docker compose up -d --build`. They also need
+`GEMINI_API_KEY`. The README's "Analysis switch" section has the details. Nothing is deleted
+either way.
+
 ## First steps in the app
 
 1. **Add sources.** `sources` in the top bar (`/settings/sources`), or edit
    `backend/insight_core/config/sources.json` before the first start.
 2. **Fetch.** New sources are due on the next ingestion tick. To fetch now, use `Fetch now` on a
-   row of the health tab (`/settings/sources?tab=health`), or `Run due sources` on `/ingestion`.
+   source's row, or `Run due sources` in the ingestion tab (`/settings/sources?tab=ingestion`).
 3. **Read.** `/` is the unread feed for the main digest. `j`/`k` move, `o` opens, `m` toggles
    read, `s` stars, `?` lists every shortcut. Tracks (folders of sources) filter the feed from the
-   rail.
+   rail, and ⌘K jumps to any track.
 
 ## When nothing shows up
 
 - **The feed is empty.** Switch the filter to `all`. If it is still empty, nothing has been
-  fetched yet: run a cycle on `/ingestion` and watch its run report.
+  fetched yet: use `Run due sources` in the ingestion tab and watch its run report.
+- **The ingestion tab says the scheduler is not running.** Start the `ingestion` container
+  (`docker compose up -d ingestion`), or `run_scheduler.py` without Docker.
 - **"Network error".** The API is not reachable. Check `http://localhost:8000/health` and the
   backend logs (`docker compose logs backend`, or the API terminal).
-- **A source never fetches.** Its row in the health tab says why: not due yet (with the next due
+- **A source never fetches.** Its row in the sources list says why: not due yet (with the next due
   time), backing off after errors, or unavailable (for example no Telegram session or yt-dlp off).
 - **The database does not exist.** `python backend/insight_core/db/ensure_db.py`, then
   `python backend/insight_core/db/migrate.py`.
