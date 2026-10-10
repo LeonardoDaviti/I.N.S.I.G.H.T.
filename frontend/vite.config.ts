@@ -13,6 +13,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // The owner opens the dev preview from other devices by machine name or over
+    // Tailscale (helicarrier, helicarrier.<tailnet>.ts.net). Vite only answers
+    // localhost and raw IPs by default and blocks every other Host header.
+    allowedHosts: ["helicarrier", ".ts.net", ".local"],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
