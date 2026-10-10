@@ -156,5 +156,19 @@ describe('SourceHealthTable', () => {
     await screen.findByRole('button', { name: /show 100 more of 900/i });
     expect(screen.getAllByRole('row')).toHaveLength(101);
   });
-});
 
+  it('a failed background refetch keeps the loaded table and says it is out of date', async () => {
+    const getSourcesHealth = vi.fn()
+      .mockResolvedValueOnce(healthResponse(rows()))
+      .mockRejectedValueOnce(new Error('Backend offline'));
+    const { queryClient } = renderWithProviders(<SourceHealthTable />, { api: makeFakeApi({ getSourcesHealth }) });
+    await screen.findByText('Calm Feed');
+
+    await queryClient.refetchQueries({ queryKey: ['sources-health'] });
+
+    await waitFor(() => expect(getSourcesHealth).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Could not refresh source health/)).toBeInTheDocument();
+    expect(screen.getByText('Calm Feed')).toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(3);
+  });
+});

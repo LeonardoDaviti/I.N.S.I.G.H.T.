@@ -7,6 +7,8 @@ import type { ContextEntry } from '../lib/feedContext';
 
 export const FEED_PAGE_SIZE = 30;
 export const UNREAD_COUNTS_KEY = ['unread-counts'] as const;
+/** The root of every cached feed (`feedKey` extends it); patches and invalidations use it. */
+export const FEED_ROOT_KEY = ['feed'] as const;
 
 export type AnyFeedPage = FeedPage | FeedGroupsPage;
 export type FeedData = InfiniteData<AnyFeedPage, string | null>;
@@ -21,7 +23,7 @@ export interface FeedFixture {
 }
 
 export function feedKey(scope: string, filter: FeedFilter, view: FeedView, fixtureName?: string) {
-  return fixtureName ? ['feed', scope, filter, view, 'fixture', fixtureName] : ['feed', scope, filter, view];
+  return fixtureName ? [...FEED_ROOT_KEY, scope, filter, view, 'fixture', fixtureName] : [...FEED_ROOT_KEY, scope, filter, view];
 }
 
 function fixturePage(fixture: FeedFixture, view: FeedView, cursor: string | null): AnyFeedPage {

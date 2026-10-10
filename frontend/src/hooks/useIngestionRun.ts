@@ -7,6 +7,8 @@ import { useApi } from '../services/ApiContext';
 import type { JobAccepted, RunReport } from '../services/api';
 import { errorMessage, isAbortError } from '../lib/apiError';
 import { summarizeRunReport } from '../lib/runReport';
+import { UNREAD_COUNTS_KEY } from './useFeed';
+import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 
 /** What a fetch run targets (the UI side of the backend's SourceSelector). */
 export type IngestionTarget =
@@ -32,7 +34,7 @@ function contextLine(target: IngestionTarget): string | null {
 
 /** Query keys a finished run makes stale. Never `['feed']`: the reader shows a
  *  "N new posts" pill instead of reordering what is on screen (spec §F.3). */
-export const INGESTION_INVALIDATES = [['unread-counts'], ['sources-health']] as const;
+export const INGESTION_INVALIDATES = [UNREAD_COUNTS_KEY, SOURCES_HEALTH_KEY] as const;
 
 /**
  * Start a fetch run, poll its job, toast the run report and refresh the counts
@@ -116,7 +118,7 @@ export function useIngestionRun(options: { onReport?: (report: RunReport, target
       return report;
     } catch (error) {
       // The run may still have changed fetch state before the request failed.
-      void queryClient.invalidateQueries({ queryKey: ['sources-health'] });
+      void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
       if (isAbortError(error)) {
         toast.dismiss(toastId);
       } else {

@@ -18,8 +18,10 @@ import {
   withEffectiveStatus,
 } from '../../lib/sourceSchedule';
 import { formatRelativeTime } from '../../lib/dates';
-import { formatCount, plural, sourceLabel } from '../../lib/format';
-import { EmptyState, ErrorState, LoadingState } from '../states';
+import { formatCount, plural } from '../../lib/format';
+import { sourceLabel } from '../../lib/sourceLabel';
+import { EmptyState, ErrorState, LoadingState, Notice } from '../states';
+import { errorMessage } from '../../lib/apiError';
 import { Button, FilterChip, Select, StatusGlyph, TBody, THead, Table, Td, Th, Tr } from '../ui';
 import type { Status } from '../ui';
 import CadenceOverrideEditor from './CadenceOverrideEditor';
@@ -138,7 +140,9 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
   let body;
   if (query.isPending) {
     body = <LoadingState label="Loading source health" rows={4} />;
-  } else if (query.isError) {
+  } else if (query.isError && !query.data) {
+    // Only a first load that failed replaces the table; a failed background
+    // refetch keeps the rows on screen with a notice above them.
     body = <ErrorState title="Could not load source health" error={query.error} onRetry={() => void query.refetch()} />;
   } else if (!allRows.length) {
     body = (
@@ -346,6 +350,15 @@ export default function SourceHealthTable({ className = '' }: { className?: stri
           {plural(allRows.length, 'source')} · as of {formatRelativeTime(query.data.generated_at, now)}
           {fixtureName ? ` · fixture: ${fixtureName}` : ''}
         </p>
+      ) : null}
+      {query.isError && query.data ? (
+        <Notice
+          tone="warning"
+          title="Could not refresh source health"
+          message={`${errorMessage(query.error)} The table shows the last loaded schedule.`}
+          action={{ label: 'Retry', onClick: () => void query.refetch() }}
+          className="mb-3"
+        />
       ) : null}
       {body}
       <DevDataSwitch options={HEALTH_FIXTURE_NAMES} />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, RefreshCw, Zap } from 'lucide-react';
 import { apiService, type Folder, type Post } from '../services/api';
@@ -51,39 +51,44 @@ export default function TrackPage() {
     return Number.isFinite(parsed) ? parsed : undefined;
   }, [searchParams]);
 
-  const load = useCallback(
-    async (opts?: { append?: boolean }) => {
-      const append = Boolean(opts?.append);
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-      setError(null);
-      const response = await apiService.getFolderPosts(trackId, {
-        limit: PAGE_SIZE,
-        offset: append ? posts.length : 0,
-        days,
+  // The newest arguments and request, so a slow response for an old window (or a
+  // reload that awaited a fetch run) never lands on the list for a newer one.
+  const latest = useRef({ trackId, days, count: 0 });
+  latest.current = { trackId, days, count: posts.length };
+  const generation = useRef(0);
+
+  const load = useCallback(async (opts?: { append?: boolean }) => {
+    const append = Boolean(opts?.append);
+    const { trackId: id, days: window, count } = latest.current;
+    const request = ++generation.current;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError(null);
+    const response = await apiService.getFolderPosts(id, {
+      limit: PAGE_SIZE,
+      offset: append ? count : 0,
+      days: window,
+    });
+    if (request !== generation.current) return;
+    if (!response.success) {
+      setError(response.error || 'Failed to load this track');
+    } else {
+      setFolder(response.folder ?? null);
+      setSourceCount(response.source_count ?? 0);
+      setTotal(response.total ?? 0);
+      setPosts((prev) => {
+        const merged = append ? [...prev, ...response.posts] : response.posts;
+        // Offset pagination can re-return a row if ingestion writes mid-scroll.
+        return Array.from(new Map(merged.map((p, i) => [p.id ?? p.url ?? `idx:${i}`, p])).values());
       });
-      if (!response.success) {
-        setError(response.error || 'Failed to load this track');
-      } else {
-        setFolder(response.folder ?? null);
-        setSourceCount(response.source_count ?? 0);
-        setTotal(response.total ?? 0);
-        setPosts((prev) => {
-          const merged = append ? [...prev, ...response.posts] : response.posts;
-          // Offset pagination can re-return a row if ingestion writes mid-scroll.
-          return Array.from(new Map(merged.map((p, i) => [p.id ?? p.url ?? `idx:${i}`, p])).values());
-        });
-      }
-      if (append) setLoadingMore(false);
-      else setLoading(false);
-    },
-    [trackId, days, posts.length],
-  );
+    }
+    setLoading(false);
+    setLoadingMore(false);
+  }, []);
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackId, days]);
+  }, [load, trackId, days]);
 
   const setWindow = (value?: number) => {
     const next = new URLSearchParams(searchParams);
