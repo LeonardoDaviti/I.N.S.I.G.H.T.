@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, pageDocProblems, parseDoc, unknownCitations, unclaimedRoutes,
 } from './coverage';
+import appSource from '../App.tsx?raw';
 
 describe('appRoutes', () => {
   it('lists every <Route path> in the router source, in order', () => {
@@ -81,4 +82,50 @@ describe('pageDocProblems', () => {
       `pages/reader.md is ${text.split('\n').length} lines; the limit is 150`,
     ]);
   });
+});
+
+/**
+ * The real docs (D7.6). Loaded the way the studio will load them (D1), so a
+ * doc that moves or is renamed here moves for /design too.
+ */
+const files = import.meta.glob<string>('./docs/**/*.md', { query: '?raw', import: 'default', eager: true });
+const docs = Object.entries(files).map(([path, text]) => parseDoc(path.replace('./docs/', ''), text));
+const pageDocs = docs.filter((doc) => doc.path.startsWith('pages/'));
+const routes = appRoutes(appSource);
+
+describe('the design docs', () => {
+  it('find the routes in App.tsx', () => {
+    expect(routes).toContain('/');
+    expect(routes).toContain('/posts/:postId');
+  });
+
+  it('claim every route in App.tsx: as a page, a parked page or a redirect', () => {
+    expect(unclaimedRoutes(routes, docs)).toEqual([]);
+  });
+
+  it('claim no route twice and no route App.tsx lacks', () => {
+    expect(claimProblems(routes, docs)).toEqual([]);
+  });
+
+  it('cite only principles that exist', () => {
+    expect(definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!).size).toBeGreaterThan(0);
+    expect(unknownCitations(docs)).toEqual([]);
+  });
+
+  it('keep at most 12 principles, numbered P1 up without gaps', () => {
+    const numbers = [...definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!)];
+    expect(numbers.length).toBeLessThanOrEqual(12);
+    expect(numbers).toEqual(numbers.map((_, index) => index + 1));
+  });
+
+  it('give every page doc the fixed template and its states', () => {
+    expect(pageDocs.map((doc) => doc.path).sort()).toEqual(['pages/post.md', 'pages/reader.md', 'pages/shell.md', 'pages/sources.md']);
+    expect(pageDocs.flatMap(pageDocProblems)).toEqual([]);
+  });
+
+  // TODO(S3): a page doc's every `states:` entry needs a specimen (D4, D7.6).
+  // When the frame route and the fixture transport land, load the specimen
+  // registry here and assert each `${page}/${state}` pair from
+  // `pageDocs.flatMap((doc) => doc.meta.states.map(...))` has one.
+  it.todo('render a specimen for every state a page doc lists (S3)');
 });
