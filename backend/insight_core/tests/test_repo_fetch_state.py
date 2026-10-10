@@ -218,6 +218,7 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual(row["mean_gap_seconds"], 86400)
         self.assertEqual(row["cadence_sample_size"], 12)
         self.assertEqual(row["post_count"], 0)
+        self.assertIsNone(row["last_post_at"])
         self.assertEqual(row["folders"], [])
         self.assertEqual(row["state"].last_fetched_posts, 2)
         self.assertFalse(row["enabled"])

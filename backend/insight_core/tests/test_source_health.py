@@ -130,6 +130,13 @@ class SourceHealthTests(unittest.TestCase):
                     expected_due = decision.next_due_at.isoformat() if decision.next_due_at else None
                     self.assertEqual(row["next_due_at"], expected_due)
 
+    def test_row_carries_the_newest_post_time(self):
+        view = schedule_view()
+        view[0] = {**view[0], "last_post_at": NOW - 5 * H}
+        rows = {r["source_id"]: r for r in make_service(view).get_source_health()["rows"]}
+        self.assertEqual(rows["deferred"]["last_post_at"], (NOW - 5 * H).isoformat())
+        self.assertIsNone(rows["new"]["last_post_at"], "no posts -> None")
+
     def test_row_shape(self):
         pinned = self.rows["pinned"]
         self.assertEqual(pinned["display_name"], "Pinned")
