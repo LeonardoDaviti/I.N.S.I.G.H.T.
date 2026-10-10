@@ -4,9 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../services/ApiContext';
 import type { Folder } from '../services/api';
 import { sourceLabel } from '../lib/sourceLabel';
+import type { SearchableSource } from '../lib/sourceSearch';
 import { useSourcesHealth } from './useSourcesHealth';
 
 export const FOLDERS_KEY = ['folders'] as const;
+export const SOURCE_URLS_KEY = ['reader-source-urls'] as const;
 
 /**
  * Names for the reader's scopes: the tracks (folders) and every source's display
@@ -40,4 +42,40 @@ export function scopeLabel(scope: string, folders: Folder[] | undefined, sourceN
   if (kind === 'folder') return folders?.find((folder) => folder.id === id)?.name ?? 'Track';
   const name = sourceNames.get(id);
   return name ? sourceLabel(name) : 'Source';
+}
+
+export interface DirectorySource extends SearchableSource {
+  id: string;
+}
+
+/**
+ * Every source the reader can open, for the rail's filter: all health rows
+ * (enabled or not, in the main digest or not) with their readable label, kind
+ * and, once `withUrls` is on, their feed URL. The URLs come from
+ * GET /api/sources/with-settings, fetched only when the owner starts filtering;
+ * until then (or if it fails) a source matches on its names and kind.
+ */
+export function useSourceDirectory(withUrls: boolean): { sources: DirectorySource[]; isPending: boolean } {
+  const api = useApi();
+  const health = useSourcesHealth();
+  const urls = useQuery({
+    queryKey: [...SOURCE_URLS_KEY],
+    queryFn: async (): Promise<Map<string, string>> => {
+      const response = await api.getSourcesWithSettings();
+      if (!response.success) throw new Error(response.error || 'Could not load source URLs.');
+      return new Map(response.sources.map((source) => [source.id, source.handle_or_url]));
+    },
+    enabled: withUrls,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const sources = useMemo(() => (health.data?.rows ?? []).map((row): DirectorySource => ({
+    id: row.source_id,
+    name: row.display_name,
+    label: sourceLabel(row.display_name),
+    url: urls.data?.get(row.source_id) ?? null,
+    kind: row.kind,
+    platform: row.platform,
+  })), [health.data, urls.data]);
+  return { sources, isPending: health.isPending };
 }

@@ -1,14 +1,14 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Inbox, Star, X } from 'lucide-react';
 
 import type { FeedFilter, UnreadCounts } from '../../services/api';
-import { useReaderDirectory } from '../../hooks/useReaderDirectory';
+import { useReaderDirectory, useSourceDirectory } from '../../hooks/useReaderDirectory';
 import { scopePath } from '../../lib/feedContext';
-import { sourceLabel } from '../../lib/sourceLabel';
+import { matchesSource, queryWords } from '../../lib/sourceSearch';
 import { formatCount, middleTruncate } from '../../lib/format';
-import { iconButtonClass } from '../ui/styles';
+import { fieldClass, iconButtonClass } from '../ui/styles';
 import { FOCUS_RING } from '../states';
 
 const SOURCES_SHOWN = 12;
@@ -47,20 +47,74 @@ function SectionTitle({ children }: { children: string }) {
   return <h2 className="px-2.5 pb-1.5 pt-6 text-[0.8125rem] lowercase text-fg-3">{children}</h2>;
 }
 
+/** The rail's source filter: placeholder only, a clear button while it has text, Esc clears. */
+function SourceFilter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="relative px-0.5 pb-1.5">
+      <input
+        ref={input}
+        type="text"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && value) {
+            event.preventDefault();
+            onChange('');
+          }
+        }}
+        aria-label="Filter sources"
+        placeholder="filter sources"
+        autoComplete="off"
+        spellCheck={false}
+        data-rail-filter=""
+        className={`${fieldClass} h-8 pr-8 text-[0.8125rem] coarse:h-11 coarse:pr-11`}
+      />
+      {value ? (
+        <button
+          type="button"
+          aria-label="Clear filter"
+          onClick={() => {
+            onChange('');
+            input.current?.focus();
+          }}
+          className={`absolute inset-y-0 right-0.5 mb-1.5 flex w-8 items-center justify-center rounded-md text-fg-3 hover:text-fg coarse:w-11 ${FOCUS_RING}`}
+        >
+          <X aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function RailContent({ scope, filter, counts, search, onNavigate }: {
   scope: string; filter: FeedFilter; counts: UnreadCounts | undefined; search: string; onNavigate?: () => void;
 }) {
-  const { folders, health, sourceNames } = useReaderDirectory();
+  const { folders } = useReaderDirectory();
   const [showAllSources, setShowAllSources] = useState(false);
+  const [query, setQuery] = useState('');
+  const words = useMemo(() => queryWords(query), [query]);
+  const filtering = words.length > 0;
+  const directory = useSourceDirectory(filtering);
   const withSearch = (path: string) => `${path}${search}`;
+  const unread = (id: string) => counts?.by_source?.[id] ?? 0;
 
-  const unreadSources = Object.entries(counts?.by_source ?? {})
-    .filter(([, count]) => count > 0)
-    // A source the directory cannot name (deleted, or not in the health rows) has no
-    // useful row here: "Unknown source 12,847" is noise. Its posts stay in All posts.
-    .filter(([sourceId]) => health.isPending || sourceNames.has(sourceId))
-    .sort((a, b) => b[1] - a[1] || (sourceNames.get(a[0]) ?? '').localeCompare(sourceNames.get(b[0]) ?? ''));
-  const shownSources = showAllSources ? unreadSources : unreadSources.slice(0, SOURCES_SHOWN);
+  // Most unread first, then by name. A source the directory cannot name (deleted)
+  // has no row: "Unknown source 12,847" is noise; its posts stay in All posts.
+  const allSources = useMemo(() => [...directory.sources].sort((a, b) => (
+    (counts?.by_source?.[b.id] ?? 0) - (counts?.by_source?.[a.id] ?? 0) || a.label.localeCompare(b.label)
+  )), [directory.sources, counts]);
+  const unreadSources = allSources.filter((source) => unread(source.id) > 0);
+  const shownSources = filtering
+    ? allSources.filter((source) => matchesSource(source, words))
+    : showAllSources ? allSources : unreadSources.slice(0, SOURCES_SHOWN);
+  const canExpand = allSources.length > Math.min(unreadSources.length, SOURCES_SHOWN);
+
+  let emptyLine: string | null = null;
+  if (!shownSources.length) {
+    if (filtering) emptyLine = directory.isPending ? 'Loading…' : 'No source matches.';
+    else emptyLine = counts && !directory.isPending ? 'Nothing unread.' : 'Loading…';
+  }
 
   return (
     <nav aria-label="Feeds" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
@@ -105,37 +159,33 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
         <p className="px-2.5 text-[0.8125rem] text-fg-3">{folders.isPending ? 'Loading…' : 'No tracks yet.'}</p>
       )}
 
-      <SectionTitle>Sources with unread</SectionTitle>
-      {unreadSources.length ? (
-        <div className="space-y-0.5">
-          {shownSources.map(([sourceId, count]) => {
-            const sourceScope = `source:${sourceId}`;
-            const raw = sourceNames.get(sourceId);
-            const name = raw ? sourceLabel(raw) : 'Loading…';
-            return (
-              <RailLink
-                key={sourceId}
-                to={withSearch(scopePath(sourceScope))}
-                current={scope === sourceScope}
-                label={name}
-                count={count}
-                onNavigate={onNavigate}
-              />
-            );
-          })}
-          {unreadSources.length > SOURCES_SHOWN ? (
-            <button
-              type="button"
-              onClick={() => setShowAllSources((value) => !value)}
-              className={`min-h-[2.25rem] w-full rounded-md px-2.5 text-left text-[0.8125rem] text-fg-2 underline decoration-fg-3/60 underline-offset-[0.22em] hover:text-fg hover:decoration-fg coarse:min-h-[2.75rem] ${FOCUS_RING}`}
-            >
-              {showAllSources ? 'Show fewer' : `Show all ${formatCount(unreadSources.length)}`}
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <p className="px-2.5 text-[0.8125rem] text-fg-3">{counts ? 'Nothing unread.' : 'Loading…'}</p>
-      )}
+      <SectionTitle>{filtering || showAllSources ? 'Sources' : 'Sources with unread'}</SectionTitle>
+      <SourceFilter value={query} onChange={setQuery} />
+      <div className="space-y-0.5">
+        {shownSources.map((source) => {
+          const sourceScope = `source:${source.id}`;
+          return (
+            <RailLink
+              key={source.id}
+              to={withSearch(scopePath(sourceScope))}
+              current={scope === sourceScope}
+              label={source.label}
+              count={unread(source.id)}
+              onNavigate={onNavigate}
+            />
+          );
+        })}
+        {emptyLine ? <p className="px-2.5 py-1.5 text-[0.8125rem] text-fg-3">{emptyLine}</p> : null}
+        {!filtering && canExpand ? (
+          <button
+            type="button"
+            onClick={() => setShowAllSources((value) => !value)}
+            className={`min-h-[2.25rem] w-full rounded-md px-2.5 text-left text-[0.8125rem] text-fg-2 underline decoration-fg-3/60 underline-offset-[0.22em] hover:text-fg hover:decoration-fg coarse:min-h-[2.75rem] ${FOCUS_RING}`}
+          >
+            {showAllSources ? 'Show fewer' : `Show all ${formatCount(allSources.length)} sources`}
+          </button>
+        ) : null}
+      </div>
 
     </nav>
   );
@@ -144,7 +194,9 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
 /**
  * The reader's persistent nav (spec §F.1 item 8): All posts, Starred, the tracks
  * and the sources with unread posts, each with its unread badge. The wordmark
- * and the app sections live in the top bar only; this rail is just the feeds. At md and up it
+ * and the app sections live in the top bar only; this rail is just the feeds.
+ * The sources section has a filter over every source (not only those with
+ * unread), and "Show all" expands the full list inline. At md and up it
  * is a sticky rail; below md the same content is a drawer opened from the
  * toolbar, which slides in from the left and leaves the same way.
  */
@@ -167,6 +219,12 @@ export default function ReaderNavRail({ scope, filter, counts, search, drawerOpe
           <Dialog.Overlay className="reader-drawer-overlay fixed inset-0 z-50 bg-black/50 md:hidden" />
           <Dialog.Content
             aria-describedby={undefined}
+            // Esc in a non-empty source filter clears it (the field handles that); only
+            // the next Esc closes the drawer.
+            onEscapeKeyDown={(event) => {
+              const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
+              if (target instanceof HTMLInputElement && target.matches('[data-rail-filter]') && target.value) event.preventDefault();
+            }}
             className="reader-drawer reader-rail fixed inset-y-0 left-0 z-50 flex w-[min(18rem,85vw)] flex-col overflow-y-auto border-r border-line-strong bg-bg md:hidden"
           >
             <div className="flex items-center justify-between pl-4 pr-1 pt-1">
