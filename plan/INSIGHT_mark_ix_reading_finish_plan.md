@@ -1,6 +1,6 @@
 # Mark IX — Reading finish: post typography + reading-only app (§9)
 
-Status: **draft, not approved** (2026-10-10). Nothing in this file gets built until the owner says go.
+Status: **approved** (2026-10-10). Built on the integration branch `mark-ix-reading-finish`.
 Parent spec: `plan/INSIGHT_mark_ix_plan.md` §9. Design: `plan/INSIGHT_mark_ix_design.md`.
 
 ## Problem
@@ -48,19 +48,19 @@ The reader, post page and sources list now match the owner's ideology ("everythi
 ### R3 — Reading-only app when `INSIGHT_ANALYSIS=off` (§9, the rest of it)
 
 **Frontend**
-- **Top bar:** `feed / tracks / sources`.
+- **Top bar:** `feed / sources` (see Decision 2).
   - `briefings` and `ingestion` are not shown.
   - With the flag on, the current five words come back.
 - **⌘K quick switcher:** no briefing, stories, inbox or experts entries when the flag is off. "Ingestion" points to the new sources tab.
 - **Routes when off:**
   - `/briefing*`, `/stories`, `/inbox` and `/experts` redirect to `/` (replace, so no history entry).
   - `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion`, carrying `:tab` across.
-- **`/tracks` (list):** a plain track list (name, sources count, unread count, open, fetch track, main-digest switch). No expert or briefing UI.
+- **`/tracks` (list):** removed when off; redirects to `/` (Decision 2).
 - **`/tracks/:id`:** the track's reading view only. No track briefing panel and no milestones rail.
 - **Sources page:** gains a third tab, `ingestion` (`?tab=ingestion`), holding the run report, Run due sources, the scheduler interval/status and job history.
   - Move the useful parts of `IngestionControl` here.
   - Drop "Write a briefing" and the "Source registry" JSON↔DB buttons when off.
-  - Keep "Fetch one source" only if it isn't already covered by the row's Fetch now. Recommendation: drop it, because each row and its detail sheet already have Fetch now.
+  - "Fetch one source" is dropped (Decision 1).
 - **Reader:** no "Summary", "Topics", "Story" or expert affordances anywhere in the feed or track views when off.
 - **How the flag is set:** `VITE_INSIGHT_ANALYSIS` at build time.
   - The frontend also reads a runtime value from `GET /api/config` → `{ analysis_enabled }`, so the backend and frontend can't disagree. If the build flag and runtime value differ, the runtime value wins.
@@ -89,7 +89,7 @@ The reader, post page and sources list now match the owner's ideology ("everythi
 |---|---|
 | `index.css` / post H1 | Component test: the post H1 has the `pretty` wrap class, not `balance`. Playwright screenshots at 1400 and 390, dark and light: for the "A new feature for my blog…" post, the title's first line spans ≥ 85% of the column width. |
 | `MarkdownRenderer` | Unit: `#### Codex voice mode` renders an `h4` with the heading classes. `h4`/`h5`/`h6` each have a computed font-weight ≥ 600. Snapshot of the heading scale. |
-| `navigation.ts` | Unit: `NAV_ITEMS` for analysis off is `['feed','tracks','sources']`, and for on, the five words. `DESTINATIONS` contains no briefing/stories/inbox entries when off. `activeNavKey('/settings/sources?tab=ingestion') === 'sources'`. |
+| `navigation.ts` | Unit: `NAV_ITEMS` for analysis off is `['feed','sources']`, and for on, the five words. `DESTINATIONS` contains no briefing/stories/inbox entries when off. `activeNavKey('/settings/sources?tab=ingestion') === 'sources'`. |
 | Routes | Router tests: each hidden route redirects (off) or renders (on). `/ingestion/jobs` goes to `/settings/sources?tab=ingestion&sub=jobs`. |
 | Sources `ingestion` tab | Component tests: run report renders, Run due sources calls the API, scheduler status shows "not running" honestly, and no briefing/registry controls when off. |
 | `/api/config` + flag | Backend unit: settings default off and parse on/off/true/false. Route test: `analysis_enabled` is false by default. |
@@ -112,15 +112,15 @@ S1 and S2 can run in parallel (disjoint files). S3 and S4 touch `App.tsx`, `navi
 ## Acceptance (owner-visible)
 
 - Opening a post: the title spans the column; "Codex voice mode" reads as a subheading.
-- The top bar reads `feed / tracks / sources`. ⌘K shows no briefings, stories, inbox or experts.
+- The top bar reads `feed / sources`. ⌘K shows no briefings, stories, inbox or experts.
 - Typing `/briefing` or `/stories` in the address bar lands on the feed.
 - Sources has tabs `sources / connections / ingestion`. The run report and Run due sources live there.
 - A Fetch now on any source finishes without entity/event work, and its report says enrichment was skipped.
 - The backend logs show no Gemini client being created during a whole scheduler cycle.
 - Setting `INSIGHT_ANALYSIS=on` (backend env + build arg) brings every hidden surface back unchanged.
 
-## Open questions for the owner
+## Decisions (owner, 2026-10-10)
 
-1. **"Fetch one source" panel on the ingestion tab:** drop it (each source row already has Fetch now)? *Recommendation: drop.*
-2. **Stored briefings:** keep the old routes readable (GET only) when the flag is on later, or treat them as gone until the analysis version? *Recommendation: GET-only stays working behind the flag; nothing is visible while off.*
-3. **The `/tracks` list page:** keep it as a separate page, or move the track list into the reader rail plus the sources page groups and drop `/tracks` entirely? *Recommendation: drop the separate page. The rail and the sources list already show tracks, so `tracks` leaves the nav and the top bar becomes `feed / sources`.*
+1. **"Fetch one source" is dropped** from the ingestion tab. Every source row and its detail sheet already have Fetch now.
+2. **The separate `/tracks` page is dropped.** Tracks live in the reader rail and in the sources list groups (fetch, rename, main digest and delete are already in the group's ⋯ menu). With the flag off, the top bar is **`feed / sources`**. `/tracks` (the list) redirects to `/`, and `/tracks/:id` keeps working as the track's reading view. The ⌘K list gets one "Tracks…" entry per track, pointing to `/tracks/:id`.
+3. **Analysis behaviour when the flag is on is not decided now.** With the flag off nothing analysis-related is visible or running. With it on, today's behaviour stays exactly as it is, and the next version decides the rest.
