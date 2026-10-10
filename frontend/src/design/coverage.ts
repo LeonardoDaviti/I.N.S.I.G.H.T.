@@ -46,3 +46,66 @@ export function unclaimedRoutes(routes: readonly string[], docs: readonly Design
   const claimed = new Set(docs.flatMap(claims));
   return routes.filter((route) => !claimed.has(route));
 }
+
+/** Claims that went stale (the route is gone) and routes with more than one home. */
+export function claimProblems(routes: readonly string[], docs: readonly DesignDoc[]): string[] {
+  const known = new Set(routes);
+  const owners = new Map<string, string[]>();
+  const problems: string[] = [];
+  for (const doc of docs) {
+    for (const route of claims(doc)) {
+      if (!known.has(route)) problems.push(`${doc.path} claims ${route}, which App.tsx does not have`);
+      owners.set(route, [...(owners.get(route) ?? []), doc.path]);
+    }
+  }
+  for (const [route, paths] of owners) {
+    if (paths.length > 1) problems.push(`${route} is claimed by more than one doc: ${paths.join(', ')}`);
+  }
+  return problems;
+}
+
+/** The principle numbers principles.md defines: each rule opens with a bold `**P<n> …`. */
+export function definedPrinciples(principles: DesignDoc): Set<number> {
+  return new Set([...principles.text.matchAll(/^\s*[-*]?\s*\*\*P(\d+)\b/gm)].map((match) => Number(match[1])));
+}
+
+/** Citations of a principle (`P7`) that principles.md does not define. */
+export function unknownCitations(docs: readonly DesignDoc[]): string[] {
+  const principles = docs.find((doc) => doc.path === 'principles.md');
+  const defined = principles ? definedPrinciples(principles) : new Set<number>();
+  const problems: string[] = [];
+  for (const doc of docs) {
+    const cited = new Set([...doc.text.matchAll(/\bP(\d+)\b/g)].map((match) => Number(match[1])));
+    for (const number of [...cited].sort((a, b) => a - b)) {
+      if (!defined.has(number)) problems.push(`${doc.path} cites P${number}, which principles.md does not define`);
+    }
+  }
+  return problems;
+}
+
+/** The fixed page-doc template (spec D7.4), as `## ` headings, in order. */
+export const PAGE_SECTIONS = [
+  'Purpose',
+  'Entry & URL',
+  'Anatomy',
+  'States',
+  'Interactions & keys',
+  'Worst cases',
+  'A11y & motion',
+  'Decisions',
+  'Open issues',
+] as const;
+
+export const PAGE_DOC_MAX_LINES = 150;
+
+/** A page doc's template gaps: missing sections, no states, over the size limit. */
+export function pageDocProblems(doc: DesignDoc): string[] {
+  const headings = new Set([...doc.text.matchAll(/^## (.+?)\s*$/gm)].map((match) => match[1]));
+  const problems = PAGE_SECTIONS
+    .filter((section) => !headings.has(section))
+    .map((section) => `${doc.path} lacks the section "## ${section}"`);
+  if (!doc.meta.states?.length) problems.push(`${doc.path} lists no \`states:\` in its meta block`);
+  const lines = doc.text.split('\n').length;
+  if (lines > PAGE_DOC_MAX_LINES) problems.push(`${doc.path} is ${lines} lines; the limit is ${PAGE_DOC_MAX_LINES}`);
+  return problems;
+}
