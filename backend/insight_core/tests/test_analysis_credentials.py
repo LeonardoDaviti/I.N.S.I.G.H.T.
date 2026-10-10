@@ -33,6 +33,12 @@ class GeminiKeyTests(unittest.TestCase):
             self.assertFalse(processor.setup_processor())
         self.assertIsNone(processor.api_key)
 
+    def test_no_client_is_built_from_environment_keys(self):
+        with mock.patch.dict(os.environ, ENV_KEYS):
+            processor = self.processor({})
+            with self.assertRaises(RuntimeError):
+                processor._client_instance()
+
     def test_the_lazy_processor_uses_the_shared_store(self):
         from insight_core.processors.ai import lazy
 

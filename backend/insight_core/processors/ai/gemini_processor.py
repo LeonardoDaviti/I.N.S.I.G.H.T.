@@ -1162,9 +1162,13 @@ POSTS:
         with self._client_lock:
             if self._client is not None:
                 return self._client
+            if not self.api_key:
+                # genai.Client() without a key would read GEMINI_API_KEY/GOOGLE_API_KEY from the
+                # environment; the key comes from Sources → Connections only.
+                raise RuntimeError("Gemini processor is not configured")
             from google import genai
 
-            client = genai.Client(api_key=self.api_key) if self.api_key else genai.Client()
+            client = genai.Client(api_key=self.api_key)
             self.llm = client
             self._client = client
             return client
