@@ -3,7 +3,7 @@ import { cn } from '../../lib/utils';
 import { STATUS_LABEL, type Status } from './styles';
 
 /**
- * Status without colour (design doc §8). Every state is a shape plus a word; the
+ * Status without colour (design docs system/status.md). Every state is a shape plus a word; the
  * worst state (`failing`) is an inverted block so it is the loudest thing on the
  * screen without red. Glyphs are inline SVG so they never depend on a font.
  */

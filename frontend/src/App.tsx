@@ -62,7 +62,7 @@ function IngestionRoute() {
 }
 
 /**
- * Routes (design doc §9). `/` is the reader feed: the Mark VIII hub is gone and
+ * Routes (design docs system/information-architecture.md). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
  * Reading-only, the app is feed / sources / post, and `/tracks/:id` stays as
  * the track's reading view.

@@ -1,4 +1,4 @@
-// The Mark IX primitives (plan/INSIGHT_mark_ix_design.md §11). Monochrome only.
+// The Mark IX primitives (src/design/docs/system/components.md). Monochrome only.
 export { default as Button } from './Button';
 export { buttonVariants, iconButtonClass, fieldClass, tabTriggerClass, STATUS_LABEL } from './styles';
 export type { Status } from './styles';

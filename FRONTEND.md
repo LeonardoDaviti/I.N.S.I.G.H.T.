@@ -1,8 +1,8 @@
 # Frontend development guide (Mark IX)
 
 React 19, TypeScript, Vite, Tailwind and TanStack Query. The UI is monochrome and dark by
-default. The design language, tokens and component inventory live in
-`plan/INSIGHT_mark_ix_design.md`; this file is the how-to. Never introduce colour fills, gradients,
+default. The design rules (principles, tokens, component inventory, page docs)
+live in `frontend/src/design/docs`, shown at `/design`; this file is the how-to. Never introduce colour fills, gradients,
 pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyph`).
 
 ## Three places, and the analysis flag

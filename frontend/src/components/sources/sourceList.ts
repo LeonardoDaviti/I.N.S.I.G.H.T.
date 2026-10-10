@@ -195,7 +195,7 @@ export function toggleInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {
   return next;
 }
 
-/** Health status -> the monochrome status vocabulary (design doc §8). */
+/** Health status -> the monochrome status vocabulary (design docs system/status.md). */
 export const STATUS_GLYPH: Record<HealthStatus, Status> = {
   error: 'failing',
   backoff: 'backoff',

@@ -1,0 +1,19 @@
+```meta
+kind: log
+```
+
+# Decisions
+
+Append-only: one line per design decision, newest last. Never edit or delete a line; a reversal is a new line that names the one it reverses. Format: `id · date · page · decision · principle · link`. Rejected prototypes get a line saying why (D6).
+
+- **001** · 2026-10-09 · all · Mark IX is monochrome: black and white only like news.smol.ai, dark by default, light the same system inverted. · P2, P3 · `plan/INSIGHT_mark_ix_design.md` (archive), commit 206e224
+- **002** · 2026-10-10 · shell · The Mark VIII hub is deleted: `/` is the reader, `/hub` redirects home, navigation is one top bar. · P1 · commit 168c09c
+- **003** · 2026-10-10 · all · Reading-only app (spec §9): analysis surfaces are hidden behind `INSIGHT_ANALYSIS` (default off), not deleted; the top bar is `feed / sources`. · P1, P10 · `plan/INSIGHT_mark_ix_reading_finish_plan.md`, commit 9a51f95
+- **004** · 2026-10-10 · post · The post is one centred column with three icon actions (↗ ☆ ⧉) beside the title and no machine metadata. · P4, P5, P6 · commit 9a51f95
+- **005** · 2026-10-10 · sources · Ingestion is a tab under Sources; `/ingestion` redirects there reading-only. · P7, P9 · commit d304422
+- **006** · 2026-10-10 · shell · The `/tracks` list is dropped reading-only; ⌘K lists one entry per track instead. · P9, P10 · commit efa0ce5
+- **007** · 2026-10-10 · reader · Fetching leaves the reading views: no fetch button or key in the reader or the post; an empty scope points quietly to Sources. · P7 · commit 30eb7b1
+- **008** · 2026-10-10 · sources · Secrets live only in Sources → Connections, never in `.env` or the environment. · P7 · commits aa8fddc, 114e37d
+- **009** · 2026-10-10 · design · The Design Studio: design rules live once, in `frontend/src/design/docs`, shown at `/design`. · P9 · `plan/INSIGHT_design_studio_plan.md`
+- **010** · 2026-10-10 · reader · The track page is retired into the reader: `/tracks/:id` redirects to `/read/folder/:id`; with analysis on, the track briefing and milestones render in the folder scope. · P9 · design studio plan D5 (S5)
+- **011** · 2026-10-10 · reader, post, sources · Source and track names in reading views link into Sources (`?source=<id>` opens the sheet, `?track=<id>` highlights the group). · P8 · `plan/issues/0003-source-name-opens-source-settings.md` (S7)

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Mark IX is monochrome (plan/INSIGHT_mark_ix_design.md). The Tailwind palette swap
+// Mark IX is monochrome (src/design/docs). The Tailwind palette swap
 // turns every colour class grey, but a literal hex in TS/TSX (an inline style, a
 // `color: '#0EA5E9'` field) gets past it. This guard keeps them out.
 const SRC = join(__dirname, '..', '..');

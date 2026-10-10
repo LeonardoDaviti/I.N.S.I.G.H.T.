@@ -3,7 +3,7 @@ import { cn } from '../../lib/utils';
 
 /**
  * A data table: 1px hairlines, small text, tabular numbers, no zebra and no
- * coloured header (design doc §11). Wrap it in `TableFrame` for the bordered,
+ * coloured header (design docs system/components.md). Wrap it in `TableFrame` for the bordered,
  * horizontally scrollable box. `stickyHeader` puts the header on the
  * translucent material just under the top bar.
  */

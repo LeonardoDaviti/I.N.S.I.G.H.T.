@@ -5,7 +5,7 @@
  */
 import type { Status } from '../components/ui/styles';
 
-/** Job status -> monochrome glyph (design doc §8). */
+/** Job status -> monochrome glyph (design docs system/status.md). */
 export function jobGlyph(status?: string | null): Status {
   if (status === 'failed') return 'failing';
   if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
