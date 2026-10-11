@@ -18,6 +18,9 @@ class FakeSourcesService:
         return list(self.sources)
 
     def add_source(self, platform, handle, *, in_main_digest=True):
+        handle = handle.strip()                      # as SourcesService.add_source
+        if any((s["platform"], s["handle_or_url"]) == (platform, handle) for s in self.sources):
+            raise ValueError(f"{platform}/{handle} is already a source")
         source_id = f"{platform}:{handle}"
         self.sources.append(
             {
@@ -105,6 +108,24 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             json.dumps({"metadata": {}, "platforms": {"rss": {"enabled": True, "sources": sources}}}),
             encoding="utf-8",
         )
+
+    def test_a_padded_id_syncs_twice_without_a_delete(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            fake_sources = FakeSourcesService([
+                {"id": "keep", "platform": "rss", "handle_or_url": "https://other.example/feed.xml", "enabled": True},
+            ])
+            self._write(config_path, [{"id": "  https://blog.example/feed.xml\n", "state": "enabled"},
+                                      {"id": "https://other.example/feed.xml", "state": "enabled"}])
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+
+            first = service.sync_json_to_db(mirror=True)
+            second = service.sync_json_to_db(mirror=True)
+
+            self.assertEqual((first["success"], second["success"]), (True, True), second["stats"]["errors"])
+            self.assertEqual(fake_sources.added, [("rss", "https://blog.example/feed.xml")])
+            self.assertEqual(fake_sources.deleted, [])
 
     def test_sync_creates_source_with_in_main_digest_off(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -41,7 +41,7 @@ class DatabaseTests(unittest.TestCase):
         database = self.make()
         with database.connection() as conn, conn.cursor() as cur:
             cur.execute("SHOW statement_timeout")
-            self.assertEqual(cur.fetchone()[0], "1min")
+            self.assertEqual(cur.fetchone()[0], "5min")
 
     def test_the_pool_hands_back_a_usable_connection_after_an_error(self):
         database = self.make(min_size=1, max_size=1)

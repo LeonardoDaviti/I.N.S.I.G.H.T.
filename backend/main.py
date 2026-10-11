@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -80,7 +81,10 @@ app.add_middleware(
 # act on (400 for a ValueError, 404 for a not-found LookupError, 400 or 429 for a failed
 # Telegram sign-in), and "Could not <what>. Check the backend logs." (500) for anything
 # else. That exception is logged, never echoed: driver messages can carry DSNs and SQL.
-# A route names its <what> with @error_detail.
+# A 4xx is logged too, as a warning. A route names its <what> with @error_detail.
+#
+# A path id (post_id, folder_id, source_id, job_id) that is not a uuid names no row: 404
+# before the route runs. A value the database still cannot read is a 400.
 
 
 DEFAULT_ERROR_WHAT = "complete the request"
@@ -105,10 +109,24 @@ def _known_error(exc: Exception) -> Optional[tuple[int, str, Dict[str, str]]]:
     if isinstance(exc, LookupError) and not isinstance(exc, (KeyError, IndexError)):
         return 404, str(exc), {}
     if isinstance(exc, psycopg.errors.InvalidTextRepresentation):
-        return 404, "Not found.", {}       # an id that is not a uuid names no row
-    if isinstance(exc, ValueError):
+        return 400, "Invalid value.", {}
+    # Bad stored data (a JSON column, a file) is ours to fix, not the caller's: a 500.
+    if isinstance(exc, ValueError) and not isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
         return 400, str(exc), {}
     return None
+
+
+UUID_PATH_PARAMS = ("post_id", "folder_id", "source_id", "job_id")
+
+
+def check_path_ids(path_params: Dict[str, Any]) -> None:
+    """LookupError (404) when a path id is not a uuid: it names no row."""
+    for name in UUID_PATH_PARAMS:
+        if name in path_params:
+            try:
+                uuid.UUID(str(path_params[name]))
+            except ValueError:
+                raise LookupError("Not found.") from None
 
 
 def service_error_response(request: Request, exc: Exception, what: str) -> JSONResponse:
@@ -120,6 +138,8 @@ def service_error_response(request: Request, exc: Exception, what: str) -> JSONR
     else:
         status, message, headers = known
         message = _DATABASE_URL.sub("<database url>", message)
+        cause = f" ({_DATABASE_URL.sub('<database url>', str(exc))})" if isinstance(exc, psycopg.Error) else ""
+        logger.warning("%s %s answered %s: %s%s", request.method, request.url.path, status, message, cause)
     return JSONResponse(status_code=status, content={"detail": message}, headers=headers or None)
 
 
@@ -136,6 +156,7 @@ class ServiceRoute(APIRoute):
 
         async def route_handler(request: Request):
             try:
+                check_path_ids(request.path_params)
                 return await handle(request)
             except (StarletteHTTPException, RequestValidationError):
                 raise
@@ -437,8 +458,8 @@ def _accept_archive_run(
     """
     try:
         support = services().source_fetch.archive_support(source_id)
-    except ValueError as exc:
-        return JSONResponse(status_code=404, content={"success": False, "error": str(exc)})
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={"success": False, "detail": str(exc), "error": str(exc)})
     if not support.get("archivable"):
         reason = support.get("reason") or "This source cannot archive"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason,

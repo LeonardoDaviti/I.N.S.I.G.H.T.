@@ -26,6 +26,7 @@ from insight_core.ingestion.schedule import (
     unavailable_reason,
 )
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.utils.env import env_float
 from insight_core.utils.json_safe import iso, json_safe
 
 
@@ -708,9 +709,9 @@ class OperationsService:
     def _default_scheduler_config(self) -> Dict[str, Any]:
         return self._normalize_scheduler_config(
             {
-                "interval_hours": float(os.getenv("INSIGHT_INGEST_INTERVAL_HOURS", "20")),
+                "interval_hours": env_float("INSIGHT_INGEST_INTERVAL_HOURS", 20),
                 "sync_sources_each_cycle": os.getenv("INSIGHT_SYNC_SOURCES_EACH_CYCLE", "true").lower() == "true",
-                "ingest_tick_minutes": float(os.getenv("INSIGHT_INGEST_TICK_MINUTES", "60")),
+                "ingest_tick_minutes": env_float("INSIGHT_INGEST_TICK_MINUTES", 60),
                 "updated_at": None,
             }
         )

@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import binascii
 import math
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -27,6 +26,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from psycopg import Cursor
 
 from insight_core.utils.content_fingerprints import strip_html
+from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 
 FeedFilter = Literal["all", "unread", "starred"]
@@ -53,10 +53,7 @@ UNREAD_SQL = (
 
 def unread_window_days_from_env() -> Optional[int]:
     """INSIGHT_UNREAD_WINDOW_DAYS as a positive int, or None (unset, 0 or garbage: no window)."""
-    try:
-        days = int(os.getenv("INSIGHT_UNREAD_WINDOW_DAYS") or 0)
-    except ValueError:
-        return DEFAULT_UNREAD_WINDOW_DAYS
+    days = env_int("INSIGHT_UNREAD_WINDOW_DAYS", 0)
     return days if days > 0 else DEFAULT_UNREAD_WINDOW_DAYS
 
 

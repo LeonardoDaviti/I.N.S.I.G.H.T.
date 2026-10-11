@@ -185,17 +185,57 @@ class ErrorHandlerTests(unittest.TestCase):
 
     def test_an_id_the_database_cannot_read_is_a_404(self):
         def update_folder(folder_id, fields):
-            raise psycopg.errors.InvalidTextRepresentation(f'invalid input syntax for type uuid: "{folder_id}"')
+            raise AssertionError("a path id that is not a uuid never reaches the service")
         self.update_folder = update_folder
         status, _, body = call(main.app, "PUT", "/api/folders/not-a-uuid", json_body={"name": "x"})
         self.assertEqual((status, body), (404, {"detail": "Not found."}))
 
+    def test_every_malformed_path_id_is_a_404(self):
+        for method, path, json_body in (
+            ("GET", "/api/posts/item/nope", None),
+            ("POST", "/api/posts/item/nope/favorite", {"favorited": True}),
+            ("DELETE", "/api/folders/nope", None),
+            ("DELETE", "/api/folders/nope/sources/nope", None),
+            ("DELETE", "/api/sources/nope", None),
+            ("POST", "/api/sources/nope/fetch-now", {}),
+            ("GET", "/api/operations/jobs/nope", None),
+            ("GET", "/api/archive/nope/status", None),
+            ("POST", "/api/archive/nope/plan", {}),
+        ):
+            with self.subTest(method=method, path=path), self.assertLogs("main", "WARNING"):
+                status, _, body = call(main.app, method, path, json_body=json_body)
+                self.assertEqual((status, body), (404, {"detail": "Not found."}))
+
+    def test_a_value_the_database_cannot_read_is_a_logged_400(self):
+        def update_folder(folder_id, fields):
+            raise psycopg.errors.InvalidTextRepresentation('invalid input syntax for type uuid: "x"')
+        self.update_folder = update_folder
+        with self.assertLogs("main", "WARNING") as logged:
+            status, _, body = call(main.app, "PUT", f"/api/folders/{SOURCE_ID}", json_body={"name": "x"})
+        self.assertEqual((status, body), (400, {"detail": "Invalid value."}))
+        self.assertIn("invalid input syntax", "\n".join(logged.output))
+
+    def test_bad_stored_data_is_a_logged_500_not_a_400(self):
+        import json
+        for error in (json.JSONDecodeError("Expecting value", "", 0),
+                      UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")):
+            def update_folder(folder_id, fields, error=error):
+                raise error
+            self.update_folder = update_folder
+            with self.subTest(error=type(error).__name__), self.assertLogs("main", "ERROR"):
+                status, _, body = call(main.app, "PUT", f"/api/folders/{SOURCE_ID}", json_body={"name": "x"})
+                self.assertEqual((status, body), (500, {"detail": "Could not update the folder. Check the backend logs."}))
+
     def test_a_message_the_caller_can_act_on_passes_without_the_dsn(self):
-        status, _, body = call(main.app, "PUT", "/api/folders/f1", json_body={"name": "x"})
+        with self.assertLogs("main", "WARNING") as logged:
+            status, _, body = call(main.app, "PUT", f"/api/folders/{SOURCE_ID}", json_body={"name": "x"})
         self.assertEqual(status, 400)
-        self.assertTrue(body["detail"].startswith("Folder f1 is broken at"))
+        self.assertTrue(body["detail"].startswith(f"Folder {SOURCE_ID} is broken at"))
         self.assertNotIn("secret", body["detail"])
         self.assertNotIn("postgresql://", body["detail"])
+        line = "\n".join(logged.output)
+        self.assertIn(f"PUT /api/folders/{SOURCE_ID} answered 400: Folder {SOURCE_ID} is broken at", line)
+        self.assertNotIn("secret", line)
 
 
 class FeedQueryBoundsTests(unittest.TestCase):

@@ -7,6 +7,9 @@ import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 import { feedCursorFor } from '../lib/feedContext';
 import { FEED_ROOT_KEY, UNREAD_COUNTS_KEY, type AnyFeedPage, type FeedData } from './useFeed';
 
+/** The most ids one PUT /api/feed/read takes (the backend's MAX_READ_BATCH). */
+export const READ_BATCH = 500;
+
 function patchPage(page: AnyFeedPage, ids: ReadonlySet<string>, patch: Partial<FeedItem>): AnyFeedPage {
   const patchItems = (items: FeedItem[]) => items.map((item) => (ids.has(item.id) ? { ...item, ...patch } : item));
   if ('groups' in page) return { ...page, groups: page.groups.map((group) => ({ ...group, items: patchItems(group.items) })) };
@@ -194,12 +197,18 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
     return ids;
   }, [api, applyRead, dryRun, queryClient, refreshCounts]);
 
-  /** The Undo of a mark-through: back to unread. */
+  /** The Undo of a mark-through: back to unread. A mark-through has no size limit but
+   *  PUT /api/feed/read takes at most READ_BATCH ids, so a big undo goes in batches, one
+   *  after another; a failed batch undoes the whole local change. */
   const markUnread = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
     const undo = applyRead([...findFeedItems(queryClient, ids).values()], false);
     try {
-      if (!dryRun) await api.setPostsRead(ids, false);
+      if (!dryRun) {
+        for (let start = 0; start < ids.length; start += READ_BATCH) {
+          await api.setPostsRead(ids.slice(start, start + READ_BATCH), false);
+        }
+      }
     } catch (error) {
       undo();
       throw error;

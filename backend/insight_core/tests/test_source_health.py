@@ -283,6 +283,10 @@ class SourceHealthTests(unittest.TestCase):
             self.service.set_cadence_override("missing", None)
 
 
+S1 = "00000000-0000-4000-8000-000000000001"
+MISSING = "00000000-0000-4000-8000-00000000dead"
+
+
 class FakeOperations:
     def __init__(self):
         self.calls = []
@@ -293,8 +297,8 @@ class FakeOperations:
 
     def set_cadence_override(self, source_id, hours):
         self.calls.append(("set_cadence_override", source_id, hours))
-        if source_id == "missing":
-            raise LookupError("Source missing not found")
+        if source_id == MISSING:
+            raise LookupError(f"Source {MISSING} not found")
         return {"source_id": source_id, "override_hours": hours}
 
 
@@ -319,28 +323,28 @@ class SourceHealthRouteTests(unittest.TestCase):
         # NaN and infinity are not JSON; the route function itself refuses them.
         for bad in (0, 0.5, 2161, 3000):
             with self.subTest(hours=bad):
-                status, _, body = self.put_cadence("s1", {"override_hours": bad})
+                status, _, body = self.put_cadence(S1, {"override_hours": bad})
                 self.assertEqual(status, 400, body)
         for bad in (float("nan"), float("inf")):
             with self.subTest(hours=bad):
                 with self.assertRaises(HTTPException) as ctx:
-                    run(main.set_source_cadence("s1", main.CadenceOverrideRequest(override_hours=bad)))
+                    run(main.set_source_cadence(S1, main.CadenceOverrideRequest(override_hours=bad)))
                 self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(self.ops.calls, [], "nothing is written for an invalid value")
 
         for ok in (None, 1, 6.5, 2160):
             with self.subTest(hours=ok):
-                status, _, body = self.put_cadence("s1", {"override_hours": ok})
+                status, _, body = self.put_cadence(S1, {"override_hours": ok})
                 self.assertEqual((status, body["success"]), (200, True))
-                self.assertEqual(self.ops.calls[-1], ("set_cadence_override", "s1", ok))
+                self.assertEqual(self.ops.calls[-1], ("set_cadence_override", S1, ok))
 
     def test_cadence_route_body_may_omit_the_value(self):
-        _, _, body = self.put_cadence("s1", {})
+        _, _, body = self.put_cadence(S1, {})
         self.assertIsNone(body["row"]["override_hours"])
 
     def test_cadence_on_an_unknown_source_is_404(self):
-        status, _, body = self.put_cadence("missing", {"override_hours": 4})
-        self.assertEqual((status, body), (404, {"detail": "Source missing not found"}))
+        status, _, body = self.put_cadence(MISSING, {"override_hours": 4})
+        self.assertEqual((status, body), (404, {"detail": f"Source {MISSING} not found"}))
 
 
 class _FakeSourcesService:

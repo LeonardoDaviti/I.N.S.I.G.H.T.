@@ -13,7 +13,7 @@ import unittest
 import psycopg
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.services.sources_service import SourcesService
-from insight_core.tests._db import delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import delete_scratch_sources, insert_scratch_source, requires_test_db, scratch_handle
 
 # Use test database or fallback to dev database
 DATABASE_URL = os.getenv('TEST_DATABASE_URL') or os.getenv('DATABASE_URL')
@@ -173,6 +173,36 @@ class ConcurrentMergeTests(unittest.TestCase):
         finally:
             first.close()
             second.close()
+
+
+@requires_test_db
+class AddWithSettingsTests(unittest.TestCase):
+    """POST /api/sources adds the source, its settings and its state all at once, or not at all."""
+
+    def setUp(self):
+        self.service = SourcesService(DATABASE_URL)
+        self.handle = scratch_handle()
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self):
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+
+    def row(self):
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            cur.execute("SELECT enabled, settings FROM sources WHERE handle_or_url = %s", (self.handle,))
+            return cur.fetchone()
+
+    def test_a_bad_setting_leaves_no_row(self):
+        with self.assertRaisesRegex(ValueError, "priority must be a whole number"):
+            self.service.add_with_settings("rss", self.handle, settings={"priority": "high"}, enabled=False)
+        self.assertIsNone(self.row())
+
+    def test_settings_and_state_land_with_the_row(self):
+        self.service.add_with_settings("rss", f"  {self.handle} ", settings={"priority": "3"}, enabled=False)
+        enabled, settings = self.row()
+        self.assertFalse(enabled)
+        self.assertEqual(settings["priority"], 3)
 
 
 if __name__ == "__main__":

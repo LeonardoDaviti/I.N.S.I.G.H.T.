@@ -91,6 +91,13 @@ class SchedulerConfigTests(unittest.TestCase):
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 5})["ingest_tick_minutes"], 15)
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 30})["ingest_tick_minutes"], 30)
 
+    def test_malformed_env_defaults_fall_back(self):
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"INSIGHT_INGEST_INTERVAL_HOURS": "daily",
+                                            "INSIGHT_INGEST_TICK_MINUTES": "1h"}):
+            config = self.service._default_scheduler_config()
+        self.assertEqual((config["interval_hours"], config["ingest_tick_minutes"]), (20, 60))
+
     def test_job_labels_name_the_current_types_and_keep_old_rows_readable(self):
         from insight_core.services.operations_service import job_label
 

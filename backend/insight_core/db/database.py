@@ -12,14 +12,18 @@ built on first use. A pooled connection behaves like `with psycopg.connect(url) 
 it commits on a clean exit and rolls back on an error, then goes back to the pool. Every
 connection runs with a statement timeout.
 
-Ingestion holds a pooled connection only for one store call, never across a fetch. The
-run lock needs a session of its own for the whole run, so it takes an unpooled
-`session_connection` instead.
+No code holds a pooled connection across a network fetch: ingestion, archives, Reddit
+comments and the image proxy read or store in one short block, then fetch with the
+connection back in the pool. The run lock and the admin bootstrap need a session of their
+own, so they take a plain `session_connection` instead (no pool, no statement timeout).
 
 Environment (read when a pool is built):
-  INSIGHT_DB_POOL_MIN (1), INSIGHT_DB_POOL_MAX (5)   connections per process
+  INSIGHT_DB_POOL_MIN (1), INSIGHT_DB_POOL_MAX (10)  connections per process
   INSIGHT_DB_POOL_TIMEOUT_SECONDS (10)               wait for a free connection, then fail
-  INSIGHT_DB_STATEMENT_TIMEOUT_MS (60000)            0 turns the timeout off
+  INSIGHT_DB_STATEMENT_TIMEOUT_MS (300000)           0 turns the timeout off
+
+The statement timeout is 5 minutes, not less: deleting a big source cascades to every
+post it collected, and that one DELETE can run for minutes.
 """
 from __future__ import annotations
 
@@ -33,6 +37,8 @@ from psycopg_pool import ConnectionPool
 from insight_core.utils.env import env_int
 
 CONNECT_TIMEOUT_SECONDS = 10
+STATEMENT_TIMEOUT_MS = 300_000   # 5 minutes: the cascading delete of a big source
+POOL_MAX = 10
 
 
 class Database:
@@ -47,8 +53,8 @@ class Database:
     ) -> None:
         self.url = url
         self.statement_timeout_ms = (statement_timeout_ms if statement_timeout_ms is not None
-                                     else env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS", 60_000))
-        max_size = max_size or env_int("INSIGHT_DB_POOL_MAX", 5)
+                                     else env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS", STATEMENT_TIMEOUT_MS))
+        max_size = max_size or env_int("INSIGHT_DB_POOL_MAX", POOL_MAX)
         min_size = min(min_size if min_size is not None else env_int("INSIGHT_DB_POOL_MIN", 1), max_size)
         self._pool = ConnectionPool(
             url,
@@ -128,7 +134,9 @@ def transaction(url: str):
 
 
 def session_connection(url: str, *, autocommit: bool = False) -> psycopg.Connection:
-    return database(url).session_connection(autocommit=autocommit)
+    """A plain connection the caller closes: no pool and no statement timeout (the run lock,
+    the admin bootstrap)."""
+    return psycopg.connect(url, autocommit=autocommit, connect_timeout=CONNECT_TIMEOUT_SECONDS)
 
 
 def close_all() -> None:

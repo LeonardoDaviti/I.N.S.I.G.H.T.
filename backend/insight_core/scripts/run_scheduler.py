@@ -30,6 +30,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from insight_core.ingestion import FetchRequest, SourceSelector, Trigger  # noqa: E402
 from insight_core.ingestion.ports import JobProgressSink  # noqa: E402
 from insight_core.logs.core.logger_config import get_component_logger, setup_logging  # noqa: E402
+from insight_core.utils.env import env_int  # noqa: E402
 
 logger = get_component_logger("run_scheduler")
 
@@ -176,7 +177,7 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
 
     try:
-        pruned = operations_service.prune_job_runs(int(os.environ.get("INSIGHT_JOB_RUNS_RETAIN_DAYS", "30")))
+        pruned = operations_service.prune_job_runs(env_int("INSIGHT_JOB_RUNS_RETAIN_DAYS", 30))
         if pruned:
             logger.info("Pruned %s job_runs rows older than the retention window", pruned)
     except Exception:  # noqa: BLE001

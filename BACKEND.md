@@ -87,7 +87,7 @@ def save_something(self, param: str) -> None:
 
 **Key Points:**
 - Every connection comes from `insight_core/db/database.py`: a small pool per process,
-  a statement timeout (60 s by default) and the transaction scope. Never call
+  a statement timeout (5 minutes by default) and the transaction scope. Never call
   `psycopg.connect` yourself (the migration runner is the exception).
 - A connection commits when its block ends cleanly and rolls back when it raises
 - Do not hold a connection across a network fetch
@@ -113,7 +113,10 @@ async def get_something(param: str):
 
 **Key Points:**
 - No try/except for service errors in a route. A `ValueError` is a 400 with its message, a
-  not-found `LookupError` a 404, anything else a 500 "Could not load something".
+  not-found `LookupError` a 404, anything else a 500 "Could not load something". Bad stored
+  data (`json.JSONDecodeError`, `UnicodeDecodeError`) is a 500 too. A path id
+  (`post_id`, `folder_id`, `source_id`, `job_id`) that is not a uuid is a 404 before the
+  route runs. Every 4xx is logged as a warning.
 - `@error_detail(what)` names the "what" in that message. Every route answers its errors
   the same way: a real status code and `{"detail": ...}`.
 - The registry builds the services once. Tests swap them with `registry.use(...)`.

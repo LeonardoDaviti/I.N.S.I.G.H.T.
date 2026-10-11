@@ -142,6 +142,7 @@ class PruneOps(FakeOps):
 
     def prune_job_runs(self, retain_days):
         self.pruned += 1
+        self.retain_days = retain_days
         return 0
 
 
@@ -158,6 +159,15 @@ class DailyWorkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cadence.call_count, 1)
         self.assertEqual(sync.call_count, 1)
         self.assertEqual(ops.job_types(), [])
+
+    async def test_a_malformed_retention_falls_back_to_30_days(self):
+        ops = PruneOps()
+        with mock.patch.dict("os.environ", {"INSIGHT_JOB_RUNS_RETAIN_DAYS": "a month"}), \
+             mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=0), \
+             mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.sync_json_to_db",
+                        return_value={"success": True}):
+            await daily_work("postgresql://unused@localhost/none", ops, {})
+        self.assertEqual(ops.retain_days, 30)
 
 
 if __name__ == "__main__":

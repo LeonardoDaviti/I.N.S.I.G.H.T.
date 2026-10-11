@@ -65,19 +65,28 @@ class SourcesService:
 
     def add_source(self, platform: str, handle: str, *, in_main_digest: bool = True) -> Dict[str, Any]:
         """Add new source to database. ValueError when it is already a source."""
+        return self._add(platform, handle, in_main_digest=in_main_digest)
+
+    def _add(self, platform: str, handle: str, *, in_main_digest: bool = True,
+             settings: Dict[str, Any] | None = None, enabled: bool = True) -> Dict[str, Any]:
+        """Insert one source with its first settings and state in one transaction: a bad
+        value or a failure leaves no row behind."""
         handle = (handle or "").strip()
         if not handle:
             raise ValueError("handle_or_url is required")
+        settings = self._valid_settings(settings or {})
         try:
-            with db.connection(self.db_url) as conn:
-                with conn.cursor() as cur:
-                    source_id = self.repo.insert_source(cur, platform, handle, in_main_digest=in_main_digest)
-                    conn.commit()
+            with db.transaction(self.db_url) as cur:
+                source_id = self.repo.insert_source(cur, platform, handle, in_main_digest=in_main_digest)
+                if settings:
+                    self.repo.merge_source_settings(cur, source_id, settings)
+                if not enabled:
+                    self.repo.update_enabled(cur, source_id, False)
         except psycopg.errors.UniqueViolation:
             raise ValueError(f"{platform}/{handle} is already a source") from None
         self.logger.info(f"Added source: {platform}/{handle}")
         return {"source_id": source_id, "platform": platform, "handle": handle}
-    
+
     def delete_source(self, source_id: str) -> bool:
         """Delete source (and cascade delete its posts)."""
         with db.connection(self.db_url) as conn:
@@ -130,18 +139,7 @@ class SourcesService:
         Update settings for a source.
         Validates settings before updating.
         """
-        # Validate settings
-        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch"}
-        validated_settings = {k: v for k, v in settings.items() if k in valid_keys}
-        
-        # Type validation
-        if "fetch_delay_seconds" in validated_settings:
-            validated_settings["fetch_delay_seconds"] = int(validated_settings["fetch_delay_seconds"])
-        if "priority" in validated_settings:
-            validated_settings["priority"] = int(validated_settings["priority"])
-        if "max_posts_per_fetch" in validated_settings:
-            validated_settings["max_posts_per_fetch"] = int(validated_settings["max_posts_per_fetch"])
-        
+        validated_settings = self._valid_settings(settings)
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 merged_settings = self.repo.merge_source_settings(cur, source_id, validated_settings)
@@ -155,6 +153,19 @@ class SourcesService:
                     }
                 else:
                     raise LookupError(f"Source {source_id} not found")
+
+    @staticmethod
+    def _valid_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+        """The settings a user may set, the numbers parsed. ValueError for a value that is not a number."""
+        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch"}
+        validated = {k: v for k, v in settings.items() if k in valid_keys}
+        for key in ("fetch_delay_seconds", "priority", "max_posts_per_fetch"):
+            if key in validated:
+                try:
+                    validated[key] = int(validated[key])
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key} must be a whole number") from None
+        return validated
 
     def merge_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
         """Merge internal settings payloads, including archive metadata."""
@@ -174,9 +185,5 @@ class SourcesService:
 
     def add_with_settings(self, platform: str, handle: str, *, settings: Dict[str, Any] | None = None,
                           enabled: bool = True) -> Dict[str, Any]:
-        """Add one source with its first settings and state (POST /api/sources)."""
-        created = self.add_source(platform, handle)
-        if settings:
-            self.update_source_settings(created["source_id"], settings)
-        self.update_source_status(created["source_id"], enabled)
-        return created
+        """Add one source with its first settings and state (POST /api/sources), all or nothing."""
+        return self._add(platform, handle, settings=settings, enabled=enabled)

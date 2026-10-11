@@ -120,7 +120,7 @@ class SourceFetchService:
         """
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
         kind = self.kinds.resolve(source)
         live_fetch_limit = int((source.get("settings") or {}).get("max_posts_per_fetch") or 50)
         support: Dict[str, Any] = {
@@ -154,7 +154,7 @@ class SourceFetchService:
         """Inspect a source and estimate archive effort."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)
@@ -233,7 +233,7 @@ class SourceFetchService:
         """Archive historical posts for a single source: one loop over kind.archive_pages."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)

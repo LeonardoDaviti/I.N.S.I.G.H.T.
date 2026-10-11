@@ -3,8 +3,11 @@ One post for the reader: detail, reader state (opens, reading time, favourite) a
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
+
+import psycopg
 
 from insight_core.db import database as db
 
@@ -106,12 +109,19 @@ class PostDetailService:
 
     def record_post_open(self, post_id: str, *, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Log the open and mark the post read (the first read time is kept), in one transaction."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                stored = self.interactions.record_post_interaction(cur, post_id, "opened", metadata or {})
-                self.reader_repo.set_read(cur, [post_id], True)
-            conn.commit()
+        with self._post_write(post_id) as cur:
+            stored = self.interactions.record_post_interaction(cur, post_id, "opened", metadata or {})
+            self.reader_repo.set_read(cur, [post_id], True)
         return stored
+
+    @contextmanager
+    def _post_write(self, post_id: str) -> Iterator[psycopg.Cursor]:
+        """One transaction that writes about a post; LookupError (404) when there is no such post."""
+        try:
+            with db.transaction(self.db_url) as cur:
+                yield cur
+        except psycopg.errors.ForeignKeyViolation:
+            raise LookupError(f"Post {post_id} not found") from None
 
     def record_reading_session(
         self,
@@ -124,21 +134,17 @@ class PostDetailService:
             **(metadata or {}),
             "duration_seconds": max(0, int(duration_seconds)),
         }
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                stored = self.interactions.record_post_interaction(cur, post_id, "reading_session", payload)
-            conn.commit()
+        with self._post_write(post_id) as cur:
+            stored = self.interactions.record_post_interaction(cur, post_id, "reading_session", payload)
         return stored
 
     def toggle_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
         interaction_type = "favorited" if favorited else "unfavorited"
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                stored = self.interactions.record_post_interaction(
-                    cur, post_id, interaction_type, {"favorited": favorited}
-                )
-                self.reader_repo.set_starred(cur, post_id, favorited)
-            conn.commit()
+        with self._post_write(post_id) as cur:
+            stored = self.interactions.record_post_interaction(
+                cur, post_id, interaction_type, {"favorited": favorited}
+            )
+            self.reader_repo.set_starred(cur, post_id, favorited)
         state = self.get_post_reader_state(post_id)
         return {
             "post_id": post_id,
@@ -150,7 +156,7 @@ class PostDetailService:
     async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
         post = self.get_post_by_id(post_id)
         if not post:
-            raise ValueError(f"Post {post_id} not found")
+            raise LookupError(f"Post {post_id} not found")
         if post.get("platform") != "reddit":
             raise ValueError("Reddit comments are only available for reddit posts")
 
