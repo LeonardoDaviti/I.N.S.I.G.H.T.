@@ -44,7 +44,7 @@ export function GrowthFigure() {
   const targetX = left + slot * GROWTH.length + (slot - bar) / 2;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Bar chart: tracked lines grew from about 1 thousand at Mark I to about 99 thousand at Mark IX; the target after cleanup is 45 to 50 thousand." className="h-auto w-full" fontFamily={FONT}>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Bar chart: tracked lines grew from about 1 thousand at Mark I to about 99 thousand at Mark IX; the target after cleanup is 55 to 60 thousand." className="h-auto w-full" fontFamily={FONT}>
       {[25_000, 50_000, 75_000, 100_000].map((v) => (
         <g key={v}>
           <line x1={left} x2={W - left} y1={y(v)} y2={y(v)} stroke={LINE} strokeWidth={1} />
@@ -64,9 +64,9 @@ export function GrowthFigure() {
         );
       })}
       {/* The target: a dashed outline, because it doesn't exist yet. */}
-      <rect x={targetX} y={y(50_000)} width={bar} height={base - y(50_000)} rx={2} fill="none" stroke={FG} strokeDasharray="4 3" />
-      <rect x={targetX} y={y(50_000)} width={bar} height={y(45_000) - y(50_000)} fill={RAISED} />
-      <text x={targetX + bar / 2} y={y(50_000) - 6} textAnchor="middle" fontSize={10.5} fontWeight={650} fill={FG}>45–50k</text>
+      <rect x={targetX} y={y(60_000)} width={bar} height={base - y(60_000)} rx={2} fill="none" stroke={FG} strokeDasharray="4 3" />
+      <rect x={targetX} y={y(60_000)} width={bar} height={y(55_000) - y(60_000)} fill={RAISED} />
+      <text x={targetX + bar / 2} y={y(60_000) - 6} textAnchor="middle" fontSize={10.5} fontWeight={650} fill={FG}>55–60k</text>
       <text x={targetX + bar / 2} y={base + 16} textAnchor="middle" fontSize={11.5} fontWeight={600} fill={FG}>next</text>
       <text x={targetX + bar / 2} y={base + 30} textAnchor="middle" fontSize={9.5} fill={FG3}>target</text>
       <line x1={left} x2={W - left} y1={base} y2={base} stroke={LINE_STRONG} />

@@ -34,7 +34,7 @@ The owner feels this as slow change, bugs that hide, a heavier image and databas
 
 ## Solution
 
-Shrink INSIGHT to what the reading product uses. It should land at about 45–50k lines, with the reading behaviour unchanged.
+Shrink INSIGHT to what the reading product uses. It should land at about 55–60k lines, with the reading behaviour unchanged.
 
 1. **Delete what is dead:** unused code, packages, tables, tests and stale docs.
 2. **Retire the analysis version.**
@@ -214,7 +214,15 @@ Reading tables stay:
 
 `post_notes` stays as data even though its UI is retired. It is the owner's own writing, so it is not dropped.
 
-**Budget.** Each slice records line count (backend, frontend, docs) and backend image size before and after. The target after all slices is about 45–50k tracked lines and a backend image well below today's 464 MB.
+**Budget.** Each slice records line count (backend, frontend, docs) and backend image size before and after. The target after all slices is about 55–60k tracked lines and a backend image well below today's 464 MB.
+
+**Budget check, 2026-10-11.** The first draft said 45–50k; that was an arithmetic slip. Main measured 102,235 lines, and the planned cuts add up to 42–47k:
+- dead code about 5.5k;
+- docs 5–9k;
+- analysis about 28.7k (code and tests);
+- pass-through layers and duplicates 3–4k.
+
+Today's additions are inside the 102k: the blog (+1.3k) and the archive sheet (+1.3k). The Design Studio branch adds about 7k more when it merges (docs, specimens, modes), which puts the whole after-cleanup figure at about 62–67k.
 
 ## Testing Decisions
 
