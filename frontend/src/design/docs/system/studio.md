@@ -12,7 +12,7 @@ How `/design` works and how a design change moves through it. Implements P9: a d
 
 - **Handbook** (the default): the rail, the docs and a specimen frame under each page doc.
 - **Wall:** the whole site as one site map, every page at its normal state.
-- **Bench:** the checkout for every new design feature. Two large frames side by side, the current page against a prototype (or one state of a page against another), sharing a state, a width (1400 / 390, plus 320 when a state needs it) and a theme. Everything is in the URL: `?mode=bench&subject=<id|page>&state=&left=&right=&width=&theme=&doc=hide`. On phones the panes stack.
+- **Bench:** the checkout for every new design feature. Two large frames side by side, the current page against a prototype (or one state of a page against another), sharing a state, a width (1400 / 390 / 320) and a theme. Everything is in the URL: `?mode=bench&subject=<id|page>&state=&left=&right=&width=&theme=&doc=hide`. On phones the panes stack.
 
 ## Prototypes
 
