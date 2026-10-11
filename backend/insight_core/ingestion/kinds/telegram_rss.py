@@ -135,6 +135,7 @@ class TelegramRssKind(BaseKind):
             match = CANONICAL_RE.match(post["url"])
             if not match or post.get("title", "").startswith("[Sponsored]"):
                 continue
+            post["title"] = parsing.strip_telegram_media_tag(post.get("title", ""))
             post["external_id"] = match.group("post_id")
             post["url"] = f"https://t.me/{match.group('username')}/{match.group('post_id')}"
             post["content_html"] = parsing.normalize_telegram_resources(post.get("content_html", ""), origin)

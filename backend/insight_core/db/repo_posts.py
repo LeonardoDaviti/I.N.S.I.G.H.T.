@@ -495,7 +495,9 @@ class PostsRepository:
             f"metadata = {metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'}",
             "media_urls = %(media_urls)s::jsonb",
             "categories = %(categories)s::jsonb",
-            "fetched_at = now()",
+            # fetched_at is when the post was first seen and is never moved: for a feed without
+            # dates it is the post's only date, and bumping it on every re-fetch made the
+            # same old posts jump to the top of the reader as new (chadnauseam.com).
             "updated_at = now()",
         ])
         return ",\n                ".join(assignments)

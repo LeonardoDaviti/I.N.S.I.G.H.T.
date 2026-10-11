@@ -156,6 +156,35 @@ def path_segments(url: str) -> List[str]:
 # ---------------------------------------------------------------- RSS / Atom feeds
 
 
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
+# The Telegram RSS bridge prefixes a media post's title: "[Photo] first words... [...]".
+TELEGRAM_MEDIA_TAG_RE = re.compile(r"^\[[A-Z][A-Za-z ]{1,20}\]\s+(?=\S)")
+
+
+def readable_title(title: str, url: Optional[str]) -> str:
+    """A title that is only the URL's slug ("levers-in-the-brain") as words ("Levers in the brain").
+
+    Some sites (Quartz/Obsidian gardens) put the file name in <title>. Only a hyphenated,
+    lowercase title of two or more words, equal to the URL's last path segment, is touched.
+    """
+    candidate = (title or "").strip()
+    if not SLUG_RE.match(candidate):
+        return title
+    # Two or more words with letters: a release tag ("2024-11-05", "2024-11-05-final") stays.
+    if sum(1 for word in candidate.split("-") if any(ch.isalpha() for ch in word)) < 2:
+        return title
+    segments = path_segments(url or "")
+    if not segments or urllib.parse.unquote(segments[-1]).lower() != candidate:
+        return title
+    words = candidate.replace("-", " ")
+    return words[0].upper() + words[1:]
+
+
+def strip_telegram_media_tag(title: str) -> str:
+    """'[Photo] Text' -> 'Text'. A title that is only the tag ('[Photo]') is kept."""
+    return TELEGRAM_MEDIA_TAG_RE.sub("", title or "", count=1)
+
+
 def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
     """Parse an RSS 2.0 or Atom document into post drafts, newest first."""
     root = ET.fromstring(feed_text)
@@ -174,7 +203,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "source": source_url,
                 "url": url,
                 "guid": child_text(item, "guid"),
-                "title": normalize_feed_urls(child_text(item, "title") or ""),
+                "title": readable_title(normalize_feed_urls(child_text(item, "title") or ""), url),
                 "content": strip_html(content_html),
                 "content_html": content_html,
                 "date": parse_datetime_value(child_text(item, "pubDate") or child_text(item, "updated")),
@@ -194,7 +223,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "source": source_url,
                 "url": url,
                 "guid": child_text(entry, "id"),
-                "title": normalize_feed_urls(child_text(entry, "title") or ""),
+                "title": readable_title(normalize_feed_urls(child_text(entry, "title") or ""), url),
                 "content": strip_html(content_html),
                 "content_html": content_html,
                 "date": parse_datetime_value(child_text(entry, "published") or child_text(entry, "updated")),

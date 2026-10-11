@@ -215,6 +215,31 @@ class GenericRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(inspection.first_post_date.startswith("2026-03-10"))
 
 
+class ReadableTitleTests(unittest.TestCase):
+    def test_a_slug_title_becomes_words(self):
+        self.assertEqual(parsing.readable_title("levers-in-the-brain",
+                                                "https://chadnauseam.com/coding/random/levers-in-the-brain"),
+                         "Levers in the brain")
+
+    def test_real_titles_and_release_tags_are_kept(self):
+        cases = [
+            ("Rust", "https://chadnauseam.com/reference/Rust"),
+            ("my-post", "https://example.com/another-post"),          # not the URL's slug
+            ("2024-11-05", "https://github.com/o/r/releases/tag/2024-11-05"),
+            ("2024-11-05-final", "https://github.com/o/r/releases/tag/2024-11-05-final"),
+            ("A Real Title", "https://example.com/a-real-title"),
+        ]
+        for title, url in cases:
+            with self.subTest(title=title):
+                self.assertEqual(parsing.readable_title(title, url), title)
+
+    def test_feed_parsing_applies_it(self):
+        feed = ('<rss version="2.0"><channel><item><title>my-rustfmt-toml</title>'
+                "<link>https://chadnauseam.com/coding/tips/my-rustfmt-toml</link></item></channel></rss>")
+        self.assertEqual(parsing.parse_feed_posts(feed, "https://chadnauseam.com/rss.xml")[0]["title"],
+                         "My rustfmt toml")
+
+
 class RedditKindTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_fetch_reads_the_new_rss_endpoint_not_json(self):
         atom = """<?xml version="1.0" encoding="UTF-8"?>
@@ -267,6 +292,21 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(posts[0]["external_id"], "11277")
         self.assertEqual(posts[0]["url"], "https://t.me/denissexy/11277")
         self.assertEqual(posts[0]["media_urls"], ["https://tg.i-c-a.su/media/denissexy/11277.jpg"])
+
+    async def test_the_bridge_media_tag_is_stripped_from_titles(self):
+        url = "https://telegram.local/rss/chan"
+        page = ('<?xml version="1.0"?><rss version="2.0"><channel>'
+                "<item><title>[Photo] Opus spent a night on the board [...]</title>"
+                "<description>Opus spent a night on the board</description>"
+                "<link>https://t.me/chan/2</link></item>"
+                "<item><title>[Video]</title><description></description>"
+                "<link>https://t.me/chan/1</link></item>"
+                "</channel></rss>")
+        posts = await TelegramRssKind(FakeHttp({"https://telegram.local/rss/chan/1": page})).fetch_latest(
+            _src("rss", url), 2)
+        self.assertEqual([p["title"] for p in posts],
+                         ["Opus spent a night on the board [...]", "[Video]"],
+                         "a title that is only the tag keeps it: there is nothing else to show")
 
     async def test_archive_pages_sleep_the_overridden_delay(self):
         http = self._http()

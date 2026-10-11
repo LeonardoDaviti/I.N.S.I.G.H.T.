@@ -162,6 +162,36 @@ class ReaderRepositoryTests(unittest.TestCase):
 
         self.assertEqual([i["id"] for i in items], [recent])
 
+    def test_without_a_window_unread_is_all_time(self):
+        repo = ReaderRepository(unread_window_days=None)
+        source = self._source()
+        recent = self._post(source, self.now - timedelta(days=1))
+        old = self._post(source, self.now - timedelta(days=4000))   # an archived post from years ago
+        folder = self._folder(source)
+
+        items, _ = repo.feed(self.cur, FeedScope("source", source), filter="unread", cursor=None, limit=30)
+        counts = repo.unread_counts(self.cur)
+
+        self.assertEqual([i["id"] for i in items], [recent, old])
+        self.assertEqual(counts["by_source"][source], 2)
+        self.assertEqual(counts["by_folder"][folder], 2)
+
+    def test_without_a_window_mark_through_reaches_old_posts(self):
+        repo = ReaderRepository(unread_window_days=None)
+        source = self._source()
+        recent = self._post(source, self.now - timedelta(hours=1))
+        old = self._post(source, self.now - timedelta(days=400))
+        scope = FeedScope("source", source)
+        loaded, _ = repo.feed(self.cur, scope, filter="all", cursor=None, limit=30)
+        by_id = {i["id"]: i for i in loaded}
+
+        marked = repo.mark_read_through(
+            self.cur, scope, FeedCursor(by_id[old]["sort_at"], old),
+            newest=FeedCursor(by_id[recent]["sort_at"], recent), now=self.now,
+        )
+
+        self.assertEqual(sorted(marked), sorted([recent, old]))
+
     def test_starred_filter_shows_starred_posts(self):
         source = self._source()
         a, b, c = self._posts(source, 3)
@@ -363,6 +393,25 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(counts["by_source"][source], 2)
         self.assertEqual(counts["by_folder"][folder], 2)
         self.assertIn("total", counts)
+
+
+class UnreadWindowFromEnvTests(unittest.TestCase):
+    def _with_env(self, value):
+        import os
+        from unittest import mock
+        env = {} if value is None else {"INSIGHT_UNREAD_WINDOW_DAYS": value}
+        with mock.patch.dict(os.environ, env, clear=False):
+            if value is None:
+                os.environ.pop("INSIGHT_UNREAD_WINDOW_DAYS", None)
+            return ReaderRepository().unread_window_days
+
+    def test_no_window_by_default(self):
+        self.assertIsNone(self._with_env(None))
+        self.assertIsNone(self._with_env("0"))
+        self.assertIsNone(self._with_env("soon"))
+
+    def test_a_positive_value_sets_the_window(self):
+        self.assertEqual(self._with_env("30"), 30)
 
 
 if __name__ == "__main__":
