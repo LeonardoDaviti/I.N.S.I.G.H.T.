@@ -35,6 +35,7 @@ YOUTUBE_PROFILE = PolitenessProfile(
 
 class YouTubeKind(BaseKind):
     name = "youtube_channel"
+    available_basis = "exact"
     profile = YOUTUBE_PROFILE
 
     def __init__(self, youtube: Any) -> None:

@@ -16,6 +16,7 @@ class GwernAdapter(BaseSourceAdapter):
     """Archive Gwern through sitemap discovery and per-page markdown sources."""
 
     adapter_type = "gwern_site"
+    available_basis = "estimate"   # sitemap candidates; some pages are not essays
     HOSTS = {"gwern.net", "www.gwern.net"}
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1

@@ -24,6 +24,8 @@ class BaseSourceAdapter(BaseKind):
     """Shared contract for non-standard source acquisition paths."""
 
     adapter_type: ClassVar[str] = "base"
+    # The discovered index is the whole archive; Gwern overrides (candidate pages).
+    available_basis = "exact"
     PAGE_DELAY_SECONDS: ClassVar[float] = 1
     # Checkpoint modes this adapter writes; a checkpoint is resumable when its mode is one
     # of these and it carries RESUME_KEY.

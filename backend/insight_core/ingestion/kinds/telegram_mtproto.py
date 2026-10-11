@@ -162,6 +162,7 @@ class TelegramSession:
 
 class TelegramKind(BaseKind):
     name = "telegram_mtproto"
+    available_basis = "exact"
     profile = TELEGRAM_MTPROTO_PROFILE
 
     def __init__(

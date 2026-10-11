@@ -59,6 +59,7 @@ def _username(source_url: str) -> str:
 
 class NitterRssKind(BaseKind):
     name = "nitter_rss"
+    available_basis = "estimate"   # the profile counter (replies and reposts included)
     profile = NITTER_PROFILE
 
     def __init__(self, http: KindHttp) -> None:

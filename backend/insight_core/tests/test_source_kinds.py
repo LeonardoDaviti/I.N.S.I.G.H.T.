@@ -525,5 +525,29 @@ class KindHttpTests(unittest.TestCase):
         self.assertEqual(sleeper.calls, [3], "a zero delay is not a sleep")
 
 
+class AvailableBasisTests(unittest.TestCase):
+    """What each kind's inspected available_posts means, so the archive UI can say it honestly."""
+
+    EXPECTED = {
+        "lesswrong_graphql": "exact",          # counted through the GraphQL API
+        "gwern_site": "estimate",              # candidate pages discovered on the index
+        "dario_site": "exact",
+        "deeplearning_batch_site": "exact",
+        "philschmid_cloud_attention": "exact",
+        "zerotomastery_ml_monthly": "exact",
+        "substack": "unknown",                 # the archive API reports no total
+        "reddit_subreddit": "listing_cap",     # listings stop at ~250 whatever the size
+        "youtube_channel": "exact",            # every video yt-dlp lists
+        "telegram_rss": "upper_bound",         # the newest post number; deleted posts count
+        "nitter_rss": "estimate",              # the profile's tweet count
+        "telegram_mtproto": "exact",           # the channel's message total
+        "generic_rss": "feed_window",          # only what the feed lists right now
+    }
+
+    def test_every_kind_declares_what_its_available_count_means(self):
+        declared = {kind.name: kind.available_basis for kind in _registry().kinds}
+        self.assertEqual(declared, self.EXPECTED)
+
+
 if __name__ == "__main__":
     unittest.main()

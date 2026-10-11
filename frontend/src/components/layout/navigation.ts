@@ -10,7 +10,7 @@ import { folderReadPath } from '../../lib/feedContext';
  * are read from the reader rail and reached in ⌘K one entry per track. With
  * analysis on, the five words and the full switcher list stay as they were.
  */
-export type NavKey = 'feed' | 'tracks' | 'briefings' | 'sources' | 'ingestion';
+export type NavKey = 'feed' | 'tracks' | 'briefings' | 'sources' | 'ingestion' | 'blog';
 
 export interface NavItem {
   key: NavKey;
@@ -18,18 +18,19 @@ export interface NavItem {
   to: string;
 }
 
-/** The analysis-on top bar: five words. */
+/** The analysis-on top bar: five words, then the blog. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'feed', label: 'feed', to: '/' },
   { key: 'tracks', label: 'tracks', to: '/tracks' },
   { key: 'briefings', label: 'briefings', to: '/briefing' },
   { key: 'sources', label: 'sources', to: '/settings/sources' },
   { key: 'ingestion', label: 'ingestion', to: '/ingestion' },
+  { key: 'blog', label: 'blog', to: '/blog' },
 ];
 
-const READING_KEYS: ReadonlySet<NavKey> = new Set(['feed', 'sources']);
+const READING_KEYS: ReadonlySet<NavKey> = new Set(['feed', 'sources', 'blog']);
 
-/** The top bar's words: five with analysis on, `feed / sources` without it. */
+/** The top bar's words: six with analysis on, `feed / sources / blog` without it. */
 export function navItems(analysisEnabled: boolean): readonly NavItem[] {
   return analysisEnabled ? NAV_ITEMS : NAV_ITEMS.filter((item) => READING_KEYS.has(item.key));
 }
@@ -44,6 +45,7 @@ export function activeNavKey(pathname: string, analysisEnabled = true): NavKey |
   if (under('/briefing') || under('/stories') || under('/inbox')) return 'briefings';
   if (under('/settings')) return 'sources';
   if (under('/ingestion')) return 'ingestion';
+  if (under('/blog')) return 'blog';
   return null;
 }
 
@@ -72,6 +74,7 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source' },
   { id: 'sources-health', label: 'Source health', group: 'sources', to: '/settings/sources?tab=health', keywords: 'cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'ingestion', to: '/ingestion', keywords: 'run cycle fetch jobs report' },
+  { id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' },
 ];
 
 /**
