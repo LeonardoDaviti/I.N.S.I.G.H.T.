@@ -102,13 +102,10 @@ and related posts) is hidden, not deleted, behind one flag:
 - Sticky chrome under the top bar says so in markup: `sticky top-topbar` (and
   `h-[calc(100dvh-var(--topbar-h))]` for a full-height rail), not a CSS override.
 - Toasts: `sonner` through `components/ui/Toaster`, monochrome. Say the outcome and link to the job.
-- Motion: short (under 200ms), ease-out, nothing on actions repeated many times a day, and
-  fade-only under `prefers-reduced-motion`.
 - Source names: always `sourceLabel()` (`lib/sourceLabel.ts`), never a raw feed URL.
-- Reading typography: the post title and article headings wrap with `text-wrap: pretty`, so a
-  long title fills the reading column. `balance` stays on short UI headings only.
-  `MarkdownRenderer` styles `h1`–`h6` on one scale (size, weight and spacing, never colour; `h6`
-  is muted), so no heading level renders like body text.
+- Motion and reading typography (durations, reduced motion, title wrap, the heading scale): the
+  design docs are the one source, `frontend/src/design/docs/system/motion.md` and `typography.md`
+  (shown at `/design`).
 
 ## Accessibility
 

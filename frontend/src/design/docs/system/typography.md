@@ -22,3 +22,4 @@ Stack: `Inter, "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe
 - Lowercase is the voice of navigation and tabs (`feed / sources`); sentence case everywhere else. No ALL-CAPS eyebrows.
 - Headings balance their lines (`text-wrap: balance`) unless they opt out with `text-pretty`, as the post title does. Whether the post title keeps `pretty` is the seed prototype (D6).
 - Text that may be in any script carries `dir="auto"` (feed titles, post title, excerpts).
+- `MarkdownRenderer` styles `h1`–`h6` on one scale (size, weight and spacing, never colour; `h6` is muted), so no heading level renders like body text.
