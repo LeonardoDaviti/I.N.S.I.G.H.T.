@@ -38,6 +38,7 @@ import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth'
 import { FOLDERS_KEY, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { useIngestionRun } from '../hooks/useIngestionRun';
+import { useNow } from '../hooks/useNow';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
@@ -50,18 +51,6 @@ type PendingDelete =
   | { kind: 'sources'; ids: string[]; name: string }
   | { kind: 'folder'; id: string; name: string }
   | null;
-
-/** Re-render once a minute so "fetched 3h ago" stays true; paused while hidden. */
-function useMinuteClock(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') setNow(new Date());
-    }, 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-  return now;
-}
 
 /** A SourceWithSettings for the sheet when only the health row is known (fixtures, a slow list). */
 function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
@@ -139,7 +128,8 @@ export default function SourcesConfig() {
     staleTime: 30_000,
   });
 
-  const now = useMinuteClock();
+  // Once a minute, so "fetched 3h ago" stays true.
+  const now = useNow(60_000);
   const [shortcutsOn] = useShortcutPreference();
   const searchRef = useRef<HTMLInputElement>(null);
   const { run: runFetch, isRunning } = useIngestionRun();

@@ -75,3 +75,16 @@ export function postSourceName(post: {
   const channel = post.platform === 'youtube' && typeof post.metadata?.channel_title === 'string' ? post.metadata.channel_title : null;
   return sourceLabel(channel, post.source_display_name, post.source);
 }
+
+const PLATFORM_LABELS: Record<string, string> = {
+  reddit: 'Reddit',
+  rss: 'RSS',
+  telegram: 'Telegram',
+  youtube: 'YouTube',
+};
+
+/** "RSS", "YouTube"; an unknown platform capitalised; "Source" when there is none. */
+export function getPlatformLabel(platform?: string | null): string {
+  const key = (platform || '').trim().toLowerCase();
+  return PLATFORM_LABELS[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Source');
+}

@@ -18,7 +18,7 @@ const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
-function RouteErrorBoundary({ children }: { children: ReactNode }) {
+export function RouteErrorBoundary({ children }: { children: ReactNode }) {
   const location = useLocation();
   return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
 }

@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Kbd from '../components/ui/Kbd';
 import Segmented from './Segmented';
-import { DEFAULT_MODE, MODES, isEditableTarget, parseMode, stepMode, type StudioMode } from './modes/modes';
+import { DEFAULT_MODE, MODES, parseMode, stepMode, type StudioMode } from './modes/modes';
+import { isEditable } from '../lib/shortcuts';
 import HandbookMode from './modes/HandbookMode';
 import WallMode from './modes/WallMode';
 import BenchMode from './modes/BenchMode';
@@ -30,7 +31,7 @@ export default function DesignStudio() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (isEditableTarget(event.target)) return;
+      if (isEditable(event.target)) return;
       event.preventDefault();
       setParams((current) => withMode(current, stepMode(mode, event.key === 'ArrowRight' ? 1 : -1)));
     };

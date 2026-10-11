@@ -13,8 +13,6 @@ Implements P2, P3, P5 and P11. Source: `src/components/ui`, `src/components/stat
 | `Chip` / `FilterChip` | `outline` default, `solid` = inverted for selected/strong; counts in `tabular-nums` | pastel backgrounds |
 | `StatusGlyph` | glyph + word (`system/status.md`) | colour-only dots |
 | `Tabs` | Radix tabs, lowercase underline; no animation | pill tabs with shadows |
-| `Table` (`Table`, `THead`, `TBody`, `Tr`, `Th`, `Td`) | 1px row hairlines, `small` text, `tabular-nums`, sticky header uses `.material` | zebra stripes, coloured headers |
-| `Row` | smol-style bordered row: meta column, bold title, chevron | cards with icons in tinted squares |
 | `Input`, `Textarea`, `Select` (native) | `surface` bg, 1px `border`, focus = `border-strong` + 2px outline | glow rings |
 | `Switch` | inverted pill when on, hairline when off | a coloured track |
 | `Dialog`, `Sheet` | Radix; dialog centred, sheet from the right; scrim | glass on glass |

@@ -14,9 +14,9 @@ import {
   defaultDesired,
   describeAvailable,
   describeRate,
-  formatEstimate,
 } from '../../lib/archive';
 import { formatRelativeTime } from '../../lib/dates';
+import { formatEstimate } from '../../lib/duration';
 import { formatCount, plural } from '../../lib/format';
 import { Button, FilterChip, Input, StatusGlyph } from '../ui';
 import { Notice } from '../states';

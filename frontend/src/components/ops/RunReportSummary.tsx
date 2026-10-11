@@ -1,6 +1,7 @@
 import type { RunReport } from '../../services/api';
 import { summarizeRunReport, type RunReportTone } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
+import { formatElapsed } from '../../lib/duration';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { StatusIcon } from '../ui';
 import type { Status } from '../ui';
@@ -32,14 +33,6 @@ function Count({ label, value, emphasis = false }: { label: string; value: numbe
   );
 }
 
-function formatDuration(seconds: number | undefined): string | null {
-  if (seconds === undefined || !Number.isFinite(seconds)) return null;
-  if (seconds < 1) return '<1s';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds % 60)}s`;
-}
-
 /**
  * A run report, readable (spec §F.3): the headline ("48 new posts"), what was
  * fetched and skipped, the counts, the failures and where the new posts came
@@ -56,7 +49,7 @@ export default function RunReportSummary({
   className?: string;
 }) {
   const summary = summarizeRunReport(report);
-  const duration = formatDuration(report.duration_s);
+  const duration = formatElapsed(report.duration_s, { hours: false });
   const topSources = [...report.inserted_by_source].sort((a, b) => b.inserted - a.inserted).slice(0, 8);
 
   return (

@@ -32,6 +32,8 @@ import { postSourceName } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { middleTruncate, plural } from '../lib/format';
+import { feedFullTime, formatLocalDateTime } from '../lib/dates';
+import { formatClock } from '../lib/duration';
 import type {
   Api,
   FeedItem,
@@ -78,13 +80,6 @@ function postPlainText(post: Post): string {
   const container = document.createElement('div');
   container.innerHTML = html;
   return (container.textContent || '').trim();
-}
-
-function formatPublished(value?: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** A section heading in the reading column: small, semibold, a hairline above. */
@@ -170,17 +165,6 @@ function extractYouTubeVideoId(post?: Post | null): string | null {
   }
 
   return null;
-}
-
-function formatDurationLabel(seconds?: number | null) {
-  const total = Math.max(0, Math.round(Number(seconds || 0)));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const remaining = total % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
-  }
-  return `${minutes}:${String(remaining).padStart(2, '0')}`;
 }
 
 function formatCompactCount(value?: number | null) {
@@ -556,7 +540,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   };
   const sourceName = postSourceName(post);
   const displayTitle = useMemo(() => displayPostTitle(post.title, postPlainText(post)), [post]);
-  const publishedLabel = formatPublished(post?.published_at || post?.fetched_at || null);
+  const publishedLabel = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
 
   const handleCopy = async () => {
@@ -721,7 +705,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
               <VideoPlayer videoId={youtubeVideoId} title={post.title || youtubeVideoId} />
 
               <p className="flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
-                {youtubeDurationSeconds ? <span>{formatDurationLabel(youtubeDurationSeconds)}</span> : null}
+                {youtubeDurationSeconds ? <span>{formatClock(youtubeDurationSeconds)}</span> : null}
                 {youtubeViewCount ? <span>{youtubeViewCount} views</span> : null}
                 {youtubeLikeCount ? <span>{youtubeLikeCount} likes</span> : null}
                 {youtubeMetadata?.transcript_source ? <span>transcript: {youtubeMetadata.transcript_source}</span> : null}
@@ -733,7 +717,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                   <span className="text-[0.8125rem] tabular-nums text-fg-2">
                     {loadingYouTubeProgress
                       ? 'Loading saved progress…'
-                      : `${formatDurationLabel(youtubeProgressDraft)} / ${formatDurationLabel(youtubeDurationSeconds)}`}
+                      : `${formatClock(youtubeProgressDraft)} / ${formatClock(youtubeDurationSeconds)}`}
                   </span>
                 </div>
                 <div
@@ -761,7 +745,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                   <p className="mt-1 text-[0.75rem] tabular-nums text-fg-3">
                     {youtubeProgress?.watch_sessions ? plural(youtubeProgress.watch_sessions, 'watch session') : null}
                     {youtubeProgress?.watch_sessions && youtubeProgress?.last_watched_at ? ' · ' : null}
-                    {youtubeProgress?.last_watched_at ? `last ${new Date(youtubeProgress.last_watched_at).toLocaleString()}` : null}
+                    {youtubeProgress?.last_watched_at ? `last ${formatLocalDateTime(youtubeProgress.last_watched_at) ?? ''}` : null}
                   </p>
                 ) : null}
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -802,7 +786,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                           onClick={() => setYouTubeProgressDraft(Number(chapter.start_seconds || 0))}
                           className="flex items-baseline gap-4 px-4 py-2.5 text-[0.875rem] hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-fg"
                         >
-                          <span className="w-12 shrink-0 tabular-nums text-fg-3">{formatDurationLabel(Number(chapter.start_seconds || 0))}</span>
+                          <span className="w-12 shrink-0 tabular-nums text-fg-3">{formatClock(Number(chapter.start_seconds || 0))}</span>
                           <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]">{chapter.title || `Chapter ${index + 1}`}</span>
                         </a>
                       </li>
@@ -840,7 +824,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     youtubeTranscriptBlocks.map((block, index) => (
                       <section key={block.id} aria-labelledby={`${block.id}-title`}>
                         <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                          <span className="text-[0.8125rem] tabular-nums text-fg-3">{formatDurationLabel(block.startSeconds)}</span>
+                          <span className="text-[0.8125rem] tabular-nums text-fg-3">{formatClock(block.startSeconds)}</span>
                           <h3 id={`${block.id}-title`} className="min-w-0 flex-1 text-[1rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">
                             {block.title || `Transcript ${index + 1}`}
                           </h3>
@@ -851,7 +835,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                             {youtubeVideoUrl ? (
                               <Button asChild size="sm" variant="ghost">
                                 <a href={buildYouTubeTimestampUrl(youtubeVideoUrl, block.startSeconds)} target="_blank" rel="noopener noreferrer">
-                                  Open at {formatDurationLabel(block.startSeconds)}
+                                  Open at {formatClock(block.startSeconds)}
                                   <ArrowUpRight aria-hidden="true" />
                                 </a>
                               </Button>
@@ -882,7 +866,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                 title="Discussion"
                 meta={[
                   comments.length ? plural(comments.length, 'comment') : 'no comments loaded',
-                  commentsFetchedAt ? `fetched ${new Date(commentsFetchedAt).toLocaleString()}` : null,
+                  commentsFetchedAt ? `fetched ${formatLocalDateTime(commentsFetchedAt) ?? ''}` : null,
                 ].filter(Boolean).join(' · ')}
                 actions={(
                   <Button size="sm" variant="secondary" onClick={() => void fetchComments(true)} disabled={loadingComments}>

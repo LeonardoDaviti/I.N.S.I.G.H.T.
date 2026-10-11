@@ -12,7 +12,6 @@ import { overlayClass } from './Dialog';
  */
 export const Sheet = DialogPrimitive.Root;
 export const SheetTrigger = DialogPrimitive.Trigger;
-export const SheetClose = DialogPrimitive.Close;
 
 export const SheetContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,

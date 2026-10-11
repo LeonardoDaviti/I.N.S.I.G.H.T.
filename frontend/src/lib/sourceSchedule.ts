@@ -5,11 +5,11 @@
  * `sortHealthRows` mirrors `operations_service._health_sort_key` exactly, so the
  * table reads in the same order the API returns and the next run decides.
  */
-import type { CadenceTier, HealthStatus, IntervalBasis, SourceHealthRow, SourceHealthSummary } from '../services/api';
+import type { CadenceTier, HealthStatus, IntervalBasis, SourceHealthRow } from '../services/api';
+import { toDate } from './dates.ts';
+import { formatHours, formatSpan } from './duration.ts';
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
 
 export const HEALTH_STATUS_ORDER: readonly HealthStatus[] = ['error', 'backoff', 'unavailable', 'due', 'deferred', 'disabled'];
 
@@ -34,34 +34,21 @@ export const INTERVAL_BASIS_LABELS: Record<IntervalBasis, string> = {
 export const OVERRIDE_MIN_HOURS = 1;
 export const OVERRIDE_MAX_HOURS = 2160;
 
-function parseDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-/** A positive duration as "25m", "3h", "5d" (floored, so "in 3h" never overstates). */
-function span(ms: number): string {
-  if (ms < HOUR) return `${Math.max(1, Math.floor(ms / MINUTE))}m`;
-  if (ms < DAY) return `${Math.floor(ms / HOUR)}h`;
-  return `${Math.floor(ms / DAY)}d`;
-}
-
 /** "in 3h", "in 5d", "overdue 2h", "due now" (within a minute), or "—" when unknown. */
 export function formatDue(nextDueAt: string | null | undefined, now: Date = new Date()): string {
-  const due = parseDate(nextDueAt);
+  const due = toDate(nextDueAt);
   if (!due) return '—';
   const diff = due.getTime() - now.getTime();
   if (Math.abs(diff) < MINUTE) return 'due now';
-  return diff > 0 ? `in ${span(diff)}` : `overdue ${span(-diff)}`;
+  return diff > 0 ? `in ${formatSpan(diff)}` : `overdue ${formatSpan(-diff)}`;
 }
 
 /** The backoff cell: "retry in 3h", "dormant · retry in 5d", "retry due", or null when not failing. */
 export function backoffLabel(row: SourceHealthRow, now: Date = new Date()): string | null {
   if (!row.consecutive_failures) return null;
-  const retry = parseDate(row.next_retry_at);
+  const retry = toDate(row.next_retry_at);
   const base = retry && retry.getTime() - now.getTime() >= MINUTE
-    ? `retry in ${span(retry.getTime() - now.getTime())}`
+    ? `retry in ${formatSpan(retry.getTime() - now.getTime())}`
     : 'retry due';
   return row.dormant ? `dormant · ${base}` : base;
 }
@@ -75,18 +62,6 @@ const TIER_LABELS: Record<CadenceTier, string> = {
 
 export function tierLabel(tier: CadenceTier): string {
   return TIER_LABELS[tier] ?? tier;
-}
-
-function trim(value: number): string {
-  return String(Number(value.toFixed(1)));
-}
-
-/** Hours as "30m", "6h", "1.5h", "2d", "1.5d"; "—" when unknown. */
-export function formatHours(hours: number | null | undefined): string {
-  if (hours === null || hours === undefined || !Number.isFinite(hours) || hours < 0) return '—';
-  if (hours < 1) return `${Math.round(hours * 60)}m`;
-  if (hours < 24) return `${trim(hours)}h`;
-  return `${trim(hours / 24)}d`;
 }
 
 export function intervalLabel(row: Pick<SourceHealthRow, 'interval_hours' | 'interval_basis'>): string {
@@ -117,8 +92,8 @@ export function sortHealthRows(rows: readonly SourceHealthRow[]): SourceHealthRo
 export function lastAttemptFailed(row: Pick<SourceHealthRow, 'last_outcome' | 'last_error' | 'last_error_at' | 'last_success_at'>): boolean {
   if (row.last_outcome) return row.last_outcome === 'error';
   if (!row.last_error) return false;
-  const failed = parseDate(row.last_error_at);
-  const succeeded = parseDate(row.last_success_at);
+  const failed = toDate(row.last_error_at);
+  const succeeded = toDate(row.last_success_at);
   return !failed || !succeeded || failed.getTime() >= succeeded.getTime();
 }
 
@@ -131,7 +106,7 @@ export function lastAttemptFailed(row: Pick<SourceHealthRow, 'last_outcome' | 'l
 export function effectiveHealthStatus(row: SourceHealthRow, now: Date = new Date()): HealthStatus {
   if (row.status !== 'due' && row.status !== 'deferred') return row.status;
   if (!lastAttemptFailed(row)) return row.status;
-  const retry = parseDate(row.next_retry_at);
+  const retry = toDate(row.next_retry_at);
   return retry && retry.getTime() - now.getTime() >= MINUTE ? 'backoff' : 'error';
 }
 
@@ -141,19 +116,6 @@ export function withEffectiveStatus(rows: readonly SourceHealthRow[], now: Date 
     const status = effectiveHealthStatus(row, now);
     return status === row.status ? row : { ...row, status };
   });
-}
-
-/** The summary counts for rows (as `summarize_health`): use on `withEffectiveStatus` rows. */
-export function summarizeHealthRows(rows: readonly SourceHealthRow[]): SourceHealthSummary {
-  const summary: SourceHealthSummary = { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 };
-  for (const row of rows) {
-    if (row.status === 'due') summary.due_now += 1;
-    else if (row.status === 'deferred') summary.deferred += 1;
-    else if (row.status === 'backoff') summary.backoff += 1;
-    else if (row.status === 'unavailable') summary.unavailable += 1;
-    else if (row.status === 'error') summary.errors += 1;
-  }
-  return summary;
 }
 
 /** `?status=` filter. `error` means failing (error or backoff), the same sources the

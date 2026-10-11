@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { healthRow } from '../ops/fixtures';
 import {
   UNASSIGNED_KEY,
-  compactAge,
   filterSources,
   groupSources,
   kindLabel,
@@ -131,19 +130,6 @@ describe('row columns', () => {
     expect(kindLabel({ kind: 'youtube_channel', platform: 'youtube' })).toBe('YouTube');
     expect(kindLabel({ kind: 'telegram_rss', platform: 'rss' })).toBe('Telegram RSS');
     expect(kindLabel({ kind: 'something_new', platform: 'telegram' })).toBe('Telegram');
-  });
-
-  it('compactAge stays short for a narrow numeric column', () => {
-    const now = new Date('2026-10-10T12:00:00Z');
-    const at = (ms: number) => new Date(now.getTime() - ms).toISOString();
-    expect(compactAge(null, now)).toBe('—');
-    expect(compactAge(at(20_000), now)).toBe('now');
-    expect(compactAge(at(45 * 60_000), now)).toBe('45m');
-    expect(compactAge(at(3 * 3_600_000), now)).toBe('3h');
-    expect(compactAge(at(2 * 86_400_000), now)).toBe('2d');
-    expect(compactAge(at(35 * 86_400_000), now)).toBe('5w');
-    expect(compactAge(at(120 * 86_400_000), now)).toBe('4mo');
-    expect(compactAge(at(800 * 86_400_000), now)).toBe('2y');
   });
 });
 

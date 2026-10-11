@@ -1,9 +1,10 @@
 /**
  * Job runs (job_runs rows) as the ingestion surfaces show them: a monochrome
- * glyph for the status, a local timestamp and a short duration, for
- * Sources → ingestion. Pure.
+ * glyph for the status and a short duration, for Sources → ingestion. Pure.
  */
 import type { Status } from '../components/ui/styles';
+import { toDate } from './dates.ts';
+import { formatElapsed } from './duration.ts';
 
 /** Job status -> monochrome glyph (design docs system/status.md). */
 export function jobGlyph(status?: string | null): Status {
@@ -12,25 +13,10 @@ export function jobGlyph(status?: string | null): Status {
   return 'ok';
 }
 
-export function formatJobTimestamp(value?: string | null): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
-}
-
 /** "<1s", "42s", "2m 5s", "1h 2m"; null until the job has finished. */
 export function formatJobDuration(startedAt?: string | null, finishedAt?: string | null): string | null {
-  if (!startedAt || !finishedAt) return null;
-  const started = new Date(startedAt).getTime();
-  const finished = new Date(finishedAt).getTime();
-  if (Number.isNaN(started) || Number.isNaN(finished) || finished < started) return null;
-  const elapsedMs = finished - started;
-  if (elapsedMs < 1000) return '<1s';
-  const totalSeconds = Math.round(elapsedMs / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  const started = toDate(startedAt);
+  const finished = toDate(finishedAt);
+  if (!started || !finished || finished < started) return null;
+  return formatElapsed((finished.getTime() - started.getTime()) / 1000);
 }

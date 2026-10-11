@@ -5,6 +5,7 @@
  * payloads (it tolerates the job compaction sentinels and missing lists).
  */
 import type { DecisionKind, RunReport } from '../services/api';
+import { isRecord } from './utils.ts';
 import { formatCount, plural } from './format.ts';
 
 /** The feedback kinds of spec §F.7 (same names as `components/states/Notice`). */
@@ -40,10 +41,6 @@ export const DECISION_LABELS: Record<DecisionKind, string> = {
 };
 
 const RUN_STATUSES = new Set(['success', 'partial', 'failed', 'skipped_busy', 'nothing_due']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;

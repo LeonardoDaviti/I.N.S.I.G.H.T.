@@ -272,10 +272,6 @@
 
   /* ---- Typography helpers ---------------------------------------------- */
 
-  .num {
-    font-variant-numeric: tabular-nums;
-  }
-
   /* Underlined text link, smol-style: the underline carries the affordance. */
   .text-link {
     color: rgb(var(--text));

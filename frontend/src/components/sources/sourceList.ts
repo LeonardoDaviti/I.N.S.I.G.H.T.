@@ -13,9 +13,8 @@ import type { Folder, HealthStatus, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
 import { HEALTH_STATUS_LABELS, HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, sortHealthRows } from '../../lib/sourceSchedule';
 import { formatRelativeTime } from '../../lib/dates';
-import { sourceLabel } from '../../lib/sourceLabel';
+import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
-import { getPlatformLabel } from '../../lib/sourcePresentation';
 
 export type GroupBy = 'track' | 'status' | 'platform' | 'none';
 export const GROUP_BY: readonly GroupBy[] = ['track', 'status', 'platform', 'none'];
@@ -248,20 +247,4 @@ export function kindLabel(row: Pick<SourceHealthRow, 'kind' | 'platform'>): stri
 /** When the source's newest post was published (the backend's `last_post_at`; older backends omit it). */
 export function lastPostAt(row: SourceHealthRow): string | null {
   return (row as SourceHealthRow & { last_post_at?: string | null }).last_post_at ?? null;
-}
-
-/** A compact age for a narrow numeric column: "now", "45m", "3h", "2d", "5w", "4mo", "2y"; "—" for none. */
-export function compactAge(iso: string | null | undefined, now: Date): string {
-  const t = iso ? Date.parse(iso) : NaN;
-  if (Number.isNaN(t)) return '—';
-  const minutes = Math.max(0, (now.getTime() - t) / 60_000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${Math.floor(minutes)}m`;
-  const hours = minutes / 60;
-  if (hours < 24) return `${Math.floor(hours)}h`;
-  const days = hours / 24;
-  if (days < 14) return `${Math.floor(days)}d`;
-  if (days < 60) return `${Math.floor(days / 7)}w`;
-  if (days < 365) return `${Math.floor(days / 30)}mo`;
-  return `${Math.floor(days / 365)}y`;
 }

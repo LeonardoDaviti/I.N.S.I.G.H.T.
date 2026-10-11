@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatJobDuration, formatJobTimestamp, jobGlyph } from './jobRuns.ts';
+import { formatJobDuration, jobGlyph } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -10,12 +10,6 @@ test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('pending'), 'running');
   assert.equal(jobGlyph('success'), 'ok');
   assert.equal(jobGlyph(null), 'ok');
-});
-
-test('formatJobTimestamp is null for missing or invalid values', () => {
-  assert.equal(formatJobTimestamp(null), null);
-  assert.equal(formatJobTimestamp('garbage'), null);
-  assert.equal(typeof formatJobTimestamp('2026-10-10T12:00:00Z'), 'string');
 });
 
 test('formatJobDuration is null until finished, and readable after', () => {

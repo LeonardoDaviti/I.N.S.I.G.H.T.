@@ -28,7 +28,7 @@ Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`),
 | --- | --- |
 | `pages/` | One component per route (`App.tsx` has the route table). |
 | `components/layout/` | The shell: `AppShell`, `TopBar` (wordmark, slash nav, theme toggle), `QuickSwitcher` (Cmd/Ctrl+K). |
-| `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Table`, `Row`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
+| `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
 | `components/states/` | `LoadingState`, `EmptyState`, `ErrorState`, `Notice`. Every async view uses these. |
 | `components/reader/`, `components/ops/` | The reader (feed, rail, toolbar) and the ingestion/health parts. |
 | `components/sources/` | The sources page's parts, including the `connections` and `ingestion` tabs. |
@@ -94,6 +94,8 @@ Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`),
   `h-[calc(100dvh-var(--topbar-h))]` for a full-height rail), not a CSS override.
 - Toasts: `sonner` through `components/ui/Toaster`, monochrome. Say the outcome and link to the job.
 - Source names: always `sourceLabel()` (`lib/sourceLabel.ts`), never a raw feed URL.
+- Dates and times: `lib/dates.ts`; durations: `lib/duration.ts`. Never a hand-rolled
+  `toLocaleString()` or minutes-and-seconds sum in a component.
 - Motion and reading typography (durations, reduced motion, title wrap, the heading scale): the
   design docs are the one source, `frontend/src/design/docs/system/motion.md` and `typography.md`
   (shown at `/design`).
