@@ -2091,7 +2091,7 @@ class ApiService {
     return this.makeRequest<FeedGroupsPage>(this.feedQuery(params, 'by_source'), { signal: params.signal });
   }
 
-  /** Unread counts within the unread window (30 days): total, per source, per folder. */
+  /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
   async getUnreadCounts(): Promise<UnreadCounts> {
     return this.makeRequest<UnreadCounts>('/api/feed/unread-counts');
   }

@@ -230,6 +230,21 @@ class UpsertPostCollisionTests(unittest.TestCase):
         self.assertEqual(title, "Original title")
         self.assertEqual(content, "Original body")
 
+    def test_a_re_fetch_keeps_when_the_post_was_first_seen(self):
+        """An undated post sorts by fetched_at; a re-fetch must not make it look new again."""
+        self.repo.upsert_post(self.cur, self._post("https://x.test/undated"), self.source_a)
+        self.cur.execute("UPDATE posts SET fetched_at = now() - interval '40 days' WHERE url = %s",
+                         ("https://x.test/undated",))
+
+        self.repo.upsert_post(self.cur, self._post("https://x.test/undated",
+                                                   title="Renamed"), self.source_a)
+
+        self.cur.execute("SELECT title, fetched_at < now() - interval '39 days' FROM posts WHERE url = %s",
+                         ("https://x.test/undated",))
+        title, still_old = self.cur.fetchone()
+        self.assertEqual(title, "Renamed")
+        self.assertTrue(still_old)
+
 
 if __name__ == "__main__":
     unittest.main()

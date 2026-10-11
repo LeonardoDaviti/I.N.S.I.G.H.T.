@@ -5,8 +5,9 @@ audit log; a list query cannot aggregate it per row cheaply.
 
 Every feed is ordered by the sort key `(COALESCE(published_at, fetched_at), id)` descending,
 which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort node).
-"Unread" means no read_at within the unread window (INSIGHT_UNREAD_WINDOW_DAYS,
-default 30), so an archive backfill never shows as tens of thousands of unread posts.
+"Unread" means no read_at, over every post the source ever gave us: an archived post from
+2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
+grouped "all" view) back to the last N days; unset or 0 means no window.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "starred")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
 SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
 
-DEFAULT_UNREAD_WINDOW_DAYS = 30
+DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-time
 EXCERPT_CHARS = 280
 TITLE_FALLBACK_CHARS = 80
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
@@ -47,11 +48,13 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
 
-def unread_window_days_from_env() -> int:
+def unread_window_days_from_env() -> Optional[int]:
+    """INSIGHT_UNREAD_WINDOW_DAYS as a positive int, or None (unset, 0 or garbage: no window)."""
     try:
-        return max(1, int(os.getenv("INSIGHT_UNREAD_WINDOW_DAYS", str(DEFAULT_UNREAD_WINDOW_DAYS))))
+        days = int(os.getenv("INSIGHT_UNREAD_WINDOW_DAYS") or 0)
     except ValueError:
         return DEFAULT_UNREAD_WINDOW_DAYS
+    return days if days > 0 else DEFAULT_UNREAD_WINDOW_DAYS
 
 
 def _require_uuid(value: str, what: str) -> str:
@@ -166,8 +169,19 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
 class ReaderRepository:
     """SQL for the reader. Every method takes the caller's cursor; the caller owns the commit."""
 
-    def __init__(self, unread_window_days: int | None = None):
-        self.unread_window_days = unread_window_days or unread_window_days_from_env()
+    _FROM_ENV = object()
+
+    def __init__(self, unread_window_days: Any = _FROM_ENV):
+        """unread_window_days: days, None for no window; omitted reads INSIGHT_UNREAD_WINDOW_DAYS."""
+        if unread_window_days is self._FROM_ENV:
+            unread_window_days = unread_window_days_from_env()
+        self.unread_window_days: Optional[int] = unread_window_days or None
+
+    def _window_sql(self) -> Tuple[str, List[Any]]:
+        """The unread window as a predicate on the sort key, or TRUE when there is none."""
+        if self.unread_window_days is None:
+            return "TRUE", []
+        return f"{SORT_KEY} >= now() - make_interval(days => %s)", [self.unread_window_days]
 
     # ---- predicates ---------------------------------------------------------------
 
@@ -181,8 +195,8 @@ class ReaderRepository:
 
     def _filter_sql(self, filter: str) -> Tuple[str, List[Any]]:
         if filter == "unread":
-            return (f"{UNREAD_SQL} AND {SORT_KEY} >= now() - make_interval(days => %s)",
-                    [self.unread_window_days])
+            window_sql, window_params = self._window_sql()
+            return f"{UNREAD_SQL} AND {window_sql}", window_params
         if filter == "starred":
             return "rs.starred_at IS NOT NULL", []
         if filter == "all":
@@ -226,8 +240,8 @@ class ReaderRepository:
                        ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One group per source, newest group first; keyset on (newest_sort_at, source_id).
 
-        `count` honours the filter and the window: the unread window bounds every filter except
-        `starred` (an explicit star never ages out), so grouping stays cheap on a big archive.
+        `count` honours the filter and, when one is set, the unread window: it then bounds every
+        filter except `starred` (an explicit star never ages out).
         `since` (the `days=` window) bounds both the counts and the items. Two queries per
         page whatever its size: the groups, then every group's newest items in one LATERAL.
         """
@@ -236,8 +250,9 @@ class ReaderRepository:
         window = ["TRUE"]
         window_params: List[Any] = []
         if filter == "all":
-            window.append(f"{SORT_KEY} >= now() - make_interval(days => %s)")
-            window_params.append(self.unread_window_days)
+            all_window_sql, all_window_params = self._window_sql()
+            window.append(all_window_sql)
+            window_params += all_window_params
         if since is not None:
             window.append(f"{SORT_KEY} >= %s")
             window_params.append(since)
@@ -357,12 +372,15 @@ class ReaderRepository:
                           now: datetime) -> List[str]:
         """Mark unread posts in `scope` from `newest` down to `through` (inclusive) read.
 
-        Bounded three ways: posts newer than `newest` (arrived after the page rendered) stay
-        unread, only the unread window is touched, and only rows with read_at IS NULL are
-        written - scope 'all' can never write one row per archive post. Returns the ids
+        Bounded by the page: posts newer than `newest` (arrived after the page rendered) stay
+        unread, nothing older than `through` is touched (nor, with a window set, anything
+        outside it), and only rows with read_at IS NULL are written. Returns the ids
         marked, so the UI can undo with set_read(ids, False).
         """
         scope_sql, params = self._scope_sql(scope)
+        window_sql, window_params = "TRUE", []
+        if self.unread_window_days is not None:
+            window_sql, window_params = f"{SORT_KEY} >= %s", [now - timedelta(days=self.unread_window_days)]
         cur.execute(
             f"""
             INSERT INTO post_reader_state (post_id, read_at)
@@ -373,28 +391,28 @@ class ReaderRepository:
               AND {UNREAD_SQL}
               AND ({SORT_KEY}, p.id) <= (%s, %s::uuid)
               AND ({SORT_KEY}, p.id) >= (%s, %s::uuid)
-              AND {SORT_KEY} >= %s
+              AND {window_sql}
             ON CONFLICT (post_id) DO UPDATE
                 SET read_at = EXCLUDED.read_at, updated_at = now()
                 WHERE post_reader_state.read_at IS NULL
             RETURNING post_id
             """,
-            [now, *params, newest.sort_at, newest.post_id, through.sort_at, through.post_id,
-             now - timedelta(days=self.unread_window_days)],
+            [now, *params, newest.sort_at, newest.post_id, through.sort_at, through.post_id, *window_params],
         )
         return [str(r[0]) for r in cur.fetchall()]
 
     def unread_counts(self, cur: Cursor) -> Dict[str, Any]:
-        """{total (main digest), by_source: {id: n}, by_folder: {id: n}} over the unread window."""
+        """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set)."""
+        window_sql, window_params = self._window_sql()
         cur.execute(
             f"""
             SELECT p.source_id, bool_or(s.in_main_digest), COUNT(*)
             FROM posts p
             JOIN sources s ON s.id = p.source_id
-            WHERE {UNREAD_SQL} AND {SORT_KEY} >= now() - make_interval(days => %s)
+            WHERE {UNREAD_SQL} AND {window_sql}
             GROUP BY p.source_id
             """,
-            (self.unread_window_days,),
+            window_params,
         )
         by_source: Dict[str, int] = {}
         total = 0

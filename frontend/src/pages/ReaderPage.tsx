@@ -149,7 +149,7 @@ function Reader({ scope }: { scope: string }) {
       return { title: 'No new posts: ingestion has stopped', description: 'Nothing has been fetched for over a day, so nothing new can arrive.', action: { label: 'Show all', onClick: showAll } };
     }
     if (filter === 'unread') {
-      return { title: 'You’re all caught up', description: 'Nothing unread from the last 30 days.', action: { label: 'Show all', onClick: showAll } };
+      return { title: 'You’re all caught up', description: 'Nothing unread.', action: { label: 'Show all', onClick: showAll } };
     }
     if (filter === 'starred') {
       return { title: 'No starred posts', description: 'Press s on a post, or its star button, to keep it here.', action: { label: 'Show all', onClick: showAll } };
