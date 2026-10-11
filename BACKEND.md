@@ -6,9 +6,7 @@ The INSIGHT backend follows a layered architecture:
 
 ```
 ┌─────────────────────────────────────┐
-│   API Layer (main.py)               │  FastAPI endpoints
-├─────────────────────────────────────┤
-│   Bridge Layer (insight_api_bridge) │  Business logic coordination
+│   API Layer (main.py)               │  FastAPI endpoints, one error handler
 ├─────────────────────────────────────┤
 │   Service Layer (services/)         │  Business operations
 ├─────────────────────────────────────┤
@@ -90,89 +88,28 @@ def get_something(self, param: str) -> List[Dict[str, Any]]:
 
 ---
 
-#### 3. **Bridge Layer** (`backend/insight_api_bridge.py`)
-   - Coordinates between API and services
-   - Transforms data for frontend consumption
-   - Handles data validation and error formatting
-
-**Pattern:**
-```python
-def get_something_by_param(self, param_str: str) -> Dict[str, Any]:
-    """
-    Get something for frontend display.
-    
-    Args:
-        param_str: String parameter from frontend
-        
-    Returns:
-        Dict with success, data, and metadata
-    """
-    try:
-        # Parse/validate input
-        parsed_param = self._parse_param(param_str)
-        
-        # Get data from service
-        items = self.service.get_something(parsed_param)
-        
-        return {
-            "success": True,
-            "data": items,
-            "total": len(items),
-            "param": param_str
-        }
-        
-    except ValueError as e:
-        return {
-            "success": False,
-            "error": f"Invalid parameter: {param_str}",
-            "data": []
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "data": []
-        }
-```
-
-**Key Points:**
-- Always return consistent response format
-- Include success/error status
-- Handle all exceptions
-- Transform data for frontend needs
-
----
-
-#### 4. **API Layer** (`backend/main.py`)
-   - Defines HTTP endpoints
-   - Validates request models
-   - Returns JSON responses
+#### 3. **API Layer** (`backend/main.py`)
+   - Defines HTTP endpoints and request models
+   - Calls the services directly, through `services()` from `insight_core/services/registry.py`
+   - Lets errors rise: one handler answers them (see Error Handling)
 
 **Pattern:**
 ```python
 @app.get("/api/something/{param}")
+@error_detail("load something")
 async def get_something(param: str):
     """Get something by parameter."""
-    try:
-        logger.info(f"📋 Fetching something for: {param}")
-        
-        result = api_bridge.get_something_by_param(param)
-        
-        if result.get("success"):
-            logger.info(f"✅ Retrieved {result.get('total', 0)} items")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception("Failed to get something")
-        return {"success": False, "error": str(e)}
+    items = services().something.get_something(param)
+    return {"success": True, "data": items, "total": len(items)}
 ```
 
 **Key Points:**
-- Use FastAPI route decorators (`@app.get`, `@app.post`, etc.)
-- Add logging at API level
-- Let bridge layer handle business errors
-- Return JSON directly
+- No try/except for service errors in a route. A `ValueError` is a 400 with its message, a
+  not-found `LookupError` a 404, anything else a 500 "Could not load something".
+- `@error_detail(what)` answers errors as HTTP errors with `{"detail": ...}` (Mark IX
+  routes). `@error_envelope(what, **fields)` answers them as HTTP 200
+  `{"success": false, "error": ..., **fields}`, for the older routes whose callers expect it.
+- The registry builds the services once. Tests swap them with `registry.use(...)`.
 
 ---
 
@@ -342,8 +279,9 @@ SELECT COUNT(*) FROM posts WHERE source_id = %s
 Every backend feature needs tests in `backend/insight_core/tests/`. They are plain
 `unittest` modules (`test_*.py`).
 
-- Test through the module's interface: a route function's JSON, saved rows, a `RunReport`.
-- Prior art: `test_feed_routes` (route functions, error redaction), `test_repo_reader` and
+- Test through the module's interface: a route's status and JSON, saved rows, a `RunReport`.
+- Prior art: `test_feed_routes` (routes over ASGI with `tests/_asgi.py`, a swapped service,
+  the error handler), `test_posts_by_source_routes` (real services), `test_repo_reader` and
   `test_ingestion_db` (a real database through the test database helpers),
   `test_ingestion_runner` and `test_source_kinds` (fakes, no network).
 
@@ -384,12 +322,16 @@ self.logger.debug("Detailed info")
 
 ---
 
-## Error Handling Best Practices
+## Error Handling
 
-1. **Repository Layer:** Let errors propagate (database errors are important)
-2. **Service Layer:** Catch specific errors and add context
-3. **Bridge Layer:** Catch all errors and format for frontend
-4. **API Layer:** Log errors and return consistent error responses
+1. **Repository and service layers:** let errors propagate. Raise `ValueError` (bad input) or
+   `LookupError` (not found) with a message a person can act on.
+2. **API layer:** one handler, `service_error_response` in `main.py`, turns an error into a
+   safe JSON answer in the route's shape. Other exceptions are logged with their traceback
+   and answered "Could not ...": a driver message can carry a DSN or SQL, so it never reaches
+   the response.
+3. **Job tracking:** `OperationsService.try_start_job` / `try_append_job_event` /
+   `try_finish_job` log a failed `job_runs` write and let the work go on.
 
 ---
 
@@ -398,6 +340,4 @@ self.logger.debug("Detailed info")
 See the `get_posts_by_date` feature for a complete example:
 - Repository: `repo_posts.py::get_posts_by_date()`
 - Service: `posts_service.py::get_posts_by_date()`
-- Bridge: `insight_api_bridge.py::get_posts_by_date()`
 - API: `main.py::@app.get("/api/posts/{date}")`
-

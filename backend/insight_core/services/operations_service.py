@@ -417,6 +417,33 @@ class OperationsService:
                 )
             conn.commit()
 
+    # Tracked work (an archive, a fetch, a comment fetch) goes on when its job_runs row
+    # cannot be written: these log the failure and return, instead of raising.
+
+    def try_start_job(self, job_type: str, **kwargs: Any) -> Optional[str]:
+        """start_job, or None (logged) when the row cannot be written."""
+        try:
+            return self.start_job(job_type, **kwargs)
+        except Exception:
+            self.logger.exception("Could not start a %s job", job_type)
+            return None
+
+    def try_append_job_event(self, job_id: Optional[str], **kwargs: Any) -> None:
+        if not job_id:
+            return
+        try:
+            self.append_job_event(job_id, **kwargs)
+        except Exception:
+            self.logger.exception("Could not record an event on job %s", job_id)
+
+    def try_finish_job(self, job_id: Optional[str], **kwargs: Any) -> None:
+        if not job_id:
+            return
+        try:
+            self.finish_job(job_id, **kwargs)
+        except Exception:
+            self.logger.exception("Could not finish job %s", job_id)
+
     def prune_job_runs(self, retain_days: int = 30) -> int:
         """Delete job history older than retain_days. Returns rows removed.
 

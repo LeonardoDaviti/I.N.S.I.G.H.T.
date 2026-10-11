@@ -168,3 +168,101 @@ class SourcesService:
                     "source_id": source_id,
                     "settings": merged_settings,
                 }
+
+    # ------------------------------------------------------------------ views for the Sources screens
+
+    def config_view(self) -> Dict[str, Any]:
+        """Sources nested by platform: {metadata, platforms: {p: {enabled, sources: [...]}}}.
+
+        A platform is enabled when any of its sources is.
+        """
+        platforms: Dict[str, Any] = {}
+        for source in self.get_all_sources():
+            platform = platforms.setdefault(source["platform"], {"enabled": False, "sources": []})
+            platform["sources"].append({
+                "id": source["handle_or_url"],
+                "state": "enabled" if source["enabled"] else "disabled",
+                "db_id": source["id"],  # Keep DB UUID for updates
+            })
+            if source["enabled"]:
+                platform["enabled"] = True
+        return {
+            "metadata": {
+                "name": "I.N.S.I.G.H.T.",
+                "description": "Intelligence Network for Systematic Gathering and Handling of Topics",
+                "version": "Mark VI",
+            },
+            "platforms": platforms,
+        }
+
+    def apply_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Make the sources match a config_view-shaped dict: add, enable/disable, delete.
+
+        One failing source does not stop the rest; its error lands in stats["errors"].
+        """
+        current = {(s["platform"], s["handle_or_url"]): s["id"] for s in self.get_all_sources()}
+        stats: Dict[str, Any] = {"added": 0, "updated": 0, "deleted": 0, "errors": []}
+        wanted = set()
+
+        for platform, platform_data in config.get("platforms", {}).items():
+            for item in platform_data.get("sources", []):
+                handle = item["id"]
+                enabled = item["state"] == "enabled"
+                key = (platform, handle)
+                wanted.add(key)
+                if key in current:
+                    try:
+                        self.update_source_status(current[key], enabled)
+                        stats["updated"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to update {platform}/{handle}: {e}")
+                else:
+                    try:
+                        self.add_source(platform, handle)
+                        stats["added"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to add {platform}/{handle}: {e}")
+
+        for key, db_id in current.items():
+            if key not in wanted:
+                try:
+                    self.delete_source(db_id)
+                    stats["deleted"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"Failed to delete {key}: {e}")
+
+        return {
+            "success": len(stats["errors"]) == 0,
+            "stats": stats,
+            "message": f"Added: {stats['added']}, Updated: {stats['updated']}, Deleted: {stats['deleted']}",
+        }
+
+    def with_settings_and_counts(self) -> List[Dict[str, Any]]:
+        """Every source with its merged settings and post_count."""
+        sources = self.get_all_sources_with_settings()
+        counts = {s["id"]: s.get("post_count", 0) for s in self.get_sources_with_post_counts()}
+        for source in sources:
+            source["post_count"] = counts.get(source["id"], 0)
+        return sources
+
+    def counts_by_platform(self) -> Dict[str, Any]:
+        """{platforms: {p: {sources, total_count}}, total_posts}; sources sorted by priority."""
+        platforms: Dict[str, Any] = {}
+        total_posts = 0
+        for source in self.get_all_sources_with_settings():
+            settings = source.get("settings", {})
+            post_count = source.get("post_count", 0)
+            platform = platforms.setdefault(source["platform"], {"sources": [], "total_count": 0})
+            platform["sources"].append({
+                "id": source["id"],
+                "handle_or_url": source["handle_or_url"],
+                "display_name": settings.get("display_name") or source["handle_or_url"],
+                "enabled": source["enabled"],
+                "post_count": post_count,
+                "priority": settings.get("priority", 999),
+            })
+            platform["total_count"] += post_count
+            total_posts += post_count
+        for platform in platforms.values():
+            platform["sources"].sort(key=lambda s: s["priority"])
+        return {"platforms": platforms, "total_posts": total_posts}

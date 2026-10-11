@@ -29,6 +29,7 @@ from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resum
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
 from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.services.operations_service import backlog_posts
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
@@ -71,6 +72,43 @@ class SourceFetchService:
         }
 
     # ------------------------------------------------------------------ archive
+
+    def archive_catalog(self) -> List[Dict[str, Any]]:
+        """Every enabled source with its persisted archive status; unfinished archives first."""
+        catalog = []
+        for source in self.sources_service.get_all_sources_with_settings():
+            if not source.get("enabled"):
+                continue
+            settings = source.get("settings") or {}
+            archive = settings.get("archive", {})
+            stored = int(archive.get("stored_posts") or source.get("post_count") or 0)
+            catalog.append(
+                {
+                    "source_id": source["id"],
+                    "display_name": settings.get("display_name") or source["handle_or_url"],
+                    "platform": source["platform"],
+                    "kind": self.kinds.resolve(source).name,
+                    "enabled": bool(source.get("enabled")),
+                    "stored_posts": stored,
+                    "available_posts": archive.get("available_posts"),
+                    # E1: the backlog is available - stored, or None when unknown; the
+                    # plan's remaining_posts is a requested target, never aliased to it.
+                    "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
+                    "remaining_posts": archive.get("remaining_posts"),
+                    "estimated_seconds": archive.get("estimated_seconds"),
+                    "archive_status": archive.get("status") or "not_archived",
+                    "resume_ready": bool(archive.get("resume_ready")),
+                    "source_type": archive.get("source_type"),
+                    "last_archived_at": archive.get("last_archived_at"),
+                    "last_live_fetch_at": archive.get("last_live_fetch_at"),
+                    "checkpoint": archive.get("checkpoint"),
+                    "rate_limit": archive.get("rate_limit") or {},
+                }
+            )
+        catalog.sort(key=lambda item: (item["archive_status"] != "partial",
+                                       item["archive_status"] != "not_archived",
+                                       item["display_name"].lower()))
+        return catalog
 
     def archive_support(self, source_id: str) -> Dict[str, Any]:
         """Can this source archive, and what does its available count mean? No network.

@@ -588,14 +588,16 @@ class CredentialsServiceTests(unittest.TestCase):
 # --------------------------------------------------------------------------- routes
 
 
-class FakeCredentialsBridge:
+class FakeCredentialsService:
+    """CredentialsService as the routes see it; the failures are what Telegram and Substack answer."""
+
     def __init__(self):
         self.calls = []
 
-    def get_credentials(self):
+    def list(self):
         return {"providers": []}
 
-    def put_credential(self, provider, key, value):
+    def put(self, provider, key, value):
         self.calls.append(("put", provider, key, value))
         if provider == "nope":
             raise CredentialNotFound("Unknown connection: nope")
@@ -603,67 +605,61 @@ class FakeCredentialsBridge:
             raise CredentialInvalid("That does not look like a substack.sid cookie value")
         return {"provider": provider, "fields": [{"key": key, "set": True, "last4": "WXYZ"}]}
 
-    def delete_credential(self, provider, key):
+    def delete(self, provider, key):
         return {"provider": provider}
 
-    async def test_credentials(self, provider):
+    async def test(self, provider):
         raise RuntimeError(f"driver error with {SID}")
 
-    async def telegram_login_start(self, phone):
+    async def login_start(self, phone):
         raise LoginFailed("Telegram asks to wait 30 seconds before trying again", retry_after=30)
 
-    async def telegram_login_code(self, code):
+    async def login_code(self, code):
         return {"stage": "password"}
 
-    async def telegram_login_password(self, password):
+    async def login_password(self, password):
         raise LoginFailed("That password is not right; try again")
 
-    def telegram_login_cancel(self):
+    def login_cancel(self):
         return {"stage": None}
 
 
 class CredentialRouteTests(unittest.TestCase):
     def setUp(self):
         import main
+        from insight_core.services import registry
 
         self.main = main
-        self.original = main.api_bridge
-        self.bridge = FakeCredentialsBridge()
-        main.api_bridge = self.bridge
-        self.addCleanup(setattr, main, "api_bridge", self.original)
+        self.service = FakeCredentialsService()
+        self.addCleanup(registry.use, registry.use(SimpleNamespace(credentials=self.service)))
 
-    def _http_error(self, coro):
-        from fastapi import HTTPException
+    def call(self, method, path, payload=None):
+        from insight_core.tests._asgi import call
 
-        with self.assertRaises(HTTPException) as caught:
-            run(coro)
-        return caught.exception
+        return call(self.main.app, method, path, json_body=payload)
 
     def test_put_passes_the_value_and_returns_the_view(self):
-        main = self.main
-        view = run(main.put_credential("substack", "sid", main.CredentialValueRequest(value=SID)))
-        self.assertEqual(self.bridge.calls, [("put", "substack", "sid", SID)])
+        status, _, view = self.call("PUT", "/api/credentials/substack/sid", {"value": SID})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.service.calls, [("put", "substack", "sid", SID)])
         self.assertNotIn(SID, json.dumps(view))
 
     def test_errors_map_to_status_codes_without_echoing_values(self):
-        main = self.main
-        self.assertEqual(self._http_error(
-            main.put_credential("nope", "sid", main.CredentialValueRequest(value="x"))).status_code, 404)
-        bad = self._http_error(main.put_credential("substack", "sid", main.CredentialValueRequest(value="bad")))
-        self.assertEqual(bad.status_code, 400)
-        flood = self._http_error(main.telegram_login_start(main.TelegramLoginStartRequest(phone="+1")))
-        self.assertEqual((flood.status_code, flood.headers["Retry-After"]), (429, "30"))
-        wrong = self._http_error(main.telegram_login_password(main.TelegramLoginPasswordRequest(password="pw")))
-        self.assertEqual(wrong.status_code, 400)
-        crashed = self._http_error(main.test_credential("substack"))
-        self.assertEqual(crashed.status_code, 500)
-        self.assertNotIn(SID, crashed.detail)
+        self.assertEqual(self.call("PUT", "/api/credentials/nope/sid", {"value": "x"})[0], 404)
+        status, _, body = self.call("PUT", "/api/credentials/substack/sid", {"value": "bad"})
+        self.assertEqual((status, body["detail"]), (400, "That does not look like a substack.sid cookie value"))
+        status, headers, _ = self.call("POST", "/api/credentials/telegram/login/start", {"phone": "+1"})
+        self.assertEqual((status, headers["retry-after"]), (429, "30"))
+        self.assertEqual(self.call("POST", "/api/credentials/telegram/login/password", {"password": "pw"})[0], 400)
+        with self.assertLogs("main", "ERROR"):
+            status, _, body = self.call("POST", "/api/credentials/substack/test")
+        self.assertEqual(status, 500)
+        self.assertNotIn(SID, body["detail"])
 
     def test_the_sign_in_steps_answer_their_stage(self):
-        main = self.main
-        self.assertEqual(run(main.telegram_login_code(main.TelegramLoginCodeRequest(code="1"))), {"stage": "password"})
-        self.assertEqual(run(main.telegram_login_cancel()), {"stage": None})
-        self.assertEqual(run(main.get_credentials()), {"providers": []})
+        self.assertEqual(self.call("POST", "/api/credentials/telegram/login/code", {"code": "1"})[2], {"stage": "password"})
+        self.assertEqual(self.call("POST", "/api/credentials/telegram/login/cancel")[2], {"stage": None})
+        self.assertEqual(self.call("GET", "/api/credentials")[2], {"providers": []})
 
 
 if __name__ == "__main__":

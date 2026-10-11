@@ -2,7 +2,7 @@
 
     report = await run_ingestion(FetchRequest(SourceSelector.all(), Trigger.SCHEDULER))
 
-The only callers are insight_api_bridge.py, scripts/run_scheduler.py and the
+The only callers are main.py (the API routes), scripts/run_scheduler.py and the
 scripts/safe_ingest.py CLI shim.
 
 Deliberately import-light: adapters/*.py import ingestion.kinds.base, and importing that

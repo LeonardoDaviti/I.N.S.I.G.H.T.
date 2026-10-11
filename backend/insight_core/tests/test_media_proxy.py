@@ -191,14 +191,14 @@ class AllowedFromTheDatabaseTests(unittest.TestCase):
 class RouteTests(unittest.TestCase):
     def setUp(self):
         import main
+        from insight_core.services import registry
         self.main = main
-        self.original = main.media_proxy
-
-    def tearDown(self):
-        self.main.media_proxy = self.original
+        self.registry = registry
+        self.addCleanup(registry.use, registry.use(None))
 
     def _get(self, fetch):
-        self.main.media_proxy = type("P", (), {"fetch": staticmethod(fetch)})()
+        from types import SimpleNamespace
+        self.registry.use(SimpleNamespace(media_proxy=SimpleNamespace(fetch=fetch)))
         return asyncio.run(self.main.get_media(post="p", url="https://cdn.test/a.jpg"))
 
     def test_an_image_is_cached_for_a_day_with_safe_headers(self):
