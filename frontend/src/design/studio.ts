@@ -35,6 +35,8 @@ export function docHref(doc: DesignDoc): string {
 export interface RailItem {
   label: string;
   href: string;
+  /** A quiet note after the label in the third tone (a prototype's status and age). */
+  note?: string;
   /** Shown under the item while it (or a child) is the current place. */
   children?: RailItem[];
 }
@@ -47,6 +49,8 @@ export interface RailGroup {
 export interface PrototypeRef {
   id: string;
   label: string;
+  /** Status and age, `review · 1 day`. */
+  note?: string;
 }
 
 /** Pages in the order you meet them: the feed, a post, where it's managed, the frame around all three. */
@@ -55,6 +59,11 @@ const PAGE_ORDER = ['reader', 'post', 'sources', 'shell'];
 function byOrder(order: readonly string[]) {
   const rank = (slug: string) => (order.includes(slug) ? order.indexOf(slug) : order.length);
   return (a: DesignDoc, b: DesignDoc) => rank(docSlug(a)) - rank(docSlug(b)) || docTitle(a).localeCompare(docTitle(b));
+}
+
+/** The page docs (`pages/*.md`) in the order you meet the pages. */
+export function pageDocsInOrder(docs: readonly DesignDoc[]): DesignDoc[] {
+  return docs.filter((doc) => doc.path.startsWith('pages/')).sort(byOrder(PAGE_ORDER));
 }
 
 const link = (doc: DesignDoc): RailItem => ({ label: docTitle(doc), href: docHref(doc) });
@@ -86,10 +95,10 @@ export function railGroups(
         { label: 'Decisions', href: '/design/decisions' },
       ],
     },
-    { label: 'Pages', items: [...under('pages')].sort(byOrder(PAGE_ORDER)).map(link) },
+    { label: 'Pages', items: pageDocsInOrder(docs).map(link) },
     {
       label: 'Prototypes',
-      items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}` })),
+      items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}`, note: prototype.note })),
     },
     { label: 'Parked', items: [...under('parked')].sort(byOrder([])).map(link) },
   ];

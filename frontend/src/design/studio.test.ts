@@ -38,13 +38,14 @@ describe('the rail', () => {
   ];
 
   it('groups Studio, Pages (in reading order), Prototypes and Parked', () => {
-    const groups = railGroups(docs, ['Button', 'Chip'], [{ id: '2026-10-10-title-wrap', label: 'title-wrap' }]);
+    const groups = railGroups(docs, ['Button', 'Chip'], [{ id: '2026-10-10-title-wrap', label: 'title-wrap', note: 'review · 1 day' }]);
     expect(groups.map((group) => [group.label, group.items.map((item) => [item.label, item.href])])).toEqual([
       ['Studio', [['Principles', '/design'], ['System', '/design/system'], ['Components', '/design/components'], ['Decisions', '/design/decisions']]],
       ['Pages', [['Reader', '/design/pages/reader'], ['Post', '/design/pages/post'], ['Sources', '/design/pages/sources'], ['Shell', '/design/pages/shell']]],
       ['Prototypes', [['title-wrap', '/design/prototypes/2026-10-10-title-wrap']]],
       ['Parked', [['Analyst inbox', '/design/parked/inbox'], ['Stories', '/design/parked/stories']]],
     ]);
+    expect(groups[2].items[0].note).toBe('review · 1 day');
   });
 
   it('nests the system docs under System and each primitive under Components', () => {

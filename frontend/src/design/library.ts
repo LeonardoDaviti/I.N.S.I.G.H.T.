@@ -6,6 +6,10 @@
 import type { ComponentType } from 'react';
 import { parseDoc, type DesignDoc } from './coverage';
 import { docHref, type PrototypeRef } from './studio';
+import { PROTOTYPES } from './prototypeRegistry';
+import { isOpen, prototypeAge } from './prototypes';
+
+export { PROTOTYPES, prototypeById } from './prototypeRegistry';
 
 const docFiles = import.meta.glob<string>('./docs/**/*.md', { query: '?raw', import: 'default', eager: true });
 
@@ -26,16 +30,12 @@ export const COMPONENT_SPECIMENS: ReadonlyMap<string, ComponentType> = new Map(
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 
-const prototypeFiles = import.meta.glob<string>('./prototypes/*/README.md', { query: '?raw', import: 'default', eager: true });
-
-export interface Prototype extends PrototypeRef {
-  readme: string;
+/**
+ * The prototypes for the rail (D6): open ones first, oldest first, each with
+ * its status and age, so nothing rots silently.
+ */
+export function prototypeRefs(now: Date): PrototypeRef[] {
+  return [...PROTOTYPES]
+    .sort((a, b) => Number(isOpen(b)) - Number(isOpen(a)) || a.id.localeCompare(b.id))
+    .map((prototype) => ({ id: prototype.id, label: prototype.slug, note: `${prototype.status} · ${prototypeAge(prototype, now)}` }));
 }
-
-/** The open prototypes (`prototypes/<yyyy-mm-dd>-<slug>/`); S5b adds the compare view. */
-export const PROTOTYPES: readonly Prototype[] = Object.entries(prototypeFiles)
-  .map(([path, readme]) => {
-    const id = path.split('/')[2];
-    return { id, label: id.replace(/^\d{4}-\d{2}-\d{2}-/, ''), readme };
-  })
-  .sort((a, b) => a.id.localeCompare(b.id));

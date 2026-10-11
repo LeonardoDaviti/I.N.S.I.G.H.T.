@@ -35,6 +35,13 @@ describe('<Frame>', () => {
     expect(frame).not.toHaveAttribute('tabindex');
   });
 
+  it('shows a prototype on its page\'s state when given one (D6)', () => {
+    stubResizeObserver();
+    render(<Frame page="post" prototype="2026-10-10-title-wrap" state="long-title" />);
+    expect(screen.getByTitle('2026-10-10-title-wrap · long-title · 1400px · dark'))
+      .toHaveAttribute('src', '/design/frame/prototype/2026-10-10-title-wrap/long-title?theme=dark&data=fixtures');
+  });
+
   it('keeps a real viewport width and scales it down to fit its box', () => {
     const resize = stubResizeObserver();
     render(<Frame page="sources" state="dense" width={1400} height={900} />);

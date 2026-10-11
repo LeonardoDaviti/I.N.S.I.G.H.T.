@@ -1,0 +1,20 @@
+--- a/pages/post.md
++++ b/pages/post.md
+@@ -23,7 +23,7 @@
+ 
+ - **Post navigation** (ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next.
+ - **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to `/settings/sources?source=<id>`, P8), ` / platform`, ` / date` (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
+-- **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. A stored title cut with "…" shows the text's whole first line instead (`displayPostTitle`).
++- **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-wrap: wrap` (the first line fills the column), `dir="auto"`. A stored title cut with "…" shows the text's whole first line instead (`displayPostTitle`).
+ - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
+ - **Body:** the content as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own.
+ - **More images** after the body.
+@@ -35,7 +35,7 @@
+ 
+ - **article:** a text post: byline, title, prose.
+ - **media:** a hero image, more images after the body, and a video (YouTube embed or watch mode).
+-- **long-title:** a title of several lines wraps (never truncates) and balances with `pretty`.
++- **long-title:** a title of several lines wraps (never truncates) with normal wrap; a one-word last line is allowed.
+ - **headings:** a body using h1–h6, lists, quotes, tables and code, to check the prose scale.
+ - **missing-title:** a Telegram or commit post with no real title: the H1 is the text's first line.
+ - **loading:** a skeleton in the same frame and column as the loaded page, so nothing jumps on arrival.
