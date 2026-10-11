@@ -203,3 +203,39 @@ describe('the System section', () => {
     expect(screen.getByRole('region', { name: 'Motion' })).toBeInTheDocument();
   });
 });
+
+describe('the Components section', () => {
+  it('lists every primitive under the inventory doc', () => {
+    renderStudio('/design/components');
+    expect(screen.getByRole('heading', { level: 1, name: 'Component inventory' })).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Primitives' });
+    expect(within(list).getByRole('link', { name: 'StatusGlyph' })).toHaveAttribute('href', '/design/components/StatusGlyph');
+    expect(within(list).getAllByRole('link').length).toBeGreaterThan(10);
+  });
+
+  it('shows a primitive\'s variants and states, with its source and its rule from the inventory', () => {
+    renderStudio('/design/components/Button');
+    expect(screen.getByRole('heading', { level: 1, name: 'Button' })).toBeInTheDocument();
+    expect(screen.getByText('src/components/ui/Button.tsx')).toBeInTheDocument();
+    expect(screen.getByText(/one primary per view/)).toBeInTheDocument();
+    const specimen = screen.getByRole('region', { name: 'Specimen' });
+    for (const name of ['Primary', 'Secondary', 'Ghost', 'Delete source']) {
+      expect(within(specimen).getAllByRole('button', { name }).length).toBeGreaterThan(0);
+    }
+    expect(within(specimen).getAllByRole('button', { name: 'Secondary' }).some((button) => button.hasAttribute('disabled'))).toBe(true);
+  });
+
+  it('renders every specimen without throwing', async () => {
+    const { COMPONENT_SPECIMENS } = await import('./library');
+    for (const name of COMPONENT_SPECIMENS.keys()) {
+      const { unmount } = renderStudio(`/design/components/${name}`);
+      expect(screen.getByRole('heading', { level: 1, name })).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it('says so for a primitive that does not exist', () => {
+    renderStudio('/design/components/Nope');
+    expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();
+  });
+});

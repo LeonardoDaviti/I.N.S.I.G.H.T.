@@ -94,3 +94,19 @@ export function railGroups(
     { label: 'Parked', items: [...under('parked')].sort(byOrder([])).map(link) },
   ];
 }
+
+export interface InventoryRule {
+  /** The first cell: the component(s) and their variants. */
+  use: string;
+  do: string;
+  dont: string;
+}
+
+/** A primitive's row in the component inventory (system/components.md), by its name in the first cell. */
+export function inventoryRule(inventory: string, name: string): InventoryRule | undefined {
+  for (const line of inventory.split('\n')) {
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length === 3 && cells[0].includes(`\`${name}\``)) return { use: cells[0], do: cells[1], dont: cells[2] };
+  }
+  return undefined;
+}

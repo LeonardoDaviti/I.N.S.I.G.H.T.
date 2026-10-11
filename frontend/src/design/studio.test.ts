@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseDoc } from './coverage';
-import { docBody, docHref, docTitle, railGroups } from './studio';
+import { docBody, docHref, docTitle, inventoryRule, railGroups } from './studio';
 
 describe('a studio doc', () => {
   const doc = parseDoc('pages/reader.md', '```meta\nkind: page\nstates: normal\n```\n\n# Reader\n\nCode: `pages/ReaderPage.tsx`.\n');
@@ -62,5 +62,20 @@ describe('the real docs', () => {
     expect(new Set(hrefs).size).toBe(DOCS.length);
     const reachable = railGroups(DOCS, [], []).flatMap((group) => group.items.flatMap((item) => [item, ...(item.children ?? [])]));
     expect(hrefs.filter((href) => !reachable.some((item) => item.href === href))).toEqual([]);
+  });
+});
+
+describe('a primitive\'s rule', () => {
+  const inventory = [
+    '| Component | Do | Don\'t |',
+    '| --- | --- | --- |',
+    '| `Button` (`primary` inverted; `sm`/`md`) | one primary per view | coloured fills |',
+    '| `Dialog`, `Sheet` | Radix; scrim | glass on glass |',
+  ].join('\n');
+
+  it('is its row in the component inventory, found by its name in the first cell', () => {
+    expect(inventoryRule(inventory, 'Sheet')).toEqual({ use: '`Dialog`, `Sheet`', do: 'Radix; scrim', dont: 'glass on glass' });
+    expect(inventoryRule(inventory, 'Button')?.do).toBe('one primary per view');
+    expect(inventoryRule(inventory, 'BackLink')).toBeUndefined();
   });
 });

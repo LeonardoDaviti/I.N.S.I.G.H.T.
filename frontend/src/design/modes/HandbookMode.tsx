@@ -6,6 +6,7 @@ import DocView from '../handbook/DocView';
 import NotFound from '../handbook/NotFound';
 import PageSpecimen from '../handbook/PageSpecimen';
 import { SystemDoc, SystemOverview } from '../handbook/SystemPage';
+import { ComponentIndex, ComponentPage } from '../handbook/ComponentPage';
 
 const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
 
@@ -52,7 +53,8 @@ export default function HandbookMode() {
           <Route path="decisions" element={<DocAt href="/design/decisions" />} />
           <Route path="system" element={<SystemOverview />} />
           <Route path="system/:slug" element={<SystemDoc />} />
-          <Route path="components" element={<DocAt href="/design/components" />} />
+          <Route path="components" element={<ComponentIndex />} />
+          <Route path="components/:name" element={<ComponentPage />} />
           <Route path="pages/:slug" element={<PageDoc section="pages" />} />
           <Route path="parked/:slug" element={<PageDoc section="parked" />} />
           <Route path="*" element={<NotFound />} />

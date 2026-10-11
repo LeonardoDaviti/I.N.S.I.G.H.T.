@@ -15,7 +15,7 @@ export function documentedTokens(text: string): DocumentedToken[] {
   return [...text.matchAll(/^\|\s*`(--[\w-]+)`\s*\|\s*(.*?)\s*\|/gm)].map((match) => ({ name: match[1], role: match[2] }));
 }
 
-/** `18 18 18` → `#121212`; any other value (an alpha, an empty string) as written. */
+/** An RGB channel triplet (`18 18 18`) as six-digit hex; any other value (an alpha, an empty string) as written. */
 export function channelsToHex(value: string): string {
   const channels = value.trim().split(/\s+/);
   if (channels.length !== 3 || !channels.every((channel) => /^\d{1,3}$/.test(channel))) return value.trim();
