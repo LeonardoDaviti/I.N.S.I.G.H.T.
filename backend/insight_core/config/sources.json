@@ -9,7 +9,15 @@
             "enabled": true,
             "sources": [
                 {
+                    "id": "/r/MachineLearning/",
+                    "state": "enabled"
+                },
+                {
                     "id": "r/LocalLLaMA",
+                    "state": "enabled"
+                },
+                {
+                    "id": "r/unsloth/",
                     "state": "enabled"
                 }
             ]
@@ -18,83 +26,255 @@
             "enabled": true,
             "sources": [
                 {
-                    "id": "http://export.arxiv.org/api/query?search_query=abs:%22augmented+reality%22+AND+abs:waveguide&sortBy=submittedDate&sortOrder=descending&max_results=30",
+                    "id": "http://antirez.com/rss",
                     "state": "enabled"
                 },
                 {
-                    "id": "http://export.arxiv.org/api/query?search_query=abs:%22smart+glasses%22&sortBy=submittedDate&sortOrder=descending&max_results=30",
+                    "id": "http://blog.avas.space/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://9to5google.com/guides/android-xr/feed/",
+                    "id": "http://www.incompleteideas.net/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://about.fb.com/news/feed/",
+                    "id": "https://addyo.substack.com/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://blog.google/products/platforms-devices/rss/",
+                    "id": "https://aella.substack.com/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://displaydaily.com/feed/",
+                    "id": "https://andrewtrask.substack.com/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/anthropic-sdk-python/releases.atom",
+                    "id": "https://anildash.com/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/anthropic-sdk-typescript/releases.atom",
+                    "id": "https://arena.ai/blog/rss/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-code/commits.atom",
+                    "id": "https://aresluna.org/main.rss",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-code/releases.atom",
+                    "id": "https://beej.us/blog/rss.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-cookbooks/commits.atom",
+                    "id": "https://bernsteinbear.com/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/claude-quickstarts/commits.atom",
+                    "id": "https://berthub.eu/articles/index.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/courses/commits.atom",
+                    "id": "https://blog.ai-futures.org/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/skills/commits.atom",
+                    "id": "https://blog.jim-nielsen.com/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/anthropics/skills/releases.atom",
+                    "id": "https://blog.miguelgrinberg.com/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/modelcontextprotocol/docs/commits.atom",
+                    "id": "https://blog.ncase.me/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/commits.atom",
+                    "id": "https://blog.pixelmelt.dev/rss/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom",
+                    "id": "https://blog.samaltman.com/posts.atom",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://ir.vuzix.com/news-events/press-releases/rss",
+                    "id": "https://bogdanthegeek.github.io/blog/index.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://kaitchup.substack.com/",
+                    "id": "https://borretti.me/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://brutecat.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://buttondown.com/hillelwayne/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://caffeineandlasers.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://chadnauseam.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://computer.rip/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://creatoreconomy.so/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://danielchasehooper.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://danieldelaney.net/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://danielmiessler.com/feed.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://danielwirtz.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://danluu.com/atom.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://daringfireball.net/feeds/main",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://darioamodei.com",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://devblogs.microsoft.com/oldnewthing/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://dfarq.homeip.net/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://dynomight.net/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://eli.thegreenplace.net/feeds/all.atom.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://entropicthoughts.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://epochai.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://ericmigi.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://evanhahn.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://fabiensanglard.net/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://feed.tedium.co/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://feeds.feedburner.com/academyofideas",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://filipesilva.github.io/paulgraham-rss/feed.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://garymarcus.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://geohot.github.io/blog/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://gilesthomas.com/feed/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://grantslatton.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://guzey.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://gwern.net",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://gwern.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://herman.bearblog.dev/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://hey.paris/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://huggingface.co/blog/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://hugotunius.se/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://huyenchip.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://idiallo.com/feed.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://it-notes.dragas.net/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://jayd.ml/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://joanwestenberg.com/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://jyn.dev/atom.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://kaitchup.substack.com/feed",
                     "state": "enabled"
                 },
                 {
@@ -102,71 +282,443 @@
                     "state": "enabled"
                 },
                 {
-                    "id": "https://kguttag.com/feed/",
+                    "id": "https://karpathy.github.io/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://lexfridman.com/feed/podcast/",
+                    "id": "https://karpathy.medium.com/feed",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://mixed-news.com/en/feed/",
+                    "id": "https://keygen.sh/blog/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://rss.arxiv.org/rss/cs.AI",
-                    "state": "enabled",
-                    "in_main_digest": false
+                    "id": "https://krebsonsecurity.com/feed/",
+                    "state": "enabled"
                 },
                 {
-                    "id": "https://rss.arxiv.org/rss/cs.CL",
-                    "state": "enabled",
-                    "in_main_digest": false
+                    "id": "https://lcamtuf.substack.com/feed",
+                    "state": "enabled"
                 },
                 {
-                    "id": "https://rss.arxiv.org/rss/cs.LG",
-                    "state": "enabled",
-                    "in_main_digest": false
+                    "id": "https://letter.visualgrowth.com/feed",
+                    "state": "enabled"
                 },
                 {
-                    "id": "https://rss.arxiv.org/rss/physics.optics",
-                    "state": "enabled",
-                    "in_main_digest": false
+                    "id": "https://lilianweng.github.io/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://lucumr.pocoo.org/feed.atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://mariozechner.at/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://martinalderson.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://matduggan.com/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://matklad.github.io/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://matthewrocklin.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://maurycyz.com/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://micahflee.com/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://michael.stapelberg.ch/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://minimaxir.com/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://mitchellh.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://mjg59.dreamwidth.org/data/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://ncase.me/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nesbitt.io/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://news.smol.ai/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://ngrok.com/blog/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nintil.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/_akhaliq/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/_philschmid/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/danielhanchen/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/ggerganov/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/gordic_aleksa/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/karpathy/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/mrdbourke/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/predict_addict/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/sama/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nitter.local/steipete/rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://nvidianews.nvidia.com/releases.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://oldvcr.blogspot.com/feeds/posts/default",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://overreacted.io/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://philiplaine.com/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://pluralistic.net/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://rachelbythebay.com/w/atom.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://rakhim.exotext.com/rss.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://recsys.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://refactoringenglish.com/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://research.google/blog/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://shkspr.mobi/blog/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://simone.org/feed/",
+                    "state": "enabled"
                 },
                 {
                     "id": "https://simonwillison.net/atom/everything/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://skarredghost.com/feed/",
+                    "id": "https://sive.rs/en.atom",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://techcrunch.com/tag/smart-glasses/feed/",
+                    "id": "https://skyfall.dev/rss.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://tg.i-c-a.su/rss/denissexy?limit=50",
+                    "id": "https://steipete.me/rss.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://tg.i-c-a.su/rss/seeallochnaya?limit=50",
+                    "id": "https://steveblank.com/feed/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.androidauthority.com/tag/smart-glasses/feed/",
+                    "id": "https://susam.net/feed.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.apple.com/newsroom/rss-feed.rss",
+                    "id": "https://tala.bearblog.dev/feed/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.auganix.org/feed/",
+                    "id": "https://telegram.local/rss/RecSysChannel?limit=50",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.digilens.com/feed/",
+                    "id": "https://telegram.local/rss/abstractDL?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/adel_and_ml?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/ai_newz?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/aimastersme?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/andgein_notes?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/aostrikov_ai_agents?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/bminaiev_blog?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/countwithsasha?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/data_secrets?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/denissexy?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/dev_salikhov?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/epsiloncorrect?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/evilfreelancer?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/gonzo_ML?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/grokaem_seby?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/inforetriever?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/j_links?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/llm_under_hood?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/nadlskom?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/neuraldeep?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/nlp_daily?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/nlpwanderer?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/nn_for_science?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/optorepost?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/optozorax_dev?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/quant_prune_distill?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/recsys_for_all?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/researchoshnaya?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/rybolos_channel?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/seeallochnaya?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/staniverse?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/theworldisnoteasy?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/toshoseti?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://telegram.local/rss/turboproject?limit=50",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://terriblesoftware.org/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://thesalt.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://timsh.org/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://tomrenner.com/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://utcc.utoronto.ca/~cks/space/blog/?atom",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://vas3k.blog/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://worksonmymachine.substack.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.abortretry.fail/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.chiark.greenend.org.uk/~sgtatham/quasiblog/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.chinatalk.media/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.construction-physics.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.davd.io/index.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.deeplearning.ai/the-batch/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.downtowndougbrown.com/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.dwarkesh.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.experimental-history.com/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.filfre.net/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.geoffreylitt.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.jeffgeerling.com/blog.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.johndcook.com/blog/feed/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.lesswrong.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.mrdbourke.com/rss/",
                     "state": "enabled"
                 },
                 {
@@ -174,47 +726,15 @@
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.reddit.com/r/EvenRealities/.rss",
+                    "id": "https://www.philschmid.de/cloud-attention",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.reddit.com/r/RayBanMeta/.rss",
+                    "id": "https://www.philschmid.de/rss",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.reddit.com/r/Spectacles/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/Vuzix/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/Xreal/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/androidxr/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/augmentedreality/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/rokid/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/smartglasses/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.reddit.com/r/viture/.rss",
-                    "state": "enabled"
-                },
-                {
-                    "id": "https://www.roadtovr.com/feed/",
+                    "id": "https://www.righto.com/feeds/posts/default",
                     "state": "enabled"
                 },
                 {
@@ -222,23 +742,39 @@
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.solosglasses.com/blogs/news.atom",
+                    "id": "https://www.swyx.io/rss.xml",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.theverge.com/rss/ar-vr/index.xml",
+                    "id": "https://www.technologyreview.com/feed/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.tomsguide.com/feeds/tag/smart-glasses",
+                    "id": "https://www.tedunangst.com/flak/rss",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.uploadvr.com/rss/",
+                    "id": "https://www.theatlantic.com/feed/author/derek-thompson/",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.vuzix.com/blogs/vuzix-blog.atom",
+                    "id": "https://www.troyhunt.com/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.wheresyoured.at/rss/",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://xania.org/feed",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://xeiaso.net/blog.rss",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://zerotomastery.io/newsletters/machine-learning-monthly/1/",
                     "state": "enabled"
                 }
             ]
@@ -300,95 +836,131 @@
             "enabled": true,
             "sources": [
                 {
-                    "id": "UCoryWpk4QVYKFCJul9KBdyw",
+                    "id": "https://www.youtube.com/@ALEXLAB",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC1xcV34QaE2icXZ21eSvSSw",
+                    "id": "https://www.youtube.com/@AZisk",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC66W1l41kXuASV-UYvC9xzA",
+                    "id": "https://www.youtube.com/@Aitrepreneur",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC766vkQw0Mz3VtXX5XvXxGQ",
+                    "id": "https://www.youtube.com/@AndrejKarpathy",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9oom6va1SHZvVOeQfRPP7A",
+                    "id": "https://www.youtube.com/@Billt_it",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCBJycsmduvYEL83R_U4JriQ",
+                    "id": "https://www.youtube.com/@DavidOndrej",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCE0X7OeFSH-I4nrkSrK-b1A",
+                    "id": "https://www.youtube.com/@DwarkeshPatel",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCEZjO5uG9A9ZxkJihl7wTLA",
+                    "id": "https://www.youtube.com/@Fireship",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCF6jzRJBunf4oOk9gu67KyQ",
+                    "id": "https://www.youtube.com/@GeerlingEngineering",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCG-ooPXjxaOdLwcGyWg0iog",
+                    "id": "https://www.youtube.com/@HuggingFace",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHbx9IUW7eCeJsC4sBCTNBA",
+                    "id": "https://www.youtube.com/@JeffGeerling",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMh4hWRHX_1QZ98UZygR30Q",
+                    "id": "https://www.youtube.com/@Level2Jeff",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMiJRAwDNSNzuYeN2uWa0pA",
+                    "id": "https://www.youtube.com/@LinusTechTips",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCN0FGqUt7e79xKoPAZQ8tww",
+                    "id": "https://www.youtube.com/@NetworkChuck",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCTecoCovL-9_f59o888a1cA",
+                    "id": "https://www.youtube.com/@Pewdiepie",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCVNYx9yT_3OhCnZqwaktXXw",
+                    "id": "https://www.youtube.com/@Protorikis",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCWFKCr40YwOZQx8FHU_ZqqQ",
+                    "id": "https://www.youtube.com/@SwitchedtoLinux",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCXIB_UAu0FBfXPvOuQ_FNHw",
+                    "id": "https://www.youtube.com/@ThePrimeTimeagen",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCYGiWMEIKXL2EhIfPSUSmvg",
+                    "id": "https://www.youtube.com/@TwoMinutePapers",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UChUEPrBybIvZIBjWN7b2xUg",
+                    "id": "https://www.youtube.com/@WelchLabs",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCkLHl6d-nvvIL08aeettG9g",
+                    "id": "https://www.youtube.com/@WolfgangsChannel",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCoUaCoFuwmbJX4Rjq1D7R9w",
+                    "id": "https://www.youtube.com/@YannicKilcher",
                     "state": "enabled"
                 },
                 {
-                    "id": "https://www.youtube.com/feeds/videos.xml?channel_id=UCs8BFKYBBfEE6Sfj7zh9kOA",
+                    "id": "https://www.youtube.com/@azisk",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@donatocapitella",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@hacksmith",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@handsonkatie",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@https://www.youtube.com/channel/UC__dUuqF5w4OnbW221JxmKg",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@juliaturc1",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@lexfridman",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@netstalkers",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@sideofburritos",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://www.youtube.com/@veritasium",
                     "state": "enabled"
                 }
             ]
