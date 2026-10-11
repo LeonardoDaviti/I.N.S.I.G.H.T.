@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 
 import { frameScenarios, type FrameScenario } from '../fixtures/scenarios';
 import { bootFrame, type BootedFrame } from './boot';
 import FrameRoot from './FrameRoot';
+import { WALK, WALK_MESSAGE } from '../wall/walk';
 
 let booted: BootedFrame | null = null;
 
@@ -67,4 +68,56 @@ describe('every frame scenario', () => {
       expect(events.filter((event) => event.kind === 'unmocked')).toEqual([]);
     },
   );
+});
+
+describe('a walk frame', () => {
+  // jsdom has no layout: ⌘K scrolls its active option into view.
+  beforeAll(() => { Element.prototype.scrollIntoView ??= () => {}; });
+
+  /** What the frame posts to the studio (its parent; in jsdom, itself). */
+  function inbox() {
+    const messages: { type: string; step?: number; ok?: boolean; error?: string; path?: string }[] = [];
+    const listen = (event: MessageEvent) => { if (typeof event.data?.type === 'string') messages.push(event.data); };
+    window.addEventListener('message', listen);
+    return { messages, stop: () => window.removeEventListener('message', listen) };
+  }
+
+  const send = (step: number) => window.dispatchEvent(new MessageEvent('message', {
+    data: { type: WALK_MESSAGE.run, step }, origin: window.location.origin, source: window,
+  }));
+
+  it('walks the real pages on fixtures: post, back, source, its sheet, closed, a track by ⌘K, the feed', async () => {
+    const { messages, stop } = inbox();
+    const frame = boot('reader', 'normal');
+    render(<FrameRoot booted={frame} walk />);
+    await waitFor(() => expect(messages.some((message) => message.type === WALK_MESSAGE.ready)).toBe(true));
+
+    const seen: Record<string, () => void> = {
+      'open-post': () => expect(screen.getByRole('button', { name: /^Back/ })).toBeInTheDocument(),
+      'source-name': () => expect(within(screen.getByRole('dialog')).getAllByText(/Simon Willison/).length).toBeGreaterThan(0),
+      'close-sheet': () => expect(screen.queryByRole('dialog')).toBeNull(),
+      track: () => expect(screen.getAllByText('AI engineering').length).toBeGreaterThan(0),
+      home: () => expect(screen.getByRole('link', { name: /Prompt caching/ })).toBeInTheDocument(),
+    };
+    for (const [index, step] of WALK.entries()) {
+      send(index);
+      await waitFor(() => expect(messages.find((message) => message.type === WALK_MESSAGE.done && message.step === index)).toBeDefined(), { timeout: 8_000 });
+      const done = messages.find((message) => message.type === WALK_MESSAGE.done && message.step === index)!;
+      expect(done, `${step.id}: ${done.error}`).toMatchObject({ ok: true });
+      seen[step.id]?.();
+      if (index === 1) expect(done.path).toMatch(/^\/posts\//);
+    }
+    stop();
+  }, 30_000);
+
+  it('ignores walk messages unless it is a walk frame', async () => {
+    const { messages, stop } = inbox();
+    const frame = boot('reader', 'normal');
+    render(<FrameRoot booted={frame} />);
+    await settle(frame);
+    send(1);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(messages.filter((message) => message.type !== WALK_MESSAGE.run)).toEqual([]);
+    stop();
+  });
 });

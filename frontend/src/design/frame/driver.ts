@@ -7,6 +7,8 @@ export interface FrameDriver {
   /** The first element matching `selector` (and `text`, when given), once it exists. */
   find(selector: string, text?: RegExp): Promise<HTMLElement>;
   click(selector: string, text?: RegExp): Promise<void>;
+  /** Resolves once no element matches `selector` (a dialog closed). */
+  gone(selector: string): Promise<void>;
   /** A keydown on the document (or the element matching `selector`). */
   press(key: KeyboardEventInit & { key: string }, selector?: string): Promise<void>;
 }
@@ -28,8 +30,19 @@ export function createFrameDriver(doc: Document, timeoutMs = STEP_TIMEOUT_MS): F
     look();
   });
 
+  const gone = (selector: string) => new Promise<void>((resolve, reject) => {
+    const started = Date.now();
+    const look = () => {
+      if (!doc.querySelector(selector)) resolve();
+      else if (Date.now() - started > timeoutMs) reject(new Error(`frame: ${selector} is still there`));
+      else setTimeout(look, 30);
+    };
+    look();
+  });
+
   return {
     find,
+    gone,
     async click(selector, text) {
       (await find(selector, text)).click();
     },

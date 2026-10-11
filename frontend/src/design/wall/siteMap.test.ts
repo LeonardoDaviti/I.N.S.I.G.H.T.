@@ -4,6 +4,8 @@ import { matchPath } from 'react-router-dom';
 import appSource from '../../App.tsx?raw';
 import { appRoutes } from '../coverage';
 import { frameScenario } from '../fixtures/scenarios';
+import { scopeFromRoute } from '../../lib/feedContext';
+import { sourceId } from '../fixtures/sites';
 import { SITE_EDGES, SITE_NODES, siteNode } from './siteMap';
 
 const ROUTES = appRoutes(appSource);
@@ -21,6 +23,14 @@ describe('the site map', () => {
     for (const node of SITE_NODES) expect(frameScenario(node.page, node.state), node.id).toBeDefined();
   });
 
+  it('opens each page at a URL the app keeps: a scoped reader is not sent back to the feed', () => {
+    for (const node of SITE_NODES) {
+      const { pathname } = new URL(frameScenario(node.page, node.state)!.url, 'http://x');
+      const scoped = matchPath('/read/:scopeKind/:scopeId?', pathname);
+      if (scoped) expect(scopeFromRoute(scoped.params.scopeKind, scoped.params.scopeId), node.id).not.toBeNull();
+    }
+  });
+
   it('joins only pages it has', () => {
     for (const edge of SITE_EDGES) {
       expect(siteNode(edge.from), edge.id).toBeDefined();
@@ -32,7 +42,7 @@ describe('the site map', () => {
     const open = SITE_EDGES.find((edge) => edge.from === 'feed' && edge.to === 'post');
     expect(open?.label).toBe('click a title');
     expect(SITE_EDGES.find((edge) => edge.from === 'post' && edge.to === 'feed')?.label).toBe('back / esc');
-    expect(SITE_EDGES.find((edge) => edge.from === 'source-feed' && edge.to === 'source-sheet')?.href).toBe('/settings/sources?source=s-simon');
+    expect(SITE_EDGES.find((edge) => edge.from === 'source-feed' && edge.to === 'source-sheet')?.href).toBe(`/settings/sources?source=${sourceId('s-simon')}`);
     expect(SITE_EDGES.find((edge) => edge.from === 'track-feed' && edge.to === 'sources')?.href).toMatch(/^\/settings\/sources\?track=/);
   });
 

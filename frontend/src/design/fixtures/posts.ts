@@ -5,6 +5,7 @@
  */
 import type { Post, PostDetailResponse } from '../../services/api';
 import { postFixtureDetail } from '../../pages/PostDetailPage.fixtures';
+import { sourceId } from './sites';
 
 const HOUR = 3_600_000;
 
@@ -13,7 +14,7 @@ function detail(id: string, post: Partial<Post>, now: Date): PostDetailResponse 
     success: true,
     post: {
       id,
-      source_id: 's-simon',
+      source_id: sourceId('s-simon'),
       title: 'Prompt caching is now generally available',
       content: '',
       content_html: '',
@@ -82,7 +83,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
     case 'media':
       return detail('p-media', {
         title: 'Hands-on: the lightest AR glasses yet',
-        source_id: 's-roadtovr',
+        source_id: sourceId('s-roadtovr'),
         source: 'https://www.roadtovr.com/feed/',
         source_display_name: 'Road to VR',
         content_html: '<p>We spent an afternoon with the new glasses. The frames weigh 38 grams, the display sits in the lower half of the right lens, and the battery lasts a working day.</p><p>The pictures below are from the demo room; the video is the maker’s own.</p>',
@@ -103,7 +104,7 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
     case 'missing-title':
       return detail('p-missing-title', {
         title: '',
-        source_id: 's-newz',
+        source_id: sourceId('s-newz'),
         source: 'https://t.me/s/ai_newz',
         source_display_name: 'ai_newz',
         platform: 'telegram',

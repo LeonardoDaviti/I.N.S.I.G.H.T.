@@ -12,7 +12,7 @@ import type { CredentialsResponse } from '../../services/api';
 import { credentials, geminiView, publicView, substackView, telegramView } from '../../components/connections/fixtures';
 import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
-import { HOUR, MINUTE, TRACKS, at, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
+import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
 import { postStateDetail } from './posts';
 
 export interface FrameScenario {
@@ -20,7 +20,7 @@ export interface FrameScenario {
   state: string;
   /** One line for the studio: what this state shows. */
   label: string;
-  /** The app URL the frame renders, e.g. `/read/folder/f-ai`. */
+  /** The app URL the frame renders, e.g. `/read/folder/<id>`. */
   url: string;
   /** The routes that answer this state's API calls, first match wins. */
   routes: (now: Date) => FixtureRoute[];
@@ -74,7 +74,7 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'reader', state: 'error', label: 'Could not load the feed, with Retry', url: '/', routes: failing, documented: true },
   { page: 'reader', state: 'worst', label: 'Long, unbroken, RTL and CJK titles; 1,000+ items', url: '/', routes: site(worstSite), documented: true },
   { page: 'reader', state: 'track', label: 'Scoped to one track', url: `/read/folder/${TRACKS.ai.id}`, routes: site(normalSite), documented: false },
-  { page: 'reader', state: 'source', label: 'Scoped to one source', url: '/read/source/s-simon', routes: site(normalSite), documented: false },
+  { page: 'reader', state: 'source', label: 'Scoped to one source', url: `/read/source/${sourceId('s-simon')}`, routes: site(normalSite), documented: false },
 
   // ---- post ----
   { page: 'post', state: 'article', label: 'A text post: byline, title, prose', url: '/posts/p-article', routes: postRoutes('article'), documented: true },
@@ -93,10 +93,10 @@ const SCENARIOS: FrameScenario[] = [
   {
     page: 'sources', state: 'bulk-selection', label: 'Three rows checked, the bulk bar showing', url: '/settings/sources', routes: site(normalSite), documented: true,
     setup: async (frame) => {
-      for (const id of ['s-simon', 's-anthropic', 's-latent']) await frame.click(`li[data-source-id="${id}"] input[type="checkbox"]`);
+      for (const slug of ['s-simon', 's-anthropic', 's-latent']) await frame.click(`li[data-source-id="${sourceId(slug)}"] input[type="checkbox"]`);
     },
   },
-  { page: 'sources', state: 'source-sheet', label: 'The source sheet, open', url: '/settings/sources?source=s-newz', routes: site(normalSite), documented: true },
+  { page: 'sources', state: 'source-sheet', label: 'The source sheet, open', url: `/settings/sources?source=${sourceId('s-newz')}`, routes: site(normalSite), documented: true },
   {
     page: 'sources', state: 'connections-set', label: 'Every provider working', url: '/settings/sources?tab=connections', documented: true,
     routes: connections((now) => credentials(
@@ -180,7 +180,7 @@ function worstSiteJobs(s: Site, now: Date): Site {
     decisions: { fetch_due: 14, skip_not_due: 76, skip_unavailable: 3 },
     posts_inserted: 41,
     failures: [
-      { source_id: 's-newz', display_name: 'ai_newz', stage: 'connector', error: 'FloodWaitError: A wait of 1260 seconds is required (caused by GetHistoryRequest)' },
+      { source_id: sourceId('s-newz'), display_name: 'ai_newz', stage: 'connector', error: 'FloodWaitError: A wait of 1260 seconds is required (caused by GetHistoryRequest)' },
       { source_id: 's-dense-6', display_name: 'Lil’Log', stage: 'fetch', error: LONG_ERROR },
       { source_id: 's-dense-35', display_name: 'Linus Tech Tips', stage: 'save', error: 'deadlock detected' },
     ],

@@ -50,4 +50,13 @@ describe('<Frame>', () => {
     expect(frame.style.transform).toBe('scale(1)');
     expect(frame.parentElement!.style.height).toBe('900px');
   });
+
+  it('as a walk frame, asks the route to take walk steps and hands the studio its iframe', () => {
+    stubResizeObserver();
+    const iframe = { current: null as HTMLIFrameElement | null };
+    render(<Frame page="reader" state="normal" interactive walk iframeRef={iframe} />);
+    const frame = screen.getByTitle(/reader · normal/);
+    expect(frame).toHaveAttribute('src', '/design/frame/reader/normal?theme=dark&data=fixtures&walk=1');
+    expect(iframe.current).toBe(frame);
+  });
 });

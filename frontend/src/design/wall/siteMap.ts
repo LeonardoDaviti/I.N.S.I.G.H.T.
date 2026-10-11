@@ -11,7 +11,7 @@ import { CONNECTIONS_PATH } from '../../components/connections/connectionStatus'
 import { folderReadPath, scopePath, sourceSettingsHref, trackSettingsHref } from '../../lib/feedContext';
 import { sourcesIngestionHref } from '../../lib/ingestionNavigation';
 import { DOCS } from '../library';
-import { TRACKS } from '../fixtures/sites';
+import { TRACKS, sourceId } from '../fixtures/sites';
 
 export interface SiteNode {
   id: string;
@@ -48,7 +48,7 @@ function cites(page: string): number[] {
   return doc ? citedPrinciples(doc.text) : [];
 }
 
-const SOURCE = 's-simon';
+const SOURCE = sourceId('s-simon');
 const TRACK = TRACKS.ai.id;
 const nav = (key: string) => NAV_ITEMS.find((item) => item.key === key)!.to;
 
