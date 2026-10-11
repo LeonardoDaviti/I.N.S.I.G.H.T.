@@ -68,7 +68,6 @@ export function useSourceDirectory(withUrls: boolean): { sources: DirectorySourc
     queryKey: [...SOURCE_URLS_KEY],
     queryFn: async (): Promise<Map<string, string>> => {
       const response = await api.getSourcesWithSettings();
-      if (!response.success) throw new Error(response.error || 'Could not load source URLs.');
       return new Map(response.sources.map((source) => [source.id, source.handle_or_url]));
     },
     enabled: withUrls,

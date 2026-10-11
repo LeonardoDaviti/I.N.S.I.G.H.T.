@@ -2,8 +2,8 @@
  * The fixture transport (Design Studio D4): a `fetch` that answers the app's
  * API calls from fixtures, so a frame renders the real page on sample data.
  * Installed on the frame's own window only; the studio's `fetch` is never
- * touched. Every API call in the app goes through `fetch` (services/api.ts,
- * services/trackApi.ts), so the page code doesn't change.
+ * touched. Every API call in the app goes through `fetch` (lib/request.ts),
+ * so the page code doesn't change.
  *
  * - A GET answers from the first route whose method and path match.
  * - A GET with no route is reported (`unmocked`) and answered 501, or, with
@@ -12,7 +12,7 @@
  *   mode and to any origin: it is reported (`write`) and answered by its route
  *   or a fake OK.
  * - An API call is `/api/…` on the frame's origin or under `VITE_API_URL`
- *   (`apiBase`), where services/api.ts sends it when that is set.
+ *   (`apiBase`), where lib/request.ts sends it when that is set.
  * - A read outside the API passes through untouched.
  */
 
@@ -62,7 +62,7 @@ export interface TransportOptions {
   apiBase?: string;
 }
 
-/** The app's `VITE_API_URL`, the base services/api.ts puts before `/api/…`. */
+/** The app's `VITE_API_URL`, the base lib/request.ts puts before `/api/…`. */
 export const APP_API_BASE: string = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || '';
 
 const READS = new Set(['GET', 'HEAD']);

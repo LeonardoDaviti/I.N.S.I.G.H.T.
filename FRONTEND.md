@@ -39,9 +39,10 @@ Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`),
 
 ## Adding a feature
 
-1. **Types and the API method** in `services/api.ts`. Mark IX methods throw an `ApiError`
-   (`lib/apiError.ts`) instead of returning `{success: false}`. Background jobs are polled with
-   `lib/jobPolling.ts`.
+1. **Types and the API method** in `services/api.ts`: one line that calls `request` (`lib/request.ts`).
+   It throws an `ApiError` (`lib/apiError.ts`) for a network error, a non-2xx answer or the
+   `{success: false}` envelope. Wrap it in `settle` only for a screen that reads `{success: false, error}`
+   instead of catching. Background jobs are polled with `lib/jobPolling.ts`.
 2. **A hook** in `hooks/` that reads the client through `useApi()` and wraps it in `useQuery` or
    `useMutation`. Export the query key as a constant, so invalidation is greppable:
 

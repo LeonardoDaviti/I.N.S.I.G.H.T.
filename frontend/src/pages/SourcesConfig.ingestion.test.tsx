@@ -8,10 +8,6 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { Api, ArchiveCatalogEntry, ArchiveStatusResponse, JobRun, SchedulerConfig } from '../services/api';
 
-vi.mock('../services/trackApi', () => ({
-  renameTrack: vi.fn().mockResolvedValue(undefined),
-  setTrackMainDigest: vi.fn().mockResolvedValue(undefined),
-}));
 
 const MINUTE = 60_000;
 
@@ -317,7 +313,7 @@ describe('Sources → ingestion tab', () => {
   it('a log that cannot be read says so', async () => {
     setup({
       route: '/settings/sources?tab=ingestion&sub=logs',
-      overrides: { getIngestionLogs: vi.fn().mockResolvedValue({ success: false, error: 'Unsupported log', log: 'application', lines: [] }) },
+      overrides: { getIngestionLogs: vi.fn().mockRejectedValue(new Error('Unsupported log')) },
     });
     const logs = await screen.findByRole('region', { name: 'Log' });
     expect(await within(logs).findByText(/Could not read the log: Unsupported log/)).toBeInTheDocument();

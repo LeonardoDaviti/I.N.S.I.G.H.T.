@@ -1,52 +1,9 @@
-// API service for INSIGHT backend communication
-import { apiErrorFromResponse, errorMessage, isAbortError, toApiError } from '../lib/apiError';
+// The INSIGHT API client: one method per endpoint a screen calls, all through `request`.
 import { JobFailedError, pollJob } from '../lib/jobPolling';
+import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 
-// Use relative base by default (Vite dev proxy will forward /api to backend). Override with VITE_API_URL in production.
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
-
-export interface PostsResponse {
-  success: boolean;
-  posts: Post[];
-  date: string;
-  total: number;
-  source: string;  // "database"
-  error?: string;
-}
-
-export interface PostsBySourceResponse {
-  success: boolean;
-  posts: Post[];
-  source_id: string;
-  total: number;
-  returned?: number;
-  offset?: number;
-  limit?: number | null;
-  has_more?: boolean;
-  error?: string;
-}
-
-export interface SourceWithCount {
-  id: string;
-  handle_or_url: string;
-  display_name: string;  // Display name from settings, fallback to handle_or_url
-  enabled: boolean;
-  post_count: number;
-  priority: number;  // Priority for sorting
-}
-
-export interface PlatformData {
-  sources: SourceWithCount[];
-  total_count: number;
-}
-
-export interface SourcesWithCountsResponse {
-  success: boolean;
-  platforms: Record<string, PlatformData>;  // e.g., { "rss": {...}, "telegram": {...} }
-  total_posts: number;
-  error?: string;
-}
+export type { Envelope };
 
 export interface SourceSettings {
   display_name?: string;
@@ -67,21 +24,16 @@ export interface SourceWithSettings {
   updated_at?: string;
 }
 
-export interface SourceSettingsResponse {
-  success: boolean;
+export interface SourceSettingsResponse extends Envelope {
   source_id: string;
   settings: SourceSettings;
   source?: SourceWithSettings;
-  error?: string;
 }
 
-export interface SourcesWithSettingsResponse {
-  success: boolean;
+export interface SourcesWithSettingsResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
-  error?: string;
 }
-
 
 export interface Post {
   id?: string;
@@ -150,12 +102,6 @@ export interface FeedParams {
   signal?: AbortSignal;
 }
 
-export interface ArchiveResponse {
-  success?: boolean;
-  error?: string;
-  [key: string]: any;
-}
-
 /** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
 export type AvailableBasis = 'exact' | 'upper_bound' | 'estimate' | 'listing_cap' | 'feed_window' | 'unknown';
 
@@ -208,9 +154,7 @@ export interface ArchiveState {
   oldest_published_at?: string | null;
 }
 
-export interface ArchiveStatusResponse {
-  success?: boolean;
-  error?: string;
+export interface ArchiveStatusResponse extends Envelope {
   archive?: ArchiveState;
   /** Missing from a backend older than the source sheet's archive section. */
   support?: ArchiveSupport | null;
@@ -256,9 +200,7 @@ export interface ArchiveCatalogEntry {
   rate_limit?: Record<string, any>;
 }
 
-export interface ArchiveCatalogResponse {
-  success?: boolean;
-  error?: string;
+export interface ArchiveCatalogResponse extends Envelope {
   sources?: ArchiveCatalogEntry[];
   total?: number;
 }
@@ -270,9 +212,7 @@ export interface ArchivePacing {
   batchCooldownSeconds?: number;
 }
 
-export interface LogTailResponse {
-  success?: boolean;
-  error?: string;
+export interface LogTailResponse extends Envelope {
   log?: string;
   available_logs?: string[];
   path?: string;
@@ -470,9 +410,7 @@ export interface RunRequestOptions {
   onAccepted?: (job: JobAccepted) => void;
 }
 
-export interface OperationsOverviewResponse {
-  success?: boolean;
-  error?: string;
+export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
   /** Summary plus the 8 worst rows (Mark IX); use lib/operationsOverview.normalizeSourceHealth. */
@@ -488,76 +426,16 @@ export interface OperationsOverviewResponse {
   stats?: Record<string, any>;
 }
 
-export interface OperationJobResponse {
-  success?: boolean;
-  error?: string;
+export interface OperationJobResponse extends Envelope {
   job?: JobRun | null;
 }
 
-export interface SystemCorpusStatus {
-  total_posts: number;
-  enabled_sources: number;
-  total_sources: number;
-  latest_post_at?: string | null;
-  oldest_post_at?: string | null;
-  latest_fetch_at?: string | null;
-  posts_last_24h: number;
-}
-
-export interface SystemFolderStatus {
-  id: string;
-  name: string;
-  source_count: number;
-  post_count: number;
-}
-
-export interface SystemJobStatus {
-  id: string;
-  job_type: string;
-  status: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-  message?: string | null;
-}
-
-export interface SystemStatusResponse {
-  success: boolean;
-  healthy?: boolean;
-  generated_at?: string;
-  corpus?: SystemCorpusStatus;
-  scheduler?: Partial<SchedulerConfig>;
-  folders?: SystemFolderStatus[];
-  recent_jobs?: SystemJobStatus[];
-  source_health_summary?: { monitored?: number; errors?: number };
-  error?: string;
-}
-
-/** Polling knobs for a request that may come back as a job (202 + job_id). */
-export interface TrackedRequestOptions {
-  timeoutMs?: number;
-  intervalMs?: number;
-  signal?: AbortSignal;
-}
-
-interface AcceptedJobResponse {
-  success?: boolean;
-  accepted?: boolean;
-  job_id?: string;
-  job_type?: string;
-  status?: string;
-  message?: string;
-}
-
-export interface PostDetailResponse {
-  success?: boolean;
-  error?: string;
+export interface PostDetailResponse extends Envelope {
   post?: Post | null;
   reader_state?: ReaderState | null;
 }
 
-export interface PostInteractionResponse {
-  success?: boolean;
-  error?: string;
+export interface PostInteractionResponse extends Envelope {
   post_id?: string;
   event?: Record<string, any> | null;
   reader_state?: ReaderState | null;
@@ -574,21 +452,12 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface RedditCommentsResponse {
-  success?: boolean;
-  error?: string;
+export interface RedditCommentsResponse extends Envelope {
   post_id?: string;
   comments?: RedditComment[];
   comment_count?: number;
   cached?: boolean;
   fetched_at?: string | null;
-}
-
-export interface SyncSourcesResponse {
-  success: boolean;
-  error?: string;
-  message?: string;
-  [key: string]: any;
 }
 
 export interface YouTubeVideoPreview {
@@ -602,9 +471,7 @@ export interface YouTubeVideoPreview {
   source_handle: string;
 }
 
-export interface YouTubeChannelVideosResponse {
-  success?: boolean;
-  error?: string;
+export interface YouTubeChannelVideosResponse extends Envelope {
   channel?: Record<string, any>;
   total_videos?: number;
   videos?: YouTubeVideoPreview[];
@@ -626,825 +493,8 @@ export interface YouTubeWatchProgress {
   updated_at?: string | null;
 }
 
-export interface YouTubeWatchProgressResponse {
-  success?: boolean;
-  error?: string;
+export interface YouTubeWatchProgressResponse extends Envelope {
   progress?: YouTubeWatchProgress | null;
-}
-
-class ApiService {
-  /** One HTTP call. Non-2xx throws `ApiError` (status + the server's clean `detail`);
-   *  a network failure throws `ApiError` with status 0. Mark VIII methods catch this
-   *  and wrap it in `{success: false, error}`; Mark IX methods let it propagate to
-   *  react-query and the `ErrorState` components (§4 error contract). */
-  private async makeRequest<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
-
-    const defaultOptions: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    };
-
-    let response: Response;
-    try {
-      response = await fetch(url, { ...defaultOptions, ...options });
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      throw toApiError(error);
-    }
-
-    if (!response.ok) {
-      throw await apiErrorFromResponse(response);
-    }
-
-    return response.json();
-  }
-
-  private isAcceptedJobResponse(value: unknown): value is AcceptedJobResponse {
-    return Boolean(
-      value
-      && typeof value === 'object'
-      && (value as AcceptedJobResponse).accepted
-      && typeof (value as AcceptedJobResponse).job_id === 'string',
-    );
-  }
-
-  /** Wait for an operation job and resolve with its payload. Throws: `JobFailedError`
-   *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError` when
-   *  `signal` aborts, or the `ApiError` that ended polling. Up to two consecutive
-   *  transient read errors (a backend restart, a 502 from nginx) are tolerated. */
-  async waitForJob<T>(jobId: string, opts?: TrackedRequestOptions): Promise<T> {
-    return pollJob<T>(
-      async (signal) => {
-        const response = await this.makeRequest<OperationJobResponse>(
-          `/api/operations/jobs/${encodeURIComponent(jobId)}`,
-          { signal },
-        );
-        const job = response.job;
-        if (!job) {
-          return { state: 'failed', error: response.error || `Operation job ${jobId} not found` };
-        }
-        if (job.status === 'success') {
-          return { state: 'done', value: (job.payload || {}) as T };
-        }
-        if (job.status === 'failed') {
-          const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
-          return {
-            state: 'failed',
-            error: payloadError || job.message || `Operation ${job.job_type} failed`,
-            value: (job.payload || {}) as T,
-          };
-        }
-        return { state: 'pending' };
-      },
-      {
-        signal: opts?.signal,
-        timeoutMs: Math.max(10_000, opts?.timeoutMs ?? 600_000),
-        intervalMs: Math.max(500, opts?.intervalMs ?? 1_500),
-      },
-    );
-  }
-
-  /** A request that may answer 202 with a job id; polls the job when it does.
-   *  Keeps the Mark VIII contract for its callers: failures, timeouts and polling
-   *  errors resolve as `{success: false, error}` (the failed job's payload is
-   *  spread in, as before). Only an abort rejects. */
-  private async makeTrackedRequest<T extends { success?: boolean; error?: string }>(
-    url: string,
-    options: RequestInit,
-    opts?: TrackedRequestOptions,
-  ): Promise<T> {
-    const requestOptions = opts?.signal ? { ...options, signal: opts.signal } : options;
-    const response = await this.makeRequest<T | AcceptedJobResponse>(url, requestOptions);
-    if (!this.isAcceptedJobResponse(response)) {
-      return response as T;
-    }
-    try {
-      const payload = await this.waitForJob<Record<string, unknown>>(response.job_id!, opts);
-      return { success: true, ...payload } as unknown as T;
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      const payload = error instanceof JobFailedError && error.value && typeof error.value === 'object'
-        ? error.value as Record<string, unknown>
-        : {};
-      return { ...payload, success: false, error: errorMessage(error) } as unknown as T;
-    }
-  }
-
-
-  async syncSources(direction: 'json-to-db' | 'db-to-json'): Promise<SyncSourcesResponse> {
-    try {
-      return await this.makeRequest<SyncSourcesResponse>(`/api/sources/sync/${direction}`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to sync sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to sync sources',
-      };
-    }
-  }
-
-  async getDailyPosts(date: string): Promise<PostsResponse> {
-    try {
-      const response = await this.makeRequest<PostsResponse>(`/api/posts/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get daily posts:', error);
-      return {
-        success: false,
-        posts: [],
-        date: date,
-        total: 0,
-        source: 'database',
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getPostsBySource(
-    sourceId: string,
-    options?: { limit?: number; offset?: number },
-  ): Promise<PostsBySourceResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (options?.limit != null) params.set('limit', String(options.limit));
-      if (options?.offset != null) params.set('offset', String(options.offset));
-      const query = params.toString();
-      const response = await this.makeRequest<PostsBySourceResponse>(
-        `/api/posts/source/${sourceId}${query ? `?${query}` : ''}`,
-      );
-      return response;
-    } catch (error) {
-      console.error('Failed to get posts by source:', error);
-      return {
-        success: false,
-        posts: [],
-        source_id: sourceId,
-        total: 0,
-        returned: 0,
-        offset: options?.offset || 0,
-        limit: options?.limit ?? null,
-        has_more: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getPostDetail(postId: string): Promise<PostDetailResponse> {
-    try {
-      return await this.makeRequest<PostDetailResponse>(`/api/posts/item/${postId}`);
-    } catch (error) {
-      console.error('Failed to get post detail:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post: null,
-      };
-    }
-  }
-
-  async recordPostOpen(postId: string, metadata?: Record<string, any>): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, {
-        method: 'POST',
-        body: JSON.stringify({ metadata }),
-      });
-    } catch (error) {
-      console.error('Failed to record post open:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async recordPostReadingSession(
-    postId: string,
-    durationSeconds: number,
-    metadata?: Record<string, any>,
-  ): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, {
-        method: 'POST',
-        body: JSON.stringify({ durationSeconds, metadata }),
-      });
-    } catch (error) {
-      console.error('Failed to record post reading session:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async togglePostFavorite(postId: string, favorited: boolean): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, {
-        method: 'POST',
-        body: JSON.stringify({ favorited }),
-      });
-    } catch (error) {
-      console.error('Failed to toggle post favorite:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async fetchRedditComments(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsResponse> {
-    try {
-      return await this.makeTrackedRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
-        method: 'POST',
-        body: JSON.stringify({
-          limit: opts?.limit ?? 80,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to fetch Reddit comments:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        comments: [],
-      };
-    }
-  }
-
-  async getSourcesWithCounts(): Promise<SourcesWithCountsResponse> {
-    try {
-      const response = await this.makeRequest<SourcesWithCountsResponse>('/api/sources/with-counts');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources with counts:', error);
-      return {
-        success: false,
-        platforms: {},
-        total_posts: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getSourceSettings(sourceId: string): Promise<SourceSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get source settings:', error);
-      return {
-        success: false,
-        source_id: sourceId,
-        settings: {},
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async updateSourceSettings(sourceId: string, settings: SourceSettings): Promise<SourceSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, {
-        method: 'PUT',
-        body: JSON.stringify(settings),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update source settings:', error);
-      return {
-        success: false,
-        source_id: sourceId,
-        settings: {},
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getSourcesWithSettings(): Promise<SourcesWithSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourcesWithSettingsResponse>('/api/sources/with-settings');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources with settings:', error);
-      return {
-        success: false,
-        sources: [],
-        total: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getArchiveStatus(sourceId: string): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/status`);
-    } catch (error) {
-      console.error('Failed to get archive status:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getArchiveCatalog(): Promise<ArchiveCatalogResponse> {
-    try {
-      return await this.makeRequest<ArchiveCatalogResponse>('/api/archive/catalog');
-    } catch (error) {
-      console.error('Failed to get archive catalog:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        sources: [],
-        total: 0,
-      };
-    }
-  }
-
-  async planArchive(
-    sourceId: string,
-    desiredPosts?: number,
-    options?: {
-      resume?: boolean;
-      pageDelaySeconds?: number;
-      batchSize?: number;
-      batchCooldownSeconds?: number;
-    },
-  ): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/plan`, {
-        method: 'POST',
-        body: JSON.stringify({
-          desiredPosts,
-          resume: options?.resume ?? true,
-          pageDelaySeconds: options?.pageDelaySeconds,
-          batchSize: options?.batchSize,
-          batchCooldownSeconds: options?.batchCooldownSeconds,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to plan archive:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async runArchive(
-    sourceId: string,
-    desiredPosts?: number,
-    options?: {
-      resume?: boolean;
-      pageDelaySeconds?: number;
-      batchSize?: number;
-      batchCooldownSeconds?: number;
-    },
-  ): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/run`, {
-        method: 'POST',
-        body: JSON.stringify({
-          desiredPosts,
-          resume: options?.resume ?? true,
-          pageDelaySeconds: options?.pageDelaySeconds,
-          batchSize: options?.batchSize,
-          batchCooldownSeconds: options?.batchCooldownSeconds,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to run archive:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  // ---- The source sheet's archive section (Mark IX). These throw (ApiError) instead of
-  // resolving {success:false}; a backend without `support` still answers the status.
-
-  async getSourceArchive(sourceId: string): Promise<ArchiveStatusResponse> {
-    const response = await this.makeRequest<ArchiveStatusResponse>(`/api/archive/${encodeURIComponent(sourceId)}/status`);
-    if (response.success === false) throw new Error(response.error || 'Could not read the archive status');
-    return response;
-  }
-
-  /**
-   * Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
-   * `pacing` overrides the source's own for this plan.
-   */
-  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> {
-    const response = await this.makeRequest<{ success?: boolean; error?: string; archive?: ArchivePlan }>(
-      `/api/archive/${encodeURIComponent(sourceId)}/plan`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, ...pacing }) },
-    );
-    if (!response.success || !response.archive) throw new Error(response.error || 'Could not plan the archive');
-    return response.archive;
-  }
-
-  /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
-  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> {
-    const response = await this.makeRequest<{ success?: boolean; error?: string; job_id?: string }>(
-      `/api/archive/${encodeURIComponent(sourceId)}/run`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true, ...pacing }) },
-    );
-    if (!response.success || !response.job_id) throw new Error(response.error || 'Could not start the archive');
-    return { job_id: response.job_id };
-  }
-
-  // ---- Mark IX ingestion (spec §4). These throw (ApiError, JobTimeoutError, AbortError)
-  // instead of resolving {success:false}; a finished run resolves with its RunReport even
-  // when some sources failed (a `partial` run is a failed job but still a report).
-
-  /** Start an ingestion_run job, then wait for its run report. */
-  private async runIngestionJob(endpoint: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
-    const accepted = await this.makeRequest<JobAccepted>(endpoint, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      signal: opts?.signal,
-    });
-    if (!accepted || typeof accepted.job_id !== 'string') {
-      throw new Error('The backend did not start an ingestion run');
-    }
-    opts?.onAccepted?.(accepted);
-    try {
-      const payload = await this.waitForJob<unknown>(accepted.job_id, opts);
-      const report = asRunReport(payload);
-      if (!report) throw new Error('The ingestion run finished without a run report');
-      return { ...report, run_id: report.run_id ?? accepted.job_id };
-    } catch (error) {
-      if (error instanceof JobFailedError) {
-        const report = asRunReport(error.value);
-        if (report) return { ...report, run_id: report.run_id ?? accepted.job_id };
-      }
-      throw error;
-    }
-  }
-
-  /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
-  async runIngestionCycle(options: { force?: boolean } & RunRequestOptions = {}): Promise<RunReport> {
-    const { force = false, ...opts } = options;
-    return this.runIngestionJob('/api/ingestion/run', { force }, opts);
-  }
-
-  /** Fetch one source now (forced, even when disabled). */
-  async fetchSourceNow(sourceId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
-    const { limit, ...opts } = options;
-    return this.runIngestionJob(`/api/sources/${encodeURIComponent(sourceId)}/fetch-now`, limit ? { limit } : {}, opts);
-  }
-
-  /** Fetch every enabled source of a folder/track now (forced). */
-  async fetchFolderNow(folderId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
-    const { limit, ...opts } = options;
-    return this.runIngestionJob(`/api/folders/${encodeURIComponent(folderId)}/ingest`, limit ? { limit } : {}, opts);
-  }
-
-  /** Every source's schedule-aware health row, worst first, plus the summary. */
-  async getSourcesHealth(): Promise<SourcesHealthResponse> {
-    return this.makeRequest<SourcesHealthResponse>('/api/sources/health');
-  }
-
-  /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
-  async setCadenceOverride(sourceId: string, hours: number | null): Promise<{ success: true; row: SourceHealthRow }> {
-    return this.makeRequest<{ success: true; row: SourceHealthRow }>(`/api/sources/${encodeURIComponent(sourceId)}/cadence`, {
-      method: 'PUT',
-      body: JSON.stringify({ override_hours: hours }),
-    });
-  }
-
-  /** Include/exclude one source from the main digest and the main feed. Throws on failure. */
-  async setSourceMainDigest(sourceId: string, inMainDigest: boolean): Promise<{ success: true; source_id: string; in_main_digest: boolean }> {
-    const response = await this.makeRequest<{ success: boolean; error?: string; source_id: string; in_main_digest: boolean }>(
-      `/api/sources/${encodeURIComponent(sourceId)}/main-digest`,
-      { method: 'PUT', body: JSON.stringify({ in_main_digest: inMainDigest }) },
-    );
-    if (!response.success) throw new Error(response.error || 'Failed to update the main-digest setting');
-    return response as { success: true; source_id: string; in_main_digest: boolean };
-  }
-
-  // ---- Connections (Mark IX §10.1). Write-only; these throw ApiError on failure. ----
-
-  async getCredentials(): Promise<CredentialsResponse> {
-    return this.makeRequest<CredentialsResponse>('/api/credentials');
-  }
-
-  /** Save one secret. The response is the provider's view (set, last4), never the value. */
-  async putCredential(provider: string, key: string, value: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ value }),
-    });
-  }
-
-  async deleteCredential(provider: string, key: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async testCredential(provider: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/test`, { method: 'POST' });
-  }
-
-  async telegramLoginStart(phone: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/start', { method: 'POST', body: JSON.stringify({ phone }) });
-  }
-
-  async telegramLoginCode(code: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/code', { method: 'POST', body: JSON.stringify({ code }) });
-  }
-
-  async telegramLoginPassword(password: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: JSON.stringify({ password }) });
-  }
-
-  async telegramLoginCancel(): Promise<{ stage: null }> {
-    return this.makeRequest<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' });
-  }
-
-  // ---- Reader (Mark IX). These throw ApiError on failure (§4 error contract). ----
-
-  private feedQuery(params: FeedParams, view: FeedView): string {
-    const qs = new URLSearchParams({ scope: params.scope, filter: params.filter, view });
-    if (params.cursor) qs.set('cursor', params.cursor);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.days) qs.set('days', String(params.days));
-    return `/api/feed?${qs.toString()}`;
-  }
-
-  /** One newest-first page of the stream view. */
-  async getFeed(params: FeedParams): Promise<FeedPage> {
-    return this.makeRequest<FeedPage>(this.feedQuery(params, 'stream'), { signal: params.signal });
-  }
-
-  /** One page of the by-source view: one group per source, at most 3 items each. */
-  async getFeedGroups(params: FeedParams): Promise<FeedGroupsPage> {
-    return this.makeRequest<FeedGroupsPage>(this.feedQuery(params, 'by_source'), { signal: params.signal });
-  }
-
-  /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
-  async getUnreadCounts(): Promise<UnreadCounts> {
-    return this.makeRequest<UnreadCounts>('/api/feed/unread-counts');
-  }
-
-  async setPostRead(postId: string, read: boolean): Promise<{ success: true; post_id: string; updated: number }> {
-    return this.makeRequest(`/api/posts/item/${encodeURIComponent(postId)}/read`, {
-      method: 'PUT',
-      body: JSON.stringify({ read }),
-    });
-  }
-
-  /** Batch read/unread (at most 500 ids); the mark-through Undo uses it. */
-  async setPostsRead(ids: string[], read: boolean): Promise<{ success: true; updated: number }> {
-    return this.makeRequest('/api/feed/read', { method: 'PUT', body: JSON.stringify({ ids, read }) });
-  }
-
-  /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
-  async markReadThrough(scope: string, through: string, newest: string): Promise<MarkReadResult> {
-    return this.makeRequest<MarkReadResult>('/api/feed/mark-read', {
-      method: 'POST',
-      body: JSON.stringify({ scope, through_cursor: through, newest_cursor: newest }),
-    });
-  }
-
-  /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
-  async setPostStarred(postId: string, starred: boolean): Promise<PostInteractionResponse> {
-    const response = await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${encodeURIComponent(postId)}/favorite`, {
-      method: 'POST',
-      body: JSON.stringify({ favorited: starred }),
-    });
-    if (response && response.success === false) throw new Error(response.error || 'Could not update the star');
-    return response;
-  }
-
-  async getIngestionLogs(log = 'application', lines = 200): Promise<LogTailResponse> {
-    try {
-      const params = new URLSearchParams({
-        log,
-        lines: String(lines),
-      });
-      return await this.makeRequest<LogTailResponse>(`/api/ingestion/logs?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to load ingestion logs:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        log,
-        lines: [],
-      };
-    }
-  }
-
-  async getOperationsOverview(): Promise<OperationsOverviewResponse> {
-    try {
-      return await this.makeRequest<OperationsOverviewResponse>('/api/operations/overview');
-    } catch (error) {
-      console.error('Failed to load operations overview:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        jobs: [],
-        source_health: { summary: { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 }, rows: [] },
-        alerts: [],
-      };
-    }
-  }
-
-  async getOperationJob(jobId: string): Promise<OperationJobResponse> {
-    try {
-      return await this.makeRequest<OperationJobResponse>(`/api/operations/jobs/${jobId}`);
-    } catch (error) {
-      console.error('Failed to load operation job detail:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        job: null,
-      };
-    }
-  }
-
-  async getStatus(): Promise<SystemStatusResponse> {
-    try {
-      return await this.makeRequest<SystemStatusResponse>('/api/status');
-    } catch (error) {
-      console.error('Failed to load system status:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getSchedulerConfig(): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler');
-    } catch (error) {
-      console.error('Failed to load scheduler config:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async updateSchedulerConfig(config: Partial<SchedulerConfig>): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler', {
-        method: 'PUT',
-        body: JSON.stringify({
-          intervalHours: config.interval_hours,
-          syncSourcesEachCycle: config.sync_sources_each_cycle,
-          ingestTickMinutes: config.ingest_tick_minutes,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to update scheduler config:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async listYouTubeChannelVideos(source: string, limit = 1): Promise<YouTubeChannelVideosResponse> {
-    try {
-      return await this.makeRequest<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', {
-        method: 'POST',
-        body: JSON.stringify({ source, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to preview YouTube channel:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getYouTubeWatchProgress(videoId: string): Promise<YouTubeWatchProgressResponse> {
-    try {
-      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`);
-    } catch (error) {
-      console.error('Failed to get YouTube watch progress:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        progress: null,
-      };
-    }
-  }
-
-  async saveYouTubeWatchProgress(
-    videoId: string,
-    payload: {
-      videoUrl: string;
-      title: string;
-      durationSeconds?: number | null;
-      progressSeconds: number;
-      sourceId?: string | null;
-      notesMarkdown?: string | null;
-      completed?: boolean;
-    },
-  ): Promise<YouTubeWatchProgressResponse> {
-    try {
-      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      console.error('Failed to save YouTube watch progress:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        progress: null,
-      };
-    }
-  }
-
-  // ===== Folders =====
-
-  /** Reading feed for one folder/track: newest posts from its sources. */
-  async getFolderPosts(
-    folderId: string,
-    opts?: { limit?: number; offset?: number; days?: number },
-  ): Promise<{
-    success: boolean;
-    folder?: Folder;
-    source_count?: number;
-    posts: Post[];
-    total?: number;
-    returned?: number;
-    has_more?: boolean;
-    error?: string;
-  }> {
-    try {
-      const params = new URLSearchParams();
-      if (opts?.limit != null) params.set('limit', String(opts.limit));
-      if (opts?.offset != null) params.set('offset', String(opts.offset));
-      if (opts?.days != null) params.set('days', String(opts.days));
-      const qs = params.toString();
-      return await this.makeRequest(`/api/folders/${folderId}/posts${qs ? `?${qs}` : ''}`);
-    } catch (error) {
-      return { success: false, posts: [], error: error instanceof Error ? error.message : 'Failed to load track feed' };
-    }
-  }
-
-  async getFolders(): Promise<{ success: boolean; folders: Folder[]; error?: string }> {
-    try { return await this.makeRequest('/api/folders'); }
-    catch (e) { return { success: false, folders: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createFolder(payload: { name: string; description?: string; sort_order?: number }): Promise<{ success: boolean; folder?: Folder; error?: string }> {
-    try { return await this.makeRequest('/api/folders', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteFolder(folderId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async getSourceFolders(sourceId: string): Promise<{ success: boolean; folder_ids: string[]; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}/folders`); }
-    catch (e) { return { success: false, folder_ids: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async addSourceToFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}/sources`, { method: 'POST', body: JSON.stringify({ source_id: sourceId }) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async removeSourceFromFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}/sources/${sourceId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
-    try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async setSourceEnabled(sourceId: string, enabled: boolean): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteSource(sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
 }
 
 export interface Folder {
@@ -1462,10 +512,251 @@ export interface Folder {
   post_count?: number;
 }
 
-// Export singleton instance
-export const apiService = new ApiService();
-export default apiService;
+export interface FoldersResponse extends Envelope {
+  folders: Folder[];
+}
 
-/** The API client's shape. Components get it from `useApi()` (ApiContext), so
- *  tests can hand them a fake through `<ApiProvider value={fakeApi}>`. */
-export type Api = ApiService;
+export interface FolderResponse extends Envelope {
+  folder?: Folder;
+}
+
+export interface SourceFoldersResponse extends Envelope {
+  folder_ids: string[];
+}
+
+export interface SchedulerResponse extends Envelope {
+  scheduler?: SchedulerConfig;
+}
+
+export interface NewSource {
+  platform: string;
+  handle_or_url: string;
+  display_name?: string;
+  fetch_delay_seconds?: number;
+  priority?: number;
+  max_posts_per_fetch?: number;
+  state?: string;
+}
+
+export interface AddSourceResponse extends Envelope {
+  source_id?: string;
+}
+
+export interface YouTubeProgressInput {
+  videoUrl: string;
+  title: string;
+  durationSeconds?: number | null;
+  progressSeconds: number;
+  sourceId?: string | null;
+  notesMarkdown?: string | null;
+  completed?: boolean;
+}
+
+const enc = encodeURIComponent;
+
+/** Wait for an operation job and resolve with its payload. Throws `JobFailedError`
+ *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError`, or
+ *  the `ApiError` that ended polling (pollJob tolerates two transient read errors). */
+function waitForJob<T>(jobId: string, opts?: Pick<RunRequestOptions, 'signal' | 'timeoutMs' | 'intervalMs'>): Promise<T> {
+  return pollJob<T>(
+    async (signal) => {
+      const { job } = await request<OperationJobResponse>(`/api/operations/jobs/${enc(jobId)}`, { signal });
+      if (!job) return { state: 'failed', error: `Operation job ${jobId} not found` };
+      if (job.status === 'success') return { state: 'done', value: (job.payload || {}) as T };
+      if (job.status === 'failed') {
+        const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
+        return { state: 'failed', error: payloadError || job.message || `Operation ${job.job_type} failed`, value: (job.payload || {}) as T };
+      }
+      return { state: 'pending' };
+    },
+    {
+      signal: opts?.signal,
+      timeoutMs: Math.max(10_000, opts?.timeoutMs ?? 600_000),
+      intervalMs: Math.max(500, opts?.intervalMs ?? 1_500),
+    },
+  );
+}
+
+/** Start an ingestion_run job, then wait for its run report. A finished run resolves
+ *  with its report even when some sources failed (a `partial` run is a failed job). */
+async function runIngestionJob(path: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
+  const accepted = await request<JobAccepted>(path, { method: 'POST', body, signal: opts?.signal });
+  if (!accepted || typeof accepted.job_id !== 'string') throw new Error('The backend did not start an ingestion run');
+  opts?.onAccepted?.(accepted);
+  try {
+    const report = asRunReport(await waitForJob<unknown>(accepted.job_id, opts));
+    if (!report) throw new Error('The ingestion run finished without a run report');
+    return { ...report, run_id: report.run_id ?? accepted.job_id };
+  } catch (error) {
+    const report = error instanceof JobFailedError ? asRunReport(error.value) : null;
+    if (report) return { ...report, run_id: report.run_id ?? accepted.job_id };
+    throw error;
+  }
+}
+
+function feedPath(params: FeedParams, view: FeedView): string {
+  const qs = new URLSearchParams({ scope: params.scope, filter: params.filter, view });
+  if (params.cursor) qs.set('cursor', params.cursor);
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.days) qs.set('days', String(params.days));
+  return `/api/feed?${qs.toString()}`;
+}
+
+/**
+ * The client. Methods throw `ApiError` on any failure (lib/request), for react-query
+ * and the `ErrorState` components, except the ones wrapped in `settle`: those resolve
+ * `{success: false, error}` for the screens that read the envelope instead.
+ * Components reach it through `useApi()` (ApiContext), so a test can hand them a fake.
+ */
+export function createApi() {
+  return {
+    // ---- Reader ----
+
+    /** One newest-first page of the stream view. */
+    getFeed: (params: FeedParams) => request<FeedPage>(feedPath(params, 'stream'), { signal: params.signal }),
+    /** One page of the by-source view: one group per source, at most 3 items each. */
+    getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
+    /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
+    getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
+    setPostRead: (postId: string, read: boolean) =>
+      request<{ success: true; post_id: string; updated: number }>(`/api/posts/item/${enc(postId)}/read`, { method: 'PUT', body: { read } }),
+    /** Batch read/unread (at most 500 ids); the mark-through Undo uses it. */
+    setPostsRead: (ids: string[], read: boolean) =>
+      request<{ success: true; updated: number }>('/api/feed/read', { method: 'PUT', body: { ids, read } }),
+    /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
+    markReadThrough: (scope: string, through: string, newest: string) =>
+      request<MarkReadResult>('/api/feed/mark-read', { method: 'POST', body: { scope, through_cursor: through, newest_cursor: newest } }),
+    /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
+    setPostStarred: (postId: string, starred: boolean) =>
+      request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/favorite`, { method: 'POST', body: { favorited: starred } }),
+
+    // ---- The post page ----
+
+    getPostDetail: (postId: string) => request<PostDetailResponse>(`/api/posts/item/${postId}`),
+    recordPostOpen: (postId: string, metadata?: Record<string, any>) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, { method: 'POST', body: { metadata } })),
+    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, any>) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
+    togglePostFavorite: (postId: string, favorited: boolean) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
+    /** Fetch a Reddit post's comments; the backend may answer 202 with a job, which is polled. */
+    fetchRedditComments: (postId: string, opts?: { limit?: number; refresh?: boolean }) => settle((async () => {
+      const response = await request<RedditCommentsResponse & Partial<JobAccepted>>(`/api/posts/item/${postId}/reddit-comments`, {
+        method: 'POST',
+        body: { limit: opts?.limit ?? 80, refresh: opts?.refresh ?? false, asyncMode: true },
+      });
+      if (!response.accepted || typeof response.job_id !== 'string') return response as RedditCommentsResponse;
+      return { success: true, ...(await waitForJob<RedditCommentsResponse>(response.job_id)) };
+    })()),
+    getYouTubeWatchProgress: (videoId: string) =>
+      settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`)),
+    saveYouTubeWatchProgress: (videoId: string, payload: YouTubeProgressInput) =>
+      settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`, { method: 'PUT', body: payload })),
+
+    // ---- Sources ----
+
+    getSourcesWithSettings: () => request<SourcesWithSettingsResponse>('/api/sources/with-settings'),
+    /** Every source's schedule-aware health row, worst first, plus the summary. */
+    getSourcesHealth: () => request<SourcesHealthResponse>('/api/sources/health'),
+    addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources/add', { method: 'POST', body: payload })),
+    updateSourceSettings: (sourceId: string, settings: SourceSettings) =>
+      settle(request<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, { method: 'PUT', body: settings })),
+    setSourceEnabled: (sourceId: string, enabled: boolean) =>
+      settle(request<Envelope>(`/api/sources/${sourceId}/enabled`, { method: 'PUT', body: { enabled } })),
+    deleteSource: (sourceId: string) => settle(request<Envelope>(`/api/sources/${sourceId}`, { method: 'DELETE' })),
+    /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
+    setCadenceOverride: (sourceId: string, hours: number | null) =>
+      request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
+    /** Include/exclude one source from the main digest and the main feed. */
+    setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
+      request<{ success: true; source_id: string; in_main_digest: boolean }>(
+        `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
+      ),
+    listYouTubeChannelVideos: (source: string, limit = 1) =>
+      settle(request<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', { method: 'POST', body: { source, limit } })),
+
+    // ---- Tracks (folders) ----
+
+    getFolders: () => settle(request<FoldersResponse>('/api/folders')),
+    createFolder: (payload: { name: string; description?: string; sort_order?: number }) =>
+      settle(request<FolderResponse>('/api/folders', { method: 'POST', body: payload })),
+    /** Rename a track. */
+    renameTrack: (folderId: string, name: string) => request<Envelope>(`/api/folders/${enc(folderId)}`, { method: 'PUT', body: { name } }),
+    deleteFolder: (folderId: string) => settle(request<Envelope>(`/api/folders/${folderId}`, { method: 'DELETE' })),
+    /** Every source in the track in (true) or out of (false) the main feed and digest. */
+    setTrackMainDigest: (folderId: string, inMainDigest: boolean) =>
+      request<Envelope>(`/api/folders/${enc(folderId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } }),
+    getSourceFolders: (sourceId: string) => settle(request<SourceFoldersResponse>(`/api/sources/${sourceId}/folders`)),
+    addSourceToFolder: (folderId: string, sourceId: string) =>
+      settle(request<Envelope>(`/api/folders/${folderId}/sources`, { method: 'POST', body: { source_id: sourceId } })),
+    removeSourceFromFolder: (folderId: string, sourceId: string) =>
+      settle(request<Envelope>(`/api/folders/${folderId}/sources/${sourceId}`, { method: 'DELETE' })),
+
+    // ---- Ingestion ----
+
+    /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
+    runIngestionCycle: ({ force = false, ...opts }: { force?: boolean } & RunRequestOptions = {}) =>
+      runIngestionJob('/api/ingestion/run', { force }, opts),
+    /** Fetch one source now (forced, even when disabled). */
+    fetchSourceNow: (sourceId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
+      runIngestionJob(`/api/sources/${enc(sourceId)}/fetch-now`, limit ? { limit } : {}, opts),
+    /** Fetch every enabled source of a folder/track now (forced). */
+    fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
+      runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
+    getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
+    getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
+    getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
+    updateSchedulerConfig: (config: Partial<SchedulerConfig>) => settle(request<SchedulerResponse>('/api/operations/scheduler', {
+      method: 'PUT',
+      body: {
+        intervalHours: config.interval_hours,
+        syncSourcesEachCycle: config.sync_sources_each_cycle,
+        ingestTickMinutes: config.ingest_tick_minutes,
+      },
+    })),
+    getIngestionLogs: (log = 'application', lines = 200) =>
+      request<LogTailResponse>(`/api/ingestion/logs?${new URLSearchParams({ log, lines: String(lines) }).toString()}`),
+
+    // ---- Archive (the source sheet's section and the Ingestion tab) ----
+
+    getArchiveCatalog: () => request<ArchiveCatalogResponse>('/api/archive/catalog'),
+    getSourceArchive: (sourceId: string) => request<ArchiveStatusResponse>(`/api/archive/${enc(sourceId)}/status`),
+    /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
+     *  `pacing` overrides the source's own for this plan. */
+    planSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> => {
+      const response = await request<{ archive?: ArchivePlan }>(
+        `/api/archive/${enc(sourceId)}/plan`, { method: 'POST', body: { desiredPosts, resume, ...pacing } },
+      );
+      if (!response.archive) throw new Error('Could not plan the archive');
+      return response.archive;
+    },
+    /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
+    startSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> => {
+      const response = await request<{ job_id?: string }>(
+        `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { desiredPosts, resume, background: true, ...pacing } },
+      );
+      if (!response.job_id) throw new Error('Could not start the archive');
+      return { job_id: response.job_id };
+    },
+
+    // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
+
+    getCredentials: () => request<CredentialsResponse>('/api/credentials'),
+    /** Save one secret. The response is the provider's view (set, last4), never the value. */
+    putCredential: (provider: string, key: string, value: string) =>
+      request<CredentialProviderView>(`/api/credentials/${enc(provider)}/${enc(key)}`, { method: 'PUT', body: { value } }),
+    deleteCredential: (provider: string, key: string) =>
+      request<CredentialProviderView>(`/api/credentials/${enc(provider)}/${enc(key)}`, { method: 'DELETE' }),
+    testCredential: (provider: string) => request<CredentialProviderView>(`/api/credentials/${enc(provider)}/test`, { method: 'POST' }),
+    telegramLoginStart: (phone: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/start', { method: 'POST', body: { phone } }),
+    telegramLoginCode: (code: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/code', { method: 'POST', body: { code } }),
+    telegramLoginPassword: (password: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
+    telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
+  };
+}
+
+/** The client's shape, shared by the real client and the test fake (test/fakeApi). */
+export type Api = ReturnType<typeof createApi>;

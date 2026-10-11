@@ -18,7 +18,6 @@ import { Button, Skeleton } from '../components/ui';
 import { EmptyState, Notice } from '../components/states';
 import { useDevFixtureApi } from '../hooks/useDevFixtureApi';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
-import { POST_FIXTURE_NAMES, postFixtureApi } from './PostDetailPage.fixtures';
 import ShortcutHelp from '../components/reader/ShortcutHelp';
 import { usePost, usePrefetchPost } from '../hooks/usePost';
 import { usePostNeighbors } from '../hooks/usePostNeighbors';
@@ -49,6 +48,26 @@ import { proxiedImage } from '../lib/mediaProxy';
  * title with three icon actions in its top-right corner (open original, star,
  * copy), the images, the text — and nothing beside it.
  */
+
+/** The dev-only `?data=` fixtures, imported on demand: a production build drops them. */
+const POST_FIXTURE_NAMES = ['worst', 'empty', 'missing', 'slow'] as const;
+const loadPostFixtures = import.meta.env.DEV ? () => import('./PostDetailPage.fixtures') : null;
+
+/** The fixture API for `?data=<name>`: the post comes from the fixtures, writes are no-ops. */
+function postFixtureApi(name: string): Partial<Api> | null {
+  if (!loadPostFixtures || !(POST_FIXTURE_NAMES as readonly string[]).includes(name)) return null;
+  const load = loadPostFixtures;
+  const ok = async () => ({ success: true });
+  return {
+    getPostDetail: async () => {
+      if (name === 'slow') await new Promise((resolve) => setTimeout(resolve, 2500));
+      return (await load()).postFixtureDetail(name) ?? { success: false, error: 'Post not found' };
+    },
+    recordPostOpen: ok,
+    recordPostReadingSession: ok,
+    togglePostFavorite: ok,
+  };
+}
 
 /** Plain text of a post for the clipboard: the stored text, else the HTML's text. */
 function postPlainText(post: Post): string {

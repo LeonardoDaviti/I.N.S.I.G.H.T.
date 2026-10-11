@@ -39,11 +39,7 @@ export default function IngestionLogs() {
   const [name, setName] = useState('application');
   const tail = useQuery({
     queryKey: ['ingestion-logs', name],
-    queryFn: async () => {
-      const response = await api.getIngestionLogs(name, TAIL_LINES);
-      if (response.success === false) throw new Error(response.error || 'Could not read the log.');
-      return response;
-    },
+    queryFn: () => api.getIngestionLogs(name, TAIL_LINES),
     refetchInterval: 30_000,
   });
   const logs = tail.data?.available_logs?.length ? tail.data.available_logs : DEFAULT_LOGS;

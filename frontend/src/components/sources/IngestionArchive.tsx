@@ -45,7 +45,6 @@ export default function IngestionArchive() {
     queryKey: [...ARCHIVE_CATALOG_KEY],
     queryFn: async () => {
       const response = await api.getArchiveCatalog();
-      if (response.success === false) throw new Error(response.error || 'Could not load the archive catalog.');
       return response.sources ?? [];
     },
     staleTime: 30_000,

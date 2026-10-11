@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -9,12 +9,6 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { Api } from '../services/api';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { renameTrack, setTrackMainDigest } from '../services/trackApi';
-
-vi.mock('../services/trackApi', () => ({
-  renameTrack: vi.fn().mockResolvedValue(undefined),
-  setTrackMainDigest: vi.fn().mockResolvedValue(undefined),
-}));
 
 const ai = { id: 'f-ai', name: 'AI engineering' };
 const ar = { id: 'f-ar', name: 'AR glasses' };
@@ -50,6 +44,8 @@ function setup(route = '/settings/sources', overrides: Partial<Record<keyof Api,
     removeSourceFromFolder: vi.fn().mockResolvedValue({ success: true }),
     setSourceMainDigest: vi.fn().mockImplementation((id: string, on: boolean) => Promise.resolve({ success: true, source_id: id, in_main_digest: on })),
     deleteFolder: vi.fn().mockResolvedValue({ success: true }),
+    renameTrack: vi.fn().mockResolvedValue({ success: true }),
+    setTrackMainDigest: vi.fn().mockResolvedValue({ success: true }),
     ...overrides,
   };
   const utils = renderWithProviders(<><SourcesConfig /><Where /></>, { api: makeFakeApi(methods), route });
@@ -72,8 +68,6 @@ const rowIds = (root: HTMLElement = document.body) =>
 const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`li[data-source-id="${id}"]`)[nth];
 
 describe('SourcesConfig', () => {
-  beforeEach(() => { vi.mocked(renameTrack).mockClear(); vi.mocked(setTrackMainDigest).mockClear(); });
-
   it('is one list grouped by track: sources, connections and ingestion tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
@@ -362,13 +356,13 @@ describe('SourcesConfig', () => {
     await userEvent.clear(field);
     await userEvent.type(field, 'Agents');
     await userEvent.click(within(rename).getByRole('button', { name: 'Rename' }));
-    await waitFor(() => expect(renameTrack).toHaveBeenCalledWith('f-ai', 'Agents'));
+    await waitFor(() => expect(api.renameTrack).toHaveBeenCalledWith('f-ai', 'Agents'));
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
     const digest = screen.getByRole('menuitemcheckbox', { name: 'In main feed and digest' });
     expect(digest).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(digest);
-    await waitFor(() => expect(setTrackMainDigest).toHaveBeenCalledWith('f-ai', false));
+    await waitFor(() => expect(api.setTrackMainDigest).toHaveBeenCalledWith('f-ai', false));
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /Delete track/ }));

@@ -12,11 +12,7 @@ export function useOperationsOverview() {
   const api = useApi();
   return useQuery({
     queryKey: [...OPERATIONS_OVERVIEW_KEY],
-    queryFn: async () => {
-      const response = await api.getOperationsOverview();
-      if (response.success === false) throw new Error(response.error || 'Could not load the job history.');
-      return response;
-    },
+    queryFn: () => api.getOperationsOverview(),
     refetchInterval: 15_000,
   });
 }
@@ -28,7 +24,7 @@ export function useSchedulerConfig() {
     queryKey: [...SCHEDULER_KEY],
     queryFn: async () => {
       const response = await api.getSchedulerConfig();
-      if (!response.success || !response.scheduler) throw new Error(response.error || 'Could not read the scheduler.');
+      if (!response.scheduler) throw new Error('Could not read the scheduler.');
       return response.scheduler;
     },
     refetchInterval: 30_000,
@@ -42,7 +38,7 @@ export function useOperationJob(id: string | null) {
     queryKey: [...operationJobKey(id)],
     queryFn: async () => {
       const response = await api.getOperationJob(id as string);
-      if (!response.success || !response.job) throw new Error(response.error || 'Could not load the job.');
+      if (!response.job) throw new Error('Could not load the job.');
       return response.job;
     },
     enabled: Boolean(id),

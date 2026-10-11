@@ -6,17 +6,11 @@
  * Dates are relative to `now`, so "retry in 3h" stays true whenever it renders.
  */
 import type { RunReport, SourceHealthRow, SourcesHealthResponse } from '../../services/api';
+import type { HealthFixtureName } from './fixtureNames';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
-
-export type HealthFixtureName = 'worst' | 'empty' | 'one' | 'huge';
-export const HEALTH_FIXTURE_NAMES: readonly HealthFixtureName[] = ['worst', 'empty', 'one', 'huge'];
-
-export function isHealthFixtureName(value: string | null | undefined): value is HealthFixtureName {
-  return HEALTH_FIXTURE_NAMES.includes(value as HealthFixtureName);
-}
 
 function at(now: Date, offsetMs: number): string {
   return new Date(now.getTime() + offsetMs).toISOString();

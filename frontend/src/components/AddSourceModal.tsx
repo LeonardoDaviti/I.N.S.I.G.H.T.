@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus } from 'lucide-react';
-import { apiService } from '../services/api';
+import { useApi } from '../services/ApiContext';
 import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
@@ -193,6 +193,7 @@ interface AddSourceModalProps {
 }
 
 export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceModalProps) {
+  const api = useApi();
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariable, setTemplateVariable] = useState('');
   const [handleOrUrl, setHandleOrUrl] = useState('');
@@ -243,7 +244,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     setIsResolvingChannel(true);
 
     const timeout = window.setTimeout(async () => {
-      const preview = await apiService.listYouTubeChannelVideos(youtubeLookupValue, 1);
+      const preview = await api.listYouTubeChannelVideos(youtubeLookupValue, 1);
       if (cancelled) return;
 
       const channelTitle = preview.videos?.[0]?.channel_title?.trim();
@@ -262,7 +263,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [platform, youtubeLookupValue, displayNameManuallyEdited]);
+  }, [api, platform, youtubeLookupValue, displayNameManuallyEdited]);
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);

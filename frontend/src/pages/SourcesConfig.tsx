@@ -5,13 +5,12 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 
 import { useApi } from '../services/ApiContext';
-import type { SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
-import { renameTrack, setTrackMainDigest } from '../services/trackApi';
+import type { Envelope, SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
 import AddSourceModal from '../components/AddSourceModal';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
-import { HEALTH_FIXTURE_NAMES, healthFixture, isHealthFixtureName } from '../components/ops/fixtures';
+import { HEALTH_FIXTURE_NAMES, isHealthFixtureName } from '../components/ops/fixtureNames';
 import SourceList, { type TrackActions } from '../components/sources/SourceList';
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
@@ -77,6 +76,9 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
 }
 
 /** History state on an entry the sheet pushed, so closing it goes Back instead of stacking entries. */
+/** The dev-only `?data=` health fixtures, imported on demand: a production build drops them. */
+const loadHealthFixtures = import.meta.env.DEV ? () => import('../components/ops/fixtures') : null;
+
 const SHEET_PUSHED = 'sourceSheetPushed';
 /** How long a deep-linked track group stays highlighted. */
 const TRACK_HIGHLIGHT_MS = 1600;
@@ -123,13 +125,15 @@ export default function SourcesConfig() {
 
   const dataParam = searchParams.get('data');
   const fixtureName = import.meta.env.DEV && isHealthFixtureName(dataParam) ? dataParam : null;
-  const health = useSourcesHealth(fixtureName ? () => healthFixture(fixtureName) : undefined, fixtureName ?? undefined);
+  const health = useSourcesHealth(
+    fixtureName && loadHealthFixtures ? () => loadHealthFixtures().then((module) => module.healthFixture(fixtureName)) : undefined,
+    fixtureName ?? undefined,
+  );
   const { folders: foldersQuery } = useReaderDirectory();
   const sourcesQuery = useQuery({
     queryKey: [...SOURCES_WITH_SETTINGS_KEY],
     queryFn: async () => {
       const response = await api.getSourcesWithSettings();
-      if (!response.success) throw new Error(response.error || 'Could not load sources.');
       return response.sources;
     },
     staleTime: 30_000,
@@ -232,9 +236,9 @@ export default function SourcesConfig() {
   };
 
   /** Run one call per source; report the failures in one line. */
-  const each = async (ids: string[], call: (id: string) => Promise<{ success: boolean; error?: string }>, verb: string) => {
+  const each = async (ids: string[], call: (id: string) => Promise<Envelope>, verb: string) => {
     setBusy(true);
-    const results = await Promise.all(ids.map((id) => call(id).catch((err: unknown) => ({ success: false, error: errorMessage(err) }))));
+    const results = await Promise.all(ids.map(call));
     setBusy(false);
     const failed = results.filter((r) => !r.success);
     if (failed.length) setError(`Could not ${verb} ${plural(failed.length, 'source')}: ${failed[0].error || 'unknown error'}`);
@@ -291,7 +295,7 @@ export default function SourcesConfig() {
     setMainDigest: (id, name, on) => {
       void (async () => {
         try {
-          await setTrackMainDigest(id, on);
+          await api.setTrackMainDigest(id, on);
           toast(`${name}: ${on ? 'in' : 'out of'} the main feed and digest`);
         } catch (err) {
           setError(`Could not change ${name}: ${errorMessage(err)}`);
@@ -310,7 +314,7 @@ export default function SourcesConfig() {
     setRenaming(null);
     if (name === target.name) return;
     try {
-      await renameTrack(target.id, name);
+      await api.renameTrack(target.id, name);
     } catch (err) {
       setError(`Could not rename ${target.name}: ${errorMessage(err)}`);
     }

@@ -1,10 +1,10 @@
-import type { Api, Post, PostDetailResponse } from '../services/api';
+import type { Post, PostDetailResponse } from '../services/api';
 
 /**
  * Dev-only `?data=` fixtures for the post page (spec §F.7, break-ui). The post id in
- * the URL is ignored: every fixture answers for whichever post is open.
+ * the URL is ignored: every fixture answers for whichever post is open. The page
+ * imports this file on demand, in dev only.
  */
-export const POST_FIXTURE_NAMES = ['worst', 'empty', 'missing', 'slow'] as const;
 
 const UNBROKEN = 'https://github.com/anthropics/claude-code/commit/' + 'f0aaf74ef7184398'.repeat(6);
 
@@ -53,24 +53,7 @@ const DETAILS: Record<string, PostDetailResponse> = {
   slow: { success: true, post: post({ title: 'Slow load: the skeleton should match this layout', content: WORST_HTML, content_html: WORST_HTML }) },
 };
 
-/** The post detail behind `?data=<name>`, for the studio's frames (Design Studio D4). */
+/** The post detail behind `?data=<name>`, for the post page and the studio's frames (Design Studio D4). */
 export function postFixtureDetail(name: string): PostDetailResponse | null {
   return DETAILS[name] ?? null;
-}
-
-/** The fixture API for `?data=<name>`: reads come from the fixtures, writes are no-ops. */
-export function postFixtureApi(name: string): Partial<Api> | null {
-  const detail = DETAILS[name];
-  if (!detail) return null;
-  const delay = name === 'slow' ? 2500 : 0;
-  const ok = async () => ({ success: true });
-  return {
-    getPostDetail: async () => {
-      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-      return detail;
-    },
-    recordPostOpen: ok,
-    recordPostReadingSession: ok,
-    togglePostFavorite: ok,
-  } as unknown as Partial<Api>;
 }

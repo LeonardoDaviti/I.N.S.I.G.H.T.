@@ -7,11 +7,11 @@ import type { SourceHealthRow, SourcesHealthResponse } from '../services/api';
 export const SOURCES_HEALTH_KEY = ['sources-health'] as const;
 
 /** Every source's health row. `fixture` (dev-only `?data=`) replaces the API call. */
-export function useSourcesHealth(fixture?: () => SourcesHealthResponse, fixtureName?: string) {
+export function useSourcesHealth(fixture?: () => Promise<SourcesHealthResponse>, fixtureName?: string) {
   const api = useApi();
   return useQuery({
     queryKey: fixture ? [...SOURCES_HEALTH_KEY, 'fixture', fixtureName ?? 'custom'] : [...SOURCES_HEALTH_KEY],
-    queryFn: fixture ? async () => fixture() : () => api.getSourcesHealth(),
+    queryFn: fixture ?? (() => api.getSourcesHealth()),
     staleTime: 30_000,
   });
 }
