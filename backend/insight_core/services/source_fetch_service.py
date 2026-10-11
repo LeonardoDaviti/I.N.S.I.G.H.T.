@@ -74,11 +74,45 @@ class SourceFetchService:
         source_settings = source.get("settings") or {}
         return {
             **inspection.as_dict(),
+            "available_basis": kind.available_basis,
             "source_type": kind.name,
             "display_name": source_settings.get("display_name") or source["handle_or_url"],
         }
 
     # ------------------------------------------------------------------ archive
+
+    def archive_support(self, source_id: str) -> Dict[str, Any]:
+        """Can this source archive, and what does its available count mean? No network.
+
+        A kind this process cannot fetch (yt-dlp off, no Telegram credentials) cannot
+        archive. A feed (available_basis feed_window) has no history beyond what it lists
+        now, so archiving only adds anything when the feed lists more than one live fetch
+        reads; an unmeasured feed stays archivable so a plan can measure it.
+        """
+        source = self.sources_service.get_source_by_id(source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        kind = self.kinds.resolve(source)
+        live_fetch_limit = int((source.get("settings") or {}).get("max_posts_per_fetch") or 50)
+        support: Dict[str, Any] = {
+            "kind": kind.name,
+            "available_basis": kind.available_basis,
+            "archivable": True,
+            "reason": None,
+            "unavailable": False,
+            "live_fetch_limit": live_fetch_limit,
+        }
+        reason = unavailable_reason(kind.profile, self.availability())
+        if reason is not None:
+            return {**support, "archivable": False, "reason": reason, "unavailable": True}
+        if kind.available_basis == "feed_window":
+            archive = (self.sources_service.get_source_with_settings(source_id).get("settings") or {}).get("archive") or {}
+            available = archive.get("available_posts")
+            if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:
+                return {**support, "archivable": False, "reason": (
+                    f"This feed only lists its latest {available} post{'' if available == 1 else 's'}, "
+                    f"and every fetch already reads up to {live_fetch_limit}.")}
+        return support
 
     async def plan_archive(
         self,

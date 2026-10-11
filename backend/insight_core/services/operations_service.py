@@ -297,6 +297,11 @@ class OperationsService:
         with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
             return JobRunsRepository.latest_success_finished_at(cur, job_type)
 
+    def latest_job_for_source(self, job_type: str, source_id: str) -> Optional[Dict[str, Any]]:
+        """The newest job of this type for one source, summarised (the source sheet's archive)."""
+        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            return JobRunsRepository.latest_for_source(cur, job_type, source_id)
+
     def start_job(
         self,
         job_type: str,

@@ -43,6 +43,7 @@ def subreddit_name(source_handle: str) -> str:
 
 class RedditKind(BaseKind):
     name = "reddit_subreddit"
+    available_basis = "listing_cap"
     profile = REDDIT_PROFILE
 
     def __init__(self, http: KindHttp) -> None:

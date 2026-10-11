@@ -26,6 +26,7 @@ SHORT_BODY_CHARS = 1400
 
 class GenericRssKind(SingleShotArchive, BaseKind):
     name = "generic_rss"
+    available_basis = "feed_window"
     profile = GENERIC_RSS_PROFILE
 
     def __init__(self, http: KindHttp, *, full_content_hosts: Optional[set[str]] = None) -> None:

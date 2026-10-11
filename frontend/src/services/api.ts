@@ -295,6 +295,82 @@ export interface ArchiveResponse {
   [key: string]: any;
 }
 
+/** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
+export type AvailableBasis = 'exact' | 'upper_bound' | 'estimate' | 'listing_cap' | 'feed_window' | 'unknown';
+
+/** GET /api/archive/{id}/status `support`: can this source archive (no network involved). */
+export interface ArchiveSupport {
+  kind: string;
+  available_basis: AvailableBasis;
+  archivable: boolean;
+  /** Why it cannot archive (kind unavailable, a feed with nothing older), or null. */
+  reason: string | null;
+  unavailable: boolean;
+  live_fetch_limit: number;
+}
+
+/** The newest archive_source job for a source, summarised. */
+export interface ArchiveJobSummary {
+  id: string;
+  status: string;
+  message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  progress?: number | null;
+  result?: {
+    posts_fetched?: number;
+    posts_inserted?: number;
+    posts_updated?: number;
+    pages_fetched?: number;
+    stored_posts?: number;
+    desired_posts?: number;
+    error?: string;
+  };
+}
+
+export interface ArchiveRateLimit {
+  page_delay_seconds?: number;
+  batch_size?: number;
+  batch_cooldown_seconds?: number;
+}
+
+/** settings.archive plus live storage stats, as GET /api/archive/{id}/status returns it. */
+export interface ArchiveState {
+  status?: string;
+  stored_posts?: number;
+  available_posts?: number | null;
+  last_inspected_at?: string | null;
+  last_archived_at?: string | null;
+  resume_ready?: boolean;
+  checkpoint?: { collected_posts?: number; pages_fetched?: number; completed?: boolean } | null;
+  rate_limit?: ArchiveRateLimit | null;
+  oldest_published_at?: string | null;
+}
+
+export interface ArchiveStatusResponse {
+  success?: boolean;
+  error?: string;
+  archive?: ArchiveState;
+  /** Missing from a backend older than the source sheet's archive section. */
+  support?: ArchiveSupport | null;
+  latest_job?: ArchiveJobSummary | null;
+}
+
+/** POST /api/archive/{id}/plan `archive`: one inspection of the source plus the estimate. */
+export interface ArchivePlan {
+  available_posts: number | null;
+  available_basis?: AvailableBasis;
+  desired_posts: number;
+  remaining_posts: number;
+  estimated_pages: number;
+  estimated_seconds: number;
+  current_stored_posts?: number;
+  resume: boolean;
+  resume_available: boolean;
+  rate_limit?: ArchiveRateLimit;
+  first_post_date?: string | null;
+}
+
 export interface ArchiveCatalogEntry {
   source_id: string;
   display_name: string;
@@ -1854,6 +1930,35 @@ class ApiService {
         error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
     }
+  }
+
+  // ---- The source sheet's archive section (Mark IX). These throw (ApiError) instead of
+  // resolving {success:false}; a backend without `support` still answers the status.
+
+  async getSourceArchive(sourceId: string): Promise<ArchiveStatusResponse> {
+    const response = await this.makeRequest<ArchiveStatusResponse>(`/api/archive/${encodeURIComponent(sourceId)}/status`);
+    if (response.success === false) throw new Error(response.error || 'Could not read the archive status');
+    return response;
+  }
+
+  /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts. */
+  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<ArchivePlan> {
+    const response = await this.makeRequest<{ success?: boolean; error?: string; archive?: ArchivePlan }>(
+      `/api/archive/${encodeURIComponent(sourceId)}/plan`,
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume }) },
+    );
+    if (!response.success || !response.archive) throw new Error(response.error || 'Could not plan the archive');
+    return response.archive;
+  }
+
+  /** Start an archive_source job (202); poll it with getOperationJob. */
+  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<{ job_id: string }> {
+    const response = await this.makeRequest<{ success?: boolean; error?: string; job_id?: string }>(
+      `/api/archive/${encodeURIComponent(sourceId)}/run`,
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true }) },
+    );
+    if (!response.success || !response.job_id) throw new Error(response.error || 'Could not start the archive');
+    return { job_id: response.job_id };
   }
 
   // ---- Mark IX ingestion (spec §4). These throw (ApiError, JobTimeoutError, AbortError)

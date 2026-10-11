@@ -172,6 +172,37 @@ describe('Sources → ingestion tab', () => {
     expect(within(detail).getByText('Fetched Simon')).toBeInTheDocument();
   });
 
+  it('archive jobs show their progress in the history and their result in the detail', async () => {
+    const getOperationJob = vi.fn().mockResolvedValue({
+      success: true,
+      job: job({ id: 'a2', job_type: 'archive_source', job_label: 'Archive', status: 'success', source_display_name: 'Marques Brownlee',
+        message: 'Archived 500 posts', payload: { posts_fetched: 500, posts_inserted: 475, posts_updated: 25, pages_fetched: 25, stored_posts: 500 } }),
+    });
+    setup({
+      overrides: {
+        getOperationJob,
+        getOperationsOverview: vi.fn().mockResolvedValue({
+          success: true,
+          alerts: [],
+          jobs: [
+            job({ id: 'a1', job_type: 'archive_source', job_label: 'Archive', status: 'running', progress: 42, finished_at: null,
+              source_display_name: 'iFixit', message: 'Archive' }),
+            job({ id: 'a2', job_type: 'archive_source', job_label: 'Archive', status: 'success', source_display_name: 'Marques Brownlee',
+              message: 'Archived 500 posts' }),
+          ],
+        }),
+      },
+    });
+    await userEvent.click(await screen.findByRole('link', { name: 'jobs' }));
+    const history = await screen.findByRole('region', { name: 'Recent jobs' });
+    const running = (await within(history).findByText(/iFixit/)).closest('button') as HTMLElement;
+    expect(within(running).getByRole('progressbar', { name: 'Archive progress' })).toHaveAttribute('aria-valuenow', '42');
+    expect(within(running).getByText('42%')).toBeInTheDocument();
+    await userEvent.click(within(history).getByText(/Marques Brownlee/));
+    const detail = await screen.findByRole('region', { name: 'Archive' });
+    expect(await within(detail).findByText('500 posts fetched, 475 new, 25 updated · 25 pages · 500 stored')).toBeInTheDocument();
+  });
+
   it('a ?job= link (from a run toast) opens that job', async () => {
     const { api } = setup({ route: '/settings/sources?tab=ingestion&sub=jobs&job=r9' });
     await screen.findByRole('region', { name: 'Recent jobs' });
