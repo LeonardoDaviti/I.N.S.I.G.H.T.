@@ -5,6 +5,8 @@ import {
 } from './coverage';
 import appSource from '../App.tsx?raw';
 import { frameScenario } from './fixtures/scenarios';
+import { prototypeProblems } from './prototypes';
+import { PROTOTYPES } from './prototypeRegistry';
 
 describe('appRoutes', () => {
   it('lists every <Route path> in the router source, in order', () => {
@@ -150,5 +152,25 @@ describe('the design docs', () => {
         .map((state) => `${page}/${state} has no frame scenario in design/fixtures/scenarios.ts`);
     });
     expect(missing).toEqual([]);
+  });
+});
+
+/** The prototype registry (D6): what Bench and the Handbook list, found by glob. */
+describe('the prototypes', () => {
+  const principles = definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!);
+  const pages = new Set(pageDocs.map((doc) => doc.path.replace(/^pages\//, '').replace(/\.md$/, '')));
+  const known = { principles, hasState: (page: string, state: string) => pages.has(page) && Boolean(frameScenario(page, state)) };
+
+  it('include the seed, the post-title wrap', () => {
+    expect(PROTOTYPES.map((prototype) => prototype.id)).toContain('2026-10-10-title-wrap');
+  });
+
+  it('each have valid meta: hypothesis, principles that exist, a page and states that exist, status and date', () => {
+    expect(PROTOTYPES.flatMap((prototype) => prototypeProblems(prototype, known))).toEqual([]);
+  });
+
+  it('each ship an index.tsx next to the README', () => {
+    const modules = Object.keys(import.meta.glob('./prototypes/*/index.tsx')).map((path) => path.split('/')[2]);
+    expect(PROTOTYPES.map((prototype) => prototype.id).filter((id) => !modules.includes(id))).toEqual([]);
   });
 });
