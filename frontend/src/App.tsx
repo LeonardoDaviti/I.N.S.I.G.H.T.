@@ -21,6 +21,7 @@ const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
 // Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
 const DesignStudio = lazy(() => import('./design/DesignStudio'));
+const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -115,6 +116,12 @@ export function AppRoutes() {
 }
 
 function App() {
+  // The Design Studio's chromeless frame (`/design/frame/:page/:state`, D4): its
+  // own router, providers and fixture fetch, so it replaces the app, not a route in it.
+  // The prefix is inlined (design/frame/frameUrl.ts FRAME_PREFIX) to keep the reader's JS lean (D8).
+  if (window.location.pathname.startsWith('/design/frame/')) {
+    return <Suspense fallback={null}><DesignFrame /></Suspense>;
+  }
   return (
     <QueryClientProvider client={queryClient}>
       <ApiProvider>
