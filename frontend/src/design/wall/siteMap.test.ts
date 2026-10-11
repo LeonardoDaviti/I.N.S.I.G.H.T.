@@ -6,7 +6,7 @@ import { appRoutes } from '../coverage';
 import { frameScenario } from '../fixtures/scenarios';
 import { scopeFromRoute } from '../../lib/feedContext';
 import { sourceId } from '../fixtures/sites';
-import { SITE_EDGES, SITE_NODES, siteNode } from './siteMap';
+import { PRINCIPLES, SITE_EDGES, SITE_NODES, siteNode } from './siteMap';
 
 const ROUTES = appRoutes(appSource);
 const routeOf = (href: string) => ROUTES.find((route) => route !== '*' && matchPath(route, new URL(href, 'http://x').pathname));
@@ -67,5 +67,16 @@ describe('the site map', () => {
   it('lays the pages out on a grid with no two in one cell', () => {
     const cells = SITE_NODES.map((node) => `${node.col},${node.row}`);
     expect(new Set(cells).size).toBe(cells.length);
+  });
+});
+
+describe('the principles the Wall highlights', () => {
+  it('are P1–P12 from principles.md, each with its title and rule', () => {
+    expect(PRINCIPLES.map((principle) => principle.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(PRINCIPLES[6]).toEqual({
+      n: 7,
+      title: 'Fetching lives in Sources',
+      rule: 'Reading views never fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections.',
+    });
   });
 });

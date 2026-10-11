@@ -43,6 +43,22 @@ export function citedPrinciples(text: string): number[] {
   return [...new Set([...text.matchAll(/\bP(\d+)\b/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
 }
 
+export interface Principle {
+  n: number;
+  /** "Fetching lives in Sources" */
+  title: string;
+  /** The rule, without its why / do / don't. */
+  rule: string;
+}
+
+/** P1–P12 as principles.md states them. */
+export function parsePrinciples(text: string): Principle[] {
+  return [...text.matchAll(/^- \*\*P(\d+) (.+?)\.\*\* (.+?)(?= \*Why:\*|$)/gm)]
+    .map(([, n, title, rule]) => ({ n: Number(n), title, rule: rule.trim() }));
+}
+
+export const PRINCIPLES: readonly Principle[] = parsePrinciples(DOCS.find((doc) => doc.path === 'principles.md')?.text ?? '');
+
 function cites(page: string): number[] {
   const doc = DOCS.find((candidate) => candidate.path === `pages/${page}.md`);
   return doc ? citedPrinciples(doc.text) : [];
