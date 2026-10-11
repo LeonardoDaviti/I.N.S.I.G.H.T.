@@ -24,7 +24,6 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - **Rail** (md and up, sticky under the top bar, 15–16rem): All posts and Starred with icons; `tracks` with unread counts; `sources with unread` (top 12, most unread first) with a filter field over every source and "Show all N sources". Below md the same content is a drawer opened from the scope title.
 - **Toolbar** (sticky material): the scope title (`display`-ish, truncates) and its unread count in `text-3`; a `shortcuts ?` text action. With a track or source scope, the title is a quiet link to that track or source in Sources (P8). Below it, slash-separated words: `Show unread / starred / all`, `View stream / by source`, `Density comfortable / compact` (md and up), and the "N new posts" pill at the right when posts arrived.
 - **Stopped notice** above the list when no enabled source was fetched for a day (P11).
-- **Track briefing and milestones** (analysis on, folder scope only): the stored track briefing and the milestones rail render above the list, read-only (`parked/track-briefing.md`).
 - **List**, stream view: day headers, then bordered rows. A row: time column (`14:05`, under its day header) in `text-3` tabular nums; title (2 lines max, weight 600 unread, 400 and `text-2` read); one meta line (unread dot, ★ if starred, source name via `sourceLabel()`, never a URL, and the length: `4 min read` or a video duration); one excerpt line in comfortable density; a greyscale thumbnail at sm and up; icon actions (mark read ○/✓, star ☆, and on the selected row "mark read up to here").
 - **List**, by-source view: one section per source, its name linking to that source's scope, up to 3 rows, then "N more from <source> →".
 - **Foot:** an infinite-scroll sentinel, a visible "Load more" button, or "You've reached the end."
@@ -69,5 +68,5 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 
 ## Open issues
 
-- [0002](../../../../../plan/issues/0002-track-briefing-reading.md): the track briefing shown in the folder scope with analysis on.
+- [0002](../../../../../plan/issues/0002-track-briefing-reading.md): a track briefing in the folder scope, rebuilt in Mark X (the old one is at the tag `mark-ix-analysis-archive`).
 - [0005](../../../../../plan/issues/0005-minimal-codebase.md): keep what reading uses, retire the rest.

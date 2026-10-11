@@ -95,14 +95,7 @@ export function asRunReport(payload: unknown): RunReport | null {
     failures: records(payload.failures, 'error'),
     post_failures: records(payload.post_failures, 'error'),
     inserted_by_source: records(payload.inserted_by_source, 'inserted'),
-    enrichment: isRecord(payload.enrichment) ? payload.enrichment as RunReport['enrichment'] : null,
   };
-}
-
-/** Why the run saved posts without enriching them ("analysis off"), or null when it enriched. */
-export function enrichmentSkipped(report: Pick<RunReport, 'enrichment'>): string | null {
-  const enrichment = report.enrichment;
-  return enrichment && 'skipped' in enrichment && typeof enrichment.skipped === 'string' ? enrichment.skipped : null;
 }
 
 function newPosts(count: number): string {

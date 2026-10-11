@@ -3,7 +3,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import type { RunReport, SchedulerConfig } from '../../services/api';
-import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
 import { INGESTION_SUB_VIEWS, ingestionSubViewHref, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
 import { useApi } from '../../services/ApiContext';
@@ -18,7 +17,6 @@ import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
 import IngestionArchive from './IngestionArchive';
 import IngestionLogs from './IngestionLogs';
-import IngestionAnalysisActions from './IngestionAnalysisActions';
 import { Notice } from '../states';
 
 /** Now, every 30 seconds while the page is visible: enough for a minute countdown. */
@@ -43,7 +41,6 @@ const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0
 export default function IngestionPanel() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const analysis = useAnalysisEnabled();
   const [sessionReport, setSessionReport] = useState<RunReport | null>(null);
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,16 +133,12 @@ export default function IngestionPanel() {
               </p>
             )}
           </section>
-          {analysis ? (
-            <IngestionAnalysisActions onDone={() => void queryClient.invalidateQueries({ queryKey: [...OPERATIONS_OVERVIEW_KEY] })} />
-          ) : null}
         </div>
       )}
       {scheduler.data && schedulerOpen ? (
         <SchedulerDialog
           open
           config={scheduler.data}
-          analysis={analysis}
           onClose={() => setSchedulerOpen(false)}
           onSave={saveScheduler}
         />

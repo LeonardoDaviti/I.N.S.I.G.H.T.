@@ -105,7 +105,7 @@ function compactValue(value: unknown, options: CompactOptions, depth: number, ke
 
 /** The run report lists RunReportSummary renders. The backend already caps each at 20
  *  entries, so they are kept whole; only the job's `events` log is trimmed. */
-const RUN_REPORT_LISTS = new Set(['failures', 'post_failures', 'inserted_by_source', 'decisions', 'selector', 'enrichment']);
+const RUN_REPORT_LISTS = new Set(['failures', 'post_failures', 'inserted_by_source', 'decisions', 'selector']);
 
 function compactRunReportPayload(payload: Record<string, unknown>, options: CompactOptions): Record<string, unknown> {
   return Object.fromEntries(
@@ -147,9 +147,6 @@ const JOB_LABELS: Record<string, string> = {
   ingestion_run: 'Ingestion run',
   scheduler_cycle: 'Daily work',
   archive_source: 'Archive',
-  daily_briefing: 'Daily briefing',
-  topic_briefing: 'Topic briefing',
-  expert_briefing: 'Expert briefing',
 };
 
 /** The human label for a job: the backend's `job_label`, a local fallback, then the type. */

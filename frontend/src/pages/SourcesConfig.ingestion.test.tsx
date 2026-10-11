@@ -19,8 +19,6 @@ function scheduler(overrides: Partial<SchedulerConfig> = {}): SchedulerConfig {
   return {
     interval_hours: 24,
     sync_sources_each_cycle: true,
-    generate_daily_briefing: true,
-    generate_topic_briefing: false,
     ingest_tick_minutes: 60,
     state: {
       last_tick_at: new Date(Date.now() - 10 * MINUTE).toISOString(),
@@ -74,15 +72,12 @@ function archiveStatus(overrides: Partial<ArchiveStatusResponse> = {}): ArchiveS
 
 function setup({
   route = '/settings/sources?tab=ingestion',
-  analysis = false,
   overrides = {},
-}: { route?: string; analysis?: boolean; overrides?: Partial<Record<keyof Api, unknown>> } = {}) {
+}: { route?: string; overrides?: Partial<Record<keyof Api, unknown>> } = {}) {
   const methods = {
-    getConfig: vi.fn().mockResolvedValue({ analysis_enabled: analysis }),
     getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog' })])),
     getSourcesWithSettings: vi.fn().mockResolvedValue({ success: true, sources: [], total: 0 }),
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
-    getExperts: vi.fn().mockResolvedValue({ success: true, experts: [] }),
     getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [job()], alerts: [] }),
     getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: scheduler() }),
     getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: runReport() }) }),
@@ -122,18 +117,19 @@ describe('Sources → ingestion tab', () => {
     expect((await within(lastRun).findAllByText(/21 new posts/)).length).toBeGreaterThan(0);
   });
 
-  it('reading-only, the last run says its enrichment was skipped', async () => {
+  it('a stored run from before issue 0005 still shows; its enrichment field is ignored', async () => {
     setup({
       overrides: {
         getOperationsOverview: vi.fn().mockResolvedValue({
           success: true,
           alerts: [],
-          jobs: [job({ id: 'r1', payload: runReport({ enrichment: { skipped: 'analysis off' } }) })],
+          jobs: [job({ id: 'r1', payload: { ...runReport(), enrichment: { skipped: 'analysis off' } } })],
         }),
       },
     });
     const lastRun = await screen.findByRole('region', { name: 'Last run' });
-    expect(await within(lastRun).findByText('Enrichment skipped (analysis off)')).toBeInTheDocument();
+    expect((await within(lastRun).findAllByText(/48 new posts/)).length).toBeGreaterThan(0);
+    expect(within(lastRun).queryByText(/enrich/i)).toBeNull();
   });
 
   it('the scheduler status says how often it checks and when it next ticks', async () => {
@@ -161,7 +157,7 @@ describe('Sources → ingestion tab', () => {
     expect(await within(status).findByText(/could not read the scheduler/i)).toBeInTheDocument();
   });
 
-  it('the tick interval can be changed; reading-only, the dialog has no briefing settings', async () => {
+  it('the tick interval can be changed; the dialog has no briefing settings', async () => {
     const updateSchedulerConfig = vi.fn().mockImplementation((config: SchedulerConfig) => Promise.resolve({ success: true, scheduler: scheduler(config) }));
     setup({ overrides: { updateSchedulerConfig } });
     await userEvent.click(await screen.findByRole('button', { name: 'Change interval' }));
@@ -333,25 +329,12 @@ describe('Sources → ingestion tab', () => {
     await waitFor(() => expect(api.getOperationJob).toHaveBeenCalledWith('r9'));
   });
 
-  it('reading-only: no briefing or source-registry controls, and no Fetch one source', async () => {
+  it('no briefing or source-registry controls, and no Fetch one source', async () => {
     setup();
     await screen.findByRole('region', { name: 'Last run' });
     expect(screen.queryByRole('region', { name: 'Write a briefing' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Source registry' })).toBeNull();
     expect(screen.queryByText(/briefing/i)).toBeNull();
-    expect(screen.queryByText(/fetch one source/i)).toBeNull();
-  });
-
-  it('with analysis on, briefings and the source registry are there too', async () => {
-    const generateBriefing = vi.fn().mockResolvedValue({ success: true });
-    const syncSources = vi.fn().mockResolvedValue({ success: true });
-    setup({ analysis: true, overrides: { generateBriefing, syncSources } });
-    const briefing = await screen.findByRole('region', { name: 'Write a briefing' });
-    await userEvent.click(within(briefing).getByRole('button', { name: 'Daily briefing' }));
-    await waitFor(() => expect(generateBriefing).toHaveBeenCalledTimes(1));
-    const registry = screen.getByRole('region', { name: 'Source registry' });
-    await userEvent.click(within(registry).getByRole('button', { name: 'JSON → database' }));
-    await waitFor(() => expect(syncSources).toHaveBeenCalledWith('json-to-db'));
     expect(screen.queryByText(/fetch one source/i)).toBeNull();
   });
 });

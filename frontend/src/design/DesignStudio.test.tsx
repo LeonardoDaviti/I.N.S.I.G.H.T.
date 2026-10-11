@@ -98,13 +98,6 @@ describe('the Handbook', () => {
     expect(screen.getByRole('figure', { name: 'reader · loading · 390 · light' })).toBeInTheDocument();
   });
 
-  it('gives a parked doc no specimen: it has no frame scenario', () => {
-    renderStudio('/design/parked/inbox');
-    expect(screen.getByRole('heading', { level: 1, name: 'Analyst inbox' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Specimen' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/No fixture scenario/)).not.toBeInTheDocument();
-  });
-
   it('offers a state\'s own width and opens that state at it (the 320px top bar)', async () => {
     const user = userEvent.setup();
     renderStudio('/design/pages/shell');

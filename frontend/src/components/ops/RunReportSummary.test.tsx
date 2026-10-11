@@ -28,13 +28,9 @@ describe('RunReportSummary', () => {
     expect(screen.getByRole('heading', { name: '1 new post, 3 sources failed' })).toBeInTheDocument();
   });
 
-  it('says quietly when enrichment was skipped (analysis off)', () => {
-    render(<RunReportSummary report={{ ...runReport(), enrichment: { skipped: 'analysis off' } }} />);
-    expect(screen.getByText('Enrichment skipped (analysis off)')).toBeInTheDocument();
-  });
-
-  it('says nothing about enrichment when it ran', () => {
-    render(<RunReportSummary report={runReport()} />);
+  it('says nothing about the enrichment field an old stored report still carries', () => {
+    const old = { ...runReport(), enrichment: { skipped: 'analysis off' } };
+    render(<RunReportSummary report={old} />);
     expect(screen.queryByText(/Enrichment skipped/)).not.toBeInTheDocument();
   });
 

@@ -39,12 +39,6 @@ test('sourceLabel: the first real display name wins over a URL', () => {
   assert.equal(sourceLabel(null, '', 'https://rss.arxiv.org/rss/cs.AI'), 'arXiv cs.AI');
 });
 
-test('sourceLabel: every page derives the same name (the briefing helper and the post page included)', async () => {
-  const { readableSourceName } = await import('./briefingPage.ts');
-  for (const [raw, label] of DERIVED) assert.equal(readableSourceName(raw), label, raw);
-  assert.equal(readableSourceName(null, ''), '');
-});
-
 test('sourceLabel: a missing name says so', () => {
   assert.equal(sourceLabel(null), 'Unknown source');
   assert.equal(sourceLabel('  ', undefined), 'Unknown source');

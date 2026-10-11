@@ -74,6 +74,7 @@ export function railGroups(
   const systemDocs = under('system')
     .filter((doc) => doc.path !== 'system/components.md')
     .sort((a, b) => docTitle(a).localeCompare(docTitle(b)));
+  const parked = [...under('parked')].sort(byOrder([])).map(link);
   return [
     {
       label: 'Studio',
@@ -93,7 +94,8 @@ export function railGroups(
       label: 'Prototypes',
       items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}`, note: prototype.note })),
     },
-    { label: 'Parked', items: [...under('parked')].sort(byOrder([])).map(link) },
+    // Retired pages kept as a doc; hidden while there are none.
+    ...(parked.length ? [{ label: 'Parked', items: parked }] : []),
   ];
 }
 

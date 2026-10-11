@@ -279,7 +279,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <div>
               <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
               <p className="mt-0.5 text-[0.75rem] text-fg-3">
-                Off keeps it fetched and readable through its tracks, but out of the feed and the daily briefing. Saves instantly.
+                Off keeps it fetched and readable through its tracks, but out of the feed. Saves instantly.
               </p>
             </div>
             <Switch

@@ -1,33 +1,6 @@
 export type IngestionTabKey = 'main' | 'archive' | 'missions' | 'logs';
 
-export type IngestionTab = {
-  key: IngestionTabKey;
-  label: string;
-  description: string;
-};
-
-export const INGESTION_TABS: IngestionTab[] = [
-  {
-    key: 'main',
-    label: 'Main',
-    description: 'Immediate actions and system snapshots.',
-  },
-  {
-    key: 'archive',
-    label: 'Archive Control',
-    description: 'Plan and run one-source archive jobs.',
-  },
-  {
-    key: 'missions',
-    label: 'Mission Feed',
-    description: 'Inspect jobs, alerts, and source health.',
-  },
-  {
-    key: 'logs',
-    label: 'Logs',
-    description: 'Read runtime and session logs.',
-  },
-];
+/** The old ingestion page's tabs (`/ingestion/:tab`), which now redirect to the ingestion tab under sources. */
 
 export function normalizeIngestionTab(tab?: string | null): IngestionTabKey {
   if (tab === 'archive' || tab === 'missions' || tab === 'logs') {
@@ -38,10 +11,6 @@ export function normalizeIngestionTab(tab?: string | null): IngestionTabKey {
     return 'missions';
   }
   return 'main';
-}
-
-export function getIngestionTabHref(tab: IngestionTabKey): string {
-  return tab === 'main' ? '/ingestion' : `/ingestion/${tab}`;
 }
 
 /** The ingestion tab's views under sources, as `?sub=`: the overview (default), archive backfill, the job history and the logs. */

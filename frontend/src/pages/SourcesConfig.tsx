@@ -586,7 +586,7 @@ export default function SourcesConfig() {
         open={pendingDelete !== null}
         title={pendingDelete?.kind === 'folder' ? `Delete the track "${pendingDelete.name}"?` : `Delete ${pendingDelete?.kind === 'sources' && pendingDelete.ids.length === 1 ? `"${pendingDelete.name}"` : pendingDelete?.name ?? ''}?`}
         description={pendingDelete?.kind === 'folder'
-          ? 'The track, its experts and its milestones are deleted. Its sources and their posts stay (they move to "Not in a track" if they are in no other track).'
+          ? 'The track is deleted. Its sources and their posts stay (they move to "Not in a track" if they are in no other track).'
           : 'Every post collected from them is deleted too. This cannot be undone; disabling keeps the posts.'}
         confirmLabel={pendingDelete?.kind === 'folder' ? 'Delete track' : pendingDelete?.kind === 'sources' && pendingDelete.ids.length > 1 ? `Delete ${pendingDelete.ids.length} sources` : 'Delete source'}
         destructive

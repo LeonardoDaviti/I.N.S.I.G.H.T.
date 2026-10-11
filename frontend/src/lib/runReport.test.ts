@@ -5,7 +5,6 @@ import {
   DECISION_KINDS,
   DECISION_LABELS,
   asRunReport,
-  enrichmentSkipped,
   summarizeRunReport,
 } from './runReport.ts';
 import type { RunReport } from '../services/api';
@@ -30,7 +29,6 @@ function report(overrides: Partial<RunReport> = {}): RunReport {
     failures: [],
     post_failures: [],
     inserted_by_source: [],
-    enrichment: null,
     ...overrides,
   };
 }
@@ -136,14 +134,8 @@ test('asRunReport fills missing optional lists so the UI never reads undefined',
   assert.equal(parsed?.posts_updated, 0);
 });
 
-test('enrichmentSkipped reads the reason a run did not enrich (analysis off)', () => {
-  assert.equal(enrichmentSkipped(report({ enrichment: { skipped: 'analysis off' } })), 'analysis off');
-  assert.equal(enrichmentSkipped(report({ enrichment: { entity: { posts: 1, chunks: 1, failed_chunks: 0 } } })), null);
-  assert.equal(enrichmentSkipped(report({ enrichment: null })), null);
-});
-
-test('asRunReport keeps a skipped enrichment', () => {
+test('asRunReport ignores the enrichment field of an old stored report', () => {
   const parsed = asRunReport({ run_id: 'r', status: 'success', posts_inserted: 0, sources_considered: 1, enrichment: { skipped: 'analysis off' } });
   assert.ok(parsed);
-  assert.equal(enrichmentSkipped(parsed), 'analysis off');
+  assert.equal('enrichment' in parsed, false);
 });

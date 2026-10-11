@@ -83,118 +83,6 @@ export interface SourcesWithSettingsResponse {
 }
 
 
-export interface BriefingHighlight {
-  id?: string;
-  post_id?: string;
-  highlight_text?: string;
-  highlight_kind?: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  language_code?: string | null;
-  importance_score?: number;
-  commentary?: string | null;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  created_at?: string | null;
-}
-
-export interface BriefingReference {
-  id?: string;
-  artifact_type?: string;
-  artifact_id?: string;
-  post_id?: string;
-  highlight_id?: string | null;
-  reference_role?: string;
-  display_label?: string | null;
-  order_index?: number;
-  created_at?: string | null;
-  post?: Post | null;
-  highlight?: BriefingHighlight | null;
-}
-
-export interface BriefingResponse {
-  success: boolean;
-  briefing?: string; // AI-generated briefing content
-  date?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  posts?: Post[]; // Array of individual source posts
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  references?: BriefingReference[];
-  error?: string;
-}
-
-export interface WeeklyBriefingResponse {
-  success: boolean;
-  briefing?: string;
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  date?: string;
-  week_start?: string | null;
-  week_end?: string | null;
-  subject_key?: string | null;
-  daily_briefings_used?: number;
-  days_covered?: string[];
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  topics?: Topic[];
-  posts?: Record<string, Post>;
-  references?: BriefingReference[];
-  variant?: string;
-  error?: string;
-}
-
-export interface WeeklyTopicTimelineEntry {
-  date?: string | null;
-  summary?: string | null;
-  source_topics?: string[];
-  post_ids?: string[];
-}
-
-export interface Topic {
-  id: string;
-  title: string;
-  summary: string | null;
-  post_ids?: string[]; // For AI-generated topics (legacy)
-  posts?: Post[]; // For database topics
-  timeline?: WeeklyTopicTimelineEntry[];
-  is_outlier?: boolean;
-  created_at?: string;
-  post_count?: number;
-}
-
-export interface BriefingTopicsResponse {
-  success: boolean;
-  briefing?: string;
-  date?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  enhanced?: boolean;
-  cached?: boolean;
-  topics?: Topic[];
-  // posts map keyed by database post UUID
-  posts?: Record<string, Post>;
-  // list of database post UUIDs not referenced by any named topic
-  unreferenced_posts?: string[];
-  one_sentence_takeaway?: string | null;
-  references?: BriefingReference[];
-  error?: string;
-}
-
-export interface TopicsResponse {
-  success: boolean;
-  topics: Topic[];
-  date: string;
-  total: number;
-  message?: string;
-  error?: string;
-}
-
 export interface Post {
   id?: string;
   source_id?: string;
@@ -217,22 +105,6 @@ export interface Post {
   metadata?: Record<string, any>;
   handle_or_url?: string;
   source_display_name?: string;
-  topics?: Array<{ id: string; title: string; date?: string | null }>;
-}
-
-export interface PostHighlight {
-  id?: string;
-  post_id?: string;
-  highlight_text: string;
-  highlight_kind?: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  language_code?: string | null;
-  importance_score?: number;
-  commentary?: string | null;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  created_at?: string | null;
 }
 
 export interface ReaderState {
@@ -418,11 +290,9 @@ export interface SchedulerState {
 }
 
 export interface SchedulerConfig {
-  /** Daily work (briefings) interval. */
-  interval_hours: number;
+  /** The daily upkeep interval (pruning, cadence, the sources.json sync). Not edited here; sent back as read. */
+  interval_hours?: number;
   sync_sources_each_cycle: boolean;
-  generate_daily_briefing: boolean;
-  generate_topic_briefing: boolean;
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
   updated_at?: string | null;
@@ -483,13 +353,11 @@ export interface RunReport {
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
   post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
-  /** Per-step counts, or why enrichment did not run (`{ skipped: 'analysis off' }`, reading-finish R3). */
-  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | { skipped: string } | null;
 }
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | 'gemini' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -521,8 +389,6 @@ export interface CredentialProviderView {
   needed: boolean;
   testable: boolean;
   sign_in: boolean;
-  /** Gemini: shown only while analysis is on. */
-  analysis_only: boolean;
   configured: boolean;
   fields: CredentialField[];
   test: CredentialTest | null;
@@ -630,8 +496,6 @@ export interface OperationJobResponse {
 
 export interface SystemCorpusStatus {
   total_posts: number;
-  total_topics: number;
-  total_briefings: number;
   enabled_sources: number;
   total_sources: number;
   latest_post_at?: string | null;
@@ -647,16 +511,6 @@ export interface SystemFolderStatus {
   post_count: number;
 }
 
-export interface SystemExpertStatus {
-  id: string;
-  name: string;
-  folder_id: string;
-  schedule?: string | null;
-  lookback_days: number;
-  enabled: boolean;
-  last_briefing_at?: string | null;
-}
-
 export interface SystemJobStatus {
   id: string;
   job_type: string;
@@ -669,12 +523,10 @@ export interface SystemJobStatus {
 export interface SystemStatusResponse {
   success: boolean;
   healthy?: boolean;
-  gemini_configured?: boolean;
   generated_at?: string;
   corpus?: SystemCorpusStatus;
   scheduler?: Partial<SchedulerConfig>;
   folders?: SystemFolderStatus[];
-  experts?: SystemExpertStatus[];
   recent_jobs?: SystemJobStatus[];
   source_health_summary?: { monitored?: number; errors?: number };
   error?: string;
@@ -696,46 +548,11 @@ interface AcceptedJobResponse {
   message?: string;
 }
 
-export interface PostNotesPayload {
-  post_id: string;
-  notes_markdown: string;
-  updated_at?: string | null;
-}
-
 export interface PostDetailResponse {
   success?: boolean;
   error?: string;
   post?: Post | null;
-  notes?: PostNotesPayload;
-  summary?: PostSummaryResponse | null;
-  summary_references?: BriefingReference[];
-  highlights?: PostHighlight[];
   reader_state?: ReaderState | null;
-}
-
-export interface PostSummaryResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  summary_markdown?: string;
-  model?: string;
-  updated_at?: string | null;
-  cached?: boolean;
-  categories?: string[];
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  highlights?: PostHighlight[];
-  references?: BriefingReference[];
-}
-
-export interface PostHighlightsResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  highlights?: PostHighlight[];
-  one_sentence_takeaway?: string | null;
-  cached?: boolean;
-  model?: string | null;
 }
 
 export interface PostInteractionResponse {
@@ -745,16 +562,6 @@ export interface PostInteractionResponse {
   event?: Record<string, any> | null;
   reader_state?: ReaderState | null;
   favorited?: boolean;
-}
-
-export interface PostChatResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  answer?: string;
-  source?: string;
-  estimated_tokens?: number;
-  context?: Record<string, any>;
 }
 
 export interface RedditComment {
@@ -775,467 +582,6 @@ export interface RedditCommentsResponse {
   comment_count?: number;
   cached?: boolean;
   fetched_at?: string | null;
-}
-
-export interface RedditCommentsBriefingResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  summary_markdown?: string;
-  model?: string | null;
-  signals?: string[];
-  updated_at?: string | null;
-  comment_count?: number;
-  cached?: boolean;
-  estimated_tokens?: number;
-}
-
-export interface EvidenceArtifact {
-  id: string;
-  artifact_type: string;
-  canonical_url: string;
-  normalized_url: string;
-  url_host?: string | null;
-  display_title?: string | null;
-  status?: string;
-  metadata?: Record<string, any>;
-  relation_type?: string;
-  confidence?: number;
-  is_primary?: boolean;
-  link_metadata?: Record<string, any>;
-  created_at?: string | null;
-}
-
-export interface EvidenceRelation {
-  from_post_id?: string;
-  to_post_id?: string;
-  relation_type: string;
-  method?: string;
-  confidence?: number;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-}
-
-export interface EvidenceDebug {
-  post?: Record<string, any>;
-  artifacts?: EvidenceArtifact[];
-  relations?: {
-    outgoing?: EvidenceRelation[];
-    incoming?: EvidenceRelation[];
-  };
-}
-
-export interface MemoryMentionCandidate {
-  mention_id: string;
-  entity_id: string;
-  candidate_method: string;
-  score: number;
-  selected: boolean;
-  resolver_version: string;
-  created_at?: string | null;
-  mention_text?: string | null;
-  normalized_mention?: string | null;
-  entity_type?: string | null;
-  canonical_name?: string | null;
-  normalized_name?: string | null;
-}
-
-export interface MemoryMention {
-  id: string;
-  post_id: string;
-  mention_text: string;
-  normalized_mention: string;
-  language_code?: string | null;
-  entity_type_predicted: string;
-  role?: string | null;
-  char_start?: number | null;
-  char_end?: number | null;
-  extractor_confidence?: number;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  candidates?: MemoryMentionCandidate[];
-}
-
-export interface MemoryEntity {
-  post_id: string;
-  entity_id: string;
-  mention_id: string;
-  resolution_status: string;
-  confidence: number;
-  role?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  entity: {
-    id: string;
-    entity_type: string;
-    canonical_name: string;
-    canonical_name_pivot?: string | null;
-    normalized_name: string;
-    description?: string | null;
-    status?: string;
-    review_state?: string;
-    first_seen_at?: string | null;
-    last_seen_at?: string | null;
-  };
-  mention: {
-    id: string;
-    mention_text: string;
-    normalized_mention: string;
-    entity_type_predicted: string;
-  };
-}
-
-export interface MemorySourceProfile {
-  source_id: string;
-  language_code?: string | null;
-  publisher_type?: string | null;
-  country_code?: string | null;
-  is_primary_reporter?: boolean;
-  reliability_notes?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface MemoryDebug {
-  post?: Record<string, any>;
-  source_profile?: MemorySourceProfile;
-  mentions?: MemoryMention[];
-  entities?: MemoryEntity[];
-  candidates?: MemoryMentionCandidate[];
-}
-
-export interface EventEvidence {
-  event_id: string;
-  event: {
-    id: string;
-    event_type: string;
-    title: string;
-    normalized_event_key?: string | null;
-    status?: string;
-    confidence?: number;
-    occurred_at?: string | null;
-    first_seen_at?: string | null;
-    last_seen_at?: string | null;
-  };
-  stance: string;
-  evidence_snippet?: string | null;
-  confidence?: number;
-  extractor_version?: string | null;
-  created_at?: string | null;
-}
-
-export interface EventEntityLink {
-  event_id: string;
-  entity_id: string;
-  role?: string | null;
-  created_at?: string | null;
-  event: {
-    id: string;
-    event_type: string;
-    title: string;
-    normalized_event_key?: string | null;
-  };
-  entity: {
-    id: string;
-    entity_type: string;
-    canonical_name: string;
-    normalized_name: string;
-    review_state?: string;
-  };
-}
-
-export interface EventDebug {
-  post?: Record<string, any>;
-  events?: Array<EventEvidence["event"] & { evidence?: EventEvidence[]; entities?: EventEntityLink[] }>;
-  evidence?: EventEvidence[];
-  entities?: EventEntityLink[];
-}
-
-export interface StoryAnchorPost {
-  id: string;
-  url?: string | null;
-  title?: string | null;
-  published_at?: string | null;
-  source_id?: string | null;
-  platform?: string | null;
-  handle_or_url?: string | null;
-  normalized_url?: string | null;
-  canonical_url?: string | null;
-  url_host?: string | null;
-  source_display_name?: string | null;
-}
-
-export interface StoryCard {
-  id: string;
-  canonical_title: string;
-  canonical_summary?: string | null;
-  story_kind?: string;
-  status?: string;
-  anchor_post_id?: string | null;
-  anchor_confidence?: number;
-  first_seen_at?: string | null;
-  last_seen_at?: string | null;
-  created_by_method?: string | null;
-  resolution_version?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  post_count?: number;
-  update_count?: number;
-  anchor_post?: StoryAnchorPost | null;
-  role?: string;
-  relevance_score?: number;
-  anchor_score?: number;
-  is_anchor_candidate?: boolean;
-  evidence_weight?: number;
-  added_by_method?: string | null;
-  added_at?: string | null;
-  story_post_metadata?: Record<string, any>;
-  /** present on the story detail response (repo_stories attaches the updates) */
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryPostEntry {
-  story_id: string;
-  post_id: string;
-  role?: string | null;
-  relevance_score?: number;
-  anchor_score?: number;
-  is_anchor_candidate?: boolean;
-  evidence_weight?: number;
-  added_by_method?: string | null;
-  added_at?: string | null;
-  metadata?: Record<string, any>;
-  post: Post;
-}
-
-export interface StoryUpdatePostEntry {
-  story_update_id: string;
-  post_id: string;
-  role?: string | null;
-  created_at?: string | null;
-  post: Post;
-}
-
-export interface StoryUpdateEntry {
-  id: string;
-  story_id: string;
-  update_date?: string | null;
-  title: string;
-  summary: string;
-  importance_score?: number;
-  created_by_method?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  post_count?: number;
-  posts?: StoryUpdatePostEntry[];
-}
-
-export interface StoryDetail extends StoryCard {
-  posts?: StoryPostEntry[];
-  posts_by_role?: Record<string, StoryPostEntry[]>;
-  updates?: StoryUpdateEntry[];
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryTimelineResponse {
-  story_id: string;
-  story?: StoryCard;
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryCandidateLink {
-  id: string;
-  source_post_id: string;
-  candidate_post_id: string;
-  candidate_story_id?: string | null;
-  retrieval_method: string;
-  retrieval_score: number;
-  decision_status: string;
-  decision_reason?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  candidate_post?: Post | null;
-  candidate_story?: Pick<StoryCard, 'id' | 'canonical_title' | 'story_kind' | 'status'> | null;
-}
-
-export interface PostTimelineView {
-  grouped_dates?: string[];
-  current_update?: StoryUpdateEntry | null;
-  earlier_updates?: StoryUpdateEntry[];
-  later_updates?: StoryUpdateEntry[];
-  total_updates?: number;
-}
-
-export interface PostTimelineResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  post?: Post | null;
-  has_story?: boolean;
-  primary_story?: StoryCard | null;
-  story?: StoryDetail | null;
-  timeline?: PostTimelineView | null;
-  related_candidates?: StoryCandidateLink[];
-  refreshed?: boolean;
-}
-
-export interface InboxBatch {
-  id: string;
-  scope_type: string;
-  scope_value?: string | null;
-  generated_for_date?: string | null;
-  status?: string;
-  item_count?: number;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  pending_count?: number;
-  acted_count?: number;
-}
-
-export interface InboxItem {
-  id: string;
-  batch_id: string;
-  batch_scope_type?: string;
-  batch_scope_value?: string | null;
-  batch_generated_for_date?: string | null;
-  batch_status?: string;
-  batch_item_count?: number;
-  batch_metadata?: Record<string, any>;
-  batch_created_at?: string | null;
-  batch_updated_at?: string | null;
-  target_type: string;
-  target_id: string;
-  status: string;
-  priority_score?: number;
-  novelty_score?: number;
-  evidence_score?: number;
-  duplication_penalty?: number;
-  source_priority_score?: number;
-  reason_summary?: string | null;
-  reasons?: Array<Record<string, any>>;
-  surfaced_at?: string | null;
-  acted_at?: string | null;
-  metadata?: Record<string, any>;
-  item_created_at?: string | null;
-  item_updated_at?: string | null;
-  target_preview?: Record<string, any> | null;
-}
-
-export interface InboxAction {
-  id: string;
-  inbox_item_id?: string | null;
-  target_type: string;
-  target_id: string;
-  action_type: string;
-  actor_id?: string | null;
-  created_by?: string | null;
-  payload?: Record<string, any>;
-  created_at?: string | null;
-  item_status?: string | null;
-  batch_id?: string | null;
-  scope_type?: string | null;
-  scope_value?: string | null;
-  generated_for_date?: string | null;
-}
-
-export interface InboxItemDetail {
-  success?: boolean;
-  error?: string;
-  item?: InboxItem | null;
-  target?: Record<string, any> | null;
-  actions?: InboxAction[];
-}
-
-export interface InboxBatchResponse {
-  success?: boolean;
-  error?: string;
-  batch?: InboxBatch | null;
-  items?: InboxItem[];
-  total?: number;
-}
-
-export interface InboxBatchesResponse {
-  success?: boolean;
-  error?: string;
-  batches?: InboxBatch[];
-  total?: number;
-}
-
-export interface InboxItemsResponse {
-  success?: boolean;
-  error?: string;
-  items?: InboxItem[];
-  total?: number;
-}
-
-export interface InboxActionsResponse {
-  success?: boolean;
-  error?: string;
-  actions?: InboxAction[];
-  total?: number;
-}
-
-export interface InboxActionResponse {
-  success?: boolean;
-  error?: string;
-  action?: InboxAction | null;
-  item?: InboxItem | null;
-  side_effects?: Array<Record<string, any>>;
-}
-
-export interface VerticalBriefingTrack {
-  id: string;
-  title: string;
-  summary?: string;
-  track_kind?: string;
-  post_ids?: string[];
-  timeline?: Array<{
-    date?: string | null;
-    summary?: string | null;
-    post_ids?: string[];
-  }>;
-  story_titles?: string[];
-  entity_hints?: string[];
-  evidence_cluster_count?: number;
-  raw_post_count?: number;
-  unique_post_count?: number;
-}
-
-export interface VerticalBriefingResponse {
-  success?: boolean;
-  error?: string;
-  briefing?: string;
-  vertical_briefing?: string;
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  scope_type?: string;
-  scope_id?: string;
-  source_id?: string;
-  source_label?: string;
-  start_date?: string;
-  end_date?: string;
-  subject_key?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  estimated_tokens?: number;
-  tracks?: VerticalBriefingTrack[];
-  posts?: Record<string, Post>;
-  variant?: string;
-}
-
-export interface RebuildResponse {
-  success?: boolean;
-  error?: string;
-  job_id?: string | null;
-  result?: Record<string, any>;
-  [key: string]: any;
 }
 
 export interface SyncSourcesResponse {
@@ -1264,23 +610,6 @@ export interface YouTubeChannelVideosResponse {
   videos?: YouTubeVideoPreview[];
 }
 
-export interface YouTubeVideoChapter {
-  title: string;
-  start_seconds: number;
-  end_seconds?: number;
-}
-
-export interface YouTubeVideoEvaluationResponse {
-  success?: boolean;
-  error?: string;
-  summary_markdown?: string;
-  chapters?: YouTubeVideoChapter[];
-  depth?: string;
-  novelty?: string;
-  worth_watching?: string;
-  reasoning?: string;
-}
-
 export interface YouTubeWatchProgress {
   video_id?: string;
   source_id?: string | null;
@@ -1301,11 +630,6 @@ export interface YouTubeWatchProgressResponse {
   success?: boolean;
   error?: string;
   progress?: YouTubeWatchProgress | null;
-}
-
-/** GET /api/config. */
-export interface AppConfig {
-  analysis_enabled: boolean;
 }
 
 class ApiService {
@@ -1413,63 +737,6 @@ class ApiService {
   }
 
 
-  async generateBriefing(date: string): Promise<BriefingResponse> {
-    try {
-      const response = await this.makeTrackedRequest<BriefingResponse>('/api/daily', {
-        method: 'POST',
-        body: JSON.stringify({ date, asyncMode: true }),
-      });
-      
-      return response;
-    } catch (error) {
-      console.error('Failed to generate briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async generateWeeklyBriefing(date: string, refresh = false, includeTopics = false): Promise<WeeklyBriefingResponse> {
-    try {
-      return await this.makeTrackedRequest<WeeklyBriefingResponse>('/api/weekly', {
-        method: 'POST',
-        body: JSON.stringify({ date, refresh, includeTopics, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to generate weekly briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async generateBriefingWithTopics(
-    date: string,
-    opts?: { includeUnreferenced?: boolean; refresh?: boolean }
-  ): Promise<BriefingTopicsResponse> {
-    try {
-      const endpoint = `/api/daily/topics`;
-      const response = await this.makeTrackedRequest<BriefingTopicsResponse>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-          date,
-          includeUnreferenced: opts?.includeUnreferenced ?? true,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        })
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to generate briefing with topics:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      } as BriefingTopicsResponse;
-    }
-  }
-
   async syncSources(direction: 'json-to-db' | 'db-to-json'): Promise<SyncSourcesResponse> {
     try {
       return await this.makeRequest<SyncSourcesResponse>(`/api/sources/sync/${direction}`, {
@@ -1543,23 +810,6 @@ class ApiService {
     }
   }
 
-  async getPostHighlights(postId: string, refresh = false): Promise<PostHighlightsResponse> {
-    try {
-      return await this.makeRequest<PostHighlightsResponse>(`/api/posts/item/${postId}/highlights`, {
-        method: 'POST',
-        body: JSON.stringify({ refresh }),
-      });
-    } catch (error) {
-      console.error('Failed to get post highlights:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        highlights: [],
-      };
-    }
-  }
-
   async recordPostOpen(postId: string, metadata?: Record<string, any>): Promise<PostInteractionResponse> {
     try {
       return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, {
@@ -1612,55 +862,6 @@ class ApiService {
     }
   }
 
-  async savePostNotes(postId: string, notesMarkdown: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`, {
-        method: 'PUT',
-        body: JSON.stringify({ notesMarkdown }),
-      });
-    } catch (error) {
-      console.error('Failed to save post notes:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        notes_markdown: notesMarkdown,
-      };
-    }
-  }
-
-  async getPostSummary(postId: string, refresh = false): Promise<PostSummaryResponse> {
-    try {
-      return await this.makeTrackedRequest<PostSummaryResponse>(`/api/posts/item/${postId}/summary`, {
-        method: 'POST',
-        body: JSON.stringify({ refresh, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to get post summary:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async chatAboutPost(postId: string, question: string): Promise<PostChatResponse> {
-    try {
-      return await this.makeTrackedRequest<PostChatResponse>(`/api/posts/item/${postId}/chat`, {
-        method: 'POST',
-        body: JSON.stringify({ question, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to chat about post:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
   async fetchRedditComments(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsResponse> {
     try {
       return await this.makeTrackedRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
@@ -1678,26 +879,6 @@ class ApiService {
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         post_id: postId,
         comments: [],
-      };
-    }
-  }
-
-  async generateRedditCommentsBriefing(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsBriefingResponse> {
-    try {
-      return await this.makeTrackedRequest<RedditCommentsBriefingResponse>(`/api/posts/item/${postId}/reddit-comments/briefing`, {
-        method: 'POST',
-        body: JSON.stringify({
-          limit: opts?.limit ?? 80,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to generate Reddit comments briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
       };
     }
   }
@@ -2094,12 +1275,6 @@ class ApiService {
     }
   }
 
-  /** What the backend runs (GET /api/config, reading-finish R3). Mark IX contract:
-   *  a failure throws, and `useAnalysis` falls back to the build flag. */
-  async getConfig(): Promise<AppConfig> {
-    return this.makeRequest<AppConfig>('/api/config');
-  }
-
   async getStatus(): Promise<SystemStatusResponse> {
     try {
       return await this.makeRequest<SystemStatusResponse>('/api/status');
@@ -2131,8 +1306,6 @@ class ApiService {
         body: JSON.stringify({
           intervalHours: config.interval_hours,
           syncSourcesEachCycle: config.sync_sources_each_cycle,
-          generateDailyBriefing: config.generate_daily_briefing,
-          generateTopicBriefing: config.generate_topic_briefing,
           ingestTickMinutes: config.ingest_tick_minutes,
         }),
       });
@@ -2153,21 +1326,6 @@ class ApiService {
       });
     } catch (error) {
       console.error('Failed to preview YouTube channel:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async evaluateYouTubeVideo(source: string, video: string): Promise<YouTubeVideoEvaluationResponse> {
-    try {
-      return await this.makeRequest<YouTubeVideoEvaluationResponse>('/api/youtube/video/evaluate', {
-        method: 'POST',
-        body: JSON.stringify({ source, video }),
-      });
-    } catch (error) {
-      console.error('Failed to evaluate YouTube video:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -2215,321 +1373,7 @@ class ApiService {
     }
   }
 
-  async getPostEvidence(postId: string): Promise<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }>(`/api/posts/item/${postId}/evidence`);
-    } catch (error) {
-      console.error('Failed to get post evidence:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', evidence: null };
-    }
-  }
-
-  async getPostMemory(postId: string): Promise<{ success?: boolean; error?: string; memory?: MemoryDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; memory?: MemoryDebug | null }>(`/api/posts/item/${postId}/memory`);
-    } catch (error) {
-      console.error('Failed to get post memory:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', memory: null };
-    }
-  }
-
-  async getPostEvents(postId: string): Promise<{ success?: boolean; error?: string; events?: EventDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; events?: EventDebug | null }>(`/api/posts/item/${postId}/events`);
-    } catch (error) {
-      console.error('Failed to get post events:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', events: null };
-    }
-  }
-
-  async getPostStory(postId: string): Promise<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }>(`/api/posts/item/${postId}/story`);
-    } catch (error) {
-      console.error('Failed to get post story:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', post_id: postId, stories: [], primary_story: null };
-    }
-  }
-
-  async rebuildEvidenceForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild evidence for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildMemoryForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild memory for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildEventsForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild events for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async getStories(filters?: { status?: string; storyKind?: string; limit?: number; offset?: number }): Promise<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.status) params.set('status', filters.status);
-      if (filters?.storyKind) params.set('storyKind', filters.storyKind);
-      if (filters?.limit != null) params.set('limit', String(filters.limit));
-      if (filters?.offset != null) params.set('offset', String(filters.offset));
-      const endpoint = params.toString() ? `/api/stories?${params.toString()}` : '/api/stories';
-      return await this.makeRequest<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }>(endpoint);
-    } catch (error) {
-      console.error('Failed to get stories:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', stories: [], total: 0 };
-    }
-  }
-
-  async getStory(storyId: string): Promise<{ success?: boolean; error?: string; story?: StoryDetail | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; story?: StoryDetail | null }>(`/api/stories/${storyId}`);
-    } catch (error) {
-      console.error('Failed to get story:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story: null };
-    }
-  }
-
-  async getStoryTimeline(storyId: string): Promise<StoryTimelineResponse & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<StoryTimelineResponse & { success?: boolean; error?: string }>(`/api/stories/${storyId}/timeline`);
-    } catch (error) {
-      console.error('Failed to get story timeline:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story_id: storyId, timeline: [] };
-    }
-  }
-
-  async getPostTimeline(postId: string, refresh = false): Promise<PostTimelineResponse> {
-    try {
-      if (refresh) {
-        return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline/refresh`, {
-          method: 'POST',
-          body: JSON.stringify({ refresh: true }),
-        });
-      }
-      return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline`);
-    } catch (error) {
-      console.error('Failed to get post timeline:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        timeline: null,
-        related_candidates: [],
-      };
-    }
-  }
-
-  async acceptStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/accept`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to accept story candidate:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
-    }
-  }
-
-  async rejectStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/reject`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to reject story candidate:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
-    }
-  }
-
-  async getInbox(batchId?: string, limit = 20): Promise<InboxBatchResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (batchId) params.set('batchId', batchId);
-      params.set('limit', String(limit));
-      const endpoint = `/api/inbox${params.toString() ? `?${params.toString()}` : ''}`;
-      return await this.makeRequest<InboxBatchResponse>(endpoint);
-    } catch (error) {
-      console.error('Failed to get inbox:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
-    }
-  }
-
-  async getInboxBatches(limit = 50, offset = 0): Promise<InboxBatchesResponse> {
-    try {
-      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-      return await this.makeRequest<InboxBatchesResponse>(`/api/inbox/batches?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox batches:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batches: [], total: 0 };
-    }
-  }
-
-  async getInboxItems(filters?: { batchId?: string; status?: string; targetType?: string; sourceId?: string; generatedForDate?: string; limit?: number; offset?: number }): Promise<InboxItemsResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.batchId) params.set('batchId', filters.batchId);
-      if (filters?.status) params.set('status', filters.status);
-      if (filters?.targetType) params.set('targetType', filters.targetType);
-      if (filters?.sourceId) params.set('sourceId', filters.sourceId);
-      if (filters?.generatedForDate) params.set('generatedForDate', filters.generatedForDate);
-      params.set('limit', String(filters?.limit ?? 100));
-      params.set('offset', String(filters?.offset ?? 0));
-      return await this.makeRequest<InboxItemsResponse>(`/api/inbox/items?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox items:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', items: [], total: 0 };
-    }
-  }
-
-  async getInboxItem(itemId: string): Promise<InboxItemDetail> {
-    try {
-      return await this.makeRequest<InboxItemDetail>(`/api/inbox/items/${itemId}`);
-    } catch (error) {
-      console.error('Failed to get inbox item:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', item: null, target: null, actions: [] };
-    }
-  }
-
-  async rebuildInbox(payload?: { generatedForDate?: string; scopeType?: string; scopeValue?: string; limit?: number; actorId?: string }): Promise<InboxBatchResponse> {
-    try {
-      return await this.makeRequest<InboxBatchResponse>('/api/inbox/rebuild', {
-        method: 'POST',
-        body: JSON.stringify(payload || {}),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild inbox:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
-    }
-  }
-
-  async recordInboxAction(itemId: string, payload: { actionType: string; actorId?: string; payload?: Record<string, any> }): Promise<InboxActionResponse> {
-    try {
-      return await this.makeRequest<InboxActionResponse>(`/api/inbox/items/${itemId}/actions`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      console.error('Failed to record inbox action:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', action: null, item: null, side_effects: [] };
-    }
-  }
-
-  async getInboxActions(filters?: { limit?: number; offset?: number; targetType?: string; targetId?: string; inboxItemId?: string }): Promise<InboxActionsResponse> {
-    try {
-      const params = new URLSearchParams();
-      params.set('limit', String(filters?.limit ?? 100));
-      params.set('offset', String(filters?.offset ?? 0));
-      if (filters?.targetType) params.set('targetType', filters.targetType);
-      if (filters?.targetId) params.set('targetId', filters.targetId);
-      if (filters?.inboxItemId) params.set('inboxItemId', filters.inboxItemId);
-      return await this.makeRequest<InboxActionsResponse>(`/api/inbox/actions?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox actions:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', actions: [], total: 0 };
-    }
-  }
-
-  async getVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
-    try {
-      const params = new URLSearchParams({ asyncMode: 'true' });
-      if (start) params.set('start', start);
-      if (end) params.set('end', end);
-      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`, {
-        method: 'GET',
-      });
-    } catch (error) {
-      console.error('Failed to get vertical briefing:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
-    }
-  }
-
-  async refreshVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
-    try {
-      const params = new URLSearchParams({ asyncMode: 'true' });
-      if (start) params.set('start', start);
-      if (end) params.set('end', end);
-      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to refresh vertical briefing:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
-    }
-  }
-
-  // ============= TOPICS METHODS =============
-
-  async getTopicsByDate(date: string): Promise<TopicsResponse> {
-    try {
-      const response = await this.makeRequest<TopicsResponse>(`/api/topics/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get topics:', error);
-      return {
-        success: false,
-        topics: [],
-        date,
-        total: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async updateTopicTitle(topicId: string, newTitle: string): Promise<{ success: boolean; topic_id?: string; title?: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; topic_id?: string; title?: string; error?: string }>(`/api/topics/${topicId}/title`, {
-        method: 'PUT',
-        body: JSON.stringify({ title: newTitle }),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update topic title:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async movePostToOutlier(topicId: string, postId: string, date: string): Promise<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }>(`/api/topics/${topicId}/posts/${postId}/move-to-outlier`, {
-        method: 'POST',
-        body: JSON.stringify({ date }),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to move post to outlier:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  // ===== Folders & Experts =====
+  // ===== Folders =====
 
   /** Reading feed for one folder/track: newest posts from its sources. */
   async getFolderPosts(
@@ -2587,84 +1431,6 @@ class ApiService {
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
   }
 
-  async getExperts(): Promise<{ success: boolean; experts: Expert[]; error?: string }> {
-    try { return await this.makeRequest('/api/experts'); }
-    catch (e) { return { success: false, experts: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createExpert(payload: Partial<Expert>): Promise<{ success: boolean; expert?: Expert; error?: string }> {
-    try { return await this.makeRequest('/api/experts', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteExpert(expertId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/experts/${expertId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async runExpert(expertId: string, opts: { refresh?: boolean } = {}): Promise<ExpertRunResult> {
-    try { return await this.makeRequest(`/api/experts/${expertId}/run`, { method: 'POST', body: JSON.stringify(opts) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  /** Latest stored briefing, or a specific past one when `date` (its end date) is given. */
-  async getExpertBriefing(expertId: string, date?: string): Promise<ExpertRunResult> {
-    try {
-      const qs = date ? `?date=${encodeURIComponent(date)}` : '';
-      return await this.makeRequest(`/api/experts/${expertId}/briefing${qs}`);
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  /** Past runs of an expert, newest first. Metadata only - no briefing bodies. */
-  async getExpertBriefingHistory(
-    expertId: string,
-    limit = 60,
-  ): Promise<{
-    success: boolean;
-    briefings: ExpertBriefingHistoryEntry[];
-    error?: string;
-  }> {
-    try {
-      return await this.makeRequest(`/api/experts/${expertId}/briefings?limit=${limit}`);
-    } catch (e) {
-      return { success: false, briefings: [], error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  // ===== Milestones =====
-
-  /** Full milestone tree for a scope. Omit folderId for all non-arXiv sources. */
-  async getMilestones(opts?: { folderId?: string | null; includeHidden?: boolean }): Promise<MilestonesResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (opts?.folderId) params.set('folder_id', opts.folderId);
-      if (opts?.includeHidden) params.set('include_hidden', 'true');
-      const qs = params.toString();
-      return await this.makeRequest(`/api/milestones${qs ? `?${qs}` : ''}`);
-    } catch (e) {
-      // Deliberately partial: callers read scope/coverage/stats/diagnostics through
-      // optional chaining, so a failed fetch renders an error state, not a crash.
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', vendors: [], papers: [] } as unknown as MilestonesResponse;
-    }
-  }
-
-  /** Evidence + comparisons for one node. The tree no longer carries them, so this
-   *  backs the evidence drawer. Server-side it reads the node cache every tree build
-   *  warms (15-minute TTL, longer than the 60s tree memo), so a drawer click minutes
-   *  after the page load is a dict lookup; a miss rebuilds that scope's tree once.
-   *  Pass the same folderId the list call used, or it lands on a different scope key. */
-  async getMilestoneNode(nodeKey: string, folderId?: string | null): Promise<MilestoneNodeDetail> {
-    try {
-      const params = new URLSearchParams({ node_key: nodeKey });
-      if (folderId) params.set('folder_id', folderId);
-      return await this.makeRequest(`/api/milestones/node?${params.toString()}`);
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', evidence: [], comparisons: [] };
-    }
-  }
-
   async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
     try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
@@ -2694,144 +1460,6 @@ export interface Folder {
   match_keywords?: string[];
   source_count?: number;
   post_count?: number;
-}
-
-export interface MilestoneEvidence {
-  post_id: string;
-  title: string;
-  url: string;
-  published_at: string | null;
-  source_name: string;
-  /** announce = earliest post (sets occurred_on); corroborate = a different source; mention = later ref */
-  role: 'announce' | 'corroborate' | 'mention';
-}
-
-export interface MilestoneComparison {
-  node_key: string;
-  title: string;
-  post_id: string;
-  post_title: string;
-  /** detail response only; the list projection strips it (nothing renders it) */
-  published_at?: string | null;
-}
-
-/** What GET /api/milestones/node returns: the per-node detail the tree stopped shipping. */
-export interface MilestoneNodeDetail {
-  success: boolean;
-  error?: string;
-  node_key?: string;
-  evidence: MilestoneEvidence[];
-  /** uncapped here, unlike the 3 the list projection keeps */
-  comparisons: MilestoneComparison[];
-}
-
-/** A node as it arrives in the tree. Everything the rail paints without a click and
- *  nothing else — evidence and the comparison tail come from getMilestoneNode. */
-export interface MilestoneListNode {
-  node_key: string;
-  title: string;
-  custom_title: string | null;
-  occurred_on: string | null;
-  post_count: number;
-  source_count: number;
-  /** single_source | retrospective | chain_start_at_corpus_edge | named_by_briefing */
-  flags: string[];
-  /** capped at 3 server-side; comparison_count is the true total */
-  comparisons: MilestoneComparison[];
-  comparison_count: number;
-}
-
-export interface MilestoneLaneGroup {
-  lane_id: string;
-  lane_name: string;
-  node_count: number;
-  nodes: MilestoneListNode[];
-}
-
-export interface MilestoneVendorGroup {
-  vendor: string;
-  node_count: number;
-  lanes: MilestoneLaneGroup[];
-}
-
-export interface MilestonesResponse {
-  success: boolean;
-  error?: string;
-  scope: { folder_id: string | null; name: string; kind: string | null; source_count: number | null };
-  coverage: {
-    posts_in_scope: number;
-    sources_in_scope: number;
-    first_post_at: string | null;
-    last_post_at: string | null;
-    weeks_covered: number;
-  };
-  vendors: MilestoneVendorGroup[];
-  papers: MilestoneListNode[];
-  stats: { nodes: number; lanes: number; vendors: number; comparisons: number; papers: number };
-  diagnostics: {
-    lanes_configured: number;
-    lanes_matched: number;
-    hidden_nodes: number;
-    briefings_available: number;
-    hit_rows: number;
-    truncated: boolean;
-  };
-  elapsed_ms?: number;
-  cached?: boolean;
-}
-
-export interface ExpertBriefingHistoryEntry {
-  id: string;
-  subject_key: string;
-  title?: string | null;
-  /** ISO timestamp of the last write */
-  at?: string | null;
-  content_length?: number | null;
-  /** model name, or "fallback" for the deterministic stub */
-  generator?: string | null;
-  posts_processed?: number | null;
-  start_date?: string | null;
-  /** the date this briefing covers up to - use as the `date` arg to getExpertBriefing */
-  end_date?: string | null;
-}
-
-export interface Expert {
-  id: string;
-  name: string;
-  folder_id: string;
-  system_prompt: string;
-  focus_instructions?: string | null;
-  output_variant: string;
-  lookback_days: number;
-  schedule?: string | null;
-  enabled: boolean;
-}
-
-export interface ExpertTopic {
-  title: string;
-  summary: string;
-  post_ids: string[];
-}
-
-export interface ExpertRunResult {
-  success: boolean;
-  cached?: boolean;
-  expert?: Expert;
-  briefing?: string;
-  /** render_format of the stored briefing; "markdown" in practice */
-  format?: string;
-  saved_briefing_id?: string;
-  topics?: ExpertTopic[];
-  posts_processed?: number;
-  start_date?: string;
-  end_date?: string;
-  /**
-   * Which generator produced this briefing: a model name (e.g. "gemini-3.1-flash-lite-preview")
-   * or the literal "fallback", meaning the deterministic stub — NOT analysis.
-   * Absent on briefings stored before this key existed.
-   */
-  generator?: string | null;
-  error?: string;
 }
 
 // Export singleton instance

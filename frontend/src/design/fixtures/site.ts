@@ -6,14 +6,13 @@
  * The feed honours scope, filter, view and paging like the backend does.
  */
 import type {
-  AppConfig, ArchiveCatalogEntry, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
+  ArchiveCatalogEntry, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
   SchedulerConfig, SourceHealthRow, SourceWithSettings, UnreadCounts,
 } from '../../services/api';
 import { healthResponse } from '../../components/ops/fixtures';
 import type { FixtureRequest, FixtureRoute } from '../frame/transport';
 
 export interface Site {
-  config: AppConfig;
   /** The whole feed, newest first. */
   items: FeedItem[];
   folders: Folder[];
@@ -216,11 +215,9 @@ function logTail({ query }: FixtureRequest, site: Site) {
 /** The transport routes that serve one site. */
 export function siteRoutes(site: Site): FixtureRoute[] {
   return [
-    { path: '/api/config', respond: () => site.config },
     { path: '/api/feed', respond: (request) => feed(request, site) },
     { path: '/api/feed/unread-counts', respond: () => unreadCounts(site) },
     { path: '/api/folders', respond: () => ({ success: true, folders: site.folders }) },
-    { path: '/api/experts', respond: () => ({ success: true, experts: [] }) },
     { path: '/api/sources/health', respond: () => healthResponse(site.health) },
     { path: '/api/sources/with-settings', respond: () => sourcesWithSettings(site) },
     {

@@ -5,21 +5,19 @@ import ThemeToggle from '../ThemeToggle';
 import Kbd from '../ui/Kbd';
 import { iconButtonClass } from '../ui/styles';
 import { cn } from '../../lib/utils';
-import { activeNavKey, navItems } from './navigation';
-import { useAnalysisEnabled } from '../../hooks/useAnalysis';
+import { activeNavKey, NAV_ITEMS } from './navigation';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
  * The one top bar (design docs system/information-architecture.md): the inverted INSIGHT wordmark on the left,
- * the lowercase slash nav (`feed / sources` reading-only) and the ⌘K switcher on the right. A translucent
+ * the lowercase slash nav (`feed / sources / blog`) and the ⌘K switcher on the right. A translucent
  * material over the black page; its hairline appears only once content scrolls
  * beneath it (apple §12: no divider where nothing overlaps).
  */
 export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void }) {
   const { pathname } = useLocation();
-  const analysisEnabled = useAnalysisEnabled();
-  const current = activeNavKey(pathname, analysisEnabled);
+  const current = activeNavKey(pathname);
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -56,7 +54,7 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
 
         <nav aria-label="Primary" className="ml-auto hidden min-w-0 sm:block">
           <ul className="flex items-center gap-1.5 text-[0.875rem]">
-            {navItems(analysisEnabled).map((item, index) => {
+            {NAV_ITEMS.map((item, index) => {
               const isCurrent = item.key === current;
               return (
                 <Fragment key={item.key}>

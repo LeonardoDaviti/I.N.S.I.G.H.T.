@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useApi } from '../../services/ApiContext';
-import type { Api } from '../../services/api';
+import { useApi } from '../services/ApiContext';
+import type { Api } from '../services/api';
 
 /**
  * The dev-only `?data=` seam (spec §F.7, break-ui): when the URL names a fixture

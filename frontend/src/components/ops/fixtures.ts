@@ -251,7 +251,6 @@ export function runReport(overrides: Partial<RunReport> = {}): RunReport {
       { source_id: 's1', display_name: 'Simon Willison’s Weblog', inserted: 30 },
       { source_id: 's2', display_name: 'Two Minute Papers', inserted: 18 },
     ],
-    enrichment: { entity: { posts: 48, chunks: 1, failed_chunks: 0 }, event: { posts: 48, chunks: 1, failed_chunks: 0 } },
     ...overrides,
   };
 }
@@ -278,6 +277,5 @@ export function worstRunReport(): RunReport {
       { url: null, source_id: 'b', stage: 'discarded', error: 'no url' },
     ],
     inserted_by_source: [{ source_id: 'b', display_name: 'الجزيرة نت — أخبار التكنولوجيا', inserted: 1 }],
-    enrichment: null,
   });
 }

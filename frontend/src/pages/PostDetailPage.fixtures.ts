@@ -46,8 +46,6 @@ const DETAILS: Record<string, PostDetailResponse> = {
       content_html: WORST_HTML,
       categories: Array.from({ length: 24 }, (_, i) => `category-${i}-${'long'.repeat(i % 4)}`),
     }),
-    summary: null,
-    highlights: [],
     reader_state: { open_count: 98765, total_read_seconds: 987654, first_opened_at: '2024-01-01T00:00:00Z' } as PostDetailResponse['reader_state'],
   },
   empty: { success: true, post: post({ title: '', content: '', content_html: '', url: undefined, published_at: null, source_display_name: undefined }) },
@@ -71,10 +69,8 @@ export function postFixtureApi(name: string): Partial<Api> | null {
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       return detail;
     },
-    getPostTimeline: async () => ({ success: true, has_story: false, timeline: null, related_candidates: [] }),
     recordPostOpen: ok,
     recordPostReadingSession: ok,
-    savePostNotes: ok,
     togglePostFavorite: ok,
   } as unknown as Partial<Api>;
 }

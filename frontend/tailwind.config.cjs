@@ -8,7 +8,6 @@
 // chromatic scales alike map onto one theme-aware neutral ramp, which turns every
 // Mark VIII page monochrome without rewriting it. New code uses the semantic names
 // (bg, surface, raised, line, fg, inverse), never the ramp.
-const typography = require('@tailwindcss/typography');
 const plugin = require('tailwindcss/plugin');
 
 const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
@@ -117,33 +116,9 @@ module.exports = {
       maxWidth: {
         reading: '68ch',
       },
-      // `prose` (the reading view) draws its colours from the tokens.
-      typography: {
-        DEFAULT: {
-          css: {
-            '--tw-prose-body': 'rgb(var(--text))',
-            '--tw-prose-headings': 'rgb(var(--text))',
-            '--tw-prose-lead': 'rgb(var(--text-2))',
-            '--tw-prose-links': 'rgb(var(--text))',
-            '--tw-prose-bold': 'rgb(var(--text))',
-            '--tw-prose-counters': 'rgb(var(--text-2))',
-            '--tw-prose-bullets': 'rgb(var(--text-3))',
-            '--tw-prose-hr': 'rgb(var(--border))',
-            '--tw-prose-quotes': 'rgb(var(--text))',
-            '--tw-prose-quote-borders': 'rgb(var(--border-strong))',
-            '--tw-prose-captions': 'rgb(var(--text-2))',
-            '--tw-prose-code': 'rgb(var(--text))',
-            '--tw-prose-pre-code': 'rgb(var(--text))',
-            '--tw-prose-pre-bg': 'rgb(var(--surface))',
-            '--tw-prose-th-borders': 'rgb(var(--border))',
-            '--tw-prose-td-borders': 'rgb(var(--border))',
-          },
-        },
-      },
     },
   },
   plugins: [
-    typography,
     // `coarse:` = touch-first pointers, where hit areas grow to 44px (spec §F.6).
     plugin(({ addVariant }) => {
       addVariant('coarse', '@media (pointer: coarse)');

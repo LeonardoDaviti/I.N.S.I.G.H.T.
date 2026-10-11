@@ -1,7 +1,7 @@
 /**
  * Job runs (job_runs rows) as the ingestion surfaces show them: a monochrome
- * glyph for the status, a local timestamp and a short duration. Shared by
- * Sources → ingestion and the analysis-on ingestion page. Pure.
+ * glyph for the status, a local timestamp and a short duration, for
+ * Sources → ingestion. Pure.
  */
 import type { Status } from '../components/ui/styles';
 

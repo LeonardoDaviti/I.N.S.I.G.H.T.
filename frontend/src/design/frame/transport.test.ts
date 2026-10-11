@@ -134,7 +134,7 @@ describe('the fixture transport', () => {
     const { transport } = setup({
       routes: [
         { path: '/api/feed', respond: () => pending() },
-        { path: '/api/config', respond: () => serverError('The database is unreachable') },
+        { path: '/api/folders', respond: () => serverError('The database is unreachable') },
       ],
     });
 
@@ -143,7 +143,7 @@ describe('the fixture transport', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(settled).not.toHaveBeenCalled();
 
-    const error = await transport('/api/config');
+    const error = await transport('/api/folders');
     expect(error.status).toBe(500);
     expect(await error.json()).toEqual({ detail: 'The database is unreachable' });
   });
