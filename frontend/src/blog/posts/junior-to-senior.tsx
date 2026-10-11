@@ -101,7 +101,7 @@ export default function JuniorToSenior() {
         Every request in INSIGHT passes through <C>insight_api_bridge.py</C>: 2,319 lines and 136 methods between the HTTP routes and the services that
         do the work. Here is one request, enabling a source, at both layers:
       </P>
-      <Code caption="backend/main.py — the route">{`
+      <Code caption="backend/main.py — the route" lang="python">{`
 @app.put("/api/sources/{source_id}/enabled")
 async def set_source_enabled(source_id: str, body: dict):
     """Enable/disable a source. Body: {enabled: bool}"""
@@ -111,7 +111,7 @@ async def set_source_enabled(source_id: str, body: dict):
         logger.exception("Failed to set source enabled")
         return {"success": False, "error": str(e)}
 `}</Code>
-      <Code caption="backend/insight_api_bridge.py — the bridge it calls">{`
+      <Code caption="backend/insight_api_bridge.py — the bridge it calls" lang="python">{`
 def set_source_enabled(self, source_id: str, enabled: bool) -> Dict[str, Any]:
     """Enable/disable a single source (durable to sources.json)."""
     try:
@@ -136,6 +136,7 @@ def set_source_enabled(self, source_id: str, enabled: bool) -> Dict[str, Any]:
         existence</em>: handle a whole class of errors in one place, instead of at every call site.
       </P>
       <Compare
+        lang="python"
         beforeLabel="today: two catches per request"
         afterLabel="where we are heading"
         before={`
@@ -176,7 +177,7 @@ async def set_source_enabled(
         <li><strong>Nine</strong> repositories with the same private <C>_json_default</C>, each one a single line that calls the shared encoder.</li>
         <li><strong>72</strong> copy-pasted <C>catch</C> blocks in the frontend’s <C>api.ts</C>, which is 2,922 lines long.</li>
       </List>
-      <Code caption="frontend/src/services/api.ts — two of the 72">{`
+      <Code caption="frontend/src/services/api.ts — two of the 72" lang="ts">{`
 async getEnabledSources(): Promise<SourceStats> {
   try {
     const response =
@@ -210,6 +211,7 @@ async getSources(): Promise<SourceStats> {
         on error (<Cite href={SRC.psycopgPool}>psycopg, Connection pools</Cite>). One request helper owns errors in the frontend.
       </P>
       <Compare
+        lang="python"
         beforeLabel="today: posts_service.py, one of 165"
         afterLabel="where we are heading"
         before={`
@@ -239,7 +241,7 @@ with pool.connection() as conn:
         In Mark IX the owner decided INSIGHT is a reader first, and switched AI analysis off. The switch was implemented carefully. But look at the
         comment on it:
       </P>
-      <Code caption="frontend/src/lib/features.ts">{`
+      <Code caption="frontend/src/lib/features.ts" lang="comment">{`
  * processes posts (summaries, highlights, the intelligence inspector, notes and
  * chat, stories and related posts) is hidden unless the build sets
  * \`VITE_INSIGHT_ANALYSIS=on\`. Hidden, not deleted: the components stay.
@@ -248,7 +250,7 @@ with pool.connection() as conn:
         “The components stay” means about 28,700 lines are still built, tested and shipped, along with 31 database tables. Some of it still runs:
         every post saved during ingestion still computes “memory pivot” columns that only analysis ever read:
       </P>
-      <Code caption="backend/insight_core/db/repo_posts.py:191 — on every saved post, analysis on or off">{`
+      <Code caption="backend/insight_core/db/repo_posts.py:191 — on every saved post, analysis on or off" lang="python">{`
 memory_fields = build_post_memory_fields(post)
 `}</Code>
       <P>
@@ -267,14 +269,14 @@ memory_fields = build_post_memory_fields(post)
 
       <H2 id="dead">4. Code nobody runs, and code that lies</H2>
       <P>Some files survived only because nobody looked. Three examples:</P>
-      <Code caption="backend/Dockerfile:21 — the image deletes code the repository keeps">{`
+      <Code caption="backend/Dockerfile:21 — the image deletes code the repository keeps" lang="dockerfile">{`
 RUN rm -rf fastapi pydantic psycopg uvicorn.py dotenv
 `}</Code>
       <P>
         Those are hand-written fake copies of real libraries, 711 lines, added so tests could run without installing anything. The image throws
         them away; outside Docker, they make tests pass or fail by accident.
       </P>
-      <Code caption="backend/insight_core/tests/old tests/test_runner.py:30">{`
+      <Code caption="backend/insight_core/tests/old tests/test_runner.py:30" lang="python">{`
 from main import InsightOperator
 `}</Code>
       <P>
@@ -288,7 +290,7 @@ from main import InsightOperator
         Telegram fetching was rebuilt four times across the Marks. Each rebuild started over beside the last one, so the old paths lingered. Mark IX
         did the opposite, and it is the best-designed part of the codebase today. All fetching goes through one entry point:
       </P>
-      <Code caption="backend/insight_core/ingestion/__init__.py">{`
+      <Code caption="backend/insight_core/ingestion/__init__.py" lang="python">{`
 async def run_ingestion(
     request: FetchRequest,
     *,
@@ -331,7 +333,7 @@ async def run_ingestion(
       </P>
 
       <H3>Lesson 2: a dependency stays only if something imports it</H3>
-      <Code caption="backend/requirements.txt — the eight lines nothing imported">{`
+      <Code caption="backend/requirements.txt — the eight lines nothing imported" lang="diff">{`
 -feedparser
 -youtube-transcript-api
 -praw
@@ -360,7 +362,7 @@ async def run_ingestion(
 
       <H3>Lesson 4: a tool that can never fail can also never help</H3>
       <P>The Langfuse tracer was 217 lines wrapped around every Gemini call. Its own header explains the problem:</P>
-      <Code caption="backend/insight_core/observability/langfuse_tracer.py (deleted)">{`
+      <Code caption="backend/insight_core/observability/langfuse_tracer.py (deleted)" lang="comment">{`
 Everything here is wrapped so tracing can NEVER break a briefing: if Langfuse is
 disabled, misconfigured, the SDK is missing, or the host is unreachable, every
 function degrades to a no-op.
@@ -407,7 +409,7 @@ function degrades to a no-op.
         <section className="rounded-md border border-dashed border-line-strong p-4">
           <h3 className="text-[1rem] font-semibold text-fg">What it costs</h3>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-[0.9375rem] leading-[1.55] text-fg marker:text-fg-3">
-            <li><strong>Working features disappear</strong>, including some the owner likes: milestones (issue 0001) and track briefings (issue 0002).</li>
+            <li><strong>Working features disappear for a while</strong>, including some the owner likes: milestones and track briefings. Their <em>ideas</em> are not lost: they are written down as issues, to be built again, better.</li>
             <li><strong>Data is dropped</strong>: the entity graph and the archive of past briefings. Rebuilding them costs compute and model tokens.</li>
             <li><strong>The tag is not an undo button.</strong> Once the bridge and the connection code change, the old code will not drop back in. The tag is reading material.</li>
             <li><strong>Some work will be redone.</strong> That cost was paid when it was built; keeping dead code does not get it back.</li>
@@ -417,13 +419,14 @@ function degrades to a no-op.
       </div>
       <H3>How the costs are contained</H3>
       <List>
+        <li><strong>Keep the ideas, not the code:</strong> what the owner liked is recorded in <C>plan/issues</C>: entity pages with milestones (0001), a readable track briefing (0002) and a citation graph between posts (0004). Each one comes back as new work on the reading core.</li>
         <li><strong>Reversible where it can be:</strong> a git tag for the code and a database backup before the migration that drops the tables.</li>
         <li><strong>Port before cut:</strong> archive backfill and the ingestion log viewer move into the Ingestion tab first, because they are reading tools that only lived on an analysis page.</li>
         <li><strong>One fixed test surface:</strong> the <C>run_ingestion()</C> tests stay unchanged through every slice. If they stay green, reading did not move.</li>
         <li><strong>Small slices:</strong> backend, frontend and schema are cut separately, and the owner reviews each one.</li>
         <li><strong>A rule for coming back:</strong> a new analysis feature ships only with a reading test it passes, so Mark X earns what Mark VII assumed.</li>
       </List>
-      <Takeaway>Deleting is a decision, not a cleanup. Write down what it gains and what it costs, make it reversible where you can, and say plainly where you can’t.</Takeaway>
+      <Takeaway>Deleting is a decision, not a cleanup. Write down what it gains and what it costs, keep the ideas you still want as issues, make it reversible where you can, and say plainly where you can’t.</Takeaway>
 
       <H2 id="switch">What we are switching to</H2>
       <P>The habits, the practices that replace them, and where each one lands in INSIGHT.</P>

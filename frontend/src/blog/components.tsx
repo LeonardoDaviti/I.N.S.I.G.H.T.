@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from 'react';
 import { Button, ExternalLink } from '../components/ui';
 import { cn } from '../lib/utils';
+import { highlight, TOKEN_CLASS, type Lang } from '../lib/highlight';
 
 /*
  * The blog's building blocks. Monochrome like the rest of the app
@@ -38,13 +39,28 @@ export function Cite({ href, children }: { href: string; children: ReactNode }) 
   return <ExternalLink href={href}>{children}</ExternalLink>;
 }
 
+const tidy = (code: string) => code.replace(/^\n/, '').replace(/\s+$/, '');
+
+/** Highlighted code: monochrome tokens (weight, tone, slant), never hue (P2). */
+function Highlighted({ code, lang }: { code: string; lang: Lang }) {
+  return (
+    <code data-lang={lang}>
+      {highlight(tidy(code), lang).map((token, i) =>
+        token.kind === 'plain' ? token.text : <span key={i} className={TOKEN_CLASS[token.kind]}>{token.text}</span>,
+      )}
+    </code>
+  );
+}
+
+const PRE = 'overflow-x-auto rounded-md border border-line bg-surface p-4 font-mono text-[0.8125rem] leading-[1.6] text-fg';
+
 /** A real code excerpt, with where it lives. */
-export function Code({ caption, children }: { caption?: ReactNode; children: string }) {
+export function Code({ caption, lang = 'text', children }: { caption?: ReactNode; lang?: Lang; children: string }) {
   return (
     <figure className="mt-6">
       {caption ? <figcaption className="mb-1.5 font-mono text-[0.75rem] text-fg-3">{caption}</figcaption> : null}
-      <pre className="overflow-x-auto rounded-md border border-line bg-surface p-4 font-mono text-[0.8125rem] leading-[1.6] text-fg">
-        <code>{children.replace(/^\n/, '').replace(/\s+$/, '')}</code>
+      <pre className={PRE}>
+        <Highlighted code={children} lang={lang} />
       </pre>
     </figure>
   );
@@ -56,11 +72,13 @@ export function Compare({
   after,
   beforeLabel = 'before',
   afterLabel = 'after',
+  lang = 'text',
 }: {
   before: string;
   after: string;
   beforeLabel?: string;
   afterLabel?: string;
+  lang?: Lang;
 }) {
   return (
     <div className="mt-6 grid gap-3 lg:-mx-24 lg:grid-cols-2">
@@ -74,8 +92,8 @@ export function Compare({
           >
             {label}
           </span>
-          <pre className="mt-1.5 overflow-x-auto rounded-md border border-line bg-surface p-4 font-mono text-[0.8125rem] leading-[1.6] text-fg">
-            <code>{code.replace(/^\n/, '').replace(/\s+$/, '')}</code>
+          <pre className={cn('mt-1.5', PRE)}>
+            <Highlighted code={code} lang={lang} />
           </pre>
         </div>
       ))}
