@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseDoc } from './coverage';
 import {
   acceptInstruction, isOpen, parsePrototype, prototypeAge, prototypeProblems, rejectInstruction,
 } from './prototypes';
