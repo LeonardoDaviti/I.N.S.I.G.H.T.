@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 
 import { AppRoutes } from '../../App';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
@@ -26,6 +26,31 @@ function PathMark() {
   useEffect(() => {
     document.documentElement.dataset.framePath = `${pathname}${search}`;
   }, [pathname, search]);
+  return null;
+}
+
+/**
+ * A plain `<a href>` in the app (the error boundary's "Go to feed", an empty
+ * state's link) would reload the iframe at a real route, out of the frame and
+ * onto the real API. A same-origin plain click moves the frame's memory router
+ * instead. It listens on the window after React's own handlers, so a router
+ * `Link` (which prevents the default) keeps its replace and state.
+ */
+function KeepLinksInFrame() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.('a[href]');
+      if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== '_self') || anchor.hasAttribute('download')) return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      event.preventDefault();
+      navigate(`${url.pathname}${url.search}${url.hash}`);
+    };
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, [navigate]);
   return null;
 }
 
@@ -167,6 +192,7 @@ export default function FrameRoot({ booted, prototype: Prototype, walk = false }
         <ThemeProvider>
           <MemoryRouter initialEntries={[scenario.url]}>
             <PathMark />
+            <KeepLinksInFrame />
             <AppShell>
               <RouteErrorBoundary>
                 <Suspense fallback={<div className="mx-auto w-full max-w-3xl px-4 pt-10 sm:px-6"><LoadingState label="Loading page" rows={4} /></div>}>

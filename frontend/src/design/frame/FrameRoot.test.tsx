@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { frameScenarios, type FrameScenario } from '../fixtures/scenarios';
 import { siteRoutes } from '../fixtures/site';
@@ -74,6 +74,22 @@ describe('a frame', () => {
     const frame = boot('reader', 'loading');
     render(<FrameRoot booted={frame} />);
     await waitFor(() => expect(document.documentElement.dataset.frameReady).toBe('true'), { timeout: 5_000 });
+  });
+
+  it('keeps a plain link inside the frame: it moves the frame\'s router instead of reloading the iframe', async () => {
+    const frame = boot('reader', 'normal');
+    render(<FrameRoot booted={frame} />);
+    await screen.findByRole('link', { name: /Prompt caching is now generally available/ });
+    const plain = document.createElement('a');
+    plain.href = '/settings/sources?tab=connections';
+    plain.textContent = 'Go to connections';
+    document.body.append(plain);
+
+    const notPrevented = fireEvent.click(plain);
+
+    expect(notPrevented).toBe(false);
+    await waitFor(() => expect(document.documentElement.dataset.framePath).toBe('/settings/sources?tab=connections'));
+    plain.remove();
   });
 
   it('says so when the URL names a state with no scenario', () => {
