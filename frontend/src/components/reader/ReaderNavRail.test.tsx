@@ -108,19 +108,19 @@ describe('ReaderNavRail', () => {
         healthRow({ source_id: CAFE, display_name: 'Café Tech' }),
         ...extraRows.map((row) => healthRow(row)),
       ];
-      const getSourcesWithSettings = vi.fn().mockResolvedValue({ success: true, total: settings.length, sources: settings });
+      const getSources = vi.fn().mockResolvedValue({ success: true, total: settings.length, sources: settings });
       const api = makeFakeApi({
         getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ source_id: SOURCE })])),
         getUnreadCounts: vi.fn().mockResolvedValue({ total: 7, by_source: { [SOURCE]: 7, [CAFE]: 3, ...byExtra }, by_folder: {} }),
         getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
         getSourcesHealth: vi.fn().mockResolvedValue(healthResponse(rows)),
-        getSourcesWithSettings,
+        getSources,
       });
       renderWithProviders(
         <Routes><Route path="/" element={<ReaderPage />} /></Routes>,
         { api, route: '/' },
       );
-      return { getSourcesWithSettings };
+      return { getSources };
     }
 
     async function railAndField(firstLink: RegExp = /Simon Willison’s Weblog/) {
@@ -152,11 +152,11 @@ describe('ReaderNavRail', () => {
 
     it('matches the source URL and kind', async () => {
       const user = userEvent.setup();
-      const { getSourcesWithSettings } = setupDirectory([], {}, [
+      const { getSources } = setupDirectory([], {}, [
         { id: KAITCHUP, platform: 'substack', handle_or_url: 'https://kaitchup.substack.com', enabled: false, post_count: 0, settings: { display_name: 'The Kaitchup' } },
       ]);
       const { rail, field } = await railAndField();
-      expect(getSourcesWithSettings).not.toHaveBeenCalled();
+      expect(getSources).not.toHaveBeenCalled();
       await user.type(field, 'substack.com');
       expect(await within(rail).findByRole('link', { name: 'The Kaitchup' })).toBeInTheDocument();
       await user.clear(field);

@@ -5,9 +5,8 @@ import asyncio
 import re
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,7 +17,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from insight_core.db import database
-from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
+from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.ingestion import run_ingestion
 from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.ports import JobProgressSink
@@ -28,7 +27,6 @@ from insight_core.services.media_proxy_service import MediaFetchFailed, MediaNot
 from insight_core.services.operations_service import (
     CADENCE_OVERRIDE_MAX_HOURS,
     CADENCE_OVERRIDE_MIN_HOURS,
-    EMPTY_SOURCE_HEALTH,
     sources_failing,
 )
 from insight_core.services.registry import services
@@ -45,12 +43,7 @@ async def lifespan(app: FastAPI):
     database.close_all()
 
 
-app = FastAPI(
-    title="INSIGHT Intelligence Platform API",
-    description="Backend API for the INSIGHT Mark I Foundation Engine",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="INSIGHT API", description="The INSIGHT reader's backend.", lifespan=lifespan)
 
 
 def _cors_origins() -> list[str]:
@@ -82,44 +75,21 @@ app.add_middleware(
 
 # ============= ERRORS =============
 # Routes call the services and let errors rise. One handler turns a service error into a
-# safe JSON answer: the service's own message for errors the caller can act on (a
-# ValueError, a not-found LookupError, a failed Telegram sign-in), and "Could not <what>"
-# for anything else. That exception is logged, never echoed: driver messages can carry
-# DSNs and SQL.
-#
-# Each route keeps the error shape its callers know:
-#   - @error_detail (the Mark IX routes, and the default): an HTTP error {"detail": message},
-#     400 for a ValueError, 404 for not found, 429 for a throttled sign-in, 500 otherwise;
-#   - @error_envelope (the Mark VIII routes): HTTP 200 {"success": false, "error": message,
-#     **fields}, with the same empty fields as their success answer.
+# safe HTTP error {"detail": message}: the service's own message for errors the caller can
+# act on (400 for a ValueError, 404 for a not-found LookupError, 400 or 429 for a failed
+# Telegram sign-in), and "Could not <what>. Check the backend logs." (500) for anything
+# else. That exception is logged, never echoed: driver messages can carry DSNs and SQL.
+# A route names its <what> with @error_detail.
 
 
-@dataclass(frozen=True)
-class ErrorShape:
-    what: str
-    envelope: Optional[Dict[str, Any]] = None   # None: an HTTP error with {"detail"}
-
-
-DEFAULT_ERROR_SHAPE = ErrorShape("complete the request")
+DEFAULT_ERROR_WHAT = "complete the request"
 
 
 def error_detail(what: str):
     def mark(endpoint):
-        endpoint.error_shape = ErrorShape(what)
+        endpoint.error_what = what
         return endpoint
     return mark
-
-
-def error_envelope(what: str, **fields: Any):
-    """Values that are callables are called with the request (to echo a path parameter)."""
-    def mark(endpoint):
-        endpoint.error_shape = ErrorShape(what, fields)
-        return endpoint
-    return mark
-
-
-def _path(name: str) -> Callable[[Request], Any]:
-    return lambda request: request.path_params.get(name)
 
 
 _DATABASE_URL = re.compile(r"postgres(?:ql)?(?:\+\w+)?://\S*", re.IGNORECASE)
@@ -138,19 +108,16 @@ def _known_error(exc: Exception) -> Optional[tuple[int, str, Dict[str, str]]]:
     return None
 
 
-def service_error_response(request: Request, exc: Exception, shape: ErrorShape) -> JSONResponse:
-    """The one error handler: a service error as a safe JSON answer in the route's shape."""
+def service_error_response(request: Request, exc: Exception, what: str) -> JSONResponse:
+    """The one error handler: a service error as a safe {"detail"} answer."""
     known = _known_error(exc)
     if known is None:
         logger.error("%s %s failed", request.method, request.url.path, exc_info=exc)
-        status, message, headers = 500, f"Could not {shape.what}. Check the backend logs.", {}
+        status, message, headers = 500, f"Could not {what}. Check the backend logs.", {}
     else:
         status, message, headers = known
         message = _DATABASE_URL.sub("<database url>", message)
-    if shape.envelope is None:
-        return JSONResponse(status_code=status, content={"detail": message}, headers=headers or None)
-    fields = {key: value(request) if callable(value) else value for key, value in shape.envelope.items()}
-    return JSONResponse(status_code=200, content={"success": False, "error": message, **fields})
+    return JSONResponse(status_code=status, content={"detail": message}, headers=headers or None)
 
 
 class ServiceRoute(APIRoute):
@@ -162,7 +129,7 @@ class ServiceRoute(APIRoute):
 
     def get_route_handler(self):
         handle = super().get_route_handler()
-        shape = getattr(self.endpoint, "error_shape", DEFAULT_ERROR_SHAPE)
+        what = getattr(self.endpoint, "error_what", DEFAULT_ERROR_WHAT)
 
         async def route_handler(request: Request):
             try:
@@ -170,7 +137,7 @@ class ServiceRoute(APIRoute):
             except (StarletteHTTPException, RequestValidationError):
                 raise
             except Exception as exc:
-                return service_error_response(request, exc, shape)
+                return service_error_response(request, exc, what)
 
         return route_handler
 
@@ -222,7 +189,7 @@ class ArchiveRequest(BaseModel):
     batchSize: int | None = None
     batchCooldownSeconds: int | None = None
     # True: start an archive_source job and answer 202 at once (the source sheet polls
-    # the job). False keeps the old synchronous answer for the Mark VIII archive tab.
+    # the job). False runs the archive inside the request and answers its result.
     background: bool = False
 
 
@@ -268,19 +235,36 @@ class PostFavoriteRequest(BaseModel):
     favorited: bool
 
 
-class PostReadRequest(BaseModel):
-    read: bool
-
-
-class FeedReadRequest(BaseModel):
-    ids: List[str]
-    read: bool
-
-
-class FeedMarkReadRequest(BaseModel):
+class ReadStateRequest(BaseModel):
+    """PUT /api/feed/read: either `ids` (one post or many, read or unread), or a mark-through:
+    `through_cursor` and `newest_cursor` in `scope` (read only)."""
+    read: bool = True
+    ids: List[str] | None = None
     scope: str = "all"
-    through_cursor: str
-    newest_cursor: str
+    through_cursor: str | None = None
+    newest_cursor: str | None = None
+
+
+class NewSourceRequest(BaseModel):
+    platform: str = "rss"
+    handle_or_url: str = ""
+    display_name: str | None = None
+    fetch_delay_seconds: int | None = None
+    priority: int | None = None
+    max_posts_per_fetch: int | None = None
+    state: str | None = "enabled"
+
+
+class SourceEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class MainDigestRequest(BaseModel):
+    in_main_digest: bool = True
+
+
+class FolderSourceRequest(BaseModel):
+    source_id: str = ""
 
 
 class PostOpenRequest(BaseModel):
@@ -513,122 +497,30 @@ def _export_sources_json() -> None:
 
 @app.get("/")
 async def root():
-    return {
-        "message": "INSIGHT Intelligence Platform API",
-        "version": "1.0.0",
-        "engine": "DB-backed Archive Engine",
-        "status": "operational"
-    }
+    return {"message": "INSIGHT API", "status": "operational"}
 
-# ============= SOURCES ENDPOINTS (DATABASE-BACKED) =============
-
-@app.get("/api/sources")
-@error_envelope("load the sources")
-async def get_sources():
-    """Get sources in frontend-compatible format (nested by platform)."""
-    return {"success": True, "data": services().sources.config_view()}
-
-@app.get("/api/enabled-sources")
-@error_envelope("load the enabled sources")
-async def get_enabled_sources():
-    """Get only enabled sources (flat list)."""
-    return {"success": True, "data": services().sources.get_enabled_sources()}
-
-@app.post("/api/sources")
-@error_envelope("update the sources")
-async def update_sources(config: dict):
-    """Update sources configuration (add/remove/enable/disable)."""
-    logger.info("🔧 Updating sources in database")
-    result = services().sources.apply_config(config)
-    _export_sources_json()
-    if result["success"]:
-        return {"success": True, "message": result["message"], "data": result["stats"]}
-    return {"success": False, "error": "Some operations failed", "data": result["stats"]}
-
-
-@app.post("/api/sources/sync/{direction}")
-@error_envelope("sync the sources")
-async def sync_sources(direction: str):
-    """Synchronize sources.json and the database-backed registry."""
-    logger.info(f"🔄 Syncing sources registry: {direction}")
-    sync = services().source_config_sync
-    if direction == "json-to-db":
-        return sync.sync_json_to_db(mirror=True)
-    if direction == "db-to-json":
-        return sync.sync_db_to_json()
-    return {"success": False, "error": f"Unsupported sync direction: {direction}"}
-
-
-# ============= POSTS ENDPOINTS (DATABASE-BACKED) =============
-
-@app.get("/api/posts/{date}")
-@error_envelope("load the posts", posts=[], total=0)
-async def get_posts(date: str):
-    """Get posts for a specific date (YYYY-MM-DD)."""
-    try:
-        day = datetime.strptime(date, "%Y-%m-%d").date()
-    except ValueError:
-        return {"success": False, "error": f"Invalid date format: {date}. Expected YYYY-MM-DD",
-                "posts": [], "total": 0}
-    posts = services().posts.get_posts_by_date(day)
-    return {"success": True, "posts": posts, "date": date, "total": len(posts), "source": "database"}
-
-@app.get("/api/posts/source/{source_id}")
-@error_envelope(
-    "load the posts", posts=[], total=0, returned=0,
-    offset=lambda request: max(0, int(request.query_params.get("offset") or 0)),
-    limit=lambda request: int(request.query_params["limit"]) if request.query_params.get("limit") else None,
-    has_more=False, source_id=_path("source_id"),
-)
-async def get_posts_by_source(
-    source_id: str,
-    limit: int | None = Query(default=None, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-):
-    """Get posts for a specific source, newest first, one page at a time."""
-    posts_service = services().posts
-    posts = posts_service.get_posts_by_source(source_id, limit=limit, offset=offset)
-    total = int(posts_service.get_source_post_stats(source_id).get("post_count", 0))
-    current_offset = max(0, int(offset or 0))
-    return {
-        "success": True,
-        "posts": posts,
-        "source_id": source_id,
-        "total": total,
-        "returned": len(posts),
-        "offset": current_offset,
-        "limit": limit,
-        "has_more": current_offset + len(posts) < total,
-    }
-
+# ============= POSTS =============
 
 @app.get("/api/posts/item/{post_id}")
-@error_envelope("load the post", post=None, reader_state=None)
+@error_detail("load the post")
 async def get_post_detail(post_id: str):
-    """Get a single post with source metadata and saved notes."""
+    """One post with its source metadata and reader state. 404 for an unknown post."""
     detail = services().post_detail
     post = detail.get_post_by_id(post_id)
     if not post:
-        return {"success": False, "error": f"Post {post_id} not found", "post": None}
+        raise LookupError(f"Post {post_id} not found")
     return {"success": True, "post": post, "reader_state": detail.get_post_reader_state(post_id)}
 
 
-@app.get("/api/posts/item/{post_id}/reader-state")
-@error_envelope("load the reader state", post_id=_path("post_id"), reader_state=None)
-async def get_post_reader_state(post_id: str):
-    state = services().post_detail.get_post_reader_state(post_id)
-    return {"success": True, "post_id": post_id, "reader_state": state}
-
-
 @app.post("/api/posts/item/{post_id}/opened")
-@error_envelope("record the post open", event=None)
+@error_detail("record the post open")
 async def record_post_open(post_id: str, request: PostOpenRequest | None = None):
     metadata = request.metadata if request else None
     return {"success": True, "event": services().post_detail.record_post_open(post_id, metadata=metadata)}
 
 
 @app.post("/api/posts/item/{post_id}/reading-session")
-@error_envelope("record the reading session", event=None)
+@error_detail("record the reading session")
 async def record_post_reading_session(post_id: str, request: PostReaderSessionRequest):
     event = services().post_detail.record_reading_session(
         post_id,
@@ -639,21 +531,41 @@ async def record_post_reading_session(post_id: str, request: PostReaderSessionRe
 
 
 @app.post("/api/posts/item/{post_id}/favorite")
-@error_envelope("update the star", post_id=_path("post_id"))
+@error_detail("update the star")
 async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
-    logger.info(f"⭐ Toggling post favorite: {post_id}")
     return {"success": True, **services().post_detail.toggle_favorite(post_id, bool(request.favorited))}
 
 
-# ============= READER (Mark IX) =============
-# New endpoints follow the §4 error contract: non-2xx with {"detail": "<human message>"}.
-# A ValueError (a bad scope, cursor, filter or id) is the 400.
+@app.post("/api/posts/item/{post_id}/reddit-comments")
+@error_detail("fetch the Reddit comments")
+async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
+    limit, refresh = int(request.limit or 80), bool(request.refresh)
+    if request.asyncMode:
+        job_id = services().operations.try_start_job(
+            "reddit_comments_fetch",
+            trigger="manual",
+            message=f"Fetch Reddit comments for {post_id}",
+            payload={"post_id": post_id, "limit": limit, "refresh": refresh},
+        )
+        if job_id:
+            background_tasks.add_task(
+                _run_async_job_background, "reddit_comments_fetch", _fetch_reddit_comments,
+                post_id, limit=limit, refresh=refresh, job_id=job_id,
+            )
+            return _accepted_job_response(job_id, "reddit_comments_fetch", message="Reddit comment fetch started")
+    return await _fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
 
-MAX_FEED_LIMIT = 100
+
+# ============= READER =============
+# One listing (GET /api/feed) and one read-state route (PUT /api/feed/read). A ValueError
+# (a bad scope, cursor, filter, date or id) is the 400.
+
 MAX_READ_BATCH = 500
 
 
 def _require_post_ids(ids: List[str]) -> List[str]:
+    if not ids:
+        raise ValueError("ids must not be empty")
     if len(ids) > MAX_READ_BATCH:
         raise ValueError(f"at most {MAX_READ_BATCH} ids per request")
     try:
@@ -665,26 +577,43 @@ def _require_post_ids(ids: List[str]) -> List[str]:
 @app.get("/api/feed")
 @error_detail("load the feed")
 async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream",
-                   cursor: str | None = None, limit: int = 30, days: int | None = None):
-    """Keyset-paginated, newest-first feed: FeedPage (stream) or FeedGroupsPage (by_source)."""
-    feed_scope = FeedScope.parse(scope)
-    if filter not in FEED_FILTERS:
-        raise ValueError(f"filter must be one of {', '.join(FEED_FILTERS)}")
-    if view not in FEED_VIEWS:
-        raise ValueError(f"view must be one of {', '.join(FEED_VIEWS)}")
-    if not 1 <= int(limit) <= MAX_FEED_LIMIT:
-        raise ValueError(f"limit must be between 1 and {MAX_FEED_LIMIT}")
-    if days is not None and int(days) < 1:
-        raise ValueError("days must be at least 1")
-    feed_cursor = FeedCursor.decode(cursor) if cursor else None
-    return services().reader.feed(feed_scope, filter=filter, view=view, cursor=feed_cursor,
-                                  limit=int(limit), days=days)
+                   cursor: str | None = None, limit: int = 30, days: int | None = None,
+                   date: str | None = None):
+    """Every post list: newest first, keyset-paginated. FeedPage (stream) or FeedGroupsPage
+    (by_source). scope: all | source:<uuid> | folder:<uuid>; filter: all | unread | starred;
+    days: the last N days, or date: one day (YYYY-MM-DD, UTC)."""
+    query = FeedQuery.parse(scope=scope, filter=filter, view=view, cursor=cursor, limit=limit,
+                            days=days, date=date)
+    return services().reader.list_posts(query)
 
 
 @app.get("/api/feed/unread-counts")
 @error_detail("load unread counts")
 async def get_feed_unread_counts():
     return services().reader.unread_counts()
+
+
+@app.put("/api/feed/read")
+@error_detail("update read state")
+async def set_read_state(request: ReadStateRequest):
+    """Read state, three ways, one answer {success, updated, ids} (ids: the posts changed):
+    - {ids, read}: one post or many (at most 500), read or unread;
+    - {scope, through_cursor, newest_cursor}: mark read every unread post in scope from
+      newest down to through, bounded by the unread window. The answer's ids undo it."""
+    if request.through_cursor is not None or request.newest_cursor is not None:
+        if request.ids is not None:
+            raise ValueError("send ids or through_cursor, not both")
+        if not request.read:
+            raise ValueError("mark-through only marks read")
+        if not request.through_cursor or not request.newest_cursor:
+            raise ValueError("mark-through needs through_cursor and newest_cursor")
+        scope = FeedScope.parse(request.scope)
+        through = FeedCursor.decode(request.through_cursor)
+        newest = FeedCursor.decode(request.newest_cursor)
+        return services().reader.mark_read_through(scope, through, newest)
+    if request.ids is None:
+        raise ValueError("send ids, or through_cursor and newest_cursor")
+    return services().reader.set_read(_require_post_ids(request.ids), bool(request.read))
 
 
 # An image is served with the headers a stranger's file needs on our origin: no sniffing,
@@ -712,105 +641,95 @@ async def get_media(post: str, url: str):
                     headers={**_MEDIA_HEADERS, "Cache-Control": "public, max-age=86400"})
 
 
-@app.post("/api/feed/mark-read")
-@error_detail("mark posts read")
-async def mark_feed_read(request: FeedMarkReadRequest):
-    """Mark all read from newest_cursor down to through_cursor, bounded by the unread window."""
-    scope = FeedScope.parse(request.scope)
-    through = FeedCursor.decode(request.through_cursor)
-    newest = FeedCursor.decode(request.newest_cursor)
-    return services().reader.mark_read_through(scope, through, newest)
+# ============= SOURCES =============
+# One route per action. A change also rewrites sources.json, the server's list of sources.
 
 
-@app.put("/api/feed/read")
-@error_detail("update read state")
-async def set_feed_read(request: FeedReadRequest):
-    """Batch read/unread (the mark-through Undo)."""
-    ids = _require_post_ids(request.ids)
-    return {"success": True, "updated": services().reader.set_read(ids, bool(request.read))}
+@app.get("/api/sources")
+@error_detail("load the sources")
+async def list_sources():
+    """Every source with its settings (platform defaults merged), post_count and in_main_digest."""
+    sources = services().sources.get_all_sources_with_settings()
+    return {"success": True, "sources": sources, "total": len(sources),
+            "total_posts": sum(int(s.get("post_count") or 0) for s in sources)}
 
 
-@app.put("/api/posts/item/{post_id}/read")
-@error_detail("update read state")
-async def set_post_read(post_id: str, request: PostReadRequest):
-    (post_id,) = _require_post_ids([post_id])
-    updated = services().reader.set_read([post_id], bool(request.read))
-    return {"success": True, "post_id": post_id, "updated": updated}
+@app.post("/api/sources")
+@error_detail("add the source")
+async def add_source(request: NewSourceRequest):
+    """Add one source. 400 when it is already a source or handle_or_url is empty."""
+    platform = (request.platform or "rss").strip()
+    settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority",
+                                           "max_posts_per_fetch"}, exclude_none=True)
+    created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
+                                                   enabled=(request.state or "enabled") == "enabled")
+    _export_sources_json()
+    return {"success": True, "source_id": created["source_id"], "platform": platform,
+            "handle_or_url": created["handle"]}
 
-
-@app.post("/api/posts/item/{post_id}/reddit-comments")
-@error_envelope("fetch the Reddit comments", post_id=_path("post_id"))
-async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
-    logger.info(f"💬 Fetching Reddit comments for post: {post_id}")
-    limit, refresh = int(request.limit or 80), bool(request.refresh)
-    if request.asyncMode:
-        job_id = services().operations.try_start_job(
-            "reddit_comments_fetch",
-            trigger="manual",
-            message=f"Fetch Reddit comments for {post_id}",
-            payload={"post_id": post_id, "limit": limit, "refresh": refresh},
-        )
-        if job_id:
-            background_tasks.add_task(
-                _run_async_job_background, "reddit_comments_fetch", _fetch_reddit_comments,
-                post_id, limit=limit, refresh=refresh, job_id=job_id,
-            )
-            return _accepted_job_response(job_id, "reddit_comments_fetch", message="Reddit comment fetch started")
-    return await _fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
-
-
-@app.get("/api/sources/with-counts")
-@error_envelope("load the sources", platforms={}, total_posts=0)
-async def get_sources_with_counts():
-    """Get all sources with their post counts, grouped by platform."""
-    return {"success": True, **services().sources.counts_by_platform()}
-
-@app.get("/api/sources/{source_id}/settings")
-@error_envelope("load the source settings", settings={})
-async def get_source_settings(source_id: str):
-    """Get settings for a specific source."""
-    source = services().sources.get_source_with_settings(source_id)
-    return {"success": True, "source_id": source_id, "settings": source.get("settings", {}), "source": source}
 
 @app.put("/api/sources/{source_id}/settings")
-@error_envelope("update the source settings")
+@error_detail("update the source settings")
 async def update_source_settings(source_id: str, settings: dict):
-    """Update settings for a specific source."""
-    logger.info(f"🔧 Updating settings for source: {source_id}")
+    """Body: any of {display_name, fetch_delay_seconds, priority, max_posts_per_fetch}."""
     result = services().sources.update_source_settings(source_id, settings)
     return {"success": True, "source_id": source_id, "settings": result.get("settings", {})}
 
-@app.get("/api/sources/with-settings")
-@error_envelope("load the sources", sources=[])
-async def get_sources_with_settings():
-    """Get all sources with their settings and post counts."""
-    sources = services().sources.with_settings_and_counts()
-    return {"success": True, "sources": sources, "total": len(sources)}
+
+@app.put("/api/sources/{source_id}/enabled")
+@error_detail("update the source")
+async def set_source_enabled(source_id: str, request: SourceEnabledRequest):
+    services().sources.update_source_status(source_id, request.enabled)
+    _export_sources_json()
+    return {"success": True, "source_id": source_id, "enabled": request.enabled}
 
 
-# ============= FOLDERS ENDPOINTS =============
+@app.put("/api/sources/{source_id}/main-digest")
+@error_detail("update the main-digest setting")
+async def set_source_main_digest(source_id: str, request: MainDigestRequest):
+    """Include (true) or exclude (false) one source from the "all" feed."""
+    return {"success": True, **services().sources.set_in_main_digest(source_id, request.in_main_digest)}
+
+
+@app.delete("/api/sources/{source_id}")
+@error_detail("delete the source")
+async def delete_source(source_id: str):
+    """Delete one source and its posts."""
+    if not services().sources.delete_source(source_id):
+        raise LookupError(f"Source {source_id} not found")
+    _export_sources_json()
+    return {"success": True, "deleted": True, "source_id": source_id}
+
+
+@app.get("/api/sources/{source_id}/folders")
+@error_detail("load the source's folders")
+async def get_source_folders(source_id: str):
+    """The folder ids a source belongs to."""
+    return {"success": True, "folder_ids": services().folders.list_folders_for_source(source_id)}
+
+
+# ============= FOLDERS (tracks) =============
 
 
 @app.get("/api/folders")
-@error_envelope("load the folders", folders=[])
+@error_detail("load the folders")
 async def get_folders():
-    """List folders with source and post counts."""
+    """Folders with source and post counts."""
     folders = services().folders.list_folders()
     return {"success": True, "folders": folders, "total": len(folders)}
 
 
 @app.post("/api/folders")
-@error_envelope("create the folder", folder=None)
+@error_detail("create the folder")
 async def create_folder(config: dict):
     """Create a folder or track.
 
     Body: {name, description?, sort_order?, kind?, exclude_from_main_digest?, match_keywords?}
     kind is "folder" (default) or "track".
     """
-    logger.info("📁 Creating folder")
     name = str(config.get("name") or "").strip()
     if not name:
-        return {"success": False, "error": "Folder name is required", "folder": None}
+        raise ValueError("Folder name is required")
     folder = services().folders.create_folder(
         name=name,
         description=config.get("description"),
@@ -823,44 +742,48 @@ async def create_folder(config: dict):
 
 
 @app.put("/api/folders/{folder_id}")
-@error_envelope("update the folder", folder=None)
+@error_detail("update the folder")
 async def update_folder(folder_id: str, fields: dict):
-    """Update folder fields.
-
-    Body: any of {name, description, sort_order, kind, exclude_from_main_digest, match_keywords}
-    """
-    logger.info(f"📁 Updating folder: {folder_id}")
+    """Body: any of {name, description, sort_order, kind, exclude_from_main_digest, match_keywords}"""
     return {"success": True, "folder": services().folders.update_folder(folder_id, fields)}
 
 
 @app.delete("/api/folders/{folder_id}")
-@error_envelope("delete the folder")
+@error_detail("delete the folder")
 async def delete_folder(folder_id: str):
-    """Delete a folder."""
-    logger.info(f"📁 Deleting folder: {folder_id}")
     if not services().folders.delete_folder(folder_id):
-        return {"success": False, "error": f"Folder {folder_id} not found"}
+        raise LookupError(f"Folder {folder_id} not found")
     return {"success": True, "deleted": True, "folder_id": folder_id}
 
 
-@app.get("/api/folders/{folder_id}/sources")
-@error_envelope("load the folder's sources", sources=[])
-async def get_folder_sources(folder_id: str):
-    """List the sources attached to a folder."""
-    sources = services().folders.list_sources(folder_id)
-    return {"success": True, "sources": sources, "total": len(sources)}
-
-
 @app.post("/api/folders/{folder_id}/sources")
-@error_envelope("add the source to the folder")
-async def add_folder_source(folder_id: str, body: dict):
+@error_detail("add the source to the folder")
+async def add_folder_source(folder_id: str, request: FolderSourceRequest):
     """Attach a source to a folder. Body: {source_id}"""
-    source_id = str(body.get("source_id") or "").strip()
+    source_id = request.source_id.strip()
     if not source_id:
-        return {"success": False, "error": "source_id is required"}
-    logger.info(f"📁 Adding source {source_id} to folder {folder_id}")
+        raise ValueError("source_id is required")
     added = services().folders.add_source(folder_id, source_id)
     return {"success": True, "added": added, "folder_id": folder_id, "source_id": source_id}
+
+
+@app.delete("/api/folders/{folder_id}/sources/{source_id}")
+@error_detail("remove the source from the folder")
+async def remove_folder_source(folder_id: str, source_id: str):
+    removed = services().folders.remove_source(folder_id, source_id)
+    return {"success": True, "removed": removed, "folder_id": folder_id, "source_id": source_id}
+
+
+@app.put("/api/folders/{folder_id}/main-digest")
+@error_detail("update the main-digest setting")
+async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
+    """Apply the digest switch to every source in a folder/track. Sending false keeps a
+    track's sources out of the "all" feed while they are still ingested."""
+    value = request.in_main_digest
+    result = services().sources.set_folder_in_main_digest(folder_id, value)
+    # Keep the folder's declared intent in step with what was applied.
+    services().folders.update_folder(folder_id, {"exclude_from_main_digest": not value})
+    return {"success": True, **result}
 
 
 @app.post("/api/folders/{folder_id}/ingest")
@@ -875,112 +798,11 @@ async def ingest_folder(folder_id: str, background_tasks: BackgroundTasks, body:
     return _accept_ingestion_run(background_tasks, request, message=f"Fetch track {folder_id}")
 
 
-@app.get("/api/folders/{folder_id}/posts")
-@error_envelope("load the track feed", posts=[])
-async def get_folder_posts(
-    folder_id: str,
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    days: int | None = Query(None, ge=1, le=365),
-):
-    """Reading feed for a folder/track: newest posts from its sources, newest first."""
-    folders = services().folders
-    folder = folders.get_folder(folder_id)
-    if not folder:
-        return {"success": False, "error": f"Folder {folder_id} not found", "posts": []}
-    source_ids = folders.list_source_ids(folder_id)
-    feed = services().posts.get_folder_feed(source_ids, limit=limit, offset=offset, since_days=days)
-    return {"success": True, "folder": folder, "source_count": len(source_ids), **feed}
-
-
-@app.put("/api/sources/{source_id}/main-digest")
-@error_envelope("update the main-digest setting")
-async def set_source_main_digest(source_id: str, body: dict):
-    """Include/exclude one source from the main digests. Body: {in_main_digest: bool}"""
-    value = bool(body.get("in_main_digest", True))
-    logger.info(f"\U0001F5DE Source {source_id} -> in_main_digest={value}")
-    return {"success": True, **services().sources.set_in_main_digest(source_id, value)}
-
-
-@app.put("/api/folders/{folder_id}/main-digest")
-@error_envelope("update the main-digest setting")
-async def set_folder_main_digest(folder_id: str, body: dict):
-    """Apply the digest switch to every source in a folder/track.
-
-    Body: {in_main_digest: bool}. Sending false keeps a track's sources out of the "all"
-    feed while they are still ingested.
-    """
-    value = bool(body.get("in_main_digest", True))
-    logger.info(f"\U0001F5DE Folder {folder_id} -> in_main_digest={value}")
-    result = services().sources.set_folder_in_main_digest(folder_id, value)
-    # Keep the folder's declared intent in step with what was applied.
-    services().folders.update_folder(folder_id, {"exclude_from_main_digest": not value})
-    return {"success": True, **result}
-
-
-@app.delete("/api/folders/{folder_id}/sources/{source_id}")
-@error_envelope("remove the source from the folder")
-async def remove_folder_source(folder_id: str, source_id: str):
-    """Detach a source from a folder."""
-    logger.info(f"📁 Removing source {source_id} from folder {folder_id}")
-    removed = services().folders.remove_source(folder_id, source_id)
-    return {"success": True, "removed": removed, "folder_id": folder_id, "source_id": source_id}
-
-
-@app.post("/api/sources/add")
-@error_envelope("add the source")
-async def add_single_source(body: dict):
-    """Add one source (non-destructive). Body: {platform, handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state?}"""
-    platform = str(body.get("platform") or "rss").strip()
-    handle = str(body.get("handle_or_url") or "").strip()
-    if not handle:
-        return {"success": False, "error": "handle_or_url is required"}
-    settings = {
-        k: body[k]
-        for k in ("display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch")
-        if body.get(k) is not None
-    }
-    enabled = str(body.get("state") or "enabled") == "enabled"
-    logger.info(f"➕ Adding source {platform}/{handle}")
-    sources = services().sources
-    source_id = sources.add_source(platform, handle)["source_id"]
-    if settings:
-        sources.update_source_settings(source_id, settings)
-    sources.update_source_status(source_id, enabled)
-    _export_sources_json()
-    return {"success": True, "source_id": source_id, "platform": platform, "handle_or_url": handle}
-
-
-@app.put("/api/sources/{source_id}/enabled")
-@error_envelope("update the source")
-async def set_source_enabled(source_id: str, body: dict):
-    """Enable/disable a source. Body: {enabled: bool}"""
-    enabled = bool(body.get("enabled"))
-    services().sources.update_source_status(source_id, enabled)
-    _export_sources_json()
-    return {"success": True, "source_id": source_id, "enabled": enabled}
-
-
-@app.delete("/api/sources/{source_id}")
-@error_envelope("delete the source")
-async def delete_single_source(source_id: str):
-    """Delete a single source (and its posts)."""
-    logger.info(f"🗑️ Deleting source {source_id}")
-    if not services().sources.delete_source(source_id):
-        return {"success": False, "error": f"Source {source_id} not found"}
-    _export_sources_json()
-    return {"success": True, "deleted": True, "source_id": source_id}
-
-
-@app.get("/api/sources/{source_id}/folders")
-@error_envelope("load the source's folders", folder_ids=[])
-async def get_source_folders(source_id: str):
-    """List the folder ids a source belongs to."""
-    return {"success": True, "folder_ids": services().folders.list_folders_for_source(source_id)}
+# ============= ARCHIVE =============
 
 
 @app.get("/api/archive/{source_id}/status")
-@error_envelope("load the archive status", source_id=_path("source_id"))
+@error_detail("load the archive status")
 async def get_archive_status(source_id: str):
     """Persisted archive metadata plus current storage stats, what the source can archive, and
     the newest archive job (a running one the sheet attaches to, or the last result)."""
@@ -1013,7 +835,7 @@ async def get_archive_status(source_id: str):
     }
 
 @app.get("/api/archive/catalog")
-@error_envelope("load the archive catalog", sources=[], total=0)
+@error_detail("load the archive catalog")
 async def get_archive_catalog():
     """List enabled sources with their persisted archive status."""
     catalog = services().source_fetch.archive_catalog()
@@ -1021,7 +843,7 @@ async def get_archive_catalog():
 
 
 @app.post("/api/archive/{source_id}/plan")
-@error_envelope("plan the archive")
+@error_detail("plan the archive")
 async def plan_archive(source_id: str, request: ArchiveRequest):
     """Estimate archive effort for a source."""
     logger.info(f"🧭 Planning archive for source: {source_id}")
@@ -1042,7 +864,7 @@ async def plan_archive(source_id: str, request: ArchiveRequest):
 
 
 @app.post("/api/archive/{source_id}/run")
-@error_envelope("run the archive", source_id=_path("source_id"))
+@error_detail("run the archive")
 async def run_archive(source_id: str, request: ArchiveRequest, background_tasks: BackgroundTasks):
     """Run an archive job for a single source (202 + archive_source job when background)."""
     rate_limit_overrides = {
@@ -1228,7 +1050,7 @@ async def run_ingestion_cycle(background_tasks: BackgroundTasks, request: Ingest
 
 
 @app.get("/api/ingestion/logs")
-@error_envelope("read the log", log=lambda request: request.query_params.get("log", "application"), lines=[])
+@error_detail("read the log")
 async def get_ingestion_logs(
     log: str = Query(default="application"),
     lines: int = Query(default=200, ge=1, le=1000),
@@ -1238,22 +1060,22 @@ async def get_ingestion_logs(
 
 
 @app.get("/api/operations/overview")
-@error_envelope("load the operations overview", jobs=[], source_health=EMPTY_SOURCE_HEALTH, alerts=[])
+@error_detail("load the operations overview")
 async def get_operations_overview():
     return services().operations.get_operations_overview()
 
 
 @app.get("/api/operations/jobs/{job_id}")
-@error_envelope("load the job", job=None)
+@error_detail("load the job")
 async def get_operation_job(job_id: str):
     job = services().operations.get_job(job_id)
     if not job:
-        return {"success": False, "error": f"Job {job_id} not found", "job": None}
+        raise LookupError(f"Job {job_id} not found")
     return {"success": True, "job": job}
 
 
 @app.get("/api/operations/scheduler")
-@error_envelope("load the scheduler settings")
+@error_detail("load the scheduler settings")
 async def get_scheduler_config():
     ops = services().operations
     scheduler = ops.get_scheduler_config()
@@ -1266,7 +1088,7 @@ async def get_scheduler_config():
 
 
 @app.put("/api/operations/scheduler")
-@error_envelope("save the scheduler settings")
+@error_detail("save the scheduler settings")
 async def update_scheduler_config(request: SchedulerConfigRequest):
     logger.info("⏱️ Updating scheduler config")
     payload = {}
@@ -1284,20 +1106,20 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
 # ============= YOUTUBE ENDPOINTS =============
 
 @app.post("/api/youtube/channel/videos")
-@error_envelope("list the channel's videos")
+@error_detail("list the channel's videos")
 async def list_youtube_channel_videos(request: YouTubeChannelRequest):
     logger.info(f"📺 Listing YouTube videos for {request.source}")
     return {"success": True, **services().youtube.list_channel_videos(request.source, limit=request.limit)}
 
 
 @app.get("/api/youtube/progress/{video_id}")
-@error_envelope("load the watch progress", progress=None)
+@error_detail("load the watch progress")
 async def get_youtube_watch_progress(video_id: str):
     return {"success": True, "progress": services().youtube.get_watch_progress(video_id)}
 
 
 @app.put("/api/youtube/progress/{video_id}")
-@error_envelope("save the watch progress", progress=None)
+@error_detail("save the watch progress")
 async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressRequest):
     progress = services().youtube.save_watch_progress(
         video_id=video_id,

@@ -18,6 +18,7 @@ export interface SourceWithSettings {
   platform: string;
   handle_or_url: string;
   enabled: boolean;
+  in_main_digest?: boolean;
   post_count: number;
   settings: SourceSettings;
   created_at?: string;
@@ -30,9 +31,11 @@ export interface SourceSettingsResponse extends Envelope {
   source?: SourceWithSettings;
 }
 
-export interface SourcesWithSettingsResponse extends Envelope {
+/** GET /api/sources: every source with its settings and post count. */
+export interface SourcesResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
+  total_posts?: number;
 }
 
 export interface Post {
@@ -71,7 +74,7 @@ export interface ReaderState {
   starred_at?: string | null;
 }
 
-// ---- Reader (Mark IX, B7: /api/feed*) ----
+// ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
 export type FeedFilter = 'all' | 'unread' | 'starred';
 export type FeedView = 'stream' | 'by_source';
@@ -89,7 +92,8 @@ export interface FeedGroup {
   newest_sort_at: string; count: number; items: FeedItem[];   // items <= 3
 }
 export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_cursor: string | null; }
-export interface MarkReadResult { success: true; updated: number; ids: string[]; }
+/** PUT /api/feed/read: `ids` are the posts whose read state changed. */
+export interface ReadStateResult { success: true; updated: number; ids: string[]; }
 export interface UnreadCounts { total: number; by_source: Record<string, number>; by_folder: Record<string, number>; }
 
 export interface FeedParams {
@@ -618,14 +622,12 @@ export function createApi() {
     getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
     /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
     getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
-    setPostRead: (postId: string, read: boolean) =>
-      request<{ success: true; post_id: string; updated: number }>(`/api/posts/item/${enc(postId)}/read`, { method: 'PUT', body: { read } }),
-    /** Batch read/unread (at most 500 ids); the mark-through Undo uses it. */
+    /** Mark one post or many (at most 500) read or unread. */
     setPostsRead: (ids: string[], read: boolean) =>
-      request<{ success: true; updated: number }>('/api/feed/read', { method: 'PUT', body: { ids, read } }),
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { ids, read } }),
     /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
     markReadThrough: (scope: string, through: string, newest: string) =>
-      request<MarkReadResult>('/api/feed/mark-read', { method: 'POST', body: { scope, through_cursor: through, newest_cursor: newest } }),
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { scope, through_cursor: through, newest_cursor: newest } }),
     /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
     setPostStarred: (postId: string, starred: boolean) =>
       request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/favorite`, { method: 'POST', body: { favorited: starred } }),
@@ -655,10 +657,10 @@ export function createApi() {
 
     // ---- Sources ----
 
-    getSourcesWithSettings: () => request<SourcesWithSettingsResponse>('/api/sources/with-settings'),
+    getSources: () => request<SourcesResponse>('/api/sources'),
     /** Every source's schedule-aware health row, worst first, plus the summary. */
     getSourcesHealth: () => request<SourcesHealthResponse>('/api/sources/health'),
-    addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources/add', { method: 'POST', body: payload })),
+    addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources', { method: 'POST', body: payload })),
     updateSourceSettings: (sourceId: string, settings: SourceSettings) =>
       settle(request<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, { method: 'PUT', body: settings })),
     setSourceEnabled: (sourceId: string, enabled: boolean) =>

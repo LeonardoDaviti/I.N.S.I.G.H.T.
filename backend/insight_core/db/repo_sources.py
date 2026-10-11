@@ -64,28 +64,6 @@ class SourcesRepository:
             "updated_at": row[6],
         }
     
-    def get_enabled_sources(self, cur: Cursor) -> List[Dict[str, Any]]:
-        """Get only enabled sources."""
-        query = """
-            SELECT id, platform, handle_or_url
-            FROM sources
-            WHERE enabled = TRUE
-            ORDER BY platform, handle_or_url
-        """
-        cur.execute(query)
-        rows = cur.fetchall()
-        
-        sources = []
-        for row in rows:
-            sources.append({
-                "id": str(row[0]),
-                "platform": row[1],
-                "handle_or_url": row[2]
-            })
-        
-        self.logger.debug(f"Retrieved {len(sources)} enabled sources")
-        return sources
-    
     def update_enabled(self, cur: Cursor, source_id: str, enabled: bool) -> bool:
         """Update source enabled status."""
         query = """
@@ -151,7 +129,8 @@ class SourcesRepository:
                 s.mean_gap_seconds,
                 s.cadence_sample_size,
                 s.cadence_tier,
-                s.fetch_interval_hours_override
+                s.fetch_interval_hours_override,
+                s.in_main_digest
             FROM sources s
             LEFT JOIN posts p ON s.id = p.source_id
             GROUP BY s.id
@@ -174,6 +153,7 @@ class SourcesRepository:
                 "cadence_sample_size": row[8],
                 "cadence_tier": row[9],
                 "fetch_interval_hours_override": row[10],
+                "in_main_digest": row[11],
             })
         
         self.logger.debug(f"Retrieved {len(sources)} sources with post counts")

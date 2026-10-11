@@ -114,9 +114,8 @@ async def get_something(param: str):
 **Key Points:**
 - No try/except for service errors in a route. A `ValueError` is a 400 with its message, a
   not-found `LookupError` a 404, anything else a 500 "Could not load something".
-- `@error_detail(what)` answers errors as HTTP errors with `{"detail": ...}` (Mark IX
-  routes). `@error_envelope(what, **fields)` answers them as HTTP 200
-  `{"success": false, "error": ..., **fields}`, for the older routes whose callers expect it.
+- `@error_detail(what)` names the "what" in that message. Every route answers its errors
+  the same way: a real status code and `{"detail": ...}`.
 - The registry builds the services once. Tests swap them with `registry.use(...)`.
 
 ---
@@ -231,15 +230,12 @@ service.update_source_settings(source_id, {
 
 **API Usage:**
 ```bash
-# Get source settings
-GET /api/sources/{source_id}/settings
+# Every source with its merged settings and post count
+GET /api/sources
 
 # Update source settings
 PUT /api/sources/{source_id}/settings
 Body: {"display_name": "New Name", "priority": 5}
-
-# Get all sources with settings
-GET /api/sources/with-settings
 ```
 
 ### Settings in ingestion
@@ -259,15 +255,10 @@ How sources are fetched at all is described in
 
 ## Common Patterns
 
-### Filtering Posts by Date
-```sql
-WHERE DATE(COALESCE(p.published_at, p.fetched_at)) = %s
-```
-
-### Filtering Posts by Source
-```sql
-WHERE p.source_id = %s
-```
+### Listing Posts
+Every post list goes through `ReaderRepository.list_posts(cur, FeedQuery(...), now=...)`
+(`db/repo_reader.py`): scope, read-state filter, time bound, cursor and view in one query.
+Add a filter there rather than writing a second listing query.
 
 ### Joining Posts with Sources
 ```sql
@@ -289,7 +280,7 @@ Every backend feature needs tests in `backend/insight_core/tests/`. They are pla
 
 - Test through the module's interface: a route's status and JSON, saved rows, a `RunReport`.
 - Prior art: `test_feed_routes` (routes over ASGI with `tests/_asgi.py`, a swapped service,
-  the error handler), `test_posts_by_source_routes` (real services), `test_repo_reader` and
+  the error handler), `test_feed_listing_routes` (real services), `test_repo_reader` and
   `test_ingestion_db` (a real database through the test database helpers),
   `test_ingestion_runner` and `test_source_kinds` (fakes, no network).
 
@@ -311,7 +302,7 @@ cd backend
 uvicorn main:app --reload --port 8000 --env-file ../.env
 
 # In another terminal
-curl http://localhost:8000/api/posts/source/{source_id}
+curl "http://localhost:8000/api/feed?scope=source:{source_id}"
 ```
 
 ---
@@ -335,7 +326,7 @@ self.logger.debug("Detailed info")
 1. **Repository and service layers:** let errors propagate. Raise `ValueError` (bad input) or
    `LookupError` (not found) with a message a person can act on.
 2. **API layer:** one handler, `service_error_response` in `main.py`, turns an error into a
-   safe JSON answer in the route's shape. Other exceptions are logged with their traceback
+   safe `{"detail": ...}` answer with a real status code. Other exceptions are logged with their traceback
    and answered "Could not ...": a driver message can carry a DSN or SQL, so it never reaches
    the response.
 3. **Job tracking:** `OperationsService.try_start_job` / `try_append_job_event` /
@@ -345,7 +336,71 @@ self.logger.debug("Detailed info")
 
 ## Example: Complete Feature Implementation
 
-See the `get_posts_by_date` feature for a complete example:
-- Repository: `repo_posts.py::get_posts_by_date()`
-- Service: `posts_service.py::get_posts_by_date()`
-- API: `main.py::@app.get("/api/posts/{date}")`
+See the post listing for a complete example:
+- Repository: `repo_reader.py::ReaderRepository.list_posts()` with a `FeedQuery`
+- Service: `reader_service.py::ReaderService.list_posts()`
+- API: `main.py::@app.get("/api/feed")`
+- Tests: `test_repo_reader`, `test_feed_routes`, `test_feed_listing_routes`
+
+---
+
+## HTTP API
+
+Every route in `main.py`. Errors are a non-2xx status with `{"detail": "<message>"}`: 400 bad
+input, 404 not found, 409 conflict, 429 throttled, 500 "Could not ...", 503 job tracking down.
+Ingestion and archive runs answer `202 {job_id}`; `GET /api/operations/jobs/{job_id}` carries
+the result when the job finishes.
+
+| Method | Path | Purpose | Body or query |
+|---|---|---|---|
+| GET | `/` | Liveness text | |
+| GET | `/health` | Container health check | |
+| GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
+| GET | `/api/feed` | Every post list, newest first, one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|starred`, `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
+| GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder | |
+| PUT | `/api/feed/read` | Read state, answers `{updated, ids}` | `{ids, read}` (1-500 ids), or `{scope, through_cursor, newest_cursor}` to mark read through a cursor |
+| GET | `/api/media` | One image of one post, through the 24-hour cache | `post`, `url` |
+| GET | `/api/posts/item/{post_id}` | One post with its reader state | |
+| POST | `/api/posts/item/{post_id}/opened` | Record an open (marks it read) | `{metadata?}` |
+| POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
+| POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
+| POST | `/api/posts/item/{post_id}/reddit-comments` | Fetch a Reddit post's comments | `{limit?, refresh?, asyncMode?}` |
+| GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
+| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled"}` |
+| PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, max_posts_per_fetch}` |
+| PUT | `/api/sources/{source_id}/enabled` | Enable or disable | `{enabled}` |
+| PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |
+| PUT | `/api/sources/{source_id}/cadence` | Set or clear the fetch interval override | `{override_hours}` (1-2160, or null) |
+| DELETE | `/api/sources/{source_id}` | Delete a source and its posts | |
+| GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
+| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary | |
+| POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
+| GET | `/api/folders` | Folders and tracks with counts | |
+| POST | `/api/folders` | Create a folder or track | `{name, kind?="folder"\|"track", description?, sort_order?, exclude_from_main_digest?, match_keywords?}` |
+| PUT | `/api/folders/{folder_id}` | Edit a folder | any of the create fields |
+| DELETE | `/api/folders/{folder_id}` | Delete a folder (its sources stay) | |
+| POST | `/api/folders/{folder_id}/sources` | Add a source to a folder | `{source_id}` |
+| DELETE | `/api/folders/{folder_id}/sources/{source_id}` | Remove a source from a folder | |
+| PUT | `/api/folders/{folder_id}/main-digest` | Every source of a folder in or out of the "all" feed | `{in_main_digest}` |
+| POST | `/api/folders/{folder_id}/ingest` | Fetch a folder's enabled sources now (202 job) | `{limit?}` |
+| GET | `/api/archive/catalog` | Enabled sources with their archive state | |
+| GET | `/api/archive/{source_id}/status` | One source's archive state and newest archive job | |
+| POST | `/api/archive/{source_id}/plan` | Estimate an archive run | `{desiredPosts, resume?, pageDelaySeconds?, batchSize?, batchCooldownSeconds?}` |
+| POST | `/api/archive/{source_id}/run` | Run an archive (202 job with `background: true`) | as plan, plus `{background?}` |
+| POST | `/api/ingestion/run` | Run the ingestion cycle now (202 job) | `{force?}` |
+| GET | `/api/ingestion/logs` | Tail of a log file | `log`, `lines` (1-1000) |
+| GET | `/api/operations/overview` | Recent jobs, source health, alerts | |
+| GET | `/api/operations/jobs/{job_id}` | One job with its result | |
+| GET | `/api/operations/scheduler` | Scheduler settings and state | |
+| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, syncSourcesEachCycle?, ingestTickMinutes?}` (tick >= 15) |
+| GET | `/api/credentials` | Every connection, without its values | |
+| PUT | `/api/credentials/{provider}/{key}` | Save one secret | `{value}` |
+| DELETE | `/api/credentials/{provider}/{key}` | Remove one secret | |
+| POST | `/api/credentials/{provider}/test` | Test a connection | |
+| POST | `/api/credentials/telegram/login/start` | Telegram sign-in: send the code | `{phone}` |
+| POST | `/api/credentials/telegram/login/code` | Telegram sign-in: the code | `{code}` |
+| POST | `/api/credentials/telegram/login/password` | Telegram sign-in: two-step password | `{password}` |
+| POST | `/api/credentials/telegram/login/cancel` | Cancel the sign-in | |
+| POST | `/api/youtube/channel/videos` | List a channel's newest videos | `{source, limit?}` |
+| GET | `/api/youtube/progress/{video_id}` | Watch progress of a video | |
+| PUT | `/api/youtube/progress/{video_id}` | Save watch progress | `{videoUrl, title, progressSeconds, durationSeconds?, sourceId?, notesMarkdown?, completed?}` |

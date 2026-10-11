@@ -193,7 +193,6 @@ class SourceConfigSyncService:
             "metadata": {
                 "name": "I.N.S.I.G.H.T.",
                 "description": "Intelligence Network for Systematic Gathering and Handling of Topics",
-                "version": "Mark VI",
             },
             "platforms": {},
         }

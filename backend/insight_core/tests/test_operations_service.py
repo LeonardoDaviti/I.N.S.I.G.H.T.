@@ -106,9 +106,9 @@ class SchedulerConfigTests(unittest.TestCase):
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 5})["ingest_tick_minutes"], 15)
         self.assertEqual(self.service._normalize_scheduler_config({"ingest_tick_minutes": 30})["ingest_tick_minutes"], 30)
 
-    def test_job_labels_cover_the_new_and_legacy_ingestion_types(self):
+    def test_job_labels_name_the_current_types_and_keep_old_rows_readable(self):
         from insight_core.services.operations_service import job_label
 
         self.assertEqual(job_label("ingestion_run"), "Ingestion run")
-        self.assertEqual(job_label("safe_ingest"), "Ingestion cycle (legacy)")
-        self.assertEqual(job_label("folder_ingest"), "Track fetch (legacy)")
+        self.assertEqual(job_label("safe_ingest"), "Safe ingest")
+        self.assertEqual(job_label("folder_ingest"), "Folder ingest")

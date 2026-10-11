@@ -45,7 +45,7 @@ describe('useReaderMutations', () => {
   it('a failed read rolls back only its own change, keeping a later star', async () => {
     const read = deferred();
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockReturnValue(read.promise),
+      setPostsRead: vi.fn().mockReturnValue(read.promise),
       setPostStarred: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 2, by_source: { s1: 1, s2: 1 }, by_folder: {} }),
     });
@@ -67,7 +67,7 @@ describe('useReaderMutations', () => {
 
   it('a failed star restores only that post', async () => {
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       setPostStarred: vi.fn().mockRejectedValue(new Error('offline')),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: { s1: 0, s2: 1 }, by_folder: {} }),
     });
@@ -83,7 +83,7 @@ describe('useReaderMutations', () => {
   it('reports the change actually applied to each scope count', async () => {
     const changes: UnreadChange[] = [];
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: { s1: 0, s2: 1 }, by_folder: {} }),
     });
     const { result } = setup(api, (change) => changes.push(change));
@@ -99,7 +99,7 @@ describe('useReaderMutations', () => {
   it('in a track, a read moves that track’s count even before the health rows load', async () => {
     const changes: UnreadChange[] = [];
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockReturnValue(new Promise(() => {})),
     });
     const { result, queryClient } = setup(api, (change) => changes.push(change), 'folder:f1');

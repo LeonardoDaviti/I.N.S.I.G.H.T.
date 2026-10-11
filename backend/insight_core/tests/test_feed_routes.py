@@ -1,4 +1,6 @@
-"""Reader routes: /api/feed*, PUT /api/posts/item/{id}/read, over ASGI with a fake reader service."""
+"""Reader routes: /api/feed*, over ASGI with a fake reader service: parsing, 400s, redaction.
+
+What the listing and read-state routes return from a real database: test_feed_listing_routes."""
 from __future__ import annotations
 
 import sys
@@ -12,7 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import main
-from insight_core.db.repo_reader import FeedCursor, FeedScope
+from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.services import registry
 from insight_core.tests._asgi import call
 
@@ -31,9 +33,9 @@ class FakeReader:
         if self.raise_on == name:
             raise RuntimeError(LEAK)
 
-    def feed(self, scope, **kwargs):
-        self._record("feed", scope, **kwargs)
-        if kwargs["view"] == "by_source":
+    def list_posts(self, query):
+        self._record("list_posts", query)
+        if query.view == "by_source":
             return {"success": True, "groups": [], "next_cursor": None}
         return {"success": True, "items": [], "next_cursor": None}
 
@@ -47,7 +49,7 @@ class FakeReader:
 
     def set_read(self, ids, read):
         self._record("set_read", ids, read)
-        return len(ids)
+        return {"success": True, "updated": len(ids), "ids": ids}
 
 
 class FeedRouteTests(unittest.TestCase):
@@ -73,18 +75,20 @@ class FeedRouteTests(unittest.TestCase):
                                         cursor=self.cursor.encode(), limit=30, days=7)
 
         self.assertEqual((status, body), (200, {"success": True, "items": [], "next_cursor": None}))
-        name, (scope,), kwargs = self.reader.calls[0]
-        self.assertEqual(name, "feed")
-        self.assertEqual(scope, FeedScope("source", SOURCE_ID))
-        self.assertEqual(kwargs, {"filter": "unread", "view": "stream", "cursor": self.cursor,
-                                  "limit": 30, "days": 7})
+        name, (query,), _ = self.reader.calls[0]
+        self.assertEqual(name, "list_posts")
+        self.assertEqual(query, FeedQuery(scope=FeedScope("source", SOURCE_ID), filter="unread", view="stream",
+                                          cursor=self.cursor, limit=30, days=7))
 
     def test_feed_defaults(self):
         self.get_feed()
-        _, (scope,), kwargs = self.reader.calls[0]
-        self.assertEqual(scope, FeedScope("all"))
-        self.assertEqual(kwargs["view"], "stream")
-        self.assertIsNone(kwargs["cursor"])
+        _, (query,), _ = self.reader.calls[0]
+        self.assertEqual(query, FeedQuery())
+
+    def test_feed_parses_a_date(self):
+        self.get_feed(scope=f"folder:{SOURCE_ID}", date="2026-10-01")
+        _, (query,), _ = self.reader.calls[0]
+        self.assertEqual((query.scope, query.day.isoformat()), (FeedScope("folder", SOURCE_ID), "2026-10-01"))
 
     def test_feed_by_source_view(self):
         _, _, body = self.get_feed(scope="all", filter="all", view="by_source")
@@ -103,13 +107,15 @@ class FeedRouteTests(unittest.TestCase):
             {"limit": 0},
             {"limit": 101},
             {"days": 0},
+            {"date": "2026-13-01"},
+            {"date": "2026-10-01", "days": 1},
         ):
             with self.subTest(**query):
                 self.assertBadRequest(self.get_feed(**query))
         self.assertEqual(self.reader.calls, [])
 
     def test_feed_failure_is_500_with_clean_detail(self):
-        self.reader.raise_on = "feed"
+        self.reader.raise_on = "list_posts"
         with self.assertLogs("main", "ERROR"):
             status, _, body = self.get_feed()
         self.assertEqual(status, 500)
@@ -121,39 +127,30 @@ class FeedRouteTests(unittest.TestCase):
         _, _, body = call(main.app, "GET", "/api/feed/unread-counts")
         self.assertEqual(body["by_source"], {SOURCE_ID: 3})
 
-    # ---- mark read through ----------------------------------------------------------
+    # ---- PUT /api/feed/read --------------------------------------------------------
 
-    def test_mark_read_through(self):
+    def test_read_through(self):
         newest = FeedCursor(datetime(2026, 10, 2, tzinfo=timezone.utc), str(uuid.uuid4()))
-        status, _, body = call(main.app, "POST", "/api/feed/mark-read", json_body={
+        status, _, body = call(main.app, "PUT", "/api/feed/read", json_body={
             "scope": "all", "through_cursor": self.cursor.encode(), "newest_cursor": newest.encode()})
 
         self.assertEqual((status, body), (200, {"success": True, "updated": 1, "ids": [POST_ID]}))
-        self.assertEqual(self.reader.calls[0][1], (FeedScope("all"), self.cursor, newest))
+        self.assertEqual(self.reader.calls[0][:2], ("mark_read_through", (FeedScope("all"), self.cursor, newest)))
 
-    def test_mark_read_through_rejects_bad_cursor(self):
-        self.assertBadRequest(call(main.app, "POST", "/api/feed/mark-read", json_body={
+    def test_read_through_rejects_bad_cursor(self):
+        self.assertBadRequest(call(main.app, "PUT", "/api/feed/read", json_body={
             "scope": "all", "through_cursor": "bad", "newest_cursor": "bad"}))
 
-    # ---- PUT /api/feed/read and /api/posts/item/{id}/read -----------------------------
-
-    def test_set_posts_read_batch(self):
+    def test_read_ids(self):
         status, _, body = call(main.app, "PUT", "/api/feed/read", json_body={"ids": [POST_ID], "read": False})
-        self.assertEqual((status, body), (200, {"success": True, "updated": 1}))
-        self.assertEqual(self.reader.calls[0][1], ([POST_ID], False))
+        self.assertEqual((status, body), (200, {"success": True, "updated": 1, "ids": [POST_ID]}))
+        self.assertEqual(self.reader.calls[0][:2], ("set_read", ([POST_ID], False)))
 
-    def test_set_posts_read_rejects_bad_ids(self):
+    def test_read_ids_rejects_bad_ids(self):
         self.assertBadRequest(call(main.app, "PUT", "/api/feed/read", json_body={"ids": ["nope"], "read": True}))
         self.assertBadRequest(call(main.app, "PUT", "/api/feed/read",
                                    json_body={"ids": [POST_ID] * 501, "read": True}))
-
-    def test_set_post_read(self):
-        status, _, body = call(main.app, "PUT", f"/api/posts/item/{POST_ID}/read", json_body={"read": True})
-        self.assertEqual((status, body), (200, {"success": True, "post_id": POST_ID, "updated": 1}))
-        self.assertEqual(self.reader.calls[0][1], ([POST_ID], True))
-
-    def test_set_post_read_rejects_bad_id(self):
-        self.assertBadRequest(call(main.app, "PUT", "/api/posts/item/nope/read", json_body={"read": True}))
+        self.assertEqual(self.reader.calls, [])
 
 
 class ErrorHandlerTests(unittest.TestCase):
@@ -163,10 +160,10 @@ class ErrorHandlerTests(unittest.TestCase):
         previous = registry.use(SimpleNamespace(reader=FakeReader(), folders=self))
         self.addCleanup(registry.use, previous)
 
-    def list_folders(self):          # the folders service for GET /api/folders
+    def list_folders(self):                    # the folders service for GET /api/folders
         raise RuntimeError(LEAK)
 
-    def get_folder(self, folder_id):  # ... and for GET /api/folders/{id}/posts
+    def update_folder(self, folder_id, fields):  # ... and for PUT /api/folders/{id}
         raise ValueError(f"Folder {folder_id} is broken at {LEAK}")
 
     def test_a_service_error_is_a_safe_500_detail(self):
@@ -179,69 +176,36 @@ class ErrorHandlerTests(unittest.TestCase):
         self.assertEqual(body, {"detail": "Could not load unread counts. Check the backend logs."})
         self.assertIn("postgresql://", "\n".join(logged.output), "the cause is in the log, not the body")
 
-    def test_a_service_error_on_a_mark_viii_route_keeps_the_envelope(self):
+    def test_every_route_names_what_failed(self):
         with self.assertLogs("main", "ERROR"):
             status, _, body = call(main.app, "GET", "/api/folders")
-        self.assertEqual(status, 200)
-        self.assertEqual(body, {"success": False, "error": "Could not load the folders. Check the backend logs.",
-                                "folders": []})
+        self.assertEqual((status, body), (500, {"detail": "Could not load the folders. Check the backend logs."}))
 
     def test_a_message_the_caller_can_act_on_passes_without_the_dsn(self):
-        status, _, body = call(main.app, "GET", "/api/folders/f1/posts")
-        self.assertEqual(status, 200)
-        self.assertFalse(body["success"])
-        self.assertTrue(body["error"].startswith("Folder f1 is broken at"))
-        self.assertNotIn("secret", body["error"])
-        self.assertNotIn("postgresql://", body["error"])
-        self.assertEqual(body["posts"], [])
+        status, _, body = call(main.app, "PUT", "/api/folders/f1", json_body={"name": "x"})
+        self.assertEqual(status, 400)
+        self.assertTrue(body["detail"].startswith("Folder f1 is broken at"))
+        self.assertNotIn("secret", body["detail"])
+        self.assertNotIn("postgresql://", body["detail"])
+
+
+class FeedQueryBoundsTests(unittest.TestCase):
+    """`days` and `date` become the sort-key bounds the listing query applies."""
+
+    now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+
+    def test_days_is_a_lower_bound(self):
+        from datetime import timedelta
+        self.assertEqual(FeedQuery(days=7).bounds(self.now), (self.now - timedelta(days=7), None))
+
+    def test_a_date_is_one_utc_day(self):
+        since, until = FeedQuery.parse(date="2026-10-01").bounds(self.now)
+        self.assertEqual((since.isoformat(), until.isoformat()),
+                         ("2026-10-01T00:00:00+00:00", "2026-10-02T00:00:00+00:00"))
+
+    def test_no_bound_by_default(self):
+        self.assertEqual(FeedQuery().bounds(self.now), (None, None))
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class ReaderServiceDaysTests(unittest.TestCase):
-    """`days` reaches the repository for both views (spec §4: GET /api/feed days=)."""
-
-    class FakeRepo:
-        def __init__(self):
-            self.calls = []
-
-        def feed(self, cur, scope, **kwargs):
-            self.calls.append(("feed", kwargs))
-            return [], None
-
-        def feed_by_source(self, cur, scope, **kwargs):
-            self.calls.append(("feed_by_source", kwargs))
-            return [], None
-
-    def _feed(self, view, days):
-        from contextlib import nullcontext
-        from datetime import timedelta
-        from unittest import mock
-
-        from insight_core.services.reader_service import ReaderService
-
-        now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
-        repo = self.FakeRepo()
-        service = ReaderService("postgresql:///unused", repo=repo, clock=lambda: now)
-        conn = mock.MagicMock()
-        conn.__enter__.return_value = conn
-        conn.cursor.return_value = nullcontext(object())
-        with mock.patch("insight_core.db.database.connection", return_value=conn):
-            service.feed(FeedScope("all", None), filter="all", view=view, cursor=None, limit=30, days=days)
-        return repo.calls[0], now - timedelta(days=days) if days else None
-
-    def test_by_source_passes_since(self):
-        (name, kwargs), expected = self._feed("by_source", 1)
-        self.assertEqual(name, "feed_by_source")
-        self.assertEqual(kwargs["since"], expected)
-
-    def test_stream_passes_since(self):
-        (name, kwargs), expected = self._feed("stream", 7)
-        self.assertEqual(name, "feed")
-        self.assertEqual(kwargs["since"], expected)
-
-    def test_no_days_means_no_since(self):
-        (_name, kwargs), _ = self._feed("by_source", None)
-        self.assertIsNone(kwargs["since"])

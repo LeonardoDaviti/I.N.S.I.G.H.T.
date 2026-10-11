@@ -72,7 +72,7 @@ function setup({
 }: { route?: string; overrides?: Partial<Record<keyof Api, unknown>> } = {}) {
   const methods = {
     getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog' })])),
-    getSourcesWithSettings: vi.fn().mockResolvedValue({ success: true, sources: [], total: 0 }),
+    getSources: vi.fn().mockResolvedValue({ success: true, sources: [], total: 0 }),
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
     getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [job()], alerts: [] }),
     getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: scheduler() }),

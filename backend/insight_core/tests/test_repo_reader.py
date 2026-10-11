@@ -18,7 +18,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_reader import FeedCursor, FeedScope, ReaderRepository
+from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope, ReaderRepository
 from insight_core.tests._db import db_url, insert_scratch_source, requires_db
 
 
@@ -78,9 +78,10 @@ class ReaderRepositoryTests(unittest.TestCase):
         return folder_id
 
     def _page(self, scope, **kwargs):
-        kwargs.setdefault("filter", "all")
-        kwargs.setdefault("cursor", None)
-        return self.repo.feed(self.cur, scope, **kwargs)
+        return self.repo.list_posts(self.cur, FeedQuery(scope=scope, **kwargs), now=self.now)
+
+    def _groups(self, scope, **kwargs):
+        return self._page(scope, view="by_source", **kwargs)
 
     # ---- feed: keyset pagination -----------------------------------------------------
 
@@ -169,7 +170,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         old = self._post(source, self.now - timedelta(days=4000))   # an archived post from years ago
         folder = self._folder(source)
 
-        items, _ = repo.feed(self.cur, FeedScope("source", source), filter="unread", cursor=None, limit=30)
+        items, _ = repo.list_posts(self.cur, FeedQuery(scope=FeedScope("source", source), filter="unread"), now=self.now)
         counts = repo.unread_counts(self.cur)
 
         self.assertEqual([i["id"] for i in items], [recent, old])
@@ -182,7 +183,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         recent = self._post(source, self.now - timedelta(hours=1))
         old = self._post(source, self.now - timedelta(days=400))
         scope = FeedScope("source", source)
-        loaded, _ = repo.feed(self.cur, scope, filter="all", cursor=None, limit=30)
+        loaded, _ = repo.list_posts(self.cur, FeedQuery(scope=scope), now=self.now)
         by_id = {i["id"]: i for i in loaded}
 
         marked = repo.mark_read_through(
@@ -202,12 +203,12 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in items], [c])
         self.assertIsNotNone(items[0]["starred_at"])
 
-    def test_since_bounds_the_feed(self):
+    def test_days_bounds_the_feed(self):
         source = self._source()
         recent = self._post(source, self.now - timedelta(days=1))
         self._post(source, self.now - timedelta(days=10))
 
-        items, _ = self._page(FeedScope("source", source), since=self.now - timedelta(days=3))
+        items, _ = self._page(FeedScope("source", source), days=3)
 
         self.assertEqual([i["id"] for i in items], [recent])
 
@@ -217,7 +218,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         source = self._source()
         (post,) = self._posts(source, 1)
 
-        self.assertEqual(self.repo.set_read(self.cur, [post], True), 1)
+        self.assertEqual(self.repo.set_read(self.cur, [post], True), [post])
         first = self._page(FeedScope("source", source))[0][0]["read_at"]
         self.assertIsNotNone(first)
 
@@ -225,7 +226,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(self._page(FeedScope("source", source))[0][0]["read_at"], first,
                          "marking read again keeps the first read time")
 
-        self.assertEqual(self.repo.set_read(self.cur, [post], False), 1)
+        self.assertEqual(self.repo.set_read(self.cur, [post], False), [post])
         self.assertIsNone(self._page(FeedScope("source", source))[0][0]["read_at"])
 
     def test_set_starred_toggles(self):
@@ -276,7 +277,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         quiet_ids = self._posts(quiet, 2, start=self.now - timedelta(hours=1))
         folder = self._folder(busy, quiet)
 
-        groups, cursor = self.repo.feed_by_source(self.cur, FeedScope("folder", folder), filter="all")
+        groups, cursor = self._groups(FeedScope("folder", folder))
 
         self.assertIsNone(cursor)
         self.assertEqual([g["source_id"] for g in groups], [quiet, busy], "ordered by newest post")
@@ -292,8 +293,8 @@ class ReaderRepositoryTests(unittest.TestCase):
         folder = self._folder(*sources)
         scope = FeedScope("folder", folder)
 
-        first, cursor = self.repo.feed_by_source(self.cur, scope, filter="all", groups=2)
-        rest, end = self.repo.feed_by_source(self.cur, scope, filter="all", groups=2, group_cursor=cursor)
+        first, cursor = self._groups(scope, limit=2)
+        rest, end = self._groups(scope, limit=2, cursor=cursor)
 
         self.assertEqual([g["source_id"] for g in first + rest], sources)
         self.assertIsNone(end)
@@ -303,20 +304,19 @@ class ReaderRepositoryTests(unittest.TestCase):
         ids = self._posts(source, 4)
         self.repo.set_read(self.cur, ids[:3], True)
 
-        groups, _ = self.repo.feed_by_source(self.cur, FeedScope("source", source), filter="unread")
+        groups, _ = self._groups(FeedScope("source", source), filter="unread")
 
         self.assertEqual(groups[0]["count"], 1)
         self.assertEqual([i["id"] for i in groups[0]["items"]], [ids[3]])
 
-    def test_feed_by_source_since_bounds_counts_and_items(self):
+    def test_feed_by_source_days_bounds_counts_and_items(self):
         source, old_only = self._source(), self._source()
         recent = self._post(source, self.now - timedelta(days=1))
         self._post(source, self.now - timedelta(days=10))
         self._post(old_only, self.now - timedelta(days=10))
         folder = self._folder(source, old_only)
 
-        groups, _ = self.repo.feed_by_source(self.cur, FeedScope("folder", folder), filter="all",
-                                             since=self.now - timedelta(days=3))
+        groups, _ = self._groups(FeedScope("folder", folder), days=3)
 
         self.assertEqual([g["source_id"] for g in groups], [source], "a source with only old posts drops out")
         self.assertEqual(groups[0]["count"], 1)
@@ -327,7 +327,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         ids = {sid: self._posts(sid, 5, start=self.now - timedelta(hours=n + 1)) for n, sid in enumerate(sources)}
         folder = self._folder(*sources)
 
-        groups, _ = self.repo.feed_by_source(self.cur, FeedScope("folder", folder), filter="all", per_source=2)
+        groups, _ = self._groups(FeedScope("folder", folder), per_source=2)
 
         for group in groups:
             self.assertEqual([i["id"] for i in group["items"]], ids[group["source_id"]][:2])

@@ -150,26 +150,6 @@ class FoldersRepository:
             self.logger.info(f"Removed source {source_id} from folder {folder_id}")
         return removed
 
-    def list_sources_in_folder(self, cur: Cursor, folder_id: str) -> List[Dict[str, Any]]:
-        """List the sources attached to a folder."""
-        query = """
-            SELECT s.id, s.platform, s.handle_or_url, s.enabled
-            FROM source_folders sf
-            JOIN sources s ON s.id = sf.source_id
-            WHERE sf.folder_id = %s
-            ORDER BY s.platform, s.handle_or_url
-        """
-        cur.execute(query, (folder_id,))
-        return [
-            {"id": str(row[0]), "platform": row[1], "handle_or_url": row[2], "enabled": row[3]}
-            for row in cur.fetchall()
-        ]
-
-    def list_source_ids_in_folder(self, cur: Cursor, folder_id: str) -> List[str]:
-        """Return just the source UUIDs attached to a folder."""
-        cur.execute("SELECT source_id FROM source_folders WHERE folder_id = %s", (folder_id,))
-        return [str(row[0]) for row in cur.fetchall()]
-
     def list_folder_ids_for_source(self, cur: Cursor, source_id: str) -> List[str]:
         """Return the folder UUIDs a source belongs to."""
         cur.execute("SELECT folder_id FROM source_folders WHERE source_id = %s", (source_id,))

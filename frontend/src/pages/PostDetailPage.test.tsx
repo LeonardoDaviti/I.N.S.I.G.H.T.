@@ -336,7 +336,7 @@ function contextApi(methods: Partial<Record<keyof Api, unknown>> = {}) {
     ])),
     recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
     recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
-    setPostRead: vi.fn().mockResolvedValue({ success: true }),
+    setPostsRead: vi.fn().mockResolvedValue({ success: true }),
     getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
     ...methods,
   });
@@ -406,9 +406,9 @@ describe('PostDetailPage feed context and keys', () => {
     // Opening marks the post read (server side, mirrored here), so m marks it unread.
     await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalled());
     await user.keyboard('m');
-    await waitFor(() => expect(api.setPostRead).toHaveBeenCalledWith(POST_ID, false));
+    await waitFor(() => expect(api.setPostsRead).toHaveBeenCalledWith([POST_ID], false));
     await user.keyboard('m');
-    await waitFor(() => expect(api.setPostRead).toHaveBeenLastCalledWith(POST_ID, true));
+    await waitFor(() => expect(api.setPostsRead).toHaveBeenLastCalledWith([POST_ID], true));
 
     await user.keyboard('?');
     const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });

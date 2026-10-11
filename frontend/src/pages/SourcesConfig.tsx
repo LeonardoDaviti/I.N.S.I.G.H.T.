@@ -122,7 +122,7 @@ export default function SourcesConfig() {
   const sourcesQuery = useQuery({
     queryKey: [...SOURCES_WITH_SETTINGS_KEY],
     queryFn: async () => {
-      const response = await api.getSourcesWithSettings();
+      const response = await api.getSources();
       return response.sources;
     },
     staleTime: 30_000,

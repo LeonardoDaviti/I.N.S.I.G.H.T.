@@ -32,24 +32,18 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
-# Human labels per job type. ingestion_run replaced safe_ingest, ingest_all,
-# fetch_source_now and folder_ingest in Mark IX; old rows keep their legacy labels.
+# Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
+# own name: "safe_ingest" -> "Safe ingest".
 JOB_LABELS: Dict[str, str] = {
     "ingestion_run": "Ingestion run",
     "scheduler_cycle": "Daily work",
     "archive_source": "Archive",
 }
-LEGACY_JOB_LABELS: Dict[str, str] = {
-    "safe_ingest": "Ingestion cycle (legacy)",
-    "ingest_all": "Full ingest (legacy)",
-    "fetch_source_now": "Fetch now (legacy)",
-    "folder_ingest": "Track fetch (legacy)",
-}
 
 
 def job_label(job_type: Optional[str]) -> str:
     job_type = job_type or ""
-    return JOB_LABELS.get(job_type) or LEGACY_JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
+    return JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
 
 
 INGEST_TICK_MINUTES_MIN = 15

@@ -58,7 +58,7 @@ export interface DirectorySource extends SearchableSource {
  * Every source the reader can open, for the rail's filter: all health rows
  * (enabled or not, in the main digest or not) with their readable label, kind
  * and, once `withUrls` is on, their feed URL. The URLs come from
- * GET /api/sources/with-settings, fetched only when the owner starts filtering;
+ * GET /api/sources, fetched only when the owner starts filtering;
  * until then (or if it fails) a source matches on its names and kind.
  */
 export function useSourceDirectory(withUrls: boolean): { sources: DirectorySource[]; isPending: boolean } {
@@ -67,7 +67,7 @@ export function useSourceDirectory(withUrls: boolean): { sources: DirectorySourc
   const urls = useQuery({
     queryKey: [...SOURCE_URLS_KEY],
     queryFn: async (): Promise<Map<string, string>> => {
-      const response = await api.getSourcesWithSettings();
+      const response = await api.getSources();
       return new Map(response.sources.map((source) => [source.id, source.handle_or_url]));
     },
     enabled: withUrls,

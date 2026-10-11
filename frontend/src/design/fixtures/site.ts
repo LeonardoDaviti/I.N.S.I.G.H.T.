@@ -219,7 +219,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/feed/unread-counts', respond: () => unreadCounts(site) },
     { path: '/api/folders', respond: () => ({ success: true, folders: site.folders }) },
     { path: '/api/sources/health', respond: () => healthResponse(site.health) },
-    { path: '/api/sources/with-settings', respond: () => sourcesWithSettings(site) },
+    { path: '/api/sources', respond: () => sourcesWithSettings(site) },
     {
       path: '/api/sources/:sourceId/folders',
       respond: ({ params }) => ({

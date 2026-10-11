@@ -255,31 +255,29 @@ docker compose up -d --force-recreate
 
 ## Useful API Endpoints
 
+Every route, with its body, is in the "HTTP API" table in `BACKEND.md`. The ones used most:
+
 Ingestion runs are background jobs: these return `202` with a `job_id`, and `GET /api/operations/jobs/{job_id}` carries the run report when the job finishes.
 
 - `POST /api/ingestion/run` (`{"force": false}`)
-- `POST /api/sources/{source_id}/fetch-now`
+- `POST /api/sources/{source_id}/fetch-now` (`{"limit": N}`)
 - `POST /api/folders/{folder_id}/ingest`
 
 Reader and sources:
 
-- `GET /api/feed` (`scope`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days`)
+- `GET /api/feed` (`scope=all|source:<id>|folder:<id>`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days` or `date`)
 - `GET /api/feed/unread-counts`
-- `PUT /api/feed/read`, `POST /api/feed/mark-read`
+- `PUT /api/feed/read` (`{ids, read}`, or `{scope, through_cursor, newest_cursor}`)
+- `GET /api/sources`, `POST /api/sources`
 - `GET /api/sources/health`
 - `PUT /api/sources/{source_id}/cadence`
 - `GET /api/operations/scheduler`, `PUT /api/operations/scheduler`
 
-Archive and tools:
+Archive:
 
 - `GET /api/archive/{source_id}/status`
 - `POST /api/archive/{source_id}/plan`
 - `POST /api/archive/{source_id}/run`
-- `POST /api/sources/sync/json-to-db`
-- `POST /api/sources/sync/db-to-json`
-- `POST /api/youtube/channel/videos`
-- `GET /api/youtube/progress/{video_id}`
-- `PUT /api/youtube/progress/{video_id}`
 
 ## External Source Infrastructure
 

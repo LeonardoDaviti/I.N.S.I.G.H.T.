@@ -35,7 +35,7 @@ function rows() {
 function setup(route = '/settings/sources', overrides: Partial<Record<keyof Api, unknown>> = {}) {
   const methods = {
     getSourcesHealth: vi.fn().mockResolvedValue(healthResponse(rows())),
-    getSourcesWithSettings: vi.fn().mockResolvedValue({ success: true, sources: [], total: 0 }),
+    getSources: vi.fn().mockResolvedValue({ success: true, sources: [], total: 0 }),
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [{ ...ai, sort_order: 0 }, { ...ar, sort_order: 1 }] }),
     getSourceFolders: vi.fn().mockResolvedValue({ success: true, folder_ids: [] }),
     setSourceEnabled: vi.fn().mockResolvedValue({ success: true }),
@@ -377,7 +377,7 @@ describe('SourcesConfig', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     setup('/settings/sources', {
-      getSourcesWithSettings: vi.fn().mockResolvedValue({
+      getSources: vi.fn().mockResolvedValue({
         success: true,
         total: 1,
         sources: [{ id: 'simon', platform: 'rss', handle_or_url: 'https://simonwillison.net/atom/everything/', enabled: true, settings: { display_name: 'Simon Willison’s Weblog' } }],

@@ -21,16 +21,6 @@ class FoldersService:
             with conn.cursor() as cur:
                 return self.repo.list_folders_with_counts(cur)
 
-    def get_folder(self, folder_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single folder with its attached sources."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                folder = self.repo.get_folder(cur, folder_id)
-                if not folder:
-                    return None
-                folder["sources"] = self.repo.list_sources_in_folder(cur, folder_id)
-                return folder
-
     def create_folder(
         self,
         name: str,
@@ -59,7 +49,7 @@ class FoldersService:
                 folder = self.repo.update_folder(cur, folder_id, fields)
                 conn.commit()
                 if folder is None:
-                    raise ValueError(f"Folder {folder_id} not found")
+                    raise LookupError(f"Folder {folder_id} not found")
                 return folder
 
     def delete_folder(self, folder_id: str) -> bool:
@@ -85,18 +75,6 @@ class FoldersService:
                 removed = self.repo.remove_source_from_folder(cur, folder_id, source_id)
                 conn.commit()
                 return removed
-
-    def list_sources(self, folder_id: str) -> List[Dict[str, Any]]:
-        """List the sources attached to a folder."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                return self.repo.list_sources_in_folder(cur, folder_id)
-
-    def list_source_ids(self, folder_id: str) -> List[str]:
-        """Return just the source UUIDs attached to a folder."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                return self.repo.list_source_ids_in_folder(cur, folder_id)
 
     def list_folders_for_source(self, source_id: str) -> List[str]:
         """Return the folder UUIDs a source belongs to."""

@@ -159,7 +159,7 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
   const setRead = useCallback(async (item: FeedItem, read: boolean) => {
     const undo = applyRead([item], read);
     try {
-      if (!dryRun) await api.setPostRead(item.id, read);
+      if (!dryRun) await api.setPostsRead([item.id], read);
     } catch (error) {
       undo();
       throw error;

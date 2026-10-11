@@ -1,7 +1,7 @@
 """The services the API routes call, built once per process.
 
     from insight_core.services.registry import services
-    services().reader.feed(...)
+    services().reader.list_posts(...)
 
 `services()` builds every service on first use, from DATABASE_URL (ensure_database) and the
 environment, and hands back the same `Services` after that. Tests swap the whole set with
