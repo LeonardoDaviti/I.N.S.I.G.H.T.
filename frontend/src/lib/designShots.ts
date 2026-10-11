@@ -54,10 +54,13 @@ export interface Shot {
   url: string;
   /** `<page>/<state>.<width>.<theme>.png`. */
   file: string;
+  /** A studio page (`/design…`), not a frame: it has frames inside instead of being one. */
+  studio?: boolean;
 }
 
 export interface ShotMatrix {
-  scenarios: readonly { page: string; state: string }[];
+  /** `width`: a state's own viewport (the 320px top bar), shot as well as the usual two. */
+  scenarios: readonly { page: string; state: string; width?: number }[];
   prototypes: readonly { id: string; states: readonly string[] }[];
 }
 
@@ -66,21 +69,46 @@ const allows = (list: string[] | undefined, value: string) => !list?.length || l
 const allowsPage = (list: string[] | undefined, page: string, id?: string) =>
   allows(list, page) || (id !== undefined && (list!.includes('prototypes') || list!.includes(id)));
 
-/** Every page × state, then every prototype × its states, each at both widths and themes, filtered. */
+/** The studio's own pages, at the desktop width: its home, the Wall fitted, Bench on the first prototype. */
+function studioSubjects(prototypes: ShotMatrix['prototypes']): { state: string; url: (theme: FrameTheme) => string }[] {
+  const seed = [...prototypes].sort((a, b) => a.id.localeCompare(b.id))[0];
+  const bench = seed ? `subject=${encodeURIComponent(seed.id)}&` : '';
+  return [
+    { state: 'handbook', url: () => '/design' },
+    { state: 'wall', url: (theme) => `/design?mode=wall&theme=${theme}` },
+    { state: 'bench', url: (theme) => `/design?mode=bench&${bench}theme=${theme}` },
+  ];
+}
+
+/**
+ * Every page × state, then every prototype × its states, each at both widths
+ * (and a state's own) and both themes; then the studio's pages. Filtered.
+ */
 export function shotList(matrix: ShotMatrix, filters: ShotFilters = {}): Shot[] {
   const subjects = [
-    ...matrix.scenarios.map(({ page, state }) => ({ page, state, id: undefined as string | undefined })),
-    ...matrix.prototypes.flatMap(({ id, states }) => states.map((state) => ({ page: `prototypes/${id}`, state, id }))),
+    ...matrix.scenarios.map(({ page, state, width }) => ({ page, state, width, id: undefined as string | undefined })),
+    ...matrix.prototypes.flatMap(({ id, states }) => states.map((state) => ({ page: `prototypes/${id}`, state, width: undefined as number | undefined, id }))),
   ];
   const shots: Shot[] = [];
-  for (const { page, state, id } of subjects) {
+  for (const { page, state, width: own, id } of subjects) {
     if (!allowsPage(filters.page, page, id) || !allows(filters.state, state)) continue;
-    for (const width of SHOT_WIDTHS) {
+    const widths = own === undefined || (SHOT_WIDTHS as readonly number[]).includes(own) ? SHOT_WIDTHS : [...SHOT_WIDTHS, own];
+    for (const width of widths) {
       if (!allows(filters.width, String(width))) continue;
       for (const theme of SHOT_THEMES) {
         if (!allows(filters.theme, theme)) continue;
         const url = id ? prototypeFrameUrl(id, state, { theme }) : frameUrl(page, state, { theme });
         shots.push({ page, state, width, theme, url, file: `${page}/${state}.${width}.${theme}.png` });
+      }
+    }
+  }
+  const width = SHOT_WIDTHS[0];
+  if (allows(filters.page, 'studio') && allows(filters.width, String(width))) {
+    for (const { state, url } of studioSubjects(matrix.prototypes)) {
+      if (!allows(filters.state, state)) continue;
+      for (const theme of SHOT_THEMES) {
+        if (!allows(filters.theme, theme)) continue;
+        shots.push({ page: 'studio', state, width, theme, url: url(theme), file: `studio/${state}.${width}.${theme}.png`, studio: true });
       }
     }
   }
