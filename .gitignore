@@ -17,6 +17,7 @@ reddit_post_analysis_https
 !sources.json
 !.env.example
 !package.json
+!frontend/package-lock.json
 !frontend/tsconfig.json
 !frontend/tsconfig.node.json
 insight_session.session
