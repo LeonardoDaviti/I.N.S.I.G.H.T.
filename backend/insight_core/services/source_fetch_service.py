@@ -55,7 +55,7 @@ class SourceFetchService:
         self.youtube_service = YouTubeService(db_url)
         self.logger = get_component_logger("source_fetch_service")
         self.http = http or KindHttp()
-        self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
+        self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service, db_url=db_url)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
         self.availability = availability
 

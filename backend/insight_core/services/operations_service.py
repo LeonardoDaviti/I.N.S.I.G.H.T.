@@ -689,7 +689,7 @@ class OperationsService:
             from insight_core.ingestion.kinds import KindRegistry
             from insight_core.services.youtube_service import YouTubeService
 
-            self._kinds = KindRegistry.default(KindHttp(), YouTubeService(self.db_url))
+            self._kinds = KindRegistry.default(KindHttp(), YouTubeService(self.db_url), db_url=self.db_url)
         return self._kinds
 
     def _load_schedule_view(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:

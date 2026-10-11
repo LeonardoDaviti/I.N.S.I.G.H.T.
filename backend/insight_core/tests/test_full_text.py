@@ -1,0 +1,208 @@
+"""Full text: a teaser is read from its article page, once (ingestion/full_text.py).
+
+No network: FakeHttp. The kind tests need no database; the upsert and repair tests commit
+rows, so they run only against a *_test database (@requires_test_db).
+"""
+from __future__ import annotations
+
+import json
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND_DIR))
+
+import psycopg
+
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PostsRepository
+from insight_core.ingestion import full_text
+from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds.generic_rss import GenericRssKind
+from insight_core.scripts.repair_full_text import STOP_AFTER_FAILURES, Repair
+from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._kind_fakes import FakeHttp
+
+FEED_URL = "https://news.example.com/feed"
+ARTICLE_TEXT = "Every paragraph of the article, read from its page. " * 40
+
+
+def _article(text: str = ARTICLE_TEXT) -> str:
+    return f"<html><body><nav><p>Menu</p></nav><article><h1>Title</h1><p>{text}</p></article></body></html>"
+
+
+def _feed(*items: tuple[str, str]) -> str:
+    body = "".join(
+        f"<item><title>{link}</title><link>{link}</link><description>{text}</description>"
+        f"<pubDate>Wed, 11 Mar 2026 18:01:01 GMT</pubDate></item>"
+        for link, text in items
+    )
+    return f'<rss version="2.0"><channel>{body}</channel></rss>'
+
+
+def _src(**settings) -> dict:
+    return {"id": "s1", "platform": "rss", "handle_or_url": FEED_URL, "settings": settings}
+
+
+class _StubYouTube:
+    pass
+
+
+class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_new_teaser_is_read_from_its_page_by_default(self):
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary.")),
+                         "https://news.example.com/a": _article()})
+        [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertIn("Every paragraph of the article", post["content"])
+        self.assertTrue(post["metadata"][FULL_TEXT_FLAG])
+
+    async def test_pages_of_one_feed_are_read_apart(self):
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "One."), ("https://news.example.com/b", "Two.")),
+                         "https://news.example.com/a": _article(), "https://news.example.com/b": _article()})
+        await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(http.sleeper.calls, [full_text.PAGE_DELAY_S])
+
+    async def test_a_stored_post_is_not_read_again(self):
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary."))})
+        kind = GenericRssKind(http, stored_urls=lambda urls: set(urls))
+        [post] = await kind.fetch_latest(_src(), 10)
+        self.assertEqual(post["content"], "Short summary.")
+        self.assertEqual(http.requests, [FEED_URL])
+
+    async def test_it_can_be_turned_off_for_a_source(self):
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary."))})
+        await GenericRssKind(http).fetch_latest(_src(fetch_full_content=False), 10)
+        self.assertEqual(http.requests, [FEED_URL])
+
+    async def test_links_that_are_not_articles_and_full_bodies_are_not_read(self):
+        long_body = "A whole post in the feed. " * 80
+        http = FakeHttp({FEED_URL: _feed(("https://github.com/o/r/commit/1", "Fix."),
+                                         ("https://www.reddit.com/r/x/comments/1", "Thread."),
+                                         ("https://news.example.com/full", long_body))})
+        await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(http.requests, [FEED_URL])
+
+    async def test_a_page_with_nothing_longer_or_an_error_keeps_the_summary(self):
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary."),
+                                         ("https://news.example.com/b", "Other summary.")),
+                         "https://news.example.com/a": _article("Tiny.")})
+        posts = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(sorted(p["content"] for p in posts), ["Other summary.", "Short summary."])
+
+    async def test_a_failed_lookup_reads_no_page(self):
+        def broken(urls):
+            raise RuntimeError("database down")
+
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary."))})
+        [post] = await GenericRssKind(http, stored_urls=broken).fetch_latest(_src(), 10)
+        self.assertEqual(post["content"], "Short summary.")
+        self.assertEqual(http.requests, [FEED_URL])
+
+
+@requires_test_db
+class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.url = db_url()
+        self.repo = PostsRepository(self.url)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.source_id = insert_scratch_source(cur)
+            self.substack_id = insert_scratch_source(cur, settings_json='{"substack": true}')
+            conn.commit()
+
+    def tearDown(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            conn.commit()
+
+    def _upsert(self, post: dict, source_id: str | None = None) -> str:
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            post_id, _ = self.repo.upsert_post(cur, {"title": "T", "date": None, **post}, source_id or self.source_id)
+            conn.commit()
+        return post_id
+
+    def _row(self, post_id: str) -> tuple:
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT content, metadata FROM posts WHERE id = %s", (post_id,))
+            return cur.fetchone()
+
+    def _repair(self, http: FakeHttp, **kwargs) -> dict:
+        registry = KindRegistry.default(http, _StubYouTube(), db_url=self.url)
+        clock = lambda: datetime(2026, 10, 12, tzinfo=timezone.utc)  # noqa: E731
+        return Repair(self.url, http=http, registry=registry, clock=clock).run(
+            source_id=kwargs.pop("source_id", self.source_id), **kwargs)
+
+    def test_the_feed_summary_never_replaces_a_body_read_from_the_page(self):
+        url = "https://news.example.com/kept"
+        post_id = self._upsert({"url": url, "content": ARTICLE_TEXT, "metadata": {FULL_TEXT_FLAG: True}})
+        self._upsert({"url": url, "content": "Short summary.", "metadata": {"feed": "again"}})
+        content, metadata = self._row(post_id)
+        self.assertEqual(content, ARTICLE_TEXT)
+        self.assertTrue(metadata[FULL_TEXT_FLAG])
+        self.assertEqual(metadata["feed"], "again")
+
+    def test_a_feed_body_still_updates_a_post_never_read_from_its_page(self):
+        url = "https://news.example.com/plain"
+        post_id = self._upsert({"url": url, "content": "Old body."})
+        self._upsert({"url": url, "content": "New body."})
+        self.assertEqual(self._row(post_id)[0], "New body.")
+
+    async def test_repair_reads_a_stored_teaser_once(self):
+        url = "https://news.example.com/teaser"
+        post_id = self._upsert({"url": url, "content": "Short summary."})
+        http = FakeHttp({url: _article()})
+        summary = await self._repair(http)
+        self.assertEqual((summary["repaired"], summary["failed"]), (1, 0))
+        content, metadata = self._row(post_id)
+        self.assertIn("Every paragraph of the article", content)
+        self.assertTrue(metadata[FULL_TEXT_FLAG])
+        self.assertEqual(metadata[FULL_TEXT_CHECKED], "2026-10-12T00:00:00+00:00")
+
+        again = await self._repair(FakeHttp())
+        self.assertEqual(again["candidates"], 0)
+
+    async def test_repair_marks_a_post_with_nothing_longer_and_skips_it_next_time(self):
+        url = "https://news.example.com/short"
+        post_id = self._upsert({"url": url, "content": "A short post."})
+        summary = await self._repair(FakeHttp({url: _article("Tiny.")}))
+        self.assertEqual(summary["nothing_longer"], 1)
+        content, metadata = self._row(post_id)
+        self.assertEqual(content, "A short post.")
+        self.assertIn(FULL_TEXT_CHECKED, metadata)
+        self.assertEqual((await self._repair(FakeHttp()))["candidates"], 0)
+        self.assertEqual((await self._repair(FakeHttp(), retry=True, dry_run=True))["to_read"], 1)
+
+    async def test_dry_run_reads_nothing(self):
+        self._upsert({"url": "https://news.example.com/x", "content": "Short."})
+        self._upsert({"url": "https://github.com/o/r/commit/1", "content": "Fix."})
+        http = FakeHttp()
+        summary = await self._repair(http, dry_run=True)
+        self.assertEqual(http.requests, [])
+        self.assertEqual(summary["by_site"], {"news.example.com": 1})
+        self.assertEqual(summary["skipped"], {"link is not an article": 1})
+
+    async def test_a_site_that_keeps_failing_is_left_for_the_next_run(self):
+        for n in range(STOP_AFTER_FAILURES + 2):
+            self._upsert({"url": f"https://blocked.example.com/{n}", "content": "Short."})
+        http = FakeHttp({})  # every page is a 404
+        summary = await self._repair(http)
+        self.assertEqual(summary["failed"], STOP_AFTER_FAILURES)
+        self.assertEqual(summary["left_for_next_run"], 2)
+        self.assertIn("blocked.example.com", summary["stopped_sites"])
+        self.assertEqual(len(http.requests), STOP_AFTER_FAILURES)
+        self.assertEqual((await self._repair(FakeHttp(), dry_run=True))["to_read"], STOP_AFTER_FAILURES + 2)
+
+    async def test_a_substack_post_is_read_from_the_api(self):
+        url = "https://test.invalid/p/exploding"
+        post_id = self._upsert({"url": url, "content": "AI! Sluts! Viscerally terrifying self-knowledge!"},
+                               self.substack_id)
+        body = "<p>" + ("The whole free post. " * 200) + "</p>"
+        http = FakeHttp({"https://test.invalid/api/v1/posts/exploding": json.dumps(
+            {"id": 7, "slug": "exploding", "title": "Everything is exploding", "audience": "everyone",
+             "wordcount": 800, "body_html": body})})
+        summary = await self._repair(http, source_id=self.substack_id)
+        self.assertEqual(summary["repaired"], 1)
+        content, metadata = self._row(post_id)
+        self.assertIn("The whole free post.", content)
+        self.assertEqual(metadata["audience"], "everyone")

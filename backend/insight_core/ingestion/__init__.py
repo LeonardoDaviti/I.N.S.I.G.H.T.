@@ -71,7 +71,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
             gates=gates,
             clock=clock,
         ),
-        registry=KindRegistry.default(KindHttp(), YouTubeService(db_url)),
+        registry=KindRegistry.default(KindHttp(), YouTubeService(db_url), db_url=db_url),
         gates=gates,
         run_lock=PgAdvisoryRunLock(db_url),
         availability=availability_from_env,

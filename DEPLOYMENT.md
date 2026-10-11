@@ -116,6 +116,19 @@ It keeps every reading table, `post_notes` included, and the post columns readin
 (content hash, normalised and canonical URL, URL host, language). The migration is
 idempotent: running it again changes nothing.
 
+## Repairing teaser posts (once)
+
+Posts stored before full text was kept (Substack and many news feeds stored only their
+summary) are re-read by hand, once, after the deploy that brings it:
+
+```bash
+docker compose exec backend python -m insight_core.scripts.repair_full_text --dry-run
+docker compose exec backend python -m insight_core.scripts.repair_full_text
+```
+
+It makes real requests to the sites (2s apart per site). See
+`backend/insight_core/scripts/README.md`, "Full text".
+
 ## Development mode
 
 ```bash

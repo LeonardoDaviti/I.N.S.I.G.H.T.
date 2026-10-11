@@ -1,11 +1,12 @@
-"""generic_rss: any RSS/Atom feed (the fallback kind), with optional full-content expansion."""
+"""generic_rss: any RSS/Atom feed (the fallback kind). A new post whose feed gave only a
+summary is expanded from its article page (ingestion/full_text.py)."""
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
-import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from insight_core.ingestion import full_text
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
@@ -21,8 +22,8 @@ logger = logging.getLogger("insight.ingestion.generic_rss")
 
 GENERIC_RSS_PROFILE = PolitenessProfile(concurrency_pool="host-lock")
 
-# An RSS body shorter than this is probably a teaser; expansion fetches the article page.
-SHORT_BODY_CHARS = 1400
+# Which of these urls are already stored (blocking; run in a thread).
+StoredUrls = Callable[[Sequence[str]], set]
 
 
 class GenericRssKind(SingleShotArchive, BaseKind):
@@ -30,13 +31,9 @@ class GenericRssKind(SingleShotArchive, BaseKind):
     available_basis = "feed_window"
     profile = GENERIC_RSS_PROFILE
 
-    def __init__(self, http: KindHttp, *, full_content_hosts: Optional[set[str]] = None) -> None:
+    def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None) -> None:
         self.http = http
-        self.full_content_hosts = full_content_hosts if full_content_hosts is not None else {
-            host.strip().lower()
-            for host in os.getenv("RSS_FULL_CONTENT_HOSTS", "news.smol.ai").split(",")
-            if host.strip()
-        }
+        self.stored_urls = stored_urls
 
     def matches(self, source: Source) -> bool:
         return True  # the fallback
@@ -59,35 +56,31 @@ class GenericRssKind(SingleShotArchive, BaseKind):
         )
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if not posts:
+        """Read the article page of each new teaser post, one page at a time.
+
+        A stored post is never re-read here: it was expanded when it was new, or it is the
+        repair script's job. When the lookup fails nothing is read, rather than every page.
+        """
+        if not full_text.full_page_enabled(source):
             return posts
-        settings = source.get("settings") or {}
-        host = (urllib.parse.urlparse(str(source["handle_or_url"])).hostname or "").lower()
-        if not (bool(settings.get("fetch_full_content")) or host in self.full_content_hosts):
+        teasers = [post for post in posts if full_text.page_is_article(post.get("url")) and full_text.is_teaser(post)]
+        if not teasers:
             return posts
-        return [await self._maybe_expand_article_body(post) for post in posts]
-
-    async def _maybe_expand_article_body(self, post: Dict[str, Any]) -> Dict[str, Any]:
-        url = post.get("url")
-        if not isinstance(url, str) or not url.startswith("http"):
-            return post
-
-        current_content = parsing.strip_html(post.get("content_html") or post.get("content") or "")
-        if len(current_content) >= SHORT_BODY_CHARS:
-            return post
-
         try:
-            article_html, _ = await self.http.get_text(url)
-            extracted_html = parsing.extract_article_html(article_html)
-            extracted_text = parsing.strip_html(extracted_html)
-            if len(extracted_text) <= max(len(current_content) + 250, 700):
-                return post
-
-            next_post = dict(post)
-            next_post["content_html"] = extracted_html
-            next_post["content"] = extracted_text
-            next_post["metadata"] = {**(post.get("metadata") or {}), "full_content_fetched": True}
-            return next_post
-        except Exception as exc:
-            logger.debug("Full-content expansion skipped for %s: %s", url, exc)
-            return post
+            stored = (await asyncio.to_thread(self.stored_urls, [post["url"] for post in teasers])
+                      if self.stored_urls else set())
+        except Exception as exc:  # noqa: BLE001 - the feed's own bodies are still saved
+            logger.warning("Full-text lookup failed for %s: %s", source.get("handle_or_url"), exc)
+            return posts
+        expanded: Dict[str, Dict[str, Any]] = {}
+        for index, post in enumerate(post for post in teasers if post["url"] not in stored):
+            if index:
+                await self.http.sleep(full_text.PAGE_DELAY_S)
+            try:
+                article = await full_text.read_article(self.http, post["url"], full_text.body_text(post))
+            except Exception as exc:  # noqa: BLE001 - the summary is kept
+                logger.debug("Full-text expansion skipped for %s: %s", post["url"], exc)
+                continue
+            if article is not None:
+                expanded[post["url"]] = full_text.with_full_text(post, *article)
+        return [expanded.get(post.get("url"), post) for post in posts]

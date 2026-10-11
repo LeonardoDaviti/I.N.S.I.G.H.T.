@@ -33,9 +33,14 @@ class KindRegistry:
         return next((k for k in self.kinds if k.name == name), None)
 
     @staticmethod
-    def default(http: "KindHttp", youtube: Any) -> "KindRegistry":
-        """The real kinds in resolution priority (spec §D.1); generic_rss is the fallback."""
+    def default(http: "KindHttp", youtube: Any, *, db_url: Optional[str] = None) -> "KindRegistry":
+        """The real kinds in resolution priority (spec §D.1); generic_rss is the fallback.
+
+        With db_url, generic_rss reads the article page of new posts only (it asks which
+        urls are already stored); without it, of every teaser it fetches.
+        """
         from insight_core.adapters import ADAPTER_CLASSES
+        from insight_core.db.repo_posts import PostsRepository
         from insight_core.ingestion.kinds.generic_rss import GenericRssKind
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.reddit import RedditKind
@@ -52,7 +57,7 @@ class KindRegistry:
             TelegramRssKind(http),
             NitterRssKind(http),
             TelegramKind(http=http),
-            GenericRssKind(http),
+            GenericRssKind(http, stored_urls=PostsRepository(db_url).stored_urls if db_url else None),
         ])
 
 

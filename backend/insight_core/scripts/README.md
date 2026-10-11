@@ -105,6 +105,30 @@ post of a Substack source. Without a cookie the teaser is stored with
 |---|---|
 | `Substack session expired — update it in Sources → Connections` | the cookie was rejected (401/403) or a paid post still came back truncated: paste a fresh `substack.sid` in Connections (applies on the next fetch, no restart). Unavailable, never backoff. |
 
+### Full text
+
+A feed item's `<content:encoded>` (the full article) is stored over its `<description>`
+(often only a summary). When a generic RSS feed still gives only a teaser (under 1,400
+characters), the article page of each **new** post is read once and its text stored, marked
+`metadata.full_content_fetched` - a later fetch never puts the feed's summary back over it.
+Pages of one feed are read 2s apart. Links to GitHub, arXiv, Reddit, YouTube, Telegram and
+X are never read as pages. `settings.fetch_full_content: false` turns it off for one source.
+Code: `ingestion/full_text.py`.
+
+Posts stored before that are repaired once, by hand:
+
+```bash
+docker compose exec backend python -m insight_core.scripts.repair_full_text --dry-run   # what it would read
+docker compose exec backend python -m insight_core.scripts.repair_full_text             # read them
+#   --source <source-id>   one source     --limit N   newest N posts     --retry   include posts already tried
+```
+
+Substack sources are read from Substack's API (paid posts only with the Substack session),
+generic RSS sources from the article page; every other kind is skipped. One site at a time,
+2s apart, up to 4 sites at once; a site that fails 3 times in a row is left for the next run.
+Every post read is marked `metadata.full_text_checked_at`, so a second run does not read it
+again. The summary is printed as JSON.
+
 ### How a source is decided
 
 `ingestion.schedule.decide_fetch`, fed by the source's cadence columns and its row in

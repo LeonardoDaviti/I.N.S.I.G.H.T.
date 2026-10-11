@@ -11,9 +11,14 @@ import psycopg
 from psycopg import Connection, Cursor
 
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
+from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
+
+# metadata key of a body read from the article page (ingestion/full_text.py)
+FULL_TEXT_FLAG = "full_content_fetched"
+FULL_TEXT_CHECKED = "full_text_checked_at"
 
 
 def _env_commit_batch() -> int:
@@ -425,6 +430,11 @@ class PostsRepository:
         UPDATE, where a bare name already means the pre-update row.
         """
         row = row_prefix
+        # A body read from the article page (metadata.full_content_fetched) is kept when the
+        # feed brings its summary again: the page is read once, when the post is new.
+        keep = (f"({row}metadata ? '{FULL_TEXT_FLAG}' AND NOT "
+                f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{FULL_TEXT_FLAG}')")
+        metadata = metadata_expr or f"COALESCE(%(metadata)s::jsonb, {row}metadata)"
         assignments: List[str] = []
         if set_url:
             assignments.append("url = %(url)s")
@@ -433,16 +443,17 @@ class PostsRepository:
         assignments.extend([
             f"published_at = COALESCE(%(published_at)s, {row}published_at)",
             f"title = COALESCE(%(title)s, {row}title)",
-            f"content = COALESCE(%(content)s, {row}content)",
-            f"content_html = COALESCE(%(content_html)s, {row}content_html)",
+            f"content = CASE WHEN {keep} THEN {row}content ELSE COALESCE(%(content)s, {row}content) END",
+            f"content_html = CASE WHEN {keep} THEN {row}content_html ELSE COALESCE(%(content_html)s, {row}content_html) END",
             f"lang = COALESCE(%(lang)s, {row}lang)",
-            f"content_hash = COALESCE(%(content_hash)s, {row}content_hash)",
+            f"content_hash = CASE WHEN {keep} THEN {row}content_hash ELSE COALESCE(%(content_hash)s, {row}content_hash) END",
             "language_code = %(language_code)s",
             "language_confidence = %(language_confidence)s",
             "normalized_url = %(normalized_url)s",
             "canonical_url = %(canonical_url)s",
             "url_host = %(url_host)s",
-            f"metadata = {metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'}",
+            f"metadata = CASE WHEN {keep} THEN ({metadata}) || jsonb_build_object('{FULL_TEXT_FLAG}', true)"
+            f" ELSE {metadata} END",
             "media_urls = %(media_urls)s::jsonb",
             "categories = %(categories)s::jsonb",
             # fetched_at is when the post was first seen and is never moved: for a feed without
@@ -578,6 +589,79 @@ class PostsRepository:
             "latest_published_at": row[2],
             "latest_fetched_at": row[3],
         }
+
+    # ===============================
+    # FULL TEXT (ingestion/full_text.py, scripts/repair_full_text.py)
+    # ===============================
+
+    def stored_urls(self, urls: Sequence[str]) -> set:
+        """Which of these urls are already stored."""
+        if not urls:
+            return set()
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT url FROM posts WHERE url = ANY(%s)", (list(urls),))
+            return {row[0] for row in cur.fetchall()}
+
+    def full_text_candidates(self, cur: Cursor, *, short_chars: int, source_id: Optional[str] = None,
+                             retry: bool = False, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Stored posts whose body is shorter than short_chars and never read from its page,
+        newest first, each with its source. retry includes those a repair already tried."""
+        cur.execute(
+            f"""
+            SELECT p.id, p.url, p.title, p.content, p.content_html, p.metadata,
+                   s.id, s.platform, s.handle_or_url, s.settings
+            FROM posts p JOIN sources s ON s.id = p.source_id
+            WHERE length(coalesce(p.content, '')) < %(short)s
+              AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
+              AND (%(retry)s OR NOT p.metadata ? '{FULL_TEXT_CHECKED}')
+              AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)
+            ORDER BY p.published_at DESC NULLS LAST, p.id
+            LIMIT %(limit)s
+            """,
+            {"short": short_chars, "retry": retry, "source_id": source_id, "limit": limit},
+        )
+        return [
+            {
+                "id": str(row[0]), "url": row[1], "title": row[2], "content": row[3],
+                "content_html": row[4], "metadata": row[5] or {},
+                "source": {"id": str(row[6]), "platform": row[7], "handle_or_url": row[8],
+                           "settings": row[9] or {}},
+            }
+            for row in cur.fetchall()
+        ]
+
+    def save_full_text(self, cur: Cursor, post_id: str, post: Dict[str, Any]) -> None:
+        """Store the full body of a stored post; its metadata is merged, never replaced."""
+        fields = build_post_fields(post)
+        cur.execute(
+            """
+            UPDATE posts SET
+                content = %(content)s,
+                content_html = %(content_html)s,
+                content_hash = %(content_hash)s,
+                language_code = %(language_code)s,
+                language_confidence = %(language_confidence)s,
+                metadata = metadata || %(metadata)s::jsonb,
+                updated_at = now()
+            WHERE id = %(id)s::uuid
+            """,
+            {
+                "id": post_id,
+                "content": post.get("content") or "",
+                "content_html": post.get("content_html"),
+                "content_hash": fields["content_hash"],
+                "language_code": fields["language_code"],
+                "language_confidence": fields["language_confidence"],
+                "metadata": self._json_dumps(post.get("metadata") or {}),
+            },
+        )
+
+    def mark_full_text_checked(self, cur: Cursor, post_id: str, at: str) -> None:
+        """A repair read this post and found nothing longer: the next run skips it."""
+        cur.execute(
+            "UPDATE posts SET metadata = metadata || jsonb_build_object(%s::text, %s::text) WHERE id = %s::uuid",
+            (FULL_TEXT_CHECKED, at, post_id),
+        )
 
     def update_post_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> bool:
         """Persist metadata for a single post."""

@@ -184,6 +184,16 @@ class SubstackKind(BaseKind):
             message = str(exc).replace(sid, "…") if sid else str(exc)
             return False, f"Could not check the Substack session: {message[:200]}"
 
+    async def read_post(self, source: Source, url: str) -> Optional[Dict[str, Any]]:
+        """One stored post again, from /api/v1/posts/<slug> (the full-text repair). None when
+        the url is not a /p/<slug> post. Raises KindUnavailable when the session expired."""
+        slug = _slug_from_url(url)
+        if not slug:
+            return None
+        base = publication_base(source)
+        detail = await self._get_json(f"{base}/api/v1/posts/{slug}")
+        return self._to_post(source, base, detail) if isinstance(detail, dict) else None
+
     # ------------------------------------------------------------------ requests
 
     def _headers(self) -> Dict[str, str]:
