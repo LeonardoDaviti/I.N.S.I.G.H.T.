@@ -391,6 +391,13 @@ export interface ArchiveCatalogResponse {
   total?: number;
 }
 
+/** An archive request's pacing overrides, in the names the backend's `ArchiveRequest` takes; a key left out keeps the saved or default value. */
+export interface ArchivePacing {
+  pageDelaySeconds?: number;
+  batchSize?: number;
+  batchCooldownSeconds?: number;
+}
+
 export interface LogTailResponse {
   success?: boolean;
   error?: string;
@@ -1853,21 +1860,24 @@ class ApiService {
     return response;
   }
 
-  /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts. */
-  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<ArchivePlan> {
+  /**
+   * Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
+   * `pacing` overrides the source's own for this plan.
+   */
+  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> {
     const response = await this.makeRequest<{ success?: boolean; error?: string; archive?: ArchivePlan }>(
       `/api/archive/${encodeURIComponent(sourceId)}/plan`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume }) },
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, ...pacing }) },
     );
     if (!response.success || !response.archive) throw new Error(response.error || 'Could not plan the archive');
     return response.archive;
   }
 
-  /** Start an archive_source job (202); poll it with getOperationJob. */
-  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<{ job_id: string }> {
+  /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
+  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> {
     const response = await this.makeRequest<{ success?: boolean; error?: string; job_id?: string }>(
       `/api/archive/${encodeURIComponent(sourceId)}/run`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true }) },
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true, ...pacing }) },
     );
     if (!response.success || !response.job_id) throw new Error(response.error || 'Could not start the archive');
     return { job_id: response.job_id };

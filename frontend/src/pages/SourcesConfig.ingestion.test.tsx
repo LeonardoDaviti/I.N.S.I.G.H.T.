@@ -6,7 +6,7 @@ import SourcesConfig from './SourcesConfig';
 import { healthResponse, healthRow, runReport } from '../components/ops/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
-import type { Api, JobRun, SchedulerConfig } from '../services/api';
+import type { Api, ArchiveCatalogEntry, ArchiveStatusResponse, JobRun, SchedulerConfig } from '../services/api';
 
 vi.mock('../services/trackApi', () => ({
   renameTrack: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +40,34 @@ function job(overrides: Partial<JobRun> = {}): JobRun {
     message: '12 due, 66 deferred, 0 failed; 48 new posts',
     started_at: '2026-10-09T10:00:00+00:00',
     finished_at: '2026-10-09T10:01:05+00:00',
+    ...overrides,
+  };
+}
+
+
+function catalogEntry(overrides: Partial<ArchiveCatalogEntry> = {}): ArchiveCatalogEntry {
+  return {
+    source_id: 'mkbhd',
+    display_name: 'Marques Brownlee',
+    platform: 'youtube',
+    enabled: true,
+    kind: 'youtube_channel',
+    stored_posts: 120,
+    available_posts: 1722,
+    backlog_posts: 1602,
+    archive_status: 'partial',
+    resume_ready: false,
+    ...overrides,
+  };
+}
+
+function archiveStatus(overrides: Partial<ArchiveStatusResponse> = {}): ArchiveStatusResponse {
+  return {
+    success: true,
+    archive: { stored_posts: 120, available_posts: 1722, resume_ready: true, checkpoint: { collected_posts: 80, pages_fetched: 4 },
+      rate_limit: { page_delay_seconds: 5, batch_size: 10, batch_cooldown_seconds: 30 } },
+    support: { kind: 'youtube_channel', available_basis: 'exact', archivable: true, reason: null, unavailable: false, live_fetch_limit: 50 },
+    latest_job: null,
     ...overrides,
   };
 }
@@ -201,6 +229,102 @@ describe('Sources → ingestion tab', () => {
     await userEvent.click(within(history).getByText(/Marques Brownlee/));
     const detail = await screen.findByRole('region', { name: 'Archive' });
     expect(await within(detail).findByText('500 posts fetched, 475 new, 25 updated · 25 pages · 500 stored')).toBeInTheDocument();
+  });
+
+  it('archive lists every source with its archive status and backlog', async () => {
+    setup({
+      overrides: {
+        getArchiveCatalog: vi.fn().mockResolvedValue({
+          success: true,
+          total: 3,
+          sources: [
+            catalogEntry(),
+            catalogEntry({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', platform: 'rss', kind: 'generic_rss',
+              stored_posts: 30, available_posts: 30, backlog_posts: 0, archive_status: 'archived' }),
+            catalogEntry({ source_id: 'kaitchup', display_name: 'The Kaitchup', platform: 'substack', kind: 'substack',
+              stored_posts: 0, available_posts: null, backlog_posts: null, archive_status: 'not_archived' }),
+          ],
+        }),
+      },
+    });
+    await userEvent.click(await screen.findByRole('link', { name: 'archive' }));
+    const catalog = await screen.findByRole('region', { name: 'Catalog' });
+    const mkbhd = (await within(catalog).findByText('Marques Brownlee')).closest('li') as HTMLElement;
+    expect(within(mkbhd).getByText('partial')).toBeInTheDocument();
+    expect(within(mkbhd).getByText(/120 of 1,722 stored/)).toBeInTheDocument();
+    expect(within(mkbhd).getByText(/1,602 in backlog/)).toBeInTheDocument();
+    const simon = within(catalog).getByText('Simon Willison’s Weblog').closest('li') as HTMLElement;
+    expect(within(simon).getByText('archived')).toBeInTheDocument();
+    expect(within(simon).getByText(/no backlog/)).toBeInTheDocument();
+    const kaitchup = within(catalog).getByText('The Kaitchup').closest('li') as HTMLElement;
+    expect(within(kaitchup).getByText('not archived')).toBeInTheDocument();
+    expect(within(kaitchup).getByText(/0 stored/)).toBeInTheDocument();
+
+    await userEvent.type(within(catalog).getByRole('searchbox', { name: 'Search the catalog' }), 'kait');
+    expect(within(catalog).queryByText('Marques Brownlee')).toBeNull();
+    expect(within(catalog).getByText('The Kaitchup')).toBeInTheDocument();
+  });
+
+  it('a backfill runs with the chosen resume, page delay, batch size and cooldown', async () => {
+    const planSourceArchive = vi.fn().mockResolvedValue({
+      available_posts: 1722, available_basis: 'exact', desired_posts: 500, remaining_posts: 420, estimated_pages: 21,
+      estimated_seconds: 3600, resume: true, resume_available: true,
+      rate_limit: { page_delay_seconds: 8, batch_size: 5, batch_cooldown_seconds: 60 },
+    });
+    const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'arch-1' });
+    setup({
+      route: '/settings/sources?tab=ingestion&sub=archive',
+      overrides: {
+        getArchiveCatalog: vi.fn().mockResolvedValue({ success: true, total: 1, sources: [catalogEntry({ resume_ready: true })] }),
+        getSourceArchive: vi.fn().mockResolvedValue(archiveStatus()),
+        planSourceArchive,
+        startSourceArchive,
+        getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ id: 'arch-1', job_type: 'archive_source', status: 'running', progress: 5, finished_at: null }) }),
+      },
+    });
+    const catalog = await screen.findByRole('region', { name: 'Catalog' });
+    await userEvent.click(await within(catalog).findByRole('button', { name: /Marques Brownlee/ }));
+    const backfill = await screen.findByRole('region', { name: 'Marques Brownlee' });
+    expect(await within(backfill).findByLabelText(/Continue from the last run/)).toBeChecked();
+
+    for (const [label, value] of [['Page delay (s)', '8'], ['Batch size', '5'], ['Batch cooldown (s)', '60']]) {
+      const field = within(backfill).getByLabelText(label);
+      await userEvent.clear(field);
+      await userEvent.type(field, value);
+    }
+    await userEvent.click(within(backfill).getByRole('button', { name: 'Plan' }));
+    const rate = { pageDelaySeconds: 8, batchSize: 5, batchCooldownSeconds: 60 };
+    await waitFor(() => expect(planSourceArchive).toHaveBeenCalledWith('mkbhd', 500, true, rate));
+    await userEvent.click(await within(backfill).findByRole('button', { name: 'Resume archive' }));
+    await waitFor(() => expect(startSourceArchive).toHaveBeenCalledWith('mkbhd', 500, true, rate));
+    expect(await within(backfill).findByText('5%')).toBeInTheDocument();
+  });
+
+  it('logs load the application log and switch to another', async () => {
+    const getIngestionLogs = vi.fn().mockImplementation((log: string) => Promise.resolve({
+      success: true,
+      log,
+      available_logs: ['application', 'errors', 'youtube'],
+      exists: true,
+      lines: log === 'errors' ? ['ERROR telegram: session expired'] : ['INFO fetched Simon Willison', 'INFO 7 new posts'],
+    }));
+    setup({ route: '/settings/sources?tab=ingestion&sub=logs', overrides: { getIngestionLogs } });
+    const logs = await screen.findByRole('region', { name: 'Log' });
+    expect(await within(logs).findByText(/INFO 7 new posts/)).toBeInTheDocument();
+    expect(getIngestionLogs).toHaveBeenCalledWith('application', expect.any(Number));
+    expect(within(logs).getByText(/last 2 lines/)).toBeInTheDocument();
+    await userEvent.selectOptions(within(logs).getByLabelText('Log file'), 'errors');
+    expect(await within(logs).findByText(/session expired/)).toBeInTheDocument();
+    expect(within(logs).queryByText(/7 new posts/)).toBeNull();
+  });
+
+  it('a log that cannot be read says so', async () => {
+    setup({
+      route: '/settings/sources?tab=ingestion&sub=logs',
+      overrides: { getIngestionLogs: vi.fn().mockResolvedValue({ success: false, error: 'Unsupported log', log: 'application', lines: [] }) },
+    });
+    const logs = await screen.findByRole('region', { name: 'Log' });
+    expect(await within(logs).findByText(/Could not read the log: Unsupported log/)).toBeInTheDocument();
   });
 
   it('a ?job= link (from a run toast) opens that job', async () => {

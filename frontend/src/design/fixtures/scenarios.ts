@@ -131,6 +131,11 @@ const SCENARIOS: FrameScenario[] = [
     })),
   },
 
+  {
+    page: 'sources', state: 'ingestion-archive', label: 'Archive: the catalog, one channel picked for a backfill',
+    url: `/settings/sources?tab=ingestion&sub=archive&source=${sourceId('s-papers')}`, routes: site(normalSite), documented: true,
+  },
+  { page: 'sources', state: 'ingestion-logs', label: 'Logs: the application log tail', url: '/settings/sources?tab=ingestion&sub=logs', routes: site(normalSite), documented: true },
   { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
 
   // ---- shell ----

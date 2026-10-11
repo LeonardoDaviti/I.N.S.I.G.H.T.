@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { RunReport, SchedulerConfig } from '../../services/api';
 import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
-import { INGESTION_SUB_VIEWS, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
+import { INGESTION_SUB_VIEWS, ingestionSubViewHref, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
 import { useApi } from '../../services/ApiContext';
 import { asRunReport } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
@@ -16,6 +16,8 @@ import RunReportSummary from '../ops/RunReportSummary';
 import { Button, tabTriggerClass } from '../ui';
 import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
+import IngestionArchive from './IngestionArchive';
+import IngestionLogs from './IngestionLogs';
 import IngestionAnalysisActions from './IngestionAnalysisActions';
 import { Notice } from '../states';
 
@@ -35,7 +37,8 @@ const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0
 
 /**
  * Sources → ingestion (reading-finish R3, S4): the useful parts of the old
- * ingestion page, under the sources it fetches.
+ * ingestion page, under the sources it fetches. Views as `?sub=`: overview,
+ * archive (backfill, issue 0005 slice 3), jobs and logs.
  */
 export default function IngestionPanel() {
   const api = useApi();
@@ -103,7 +106,7 @@ export default function IngestionPanel() {
         {INGESTION_SUB_VIEWS.map((key) => (
           <Link
             key={key}
-            to={key === 'jobs' ? '?tab=ingestion&sub=jobs' : '?tab=ingestion'}
+            to={ingestionSubViewHref(key)}
             replace
             aria-current={key === sub ? 'page' : undefined}
             className={tabTriggerClass}
@@ -113,7 +116,7 @@ export default function IngestionPanel() {
         ))}
       </nav>
       {error ? <Notice tone="error" title={error} action={{ label: 'Dismiss', onClick: () => setError(null) }} /> : null}
-      {sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : (
+      {sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : sub === 'archive' ? <IngestionArchive /> : sub === 'logs' ? <IngestionLogs /> : (
         <div className="space-y-10">
           <section aria-labelledby="ingestion-scheduler" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
