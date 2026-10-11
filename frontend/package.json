@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test src/lib/*.test.ts && vitest run",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bundle:check": "node scripts/bundle-check.mjs",
+    "bundle:baseline": "node scripts/bundle-check.mjs --update"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
