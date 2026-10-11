@@ -5,6 +5,7 @@ import { Rail, RailPicker } from '../handbook/Rail';
 import DocView from '../handbook/DocView';
 import NotFound from '../handbook/NotFound';
 import PageSpecimen from '../handbook/PageSpecimen';
+import { SystemDoc, SystemOverview } from '../handbook/SystemPage';
 
 const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
 
@@ -12,12 +13,6 @@ const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
 function DocAt({ href }: { href: string }) {
   const doc = docAt(href);
   return doc ? <DocView doc={doc} /> : <NotFound what="doc" />;
-}
-
-/** A doc under a section by its slug (`/design/system/:slug`). */
-function SectionDoc({ section }: { section: 'system' }) {
-  const { slug = '' } = useParams();
-  return <DocAt href={`/design/${section}/${slug}`} />;
 }
 
 /**
@@ -55,7 +50,8 @@ export default function HandbookMode() {
           <Route index element={<DocAt href="/design" />} />
           <Route path="principles" element={<Navigate to="/design" replace />} />
           <Route path="decisions" element={<DocAt href="/design/decisions" />} />
-          <Route path="system/:slug" element={<SectionDoc section="system" />} />
+          <Route path="system" element={<SystemOverview />} />
+          <Route path="system/:slug" element={<SystemDoc />} />
           <Route path="components" element={<DocAt href="/design/components" />} />
           <Route path="pages/:slug" element={<PageDoc section="pages" />} />
           <Route path="parked/:slug" element={<PageDoc section="parked" />} />

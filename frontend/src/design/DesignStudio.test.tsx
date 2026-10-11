@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
@@ -114,5 +114,92 @@ describe('the Handbook', () => {
   it('says so when nothing lives at an address', () => {
     renderStudio('/design/pages/nowhere');
     expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();
+  });
+});
+
+describe('the System section', () => {
+  let style: HTMLStyleElement | undefined;
+  const realAnimate = HTMLElement.prototype.animate;
+  afterEach(() => {
+    HTMLElement.prototype.animate = realAnimate;
+    style?.remove();
+    document.documentElement.className = '';
+    vi.unstubAllGlobals();
+  });
+
+  /** A slice of index.css: the studio reads whatever the page defines. */
+  function defineTokens() {
+    style = document.createElement('style');
+    style.textContent = [
+      ':root, :root.theme-dark { --bg: 18 18 18; --text: 242 242 242; --scrim: 0 0 0 / 0.6 }',
+      ':root.theme-light { --bg: 255 255 255; --text: 17 17 17 }',
+      ':root { --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --dur-press: 120ms; --dur-sheet: 260ms }',
+    ].join('\n');
+    document.head.append(style);
+  }
+
+  const tokenRow = (name: string) => screen.getByRole('row', { name: new RegExp(`^${name} `) });
+
+  it('reads each documented token live from the page, and follows the theme', async () => {
+    defineTokens();
+    renderStudio('/design/system');
+    expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
+    expect(tokenRow('--bg')).toHaveTextContent('#121212');
+    expect(tokenRow('--scrim')).toHaveTextContent(/0 0 0 ?\/ ?0\.6/);
+    // Documented in tokens.md, not defined by this page: said out loud.
+    expect(tokenRow('--surface')).toHaveTextContent('not defined');
+    await act(async () => document.documentElement.classList.add('theme-light'));
+    expect(tokenRow('--bg')).toHaveTextContent('#ffffff');
+  });
+
+  it('lists the motion durations live, and replays them unless motion is reduced', async () => {
+    defineTokens();
+    const user = userEvent.setup();
+    renderStudio('/design/system');
+    const motion = screen.getByRole('region', { name: 'Motion' });
+    expect(within(motion).getByText('--dur-press')).toBeInTheDocument();
+    expect(within(motion).getByText('260ms')).toBeInTheDocument();
+    // jsdom drops the spaces a browser keeps.
+    expect(within(motion).getByText(/cubic-bezier\(0.23, ?1, ?0.32, ?1\)/)).toBeInTheDocument();
+    const animate = vi.fn();
+    HTMLElement.prototype.animate = animate;
+    await user.click(within(motion).getByRole('button', { name: 'Replay' }));
+    expect(animate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 260, easing: expect.stringMatching(/cubic-bezier\(0.23, ?1, ?0.32, ?1\)/) }));
+  });
+
+  it('under reduced motion, the replay only fades', async () => {
+    defineTokens();
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce'), addEventListener() {}, removeEventListener() {} }));
+    const user = userEvent.setup();
+    renderStudio('/design/system');
+    const motion = screen.getByRole('region', { name: 'Motion' });
+    expect(within(motion).getByText(/Reduced motion is on/)).toBeInTheDocument();
+    const animate = vi.fn();
+    HTMLElement.prototype.animate = animate;
+    await user.click(within(motion).getByRole('button', { name: 'Replay' }));
+    for (const [keyframes, options] of animate.mock.calls) {
+      expect(keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }]);
+      expect(options).toMatchObject({ duration: 150 });
+    }
+    expect(animate).toHaveBeenCalled();
+  });
+
+  it('shows the type scale, the radii and every status as glyph plus word', () => {
+    renderStudio('/design/system');
+    for (const step of ['display', 'title', 'heading', 'body', 'reading', 'small', 'micro']) {
+      expect(within(screen.getByRole('region', { name: 'Type scale' })).getByText(step)).toBeInTheDocument();
+    }
+    expect(within(screen.getByRole('region', { name: 'Space and radii' })).getByText('rounded-md')).toBeInTheDocument();
+    const status = screen.getByRole('region', { name: 'Status' });
+    for (const word of ['ok', 'due', 'scheduled', 'backoff', 'failing', 'unavailable', 'disabled', 'running', 'unread', 'read', 'starred']) {
+      expect(within(status).getAllByText(word).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('opens a system doc with its live specimen under it', () => {
+    defineTokens();
+    renderStudio('/design/system/motion');
+    expect(screen.getByRole('heading', { level: 1, name: 'Motion' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Motion' })).toBeInTheDocument();
   });
 });
