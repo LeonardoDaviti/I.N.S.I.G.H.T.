@@ -10,6 +10,7 @@ import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId, formatDuration } from '../../lib/feedItem';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
+import { proxiedImage } from '../../lib/mediaProxy';
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatDuration(item.duration_seconds);
@@ -163,7 +164,7 @@ function FeedItem({
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">
           <img
-            src={item.media_thumb ?? undefined}
+            src={proxiedImage(item.id, item.media_thumb)}
             alt=""
             loading="lazy"
             decoding="async"

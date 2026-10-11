@@ -7,6 +7,8 @@ import { defaultSchema } from 'hast-util-sanitize';
 interface MarkdownRendererProps {
   content: string;
   className?: string;
+  /** Rewrites each image's src (a post body loads its images through /api/media). */
+  imageSrc?: (src: string) => string | undefined;
 }
 
 function decodeHtmlEntities(input: string): string {
@@ -44,7 +46,7 @@ export function normalizeRendererContent(content: string): string {
   return dedentHtml(decodeHtmlEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim());
 }
 
-export default function MarkdownRenderer({ content, className = "" }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, className = "", imageSrc }: MarkdownRendererProps) {
   if (!content) {
     return <p className="text-fg-3">No content available</p>;
   }
@@ -182,7 +184,7 @@ export default function MarkdownRenderer({ content, className = "" }: MarkdownRe
             const sized = w > 0 && h > 0;
             return (
               <img
-                src={typeof src === 'string' ? src : undefined}
+                src={typeof src === 'string' ? (imageSrc ? imageSrc(src) : src) : undefined}
                 alt={alt ?? ''}
                 title={title}
                 width={sized ? w : undefined}

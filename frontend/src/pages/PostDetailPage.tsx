@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, Component } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Component } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -65,6 +65,7 @@ import type {
   YouTubeVideoEvaluationResponse,
   YouTubeWatchProgress,
 } from '../services/api';
+import { proxiedImage } from '../lib/mediaProxy';
 
 /**
  * The post reading view (/posts/:id). Mark IX is reading-only (spec §9): one
@@ -934,6 +935,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
   // Images the body already shows stay inline; the rest: the first under the
   // title, the others after the text. A video post shows its player instead.
   const media = useMemo(() => postMedia(post, `${renderContent}\n${post.content || ''}`), [post, renderContent]);
+  const bodyImageSrc = useCallback((src: string) => proxiedImage(postId, src), [postId]);
   const isYouTubePost = post?.platform === 'youtube';
   // A blog post that carries a YouTube video: the player stands in for the hero.
   const embeddedVideoId = !isYouTubePost ? media.video?.id ?? null : null;
@@ -1177,7 +1179,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
             <span aria-live="polite" className="sr-only">{announcement}</span>
           </header>
 
-          {heroImage ? <PostFigure image={heroImage} className="mb-10" /> : null}
+          {heroImage ? <PostFigure image={heroImage} postId={postId} className="mb-10" /> : null}
           {embeddedVideoId ? <VideoPlayer videoId={embeddedVideoId} title={displayTitle} className="mb-10" /> : null}
 
           {error && (
@@ -1432,12 +1434,12 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
               ) : analysisEnabled && highlights.length && post.content ? (
                 highlightedContentBlock
               ) : (
-                <MarkdownRenderer content={renderContent} />
+                <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} />
               )}
             </div>
           </article>
 
-          <PostImageList images={moreImages} />
+          <PostImageList images={moreImages} postId={postId} />
 
           {/* ---- Reddit discussion ---- */}
           {isRedditPost && (
