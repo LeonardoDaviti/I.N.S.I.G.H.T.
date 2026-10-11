@@ -936,9 +936,14 @@ class InsightApiBridge:
         *,
         resume: bool = True,
         rate_limit_overrides: Dict[str, Any] | None = None,
+        job_id: str | None = None,
     ) -> Dict[str, Any]:
-        """Archive posts for a single source into the shared posts table."""
-        job_id = self._start_job_safe(
+        """Archive posts for a single source into the shared posts table.
+
+        With job_id (the route already started the job) progress lands on that job;
+        otherwise the run starts its own archive_source job.
+        """
+        job_id = job_id or self._start_job_safe(
             "archive_source",
             trigger="manual",
             source_id=source_id,
@@ -995,6 +1000,10 @@ class InsightApiBridge:
                 "source_id": source_id,
             }
 
+    def archive_support(self, source_id: str) -> Dict[str, Any]:
+        """Whether the source can archive and what its available count means (no network)."""
+        return self.source_fetch_service.archive_support(source_id)
+
     def get_archive_status(self, source_id: str) -> Dict[str, Any]:
         """Return persisted archive metadata plus current storage stats."""
         try:
@@ -1012,6 +1021,9 @@ class InsightApiBridge:
                     "latest_published_at": post_stats["latest_published_at"].isoformat() if post_stats.get("latest_published_at") else None,
                 },
                 "source": source,
+                "support": self._archive_support_or_none(source_id),
+                # The newest archive job: a running one the sheet attaches to, or the last result.
+                "latest_job": self._latest_archive_job_or_none(source_id),
             }
         except Exception as e:
             return {
@@ -1019,6 +1031,18 @@ class InsightApiBridge:
                 "error": str(e),
                 "source_id": source_id,
             }
+
+    def _latest_archive_job_or_none(self, source_id: str) -> Dict[str, Any] | None:
+        try:
+            return self.operations_service.latest_job_for_source("archive_source", source_id)
+        except Exception:
+            return None
+
+    def _archive_support_or_none(self, source_id: str) -> Dict[str, Any] | None:
+        try:
+            return self.archive_support(source_id)
+        except Exception:
+            return None
 
     async def fetch_source_now(self, source_id: str, limit: int | None = None, *, job_id: str | None = None) -> Dict[str, Any]:
         """Fetch one source now (forced, even when disabled), through the ingestion runner."""

@@ -50,13 +50,13 @@ async function navWords() {
 
 describe('navigation model', () => {
   it('the top bar has exactly the five lowercase words, in order, with analysis on', () => {
-    expect(navItems(true).map((item) => item.label)).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion']);
+    expect(navItems(true).map((item) => item.label)).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion', 'blog']);
     expect(NAV_ITEMS).toEqual(navItems(true));
   });
 
-  it('the reading-only top bar is feed / sources', () => {
-    expect(navItems(false).map((item) => item.key)).toEqual(['feed', 'sources']);
-    expect(navItems(false).map((item) => item.to)).toEqual(['/', '/settings/sources']);
+  it('the reading-only top bar is feed / sources / blog', () => {
+    expect(navItems(false).map((item) => item.key)).toEqual(['feed', 'sources', 'blog']);
+    expect(navItems(false).map((item) => item.to)).toEqual(['/', '/settings/sources', '/blog']);
   });
 
   it('the reading-only switcher has no briefing, stories, inbox or experts entries', () => {
@@ -86,7 +86,7 @@ describe('navigation model', () => {
   it('with analysis on the switcher is unchanged, plus the design studio', () => {
     expect(destinations(true, [{ id: 'a1', name: 'Agentic News' }]).map((d) => d.id)).toEqual([
       'feed-unread', 'feed-starred', 'feed-all', 'feed-by-source', 'tracks', 'briefing', 'briefing-topics',
-      'briefing-vertical', 'stories', 'inbox', 'sources', 'sources-health', 'ingestion', 'design-studio',
+      'briefing-vertical', 'stories', 'inbox', 'sources', 'sources-health', 'ingestion', 'blog', 'design-studio',
     ]);
   });
 
@@ -127,6 +127,8 @@ describe('navigation model', () => {
     ['/inbox', 'briefings'],
     ['/settings/sources', 'sources'],
     ['/ingestion/jobs', 'ingestion'],
+    ['/blog', 'blog'],
+    ['/blog/junior-to-senior', 'blog'],
     ['/nowhere', null],
     ['/briefingx', null],
   ])('%s → %s', (path, key) => {
@@ -160,19 +162,19 @@ describe('AppShell', () => {
   it('the backend says analysis is on: the five words', async () => {
     renderShell('/');
     await screen.findByRole('link', { name: 'briefings' });
-    expect(await navWords()).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion']);
+    expect(await navWords()).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion', 'blog']);
   });
 
-  it('the backend says analysis is off: feed / sources', async () => {
+  it('the backend says analysis is off: feed / sources / blog', async () => {
     renderShell('/', { analysis: false });
     await screen.findByRole('link', { name: 'sources' });
-    expect(await navWords()).toEqual(['feed', 'sources']);
+    expect(await navWords()).toEqual(['feed', 'sources', 'blog']);
   });
 
   it('when /api/config fails, the build flag decides (off in tests)', async () => {
     const { queryClient } = renderShell('/', { analysis: null });
     await vi.waitFor(() => expect(queryClient.getQueryState(['config'])?.status).toBe('error'));
-    expect(await navWords()).toEqual(['feed', 'sources']);
+    expect(await navWords()).toEqual(['feed', 'sources', 'blog']);
   });
 
   it('reading-only ⌘K: one entry per track, no briefings', async () => {

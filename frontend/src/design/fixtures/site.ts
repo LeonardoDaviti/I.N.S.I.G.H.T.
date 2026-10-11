@@ -6,7 +6,7 @@
  * The feed honours scope, filter, view and paging like the backend does.
  */
 import type {
-  AppConfig, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
+  AppConfig, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
   SchedulerConfig, SourceHealthRow, SourceWithSettings, UnreadCounts,
 } from '../../services/api';
 import { healthResponse } from '../../components/ops/fixtures';
@@ -140,6 +140,20 @@ function sourcesWithSettings(site: Site): { success: true; sources: SourceWithSe
   return { success: true, sources, total: sources.length };
 }
 
+/** The source sheet's Archive section: what is stored, what the source has, no job yet. */
+function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusResponse {
+  const row = site.health.find((candidate) => candidate.source_id === params.sourceId);
+  const stored = row?.stored_posts ?? 0;
+  return {
+    success: true,
+    archive: { stored_posts: stored, available_posts: stored + 1480, last_inspected_at: null, resume_ready: false },
+    support: {
+      kind: row?.kind ?? 'generic_rss', available_basis: 'exact', archivable: true, reason: null, unavailable: false, live_fetch_limit: 50,
+    },
+    latest_job: null,
+  };
+}
+
 /** The transport routes that serve one site. */
 export function siteRoutes(site: Site): FixtureRoute[] {
   return [
@@ -165,6 +179,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
       respond: ({ params }) => ({ success: true, job: site.jobs.find((job) => job.id === params.jobId) ?? null }),
     },
     { path: '/api/posts/item/:postId', respond: (request) => postDetail(request, site) },
+    { path: '/api/archive/:sourceId/status', respond: (request) => archiveStatus(request, site) },
     { path: '/api/youtube/progress/:videoId', respond: () => ({ success: true, progress: null }) },
   ];
 }

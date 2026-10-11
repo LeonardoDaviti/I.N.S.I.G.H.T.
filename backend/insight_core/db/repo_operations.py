@@ -52,3 +52,43 @@ class JobRunsRepository:
         )
         row = cur.fetchone()
         return row[0] if row else None
+
+    @staticmethod
+    def latest_for_source(cur: Cursor, job_type: str, source_id: str) -> Optional[dict]:
+        """The newest job of this type for one source, summarised (no event log), or None.
+
+        The source sheet reads it to attach to a running archive and to show the last result.
+        """
+        cur.execute(
+            """
+            SELECT id, status, message, started_at, finished_at,
+                   CASE WHEN jsonb_typeof(payload->'progress') = 'number'
+                        THEN (payload->>'progress')::float END,
+                   jsonb_strip_nulls(jsonb_build_object(
+                     'posts_fetched',  payload->'posts_fetched',
+                     'posts_inserted', payload->'posts_inserted',
+                     'posts_updated',  payload->'posts_updated',
+                     'pages_fetched',  payload->'pages_fetched',
+                     'stored_posts',   payload->'stored_posts',
+                     'desired_posts',  payload->'desired_posts',
+                     'error',          payload->'error'
+                   ))
+            FROM job_runs
+            WHERE job_type = %s AND source_id = %s
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (job_type, source_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": str(row[0]),
+            "status": row[1],
+            "message": row[2],
+            "started_at": row[3].isoformat() if row[3] else None,
+            "finished_at": row[4].isoformat() if row[4] else None,
+            "progress": row[5],
+            "result": row[6] or {},
+        }

@@ -70,4 +70,4 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 ## Open issues
 
 - [0002](../../../../../plan/issues/0002-track-briefing-reading.md): the track briefing shown in the folder scope with analysis on.
-- [0003](../../../../../plan/issues/0003-minimal-codebase.md): keep what reading uses, retire the rest.
+- [0005](../../../../../plan/issues/0005-minimal-codebase.md): keep what reading uses, retire the rest.

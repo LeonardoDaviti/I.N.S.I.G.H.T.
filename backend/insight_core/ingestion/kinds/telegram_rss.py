@@ -41,6 +41,7 @@ CANONICAL_RE = re.compile(r"^https://t\.me/(?P<username>[^/]+)/(?P<post_id>\d+)$
 
 class TelegramRssKind(BaseKind):
     name = "telegram_rss"
+    available_basis = "upper_bound"   # the newest post number; deleted posts still count
     profile = TELEGRAM_RSS_PROFILE
 
     def __init__(self, http: KindHttp) -> None:

@@ -53,8 +53,8 @@ export interface PrototypeRef {
   note?: string;
 }
 
-/** Pages in the order you meet them: the feed, a post, where it's managed, the frame around all three. */
-const PAGE_ORDER = ['reader', 'post', 'sources', 'shell'];
+/** Pages in the order you meet them: the feed, a post, where it's managed, the blog, the frame around them all. */
+const PAGE_ORDER = ['reader', 'post', 'sources', 'blog', 'shell'];
 
 function byOrder(order: readonly string[]) {
   const rank = (slug: string) => (order.includes(slug) ? order.indexOf(slug) : order.length);

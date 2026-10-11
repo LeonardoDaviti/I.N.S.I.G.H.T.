@@ -22,6 +22,7 @@ const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
 // Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
 const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
+const BlogPage = lazy(() => import('./pages/BlogPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -110,6 +111,8 @@ export function AppRoutes() {
       <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
       <Route path="/design/*" element={<DesignStudio />} />
+      <Route path="/blog" element={<BlogPage />} />
+      <Route path="/blog/:slug" element={<BlogPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

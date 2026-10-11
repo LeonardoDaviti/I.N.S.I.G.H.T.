@@ -8,6 +8,8 @@ import { jobLabel } from '../../lib/operationsOverview';
 import { formatJobDuration, formatJobTimestamp, jobGlyph } from '../../lib/jobRuns';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
+import { ArchiveProgressBar } from './ArchiveSection';
+import { archiveResultLine } from '../../lib/archive';
 import { StatusGlyph } from '../ui';
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
@@ -17,6 +19,7 @@ type JobEvent = { at?: string; level?: string; message?: string };
 /** One job: what it was, how it went, its run report and its events. */
 function JobDetail({ job }: { job: JobRun }) {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
+  const archiveResult = job.job_type === 'archive_source' && job.payload ? archiveResultLine(job.payload) : null;
   const events: JobEvent[] = Array.isArray(job.payload?.events) ? job.payload.events : [];
   const facts: Array<[string, React.ReactNode]> = [
     ['Status', <StatusGlyph key="s" status={jobGlyph(job.status)} label={job.status} />],
@@ -34,7 +37,9 @@ function JobDetail({ job }: { job: JobRun }) {
           </div>
         ))}
       </dl>
-      {report ? <RunReportSummary report={report} /> : job.message ? (
+      {report ? <RunReportSummary report={report} /> : archiveResult ? (
+        <p className="text-[0.875rem] tabular-nums text-fg-2">{archiveResult}</p>
+      ) : job.message ? (
         <p className="text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p>
       ) : null}
       {events.length ? (
@@ -94,6 +99,12 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
                     </div>
                     <StatusGlyph status={jobGlyph(job.status)} label={job.status} />
                   </div>
+                  {job.job_type === 'archive_source' && job.status === 'running' && typeof job.progress === 'number' ? (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="min-w-0 flex-1"><ArchiveProgressBar percent={job.progress} /></div>
+                      <span className="text-[0.75rem] tabular-nums text-fg-2">{Math.round(job.progress)}%</span>
+                    </div>
+                  ) : null}
                   {job.message ? <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p> : null}
                   {when ? <p className="mt-0.5 text-[0.75rem] tabular-nums text-fg-3">{when}</p> : null}
                 </button>

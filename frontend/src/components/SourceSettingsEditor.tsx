@@ -18,6 +18,7 @@ import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { getPlatformLabel } from '../lib/sourcePresentation';
 import { ConnectionsLink } from './connections';
 import { writeToClipboard } from '../lib/clipboard';
+import ArchiveSection from './sources/ArchiveSection';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
 function SourceAddress({ value }: { value: string }) {
@@ -298,6 +299,10 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
                 {health.isError ? `Cadence unavailable: ${errorMessage(health.error)}` : 'Loading cadence…'}
               </p>
             )}
+          </div>
+
+          <div className="rounded-md border border-line p-3">
+            <ArchiveSection sourceId={source.id} />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
