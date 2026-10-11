@@ -73,8 +73,8 @@ describe('Bench', () => {
     expect(frameSrc('right')).toBe('/design/frame/reader/loading?theme=dark&data=fixtures');
   });
 
-  it('offers the 320px width for the shell, whose narrow top bar needs it', () => {
-    renderBench('&subject=shell');
+  it('offers 1400, 390 and the narrowest phone, 320', () => {
+    renderBench();
     expect(within(screen.getByRole('radiogroup', { name: 'Width' })).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['1400', '390', '320']);
   });
 

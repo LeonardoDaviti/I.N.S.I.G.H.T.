@@ -30,7 +30,7 @@ describe('parseBench', () => {
   it('opens on the oldest open prototype: current page against it, on its first state, 1400, dark', () => {
     expect(parse('mode=bench')).toEqual({
       subject: '2026-10-10-title-wrap', prototype: '2026-10-10-title-wrap', page: 'post', states: ['long-title', 'article'],
-      left: 'long-title', right: 'long-title', widths: [1400, 390], width: 1400, theme: 'dark', drawer: true,
+      left: 'long-title', right: 'long-title', widths: [1400, 390, 320], width: 1400, theme: 'dark', drawer: true,
     });
   });
 
@@ -45,9 +45,9 @@ describe('parseBench', () => {
     });
   });
 
-  it('adds a state\'s own width (the 320px shell) to the widths', () => {
+  it('offers 1400, 390 and the narrowest phone, 320, on every subject', () => {
     expect(parse('subject=shell&width=320')).toMatchObject({ widths: [1400, 390, 320], width: 320 });
-    expect(parse('subject=reader&width=320')).toMatchObject({ width: 1400 });
+    expect(parse('subject=2026-10-10-title-wrap&width=320')).toMatchObject({ widths: [1400, 390, 320], width: 320 });
   });
 
   it('falls back on anything unknown: subject, state, width, theme', () => {

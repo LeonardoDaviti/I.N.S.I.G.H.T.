@@ -5,7 +5,7 @@
  *   ?mode=bench&subject=<prototype id | page>   what is on the bench
  *   &state=<s>              a prototype's state, shared by both panes
  *   &left=<s>&right=<s>     a page's two states, state against state
- *   &width=1400|390|…       &theme=dark|light   shared by both panes
+ *   &width=1400|390|320     &theme=dark|light   shared by both panes
  *   &doc=hide               the drawer folded away
  */
 import { SPECIMEN_THEMES, SPECIMEN_WIDTHS, type SpecimenTheme } from './specimen';
@@ -15,6 +15,9 @@ import { isOpen, type Prototype } from './prototypes';
 export function benchHref(subject: string): string {
   return `/design?${new URLSearchParams({ mode: 'bench', subject }).toString()}`;
 }
+
+/** A desktop window, a phone, the narrowest phone: the last is where a wrap or a top bar breaks first. */
+export const BENCH_WIDTHS: readonly number[] = [...SPECIMEN_WIDTHS, 320];
 
 export interface BenchPage {
   /** The page doc's name: `post`. */
@@ -82,7 +85,7 @@ export function parseBench(params: URLSearchParams, { prototypes, pages, widthOf
   const left = prototype ? pick('state', states[0] ?? '') : pick('left', states[0] ?? '');
   const right = prototype ? left : pick('right', states[1] ?? states[0] ?? '');
   const own = states.map((state) => widthOf(pageName, state)).filter((width): width is number => width !== undefined);
-  const widths = [...new Set<number>([...SPECIMEN_WIDTHS, ...own])];
+  const widths = [...new Set<number>([...BENCH_WIDTHS, ...own])];
 
   return {
     subject: prototype?.id ?? page?.name ?? '',
