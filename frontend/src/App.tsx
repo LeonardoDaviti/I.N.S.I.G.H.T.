@@ -19,10 +19,10 @@ const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
+const BlogPage = lazy(() => import('./pages/BlogPage'));
 // Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
 const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
-const BlogPage = lazy(() => import('./pages/BlogPage'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -88,8 +88,8 @@ function TrackRedirect() {
  * Routes (design docs system/information-architecture.md). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
  * Reading-only, the app is feed / sources / post. `/tracks/:id` redirects to
- * the reader scoped to the track (Design Studio D5). `/design/*` is the Design
- * Studio, reached from ⌘K only, with analysis on or off.
+ * the reader scoped to the track (Design Studio D5). `/blog` is the engineering
+ * blog. `/design/*` is the Design Studio, reached from ⌘K only, with analysis on or off.
  */
 export function AppRoutes() {
   return (
@@ -110,9 +110,9 @@ export function AppRoutes() {
       <Route path="/tracks" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
-      <Route path="/design/*" element={<DesignStudio />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogPage />} />
+      <Route path="/design/*" element={<DesignStudio />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

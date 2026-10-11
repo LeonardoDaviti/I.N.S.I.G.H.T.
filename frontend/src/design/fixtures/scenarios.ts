@@ -14,7 +14,6 @@ import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
 import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
 import { postStateDetail } from './posts';
-import { POSTS } from '../../blog/posts';
 
 export interface FrameScenario {
   page: string;
@@ -134,13 +133,6 @@ const SCENARIOS: FrameScenario[] = [
 
   { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
 
-  // ---- blog ----
-  { page: 'blog', state: 'index', label: 'The list of posts, newest first', url: '/blog', routes: site(normalSite), documented: true },
-  {
-    page: 'blog', state: 'article', label: 'One post open', url: `/blog/${POSTS[0].slug}`, routes: site(normalSite), documented: true,
-    setup: async (frame) => { await frame.find('article p'); },
-  },
-
   // ---- shell ----
   {
     page: 'shell', state: 'switcher', label: '⌘K open over the feed', url: '/', routes: site(normalSite), documented: false,
@@ -168,6 +160,10 @@ const SCENARIOS: FrameScenario[] = [
       await frame.find('[role="dialog"]');
     },
   },
+  // ---- blog ----
+  { page: 'blog', state: 'index', label: 'Every post, newest first', url: '/blog', routes: site(normalSite), documented: true },
+  { page: 'blog', state: 'article', label: 'A post with figures, code and the quiz', url: '/blog/junior-to-senior', routes: site(normalSite), documented: true },
+  { page: 'blog', state: 'unknown', label: 'An unknown slug lands on the list', url: '/blog/no-such-post', routes: site(normalSite), documented: true },
   {
     page: 'shell', state: 'dialog', label: 'A dialog open: Add source', url: '/settings/sources', routes: site(normalSite), documented: false,
     setup: async (frame) => {
@@ -197,7 +193,7 @@ function worstSiteJobs(s: Site, now: Date): Site {
 }
 
 /** Every page with frames, in the studio's order. */
-export const FRAME_PAGES = ['reader', 'post', 'sources', 'blog', 'shell'] as const;
+export const FRAME_PAGES = ['reader', 'post', 'sources', 'shell', 'blog'] as const;
 
 export function frameScenarios(page?: string): FrameScenario[] {
   return page ? SCENARIOS.filter((scenario) => scenario.page === page) : [...SCENARIOS];

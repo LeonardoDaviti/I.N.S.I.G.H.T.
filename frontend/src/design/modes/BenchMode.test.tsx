@@ -58,7 +58,7 @@ describe('Bench', () => {
     const groups = within(screen.getByRole('combobox', { name: 'On the bench' })).getAllByRole('group');
     expect(groups.map((group) => [group.getAttribute('label'), within(group).getAllByRole('option').map((option) => option.textContent)])).toEqual([
       ['open prototypes', ['title-wrap (review)']],
-      ['pages', ['Reader', 'Post', 'Sources', 'Blog', 'Shell']],
+      ['pages', ['Reader', 'Post', 'Sources', 'Shell', 'Blog']],
     ]);
   });
 
