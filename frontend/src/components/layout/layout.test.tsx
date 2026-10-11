@@ -83,11 +83,20 @@ describe('navigation model', () => {
     expect(filterDestinations('track', items).map((d) => d.to)).toEqual(['/read/folder/a1', '/read/folder/b%202']);
   });
 
-  it('with analysis on the switcher is unchanged', () => {
+  it('with analysis on the switcher is unchanged, plus the design studio', () => {
     expect(destinations(true, [{ id: 'a1', name: 'Agentic News' }]).map((d) => d.id)).toEqual([
       'feed-unread', 'feed-starred', 'feed-all', 'feed-by-source', 'tracks', 'briefing', 'briefing-topics',
-      'briefing-vertical', 'stories', 'inbox', 'sources', 'sources-health', 'ingestion',
+      'briefing-vertical', 'stories', 'inbox', 'sources', 'sources-health', 'ingestion', 'design-studio',
     ]);
+  });
+
+  it('⌘K reaches the design studio with analysis on or off; the top bar never shows it', () => {
+    for (const analysis of [true, false]) {
+      const items = destinations(analysis, [{ id: 'a1', name: 'Agentic News' }]);
+      expect(items.at(-1)).toMatchObject({ id: 'design-studio', label: 'Design studio', to: '/design' });
+      expect(navItems(analysis).map((item) => item.to)).not.toContain('/design');
+    }
+    expect(filterDestinations('principles tokens', destinations(false)).map((d) => d.id)).toEqual(['design-studio']);
   });
 
   it('reading-only, Ingestion in the switcher opens the ingestion tab under sources', () => {
@@ -203,6 +212,17 @@ describe('AppShell', () => {
     expect(screen.getByRole('option', { name: /switch to light theme/i })).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Enter}');
     expect(document.documentElement).toHaveClass('theme-light');
+  });
+
+  it('reading-only, ⌘K opens the design studio', async () => {
+    const user = userEvent.setup();
+    renderShell('/', { analysis: false });
+    await screen.findByRole('link', { name: 'sources' });
+    await user.keyboard('{Control>}k{/Control}');
+    await user.type(await screen.findByRole('combobox'), 'design');
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([expect.stringMatching(/^Design studio/)]);
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('where')).toHaveTextContent('/design');
   });
 
   it('shows an empty message when nothing matches', async () => {

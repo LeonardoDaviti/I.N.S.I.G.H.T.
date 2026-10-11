@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, pageDocProblems, parseDoc, unknownCitations, unclaimedRoutes,
+  PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, pageDocProblems, parseDoc, specimenProblems, unknownCitations, unclaimedRoutes,
 } from './coverage';
 import appSource from '../App.tsx?raw';
 import { frameScenario } from './fixtures/scenarios';
@@ -85,6 +85,17 @@ describe('pageDocProblems', () => {
   });
 });
 
+describe('specimenProblems', () => {
+  it('names a primitive with no specimen and a specimen whose primitive is gone', () => {
+    const primitives = ['../components/ui/Button.tsx', '../components/ui/Chip.tsx', '../components/ui/ui.test.tsx'];
+    const specimens = ['./specimens/components/Button.tsx', './specimens/components/Gone.tsx'];
+    expect(specimenProblems(primitives, specimens)).toEqual([
+      'components/ui/Chip.tsx has no specimen in src/design/specimens/components/Chip.tsx',
+      'src/design/specimens/components/Gone.tsx shows a primitive components/ui no longer has',
+    ]);
+  });
+});
+
 /**
  * The real docs (D7.6). Loaded the way the studio will load them (D1), so a
  * doc that moves or is renamed here moves for /design too.
@@ -122,6 +133,13 @@ describe('the design docs', () => {
   it('give every page doc the fixed template and its states', () => {
     expect(pageDocs.map((doc) => doc.path).sort()).toEqual(['pages/post.md', 'pages/reader.md', 'pages/shell.md', 'pages/sources.md']);
     expect(pageDocs.flatMap(pageDocProblems)).toEqual([]);
+  });
+
+  it('show every components/ui primitive as a hand-written specimen', () => {
+    const primitives = Object.keys(import.meta.glob('../components/ui/*.tsx'));
+    const specimens = Object.keys(import.meta.glob('./specimens/components/*.tsx'));
+    expect(primitives.length).toBeGreaterThan(10);
+    expect(specimenProblems(primitives, specimens)).toEqual([]);
   });
 
   it('have a fixture scenario for every state a page doc lists (D4, D7.6)', () => {

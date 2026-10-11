@@ -109,3 +109,23 @@ export function pageDocProblems(doc: DesignDoc): string[] {
   if (lines > PAGE_DOC_MAX_LINES) problems.push(`${doc.path} is ${lines} lines; the limit is ${PAGE_DOC_MAX_LINES}`);
   return problems;
 }
+
+const fileName = (path: string) => path.replace(/^.*\//, '').replace(/\.tsx$/, '');
+
+/**
+ * Every `components/ui` primitive has a specimen in `specimens/components/`
+ * under the same file name, and no specimen outlives its primitive (S2).
+ * Takes the two globs' paths; test files are not primitives.
+ */
+export function specimenProblems(primitivePaths: readonly string[], specimenPaths: readonly string[]): string[] {
+  const primitives = primitivePaths.filter((path) => !/\.test\.tsx$/.test(path)).map(fileName);
+  const specimens = specimenPaths.map(fileName);
+  return [
+    ...primitives
+      .filter((name) => !specimens.includes(name))
+      .map((name) => `components/ui/${name}.tsx has no specimen in src/design/specimens/components/${name}.tsx`),
+    ...specimens
+      .filter((name) => !primitives.includes(name))
+      .map((name) => `src/design/specimens/components/${name}.tsx shows a primitive components/ui no longer has`),
+  ];
+}

@@ -8,7 +8,6 @@ import { LoadingState } from './components/states';
 import { ApiProvider } from './services/ApiContext';
 import { useAnalysis } from './hooks/useAnalysis';
 import { sourcesIngestionHref } from './lib/ingestionNavigation';
-import { isFramePath } from './design/frame/frameUrl';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
@@ -20,6 +19,8 @@ const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
+// Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
+const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
@@ -86,7 +87,8 @@ function TrackRedirect() {
  * Routes (design docs system/information-architecture.md). `/` is the reader feed: the Mark VIII hub is gone and
  * `/hub` redirects home. Every route renders inside the AppShell top bar.
  * Reading-only, the app is feed / sources / post. `/tracks/:id` redirects to
- * the reader scoped to the track (Design Studio D5).
+ * the reader scoped to the track (Design Studio D5). `/design/*` is the Design
+ * Studio, reached from ⌘K only, with analysis on or off.
  */
 export function AppRoutes() {
   return (
@@ -107,6 +109,7 @@ export function AppRoutes() {
       <Route path="/tracks" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/experts" element={<AnalysisOnly><ExpertsPage /></AnalysisOnly>} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
+      <Route path="/design/*" element={<DesignStudio />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -115,7 +118,8 @@ export function AppRoutes() {
 function App() {
   // The Design Studio's chromeless frame (`/design/frame/:page/:state`, D4): its
   // own router, providers and fixture fetch, so it replaces the app, not a route in it.
-  if (isFramePath(window.location.pathname)) {
+  // The prefix is inlined (design/frame/frameUrl.ts FRAME_PREFIX) to keep the reader's JS lean (D8).
+  if (window.location.pathname.startsWith('/design/frame/')) {
     return <Suspense fallback={null}><DesignFrame /></Suspense>;
   }
   return (
