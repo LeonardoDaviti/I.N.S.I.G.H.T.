@@ -74,6 +74,18 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'ingestion', label: 'Ingestion', group: 'ingestion', to: '/ingestion', keywords: 'run cycle fetch jobs report' },
 ];
 
+/**
+ * The Design Studio (design docs, specimens, prototypes): reached only from
+ * ⌘K, never from the top bar, with analysis on or off (Design Studio D8).
+ */
+export const DESIGN_STUDIO: Destination = {
+  id: 'design-studio',
+  label: 'Design studio',
+  group: 'design',
+  to: '/design',
+  keywords: 'principles system tokens components specimens prototypes decisions',
+};
+
 /** Switcher ids that belong to analysis (briefings, stories, inbox) or to the
  *  tracks list page, which reading-only drops (Decision 2). */
 const ANALYSIS_DESTINATION_IDS: ReadonlySet<string> = new Set([
@@ -88,10 +100,11 @@ export interface TrackRef {
 /**
  * What ⌘K can jump to. With analysis on, the list above unchanged. Reading-only:
  * the feed and sources entries, then one entry per track (to `/read/folder/:id`,
- * the reader scoped to it) in the order given.
+ * the reader scoped to it) in the order given. Either way the design studio
+ * comes last.
  */
 export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef[] = []): Destination[] {
-  if (analysisEnabled) return [...DESTINATIONS];
+  if (analysisEnabled) return [...DESTINATIONS, DESIGN_STUDIO];
   // Reading-only, ingestion is a tab under sources (reading-finish R3).
   const reading = DESTINATIONS
     .filter((item) => !ANALYSIS_DESTINATION_IDS.has(item.id))
@@ -106,7 +119,7 @@ export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef
   // Tracks go after the feed entries; with none after the feed, at the end.
   const afterFeed = reading.findIndex((item) => item.group !== 'feed');
   const at = afterFeed === -1 ? reading.length : afterFeed;
-  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at)];
+  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at), DESIGN_STUDIO];
 }
 
 /** Case-insensitive, every word must match label, group or keywords. Order is kept. */

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc --noEmit -p . && vite build",
+    "build": "tsc --noEmit -p . && vite build && node scripts/bundle-check.mjs",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test src/lib/*.test.ts && vitest run",
     "lint": "eslint .",

@@ -1,0 +1,49 @@
+import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { COMPONENT_SPECIMENS, DOCS, PROTOTYPES, docAt } from '../library';
+import { railGroups } from '../studio';
+import { Rail, RailPicker } from '../handbook/Rail';
+import DocView from '../handbook/DocView';
+import NotFound from '../handbook/NotFound';
+
+const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
+
+/** The doc at a fixed studio URL. */
+function DocAt({ href }: { href: string }) {
+  const doc = docAt(href);
+  return doc ? <DocView doc={doc} /> : <NotFound what="doc" />;
+}
+
+/** A doc under a section by its slug (`/design/parked/:slug`). */
+function SectionDoc({ section }: { section: 'system' | 'parked' | 'pages' }) {
+  const { slug = '' } = useParams();
+  return <DocAt href={`/design/${section}/${slug}`} />;
+}
+
+/**
+ * Handbook mode, the default (verdict A): the rail on the left, the doc in a
+ * centred column, specimens under page docs at full width.
+ */
+export default function HandbookMode() {
+  return (
+    <div className="mx-auto flex w-full max-w-[90rem] gap-8 px-4 sm:px-6">
+      <aside className="studio-rail sticky top-[calc(var(--topbar-h)+3rem)] hidden h-[calc(100dvh-var(--topbar-h)-3rem)] w-56 shrink-0 overflow-y-auto border-r border-line py-8 pr-3 md:block">
+        <Rail groups={GROUPS} />
+      </aside>
+      <div className="min-w-0 flex-1 pb-24 pt-6 md:pt-10">
+        <div className="mb-8 md:hidden">
+          <RailPicker groups={GROUPS} />
+        </div>
+        <Routes>
+          <Route index element={<DocAt href="/design" />} />
+          <Route path="principles" element={<Navigate to="/design" replace />} />
+          <Route path="decisions" element={<DocAt href="/design/decisions" />} />
+          <Route path="system/:slug" element={<SectionDoc section="system" />} />
+          <Route path="components" element={<DocAt href="/design/components" />} />
+          <Route path="pages/:slug" element={<SectionDoc section="pages" />} />
+          <Route path="parked/:slug" element={<SectionDoc section="parked" />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </div>
+    </div>
+  );
+}
