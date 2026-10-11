@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 import { tabTriggerClass } from './styles';
 
 /**
- * Lowercase underline tabs (design doc §11). Switching never animates: tabs are
+ * Lowercase underline tabs (design docs system/components.md). Switching never animates: tabs are
  * used constantly, so the change is instant (emil: frequency decides motion).
  */
 export const Tabs = TabsPrimitive.Root;

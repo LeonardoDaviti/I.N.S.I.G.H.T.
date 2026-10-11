@@ -55,6 +55,11 @@ const DETAILS: Record<string, PostDetailResponse> = {
   slow: { success: true, post: post({ title: 'Slow load: the skeleton should match this layout', content: WORST_HTML, content_html: WORST_HTML }) },
 };
 
+/** The post detail behind `?data=<name>`, for the studio's frames (Design Studio D4). */
+export function postFixtureDetail(name: string): PostDetailResponse | null {
+  return DETAILS[name] ?? null;
+}
+
 /** The fixture API for `?data=<name>`: reads come from the fixtures, writes are no-ops. */
 export function postFixtureApi(name: string): Partial<Api> | null {
   const detail = DETAILS[name];

@@ -163,7 +163,7 @@ With `INSIGHT_ANALYSIS=on` the top bar has its five words again (`feed / tracks 
 - `/briefing*`, `/stories`, `/inbox`, `/experts`: the analysis pages.
 - On the post page: the summary, the intelligence inspector, notes and chat, and story/related posts.
 
-The UI is monochrome, dark by default, with a theme toggle in the top bar. The design language is `plan/INSIGHT_mark_ix_design.md`.
+The UI is monochrome, dark by default, with a theme toggle in the top bar. The design rules live in `frontend/src/design/docs` (shown at `/design`).
 
 ## Analysis switch (`INSIGHT_ANALYSIS`)
 

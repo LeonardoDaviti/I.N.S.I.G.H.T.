@@ -3,7 +3,7 @@ import Button from '../ui/Button';
 import { StatusIcon } from '../ui/StatusGlyph';
 
 /** A fetch that failed: the clean `ApiError.message` and a Retry button (Mark IX §F.6).
- *  No red: the inverted "×" block and the word "error" carry it (design doc §8). */
+ *  No red: the inverted "×" block and the word "error" carry it (design docs system/status.md). */
 export default function ErrorState({
   error,
   onRetry,

@@ -319,7 +319,7 @@ function renderHighlightedContent(content: string, ranges: ResolvedHighlightRang
       );
     }
 
-    // Monochrome highlight (design doc §12): a neutral tint, and passages the
+    // Monochrome highlight (design docs system/tokens.md): a neutral tint, and passages the
     // summary relied on are also underlined, so the difference is not hue.
     nodes.push(
       <mark

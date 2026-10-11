@@ -7,7 +7,7 @@ import type { Status } from '../ui/styles';
  *  (a run report), warning (backoff, kind unavailable) and error. */
 export type NoticeTone = 'status' | 'completion' | 'warning' | 'error';
 
-/** Monochrome: tone is carried by glyph, border style and inversion (design doc §8). */
+/** Monochrome: tone is carried by glyph, border style and inversion (design docs system/status.md). */
 const TONE: Record<NoticeTone, { box: string; glyph: Status; word: string }> = {
   status: { box: 'border-line', glyph: 'running', word: 'Status' },
   completion: { box: 'border-line-strong', glyph: 'ok', word: 'Done' },

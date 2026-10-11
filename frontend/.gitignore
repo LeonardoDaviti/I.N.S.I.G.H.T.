@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Design Studio screenshots (npm run design:shots), never committed
+.design-shots

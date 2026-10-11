@@ -2,7 +2,7 @@
 // CommonJS on purpose: Tailwind 3 reloads its config in a running dev server by
 // clearing require.cache, which cannot evict an ES module on Node >= 22. As .cjs,
 // edits here hot-reload in `vite` without a restart.
-// Mark IX design language (plan/INSIGHT_mark_ix_design.md): monochrome only.
+// Mark IX design language (src/design/docs/system/tokens.md): monochrome only.
 // Every colour resolves to a CSS variable defined in src/index.css, so one class
 // works in dark (default) and light. The whole stock palette is replaced: grey and
 // chromatic scales alike map onto one theme-aware neutral ramp, which turns every

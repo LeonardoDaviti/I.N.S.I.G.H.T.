@@ -5,7 +5,7 @@ import type { Status } from '../ui/styles';
 
 /**
  * Local building blocks for the analysis pages (Stories, Inbox, Tracks), built on
- * the Mark IX tokens (design doc §3, §11). The foundation has `Row` for
+ * the Mark IX tokens (design docs system/tokens.md, system/components.md). The foundation has `Row` for
  * navigating rows; these pages also need a *selectable* row (master/detail), a
  * quiet section heading and a key/value list, so they live here.
  */

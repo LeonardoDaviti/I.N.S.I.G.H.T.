@@ -149,3 +149,20 @@ S1 comes first. S2 and S5 can run in parallel. S3 needs S2, S4 needs S3, and S6 
 - `/tracks/:id` opens the reader scoped to that track.
 - Removing a page's doc, or adding a route without one, fails `npm test`.
 7. **S7 — Issue 0003:** source and track names link into Sources (`?source=` opens the sheet, `?track=` scrolls to and highlights the group; unknown id shows a quiet note). Runs with S5.
+
+## Prototype verdict (owner, 2026-10-11) — supersedes D3's layout and the slice list above
+
+Prototype: branch `prototype/design-studio` (`218e7b6`), `/prototype/design-studio?variant=A|B|C`. The owner kept **all three** as modes of one studio, switched by a toggle (`/design?mode=handbook|wall|bench`, keys ← → like the prototype bar but as a real, styled segmented control):
+
+- **Handbook (A)** — the default. Left rail (Studio: principles, system, components, decisions · Pages · Prototypes · Parked), centred doc column rendered from the markdown, one specimen frame under the doc with state / width / theme controls.
+- **Wall (B)** — **the whole website as one wall, not states per page.** Every page in use (reader all / track / source, post, sources, connections, ingestion, ⌘K open, a dialog/sheet open) at its normal state, laid out in navigation order as a site map, with the links between them drawn and labelled by the interaction that moves you (e.g. "click a title" reader → post, "source name" post → sources?source=). Purpose: check at a glance that every page obeys the principles (P-chips highlight the pages a principle governs) and that the journey between pages is smooth. A **walk** control replays a scripted journey (feed → post → back → source name → Sources sheet → track → reader) inside one large frame at real speed, so page transitions and motion can be judged (respects reduced motion; step / play / pause).
+- **Bench (C)** — **the checkout for every new design feature.** Two large frames side by side: current page vs a prototype (or state vs state), shared state / width / theme, a drawer with the prototype's hypothesis, the principles it serves, and its status. Accept / reject are not browser writes (docs are files): they show the exact instruction to give ("accept prototype <id>") and the lifecycle in D6 runs from that.
+
+Frames (D4) use fixtures by default; Wall and Bench add a `data=live` toggle that loads the preview API read-only (frames are `pointer-events: none` except in walk mode).
+
+### Slices (replace S2–S6)
+- **S2 — Studio shell + Handbook:** `/design` lazy route, mode toggle, rail, markdown docs, live system specimens, component specimens, ⌘K "Design studio", bundle check (reader initial JS +≤1%).
+- **S3 — Frames & fixtures:** chromeless `/design/frame/*`, per-frame fixture `fetch` transport, state matrix from each doc's `meta.states`, unmocked-request bar, width/theme; coverage test extended to specimens. Handbook specimens use it.
+- **S4 — Wall:** site-map layout from a small `siteMap.ts` (pages + labelled edges), P-chip highlighting, live/fixture toggle, walk replay.
+- **S5b — Bench + prototypes:** glob registry of `src/design/prototypes/*/`, compare view, drawer, open-prototype list with age; seed prototype `2026-10-10-title-wrap`.
+- **S6 — `design:shots`** (all three modes + every page × state).

@@ -30,7 +30,7 @@ import { TRACKS_FIXTURE_NAMES, tracksFixtureApi } from '../pages/ExpertsPage.fix
 import { folderReadPath } from '../lib/feedContext';
 
 /**
- * Tracks & experts (design doc §12): the folders and tracks as smol-style rows
+ * Tracks & experts (design docs parked/experts-tracks.md): the folders and tracks as smol-style rows
  * (kind column, bold name, counts, unread), and the experts that write briefings
  * on them, each a disclosure row with Run / Regenerate / Delete. Deleting asks
  * first (apple: confirm only what is destructive and irreversible).

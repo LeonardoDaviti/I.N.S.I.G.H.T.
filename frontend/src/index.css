@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /*
- * Mark IX design language — plan/INSIGHT_mark_ix_design.md.
+ * Mark IX design language — src/design/docs/system.
  * Monochrome only. Dark is the default; light is the same system inverted.
  * Tokens are RGB channel triplets so `rgb(var(--x) / a)` and Tailwind alpha
  * modifiers work. Legacy Mark VIII variables are aliases at the bottom.
@@ -417,7 +417,7 @@
   }
 }
 
-/* ---- Motion: one easing, short durations (design doc §6) --------------- */
+/* ---- Motion: one easing, short durations (design docs system/motion.md) --------------- */
 
 @keyframes fade-in {
   from { opacity: 0; }

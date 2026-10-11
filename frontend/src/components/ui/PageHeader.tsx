@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 
 /**
- * Page anatomy (design doc §10): title, an optional meta line in the secondary
+ * Page anatomy (design docs system/space-radii-layout.md): title, an optional meta line in the secondary
  * tone ("90 sources · as of just now"), actions on the right (one primary).
  */
 export default function PageHeader({

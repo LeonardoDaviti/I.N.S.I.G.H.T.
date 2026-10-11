@@ -15,7 +15,7 @@ import type { Status } from '../components/ui/styles';
 import { STORY_FIXTURE_NAMES, storiesFixtureApi } from './StoriesExplorerPage.fixtures';
 
 /**
- * Stories (design doc §12): a master/detail view of the story graph. The list is
+ * Stories (design docs parked/stories.md): a master/detail view of the story graph. The list is
  * smol-style rows (date column, bold title, one meta line); the detail is a
  * reading column with the summary, a key/value list, the timeline and the posts.
  * Status is a glyph plus a word, never a hue.

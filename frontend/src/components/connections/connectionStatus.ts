@@ -17,7 +17,7 @@ export interface ProviderStatus {
 }
 
 /**
- * One provider's state as a glyph and a word (monochrome, design doc §8):
+ * One provider's state as a glyph and a word (monochrome, design docs system/status.md):
  * working (tested ok), failing (last test failed, or a saved value cannot be read),
  * set (all fields set, not tested yet), not set, not needed.
  */
