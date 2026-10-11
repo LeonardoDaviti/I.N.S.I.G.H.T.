@@ -142,10 +142,6 @@ class InsightApiBridge:
     
     # ============= SOURCES MANAGEMENT =============
 
-    def get_all_sources(self) -> List[Dict[str, Any]]:
-        """Get all sources from database (flat list)."""
-        return self.sources_service.get_all_sources()
-    
     def get_sources_config(self) -> Dict[str, Any]:
         """
         Get sources in frontend-compatible format.
@@ -197,12 +193,6 @@ class InsightApiBridge:
             return self.source_config_sync_service.sync_db_to_json()
         return {"success": False, "error": f"Unsupported sync direction: {direction}"}
 
-    def update_source(self, source_id: str, enabled: bool) -> Dict[str, Any]:
-        """Enable/disable a single source by UUID."""
-        result = self.sources_service.update_source_status(source_id, enabled)
-        self._export_sources_json()
-        return result
-    
     def update_sources_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update sources from frontend config format.
@@ -271,12 +261,6 @@ class InsightApiBridge:
         self._export_sources_json()
         return result
     
-    def add_source(self, platform: str, handle: str) -> Dict[str, Any]:
-        """Add new source to database."""
-        result = self.sources_service.add_source(platform, handle)
-        self._export_sources_json()
-        return result
-    
     def delete_source(self, source_id: str) -> bool:
         """Remove source from database."""
         deleted = self.sources_service.delete_source(source_id)
@@ -327,16 +311,6 @@ class InsightApiBridge:
             return {"success": True, "folders": folders, "total": len(folders)}
         except Exception as e:
             return {"success": False, "error": str(e), "folders": []}
-
-    def get_folder(self, folder_id: str) -> Dict[str, Any]:
-        """Get a single folder with its attached sources."""
-        try:
-            folder = self.folders_service.get_folder(folder_id)
-            if folder is None:
-                return {"success": False, "error": f"Folder {folder_id} not found", "folder": None}
-            return {"success": True, "folder": folder}
-        except Exception as e:
-            return {"success": False, "error": str(e), "folder": None}
 
     def create_folder(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Create a folder from a config dict."""

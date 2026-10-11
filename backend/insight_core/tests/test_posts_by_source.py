@@ -83,5 +83,5 @@ if __name__ == "__main__":
         logger.info("=" * 60)
     else:
         logger.error("\n❌ Cannot run tests without a source in the database")
-        logger.info("Please add sources using the frontend or seed_sources.py")
+        logger.info("Please add sources using the frontend")
 

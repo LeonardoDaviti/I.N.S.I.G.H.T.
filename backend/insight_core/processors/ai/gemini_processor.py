@@ -361,16 +361,6 @@ POSTS ({len(posts)} total):
             self.logger.warning("Falling back to deterministic daily briefing: %s", exc)
             return self._fallback_daily_briefing(posts)
 
-    async def daily_briefing_with_tokens(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Compatibility wrapper for older test paths."""
-        briefing = await self.daily_briefing(posts)
-        return {
-            "briefing": briefing,
-            "token_usage": {
-                "estimated_tokens": self.count_tokens(briefing),
-            },
-        }
-
     async def topic_briefing_with_numeric_ids(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Group posts into topics and cite them by numeric IDs."""
         numbered_posts = self._format_posts(posts, truncate_to=self.briefing_context_chars, numeric_ids=True)
@@ -419,10 +409,6 @@ POSTS:
         except Exception as exc:
             self.logger.warning("Falling back to deterministic topic briefing: %s", exc)
             return self._fallback_topic_briefing(posts)
-
-    async def enhanced_daily_briefing_with_topics(self, posts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Compatibility alias for older scripts."""
-        return await self.topic_briefing_with_numeric_ids(posts)
 
     async def expert_topic_briefing(
         self,
@@ -1587,41 +1573,6 @@ POSTS:
             "tracks": tracks,
         }
 
-    def _vertical_track_signature(self, post: Dict[str, Any]) -> str:
-        story_title = str(post.get("vertical_primary_story_title") or "").strip()
-        if story_title:
-            return story_title
-
-        track_hint = str(post.get("vertical_track_hint") or "").strip()
-        if track_hint:
-            return track_hint
-
-        entity_names = self._vertical_entity_names(post)
-        if entity_names:
-            return " / ".join(entity_names[:2]).strip()
-
-        text = self._normalize_vertical_text(post.get("title") or "") or self._normalize_vertical_text(post.get("content") or "")
-        if not text:
-            return "general"
-
-        tokens = [
-            token
-            for token in re.findall(r"[a-z0-9][a-z0-9\-']+", text.lower())
-            if token not in {"and", "or", "the", "a", "an", "to", "of", "for", "in", "on", "with", "from"}
-        ]
-        if not tokens:
-            return "general"
-
-        if tokens[0] in VERTICAL_GENERIC_LEADS and len(tokens) > 1:
-            signature_tokens = tokens[1:3]
-        elif len(tokens) > 1 and (tokens[1] in VERTICAL_GENERIC_SUFFIXES or re.fullmatch(r"v?\d+(?:\.\d+)?", tokens[1])):
-            signature_tokens = tokens[:1]
-        else:
-            signature_tokens = tokens[:2]
-
-        signature = " ".join(signature_tokens).strip()
-        return signature or tokens[0]
-
     def _vertical_track_title(
         self,
         signature: str,
@@ -1826,12 +1777,6 @@ POSTS:
             "post_ids": list(cluster.get("post_ids") or []),
         }
 
-    def _vertical_date_span(self, posts: List[Dict[str, Any]]) -> int:
-        dates = [self._vertical_post_date(post) for post in posts if self._vertical_post_date(post)]
-        if len(dates) < 2:
-            return 0
-        return self._date_distance_days(dates[0], dates[-1])
-
     def _vertical_post_date(self, post: Dict[str, Any]) -> str:
         value = post.get("published_at") or post.get("date") or post.get("fetched_at")
         if isinstance(value, datetime):
@@ -2008,14 +1953,3 @@ POSTS:
         ]
         return ordered[:4]
 
-    def _date_distance_days(self, start: str, end: str) -> int:
-        try:
-            start_dt = datetime.fromisoformat(start[:10])
-            end_dt = datetime.fromisoformat(end[:10])
-        except ValueError:
-            return 0
-        return abs((end_dt - start_dt).days)
-
-    def _normalize_vertical_text(self, value: str) -> str:
-        text = re.sub(r"\s+", " ", str(value or "")).strip()
-        return text

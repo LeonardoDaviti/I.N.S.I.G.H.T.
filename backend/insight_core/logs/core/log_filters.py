@@ -1,11 +1,5 @@
 import logging
 
-class ConnectorFilter(logging.Filter):
-    """Filter to only allow log messages from connector modules."""
-    
-    def filter(self, record):
-        return 'connector' in record.name.lower() or 'connector' in record.module.lower()
-    
 class OperationFilter(logging.Filter):
     """Filter for operation-specific logs."""
 
@@ -24,19 +18,6 @@ class ErrorOnlyFilter(logging.Filter):
     def filter(self, record):
         return record.levelno >= logging.ERROR
     
-class DebugModeFilter(logging.Filter):
-    """Filter that changes behavior based on debug mode."""
-    
-    def __init__(self, debug_mode=False):
-        super().__init__()
-        self.debug_mode = debug_mode
-    
-    def filter(self, record):
-        if self.debug_mode:
-            return True  # Allow all messages in debug mode
-        else:
-            return record.levelno >= logging.INFO 
-        
 class PlatformFilter(logging.Filter):
     """Filter for specific platform logs (telegram, rss, youtube, reddit)."""
     

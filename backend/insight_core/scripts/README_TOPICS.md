@@ -55,7 +55,6 @@ Database access layer with methods:
 Service layer that wraps repository methods with connection management and transactions.
 
 **Additional Methods:**
-- `save_topics_with_connections()` - Atomic operation for topics + connections
 - `save_topic_with_posts()` - Atomic operation for topic + post associations
 
 ### 3. Topic Generator (`generate_topics.py`)

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # Run the backend test suite the only way it is meaningful: inside the image.
 #
-# Running `python -m unittest` on the host imports the vendored stubs in backend/
-# (fastapi/, pydantic/, psycopg/, dotenv), which the Dockerfile deletes at build time
-# in favour of the real packages. The host also has no `psql` binary, which several
-# DB-backed tests shell out to. Both produce failures that do not exist in the
-# deployed image, so host results are not a signal.
+# The image holds the real packages from requirements.txt and reaches the database on the
+# compose network. The host has neither, so host results are not a signal.
 #
 # Usage:
 #   ./run-tests.sh                                   # whole suite
@@ -19,9 +16,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Build every run. The image bakes the source in (no volume is mounted, because mounting
-# backend/ over /app would restore the vendored stubs the Dockerfile deletes), so a stale
-# image silently tests code that is no longer on disk - a green run that proves nothing.
+# Build every run. The image bakes the source in (no volume is mounted), so a stale image
+# silently tests code that is no longer on disk - a green run that proves nothing.
 # Layer caching makes a no-change rebuild cost about a second. SKIP_BUILD=1 opts out.
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   echo "==> building insight-backend:latest"

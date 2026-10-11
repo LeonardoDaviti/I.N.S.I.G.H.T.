@@ -162,12 +162,6 @@ class AnalystActionsService:
                 )
         return {"success": True, "actions": actions, "total": len(actions)}
 
-    def get_target_actions(self, target_type: str, target_id: str) -> Dict[str, Any]:
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                actions = self.repo.get_actions_for_target(cur, target_type, target_id)
-        return {"success": True, "actions": actions, "total": len(actions)}
-
     def _resolve_source_context(self, item: Dict[str, Any], preview: Dict[str, Any]) -> Dict[str, Any] | None:
         target_type = item.get("target_type")
         if target_type == "post":

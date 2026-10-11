@@ -208,39 +208,6 @@ class TopicsService:
     # COMBINED OPERATIONS
     # ===============================
 
-    def save_topics_with_connections(
-        self,
-        target_date: date,
-        topics_data: List[Dict[str, Any]],
-        connections: List[Tuple[str, str, float]]
-    ) -> List[str]:
-        """
-        Save multiple topics and their connections in a single transaction.
-        
-        Args:
-            target_date: Date for the topics
-            topics_data: List of topic dicts (date, title, embedding, is_outlier, summary)
-            connections: List of connection tuples (source_id, target_id, score)
-            
-        Returns:
-            List of topic UUIDs
-        """
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                # Insert topics
-                topic_ids = self.repo.insert_topics_batch(cur, topics_data)
-                
-                # Insert connections
-                if connections:
-                    self.repo.insert_connections_batch(cur, connections)
-                
-                conn.commit()
-                self.logger.info(
-                    f"Saved {len(topic_ids)} topics and {len(connections)} connections "
-                    f"for date {target_date}"
-                )
-                return topic_ids
-
     def save_topic_with_posts(
         self,
         target_date: date,

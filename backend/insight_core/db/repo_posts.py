@@ -37,18 +37,11 @@ def _env_commit_batch() -> int:
 # this is a commit interval and not a savepoint-stack depth.
 SAVE_COMMIT_BATCH = _env_commit_batch()
 
-# Detected once rather than by catching AttributeError per call: backend/psycopg is a
-# psql-shelling dev shim with no pq submodule (the image deletes it). Swallowing
-# AttributeError at the call site would also swallow a genuine psycopg API move and silently
-# disable the poisoned-transaction guard.
-_PQ_INERROR = getattr(getattr(psycopg, "pq", None), "TransactionStatus", None)
-_PQ_INERROR = getattr(_PQ_INERROR, "INERROR", None)
+_PQ_INERROR = psycopg.pq.TransactionStatus.INERROR
 
 
 def _transaction_is_poisoned(conn) -> bool:
     """True when the connection sits in aborted-transaction state and accepts nothing."""
-    if _PQ_INERROR is None:
-        return False
     return conn.info.transaction_status == _PQ_INERROR
 
 
@@ -1093,27 +1086,6 @@ class PostsRepository:
 
         ordered = [posts_by_id[post_id] for post_id in post_ids if post_id in posts_by_id]
         return ordered
-
-    def get_post_count(self, source_id) -> int:
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM posts WHERE source_id = %s", (source_id,))
-                row = cur.fetchone()
-                return row[0] if row else 0
-
-    def get_post_count_by_date(self, date) -> int:
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM posts
-                    WHERE DATE(COALESCE(published_at, fetched_at)) = %s
-                    """,
-                    (date,),
-                )
-                row = cur.fetchone()
-                return row[0] if row else 0
 
     def get_source_post_stats(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
         """Return aggregate storage stats for a single source."""

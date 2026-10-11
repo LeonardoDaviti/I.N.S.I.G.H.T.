@@ -30,13 +30,6 @@ class EntityMemoryService:
         self.sources_service = SourcesService(db_url)
         self.logger = get_component_logger("entity_memory_service")
 
-    def build_post_memory(self, post: Dict[str, Any]) -> Dict[str, Any]:
-        """Build deterministic post-memory fields and mention candidates."""
-        return {
-            "post_fields": build_post_memory_fields(post),
-            "mentions": extract_entity_mentions(post),
-        }
-
     def get_post_memory_debug(self, post_id: str) -> Dict[str, Any]:
         """Return the current entity-memory debug view for a single post."""
         with psycopg.connect(self.db_url) as conn:

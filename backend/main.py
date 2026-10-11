@@ -425,11 +425,6 @@ async def root():
         "status": "operational"
     }
 
-@app.get("/hello")
-async def hello():
-    return {"message": "Hello World"}
-
-
 @app.get("/api/config")
 async def get_config():
     """What this backend runs (reading-finish R3). The frontend reads it at runtime so the
@@ -1297,17 +1292,6 @@ async def create_folder(config: dict):
         return api_bridge.create_folder(config)
     except Exception as e:
         logger.exception("Failed to create folder")
-        return {"success": False, "error": str(e), "folder": None}
-
-
-@app.get("/api/folders/{folder_id}")
-async def get_folder(folder_id: str):
-    """Get a single folder with its attached sources."""
-    try:
-        logger.info(f"📁 Fetching folder: {folder_id}")
-        return api_bridge.get_folder(folder_id)
-    except Exception as e:
-        logger.exception("Failed to get folder")
         return {"success": False, "error": str(e), "folder": None}
 
 

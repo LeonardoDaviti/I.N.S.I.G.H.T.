@@ -59,45 +59,6 @@ class EvidenceFoundationService:
 
         return result
 
-    def rebuild_source_evidence(
-        self,
-        source_id: str,
-        *,
-        job_run_id: str | None = None,
-        limit: int | None = None,
-    ) -> Dict[str, Any]:
-        """Re-run evidence enrichment for all posts belonging to one source."""
-        posts = self.posts_service.get_posts_by_source(source_id)
-        posts = list(reversed(posts))
-        if limit is not None:
-            posts = posts[: max(0, int(limit))]
-
-        processed = 0
-        artifacts = 0
-        relations = 0
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                for post in posts:
-                    result = self.process_post(
-                        cur,
-                        post["id"],
-                        post,
-                        job_run_id=job_run_id,
-                        allow_relations=True,
-                    )
-                    processed += 1
-                    artifacts += int(result.get("artifacts_linked", 0))
-                    relations += int(result.get("relations_created", 0))
-            conn.commit()
-
-        return {
-            "success": True,
-            "source_id": source_id,
-            "posts_processed": processed,
-            "artifacts_linked": artifacts,
-            "relations_created": relations,
-        }
-
     def rebuild_date_evidence(
         self,
         target_date: date,

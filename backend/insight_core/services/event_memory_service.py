@@ -24,10 +24,6 @@ class EventMemoryService:
         self.posts_service = PostsService(db_url)
         self.logger = get_component_logger("event_memory_service")
 
-    def build_post_events(self, post: Dict[str, Any]) -> Dict[str, Any]:
-        """Build deterministic event-memory fields without touching the database."""
-        return build_post_event_fields(post)
-
     def get_post_event_debug(self, post_id: str) -> Dict[str, Any]:
         """Return the current event-memory debug view for a single post."""
         with psycopg.connect(self.db_url) as conn:

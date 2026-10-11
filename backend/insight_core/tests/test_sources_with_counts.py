@@ -75,5 +75,5 @@ if __name__ == "__main__":
     
     if not sources:
         logger.info("\n⚠️  Note: No sources in database")
-        logger.info("Add sources using the frontend or seed_sources.py")
+        logger.info("Add sources using the frontend")
 
