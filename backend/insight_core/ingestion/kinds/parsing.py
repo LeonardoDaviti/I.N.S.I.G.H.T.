@@ -196,8 +196,9 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
         channel = next((child for child in root if local_name(child.tag) == "channel"), None)
         items = [child for child in (channel if channel is not None else []) if local_name(child.tag) == "item"]
         for item in items:
+            # <content:encoded> is the full article, <description> often only a summary.
             content_html = normalize_feed_urls(
-                child_inner_xml(item, "description") or child_inner_xml(item, "encoded")
+                child_inner_xml(item, "encoded") or child_inner_xml(item, "description")
             )
             url = normalize_feed_urls(child_text(item, "link") or source_url)
             posts.append({

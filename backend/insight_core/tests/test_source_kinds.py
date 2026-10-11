@@ -240,6 +240,34 @@ class ReadableTitleTests(unittest.TestCase):
                          "My rustfmt toml")
 
 
+class FullTextTests(unittest.TestCase):
+    """An RSS item can carry a summary (<description>) and the full article (<content:encoded>)."""
+
+    FEED = ('<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>'
+            "<item><title>Both</title><link>https://a.example.com/p/both</link>"
+            "<description>AI! Sluts! Viscerally terrifying self-knowledge!</description>"
+            "<content:encoded><![CDATA[<p>The whole post.</p><p>Every paragraph of it.</p>]]></content:encoded></item>"
+            "<item><title>Summary only</title><link>https://a.example.com/p/summary</link>"
+            "<description>Only a summary here.</description></item>"
+            "<item><title>Empty full text</title><link>https://a.example.com/p/empty</link>"
+            "<description>The real body is in the description.</description>"
+            "<content:encoded></content:encoded></item>"
+            "</channel></rss>")
+
+    def posts(self):
+        return {post["title"]: post for post in parsing.parse_feed_posts(self.FEED, "https://a.example.com/feed")}
+
+    def test_the_full_article_wins_over_the_summary(self):
+        post = self.posts()["Both"]
+        self.assertEqual(post["content_html"], "<p>The whole post.</p><p>Every paragraph of it.</p>")
+        self.assertIn("Every paragraph of it.", post["content"])
+
+    def test_a_feed_without_full_text_keeps_its_summary(self):
+        posts = self.posts()
+        self.assertEqual(posts["Summary only"]["content"], "Only a summary here.")
+        self.assertEqual(posts["Empty full text"]["content"], "The real body is in the description.")
+
+
 class RedditKindTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_fetch_reads_the_new_rss_endpoint_not_json(self):
         atom = """<?xml version="1.0" encoding="UTF-8"?>
