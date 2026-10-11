@@ -1,6 +1,9 @@
-# 0003 — Minimal codebase: keep what reading uses, retire the rest
+# 0005 — Minimal codebase: keep what reading uses, retire the rest
 
 Status: **planned** · Label: `ready-for-agent` · Drafted 2026-10-10 from the whole-codebase audit (owner request).
+Renumbered from 0003 on 2026-10-11 (0003 is the source-name issue folded into the Design Studio spec as S7).
+
+**Owner decision, 2026-10-11:** retire analysis **completely** and remove it; better analysis comes back later as new work. No exceptions (milestones and the track briefing go too). Slices 4–6 are confirmed; nothing is built until the owner says go.
 
 ## Problem Statement
 
@@ -263,9 +266,7 @@ Reading tables stay:
 
 ## Further Notes
 
-- **Assumptions to confirm before slice 4.** Slices 1–3 are safe either way.
-  - The owner chooses **retire** over **pause** for analysis. The audit recommended retire, and the owner hasn't answered yet. If the answer is pause, slices 4–6 drop out, and slices 7–11 apply only to the reading half.
-  - Milestones are retired with the rest under the one rule above. Issue 0001 rebuilds them.
+- **Decided (owner, 2026-10-11): retire, not pause.** Analysis is removed completely, including milestones; issue 0001 rebuilds milestones and entity pages later on the reading core. The trade-offs (what retiring gains and what it costs) are written up in the blog post `/blog/junior-to-senior`, section "Retiring analysis: the good and the bad".
 - **Why retire rather than keep dormant.** Dormant code still costs:
   - build time and image size;
   - test time;
