@@ -53,6 +53,15 @@ describe('Bench', () => {
     expect(within(pane('prototype')).getByTitle(/./).style.width).toBe('390px');
   });
 
+  it('switches both panes to live data, read-only, like the Wall', async () => {
+    const user = userEvent.setup();
+    renderBench('&subject=reader');
+    await user.click(choose('Data', 'live'));
+    expect(where()).toBe('/design?mode=bench&subject=reader&data=live');
+    expect(frameSrc('left')).toBe('/design/frame/reader/normal?theme=dark&data=live');
+    expect(frameSrc('right')).toBe('/design/frame/reader/empty?theme=dark&data=live');
+  });
+
   it('groups the picker: open prototypes first, then pages', () => {
     renderBench();
     const groups = within(screen.getByRole('combobox', { name: 'On the bench' })).getAllByRole('group');

@@ -11,7 +11,7 @@ import Segmented from '../Segmented';
 import Frame from '../frame/Frame';
 import { frameScenario } from '../fixtures/scenarios';
 import { DOCS, PRINCIPLES, PROTOTYPES, prototypeById } from '../library';
-import { benchSubjects, parseBench, type BenchPage, type BenchView } from '../bench';
+import { BENCH_DATA, benchSubjects, parseBench, type BenchPage, type BenchView } from '../bench';
 import { acceptInstruction, isOpen, prototypeAge, rejectInstruction, type Prototype } from '../prototypes';
 import { docSlug } from '../coverage';
 import { docTitle, pageDocsInOrder } from '../studio';
@@ -20,13 +20,11 @@ const PAGES: BenchPage[] = pageDocsInOrder(DOCS).map((doc) => ({ name: docSlug(d
 const CATALOG = { prototypes: PROTOTYPES, pages: PAGES, widthOf: (page: string, state: string) => frameScenario(page, state)?.width };
 const SUBJECTS = benchSubjects(PROTOTYPES, PAGES);
 
-/** A desktop window, a phone, the narrowest phone. */
-
 /**
  * Bench mode (verdict C), the checkout for every new design feature: two
  * large frames side by side on the same fixtures, the current page against a
  * prototype (or one state of a page against another), with a shared state,
- * width and theme. The drawer holds what the comparison is for and how it
+ * width, theme and data (fixtures, or the real API read-only). The drawer holds what the comparison is for and how it
  * ends; accept and reject are instructions to the agent, never browser
  * writes, because the docs are files (D6). On phones the panes stack.
  */
@@ -72,6 +70,7 @@ export default function BenchMode() {
         ) : null}
         <div className="flex flex-wrap items-center gap-3 sm:ml-auto">
           <Segmented size="sm" label="Width" value={String(view.width)} options={widths} onChange={(value) => set('width', value, widths[0])} />
+          <Segmented size="sm" label="Data" value={view.data} options={BENCH_DATA} onChange={(value) => set('data', value, BENCH_DATA[0])} />
           <Segmented size="sm" label="Theme" value={view.theme} options={['dark', 'light']} onChange={(value) => set('theme', value, 'dark')} />
           <Button
             size="sm"
@@ -89,10 +88,10 @@ export default function BenchMode() {
         {prototype ? (
           <>
             <Pane name="current" heading="current" detail={`${view.page} / ${view.left}`} view={view}>
-              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} />
+              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} data={view.data} />
             </Pane>
             <Pane name="prototype" heading={`prototype · ${prototype.slug}`} detail={`${view.page} / ${view.left}`} view={view}>
-              <Frame page={view.page} prototype={prototype.id} state={view.left} width={view.width} theme={view.theme} />
+              <Frame page={view.page} prototype={prototype.id} state={view.left} width={view.width} theme={view.theme} data={view.data} />
             </Pane>
           </>
         ) : (
@@ -100,12 +99,12 @@ export default function BenchMode() {
             <Pane name="left" heading={view.page} view={view} control={
               <Segmented size="sm" label="Left state" value={view.left} options={view.states} onChange={(value) => set('left', value, view.states[0])} />
             }>
-              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} />
+              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} data={view.data} />
             </Pane>
             <Pane name="right" heading={view.page} view={view} control={
               <Segmented size="sm" label="Right state" value={view.right} options={view.states} onChange={(value) => set('right', value, view.states[1] ?? view.states[0])} />
             }>
-              <Frame page={view.page} state={view.right} width={view.width} theme={view.theme} />
+              <Frame page={view.page} state={view.right} width={view.width} theme={view.theme} data={view.data} />
             </Pane>
           </>
         )}

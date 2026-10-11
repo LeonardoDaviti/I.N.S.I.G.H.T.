@@ -30,7 +30,7 @@ describe('parseBench', () => {
   it('opens on the oldest open prototype: current page against it, on its first state, 1400, dark', () => {
     expect(parse('mode=bench')).toEqual({
       subject: '2026-10-10-title-wrap', prototype: '2026-10-10-title-wrap', page: 'post', states: ['long-title', 'article'],
-      left: 'long-title', right: 'long-title', widths: [1400, 390, 320], width: 1400, theme: 'dark', drawer: true,
+      left: 'long-title', right: 'long-title', widths: [1400, 390, 320], width: 1400, theme: 'dark', data: 'fixtures', drawer: true,
     });
   });
 
@@ -40,8 +40,8 @@ describe('parseBench', () => {
 
   it('compares two states of a page, the second state on the right by default', () => {
     expect(parse('subject=reader')).toMatchObject({ prototype: undefined, page: 'reader', left: 'normal', right: 'empty' });
-    expect(parse('subject=reader&left=loading&right=normal&width=390&theme=light&doc=hide')).toMatchObject({
-      left: 'loading', right: 'normal', width: 390, theme: 'light', drawer: false,
+    expect(parse('subject=reader&left=loading&right=normal&width=390&theme=light&data=live&doc=hide')).toMatchObject({
+      left: 'loading', right: 'normal', width: 390, theme: 'light', data: 'live', drawer: false,
     });
   });
 
@@ -51,8 +51,8 @@ describe('parseBench', () => {
   });
 
   it('falls back on anything unknown: subject, state, width, theme', () => {
-    expect(parse('subject=nope&state=huge&width=7&theme=sepia')).toMatchObject({
-      subject: '2026-10-10-title-wrap', left: 'long-title', width: 1400, theme: 'dark',
+    expect(parse('subject=nope&state=huge&width=7&theme=sepia&data=prod')).toMatchObject({
+      subject: '2026-10-10-title-wrap', left: 'long-title', width: 1400, theme: 'dark', data: 'fixtures',
     });
   });
 

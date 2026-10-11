@@ -6,10 +6,14 @@
  *   &state=<s>              a prototype's state, shared by both panes
  *   &left=<s>&right=<s>     a page's two states, state against state
  *   &width=1400|390|320     &theme=dark|light   shared by both panes
+ *   &data=live              both panes on the real API, read-only (fixtures by default)
  *   &doc=hide               the drawer folded away
  */
 import { SPECIMEN_THEMES, SPECIMEN_WIDTHS, type SpecimenTheme } from './specimen';
 import { isOpen, type Prototype } from './prototypes';
+import type { FrameData } from './frame/transport';
+
+export const BENCH_DATA: readonly FrameData[] = ['fixtures', 'live'];
 
 /** Bench opened on a subject: a prototype id or a page doc's name. */
 export function benchHref(subject: string): string {
@@ -61,6 +65,7 @@ export interface BenchView {
   widths: number[];
   width: number;
   theme: SpecimenTheme;
+  data: FrameData;
   /** The drawer with the hypothesis, principles, status and decision. */
   drawer: boolean;
 }
@@ -97,6 +102,7 @@ export function parseBench(params: URLSearchParams, { prototypes, pages, widthOf
     widths,
     width: widths.find((width) => String(width) === params.get('width')) ?? widths[0],
     theme: SPECIMEN_THEMES.find((theme) => theme === params.get('theme')) ?? SPECIMEN_THEMES[0],
+    data: BENCH_DATA.find((data) => data === params.get('data')) ?? BENCH_DATA[0],
     drawer: params.get('doc') !== 'hide',
   };
 }
