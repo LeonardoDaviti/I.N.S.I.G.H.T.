@@ -223,7 +223,7 @@ python backend/insight_core/db/migrate.py
 3. Start the backend:
 
 ```bash
-python backend/start_api.py
+(cd backend && uvicorn main:app --reload --port 8000 --env-file ../.env)
 ```
 
 4. Start the ingestion scheduler in another shell:

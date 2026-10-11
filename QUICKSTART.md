@@ -23,7 +23,7 @@ PostgreSQL must be running and `DATABASE_URL` in `.env` must point at it.
 # Terminal 1: API on :8000
 pip install -r backend/requirements.txt
 python backend/insight_core/db/migrate.py
-python backend/start_api.py
+(cd backend && uvicorn main:app --reload --port 8000 --env-file ../.env)
 
 # Terminal 2: UI on :5173 (proxies /api to :8000)
 cd frontend && npm install && npm run dev

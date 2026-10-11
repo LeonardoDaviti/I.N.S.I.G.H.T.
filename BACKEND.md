@@ -221,20 +221,14 @@ Each source can have optional settings stored in the `settings` JSONB field:
 ```json
 {
   "display_name": "Friendly Name",       // null = use handle_or_url
-  "fetch_delay_seconds": 5,              // Delay after fetching this source
+  "fetch_delay_seconds": 5,              // Minimum seconds between requests to this source's host
   "priority": 1,                         // Lower = fetch first (default: 999)
-  "max_posts_per_fetch": 50             // Stored but not enforced (future use)
+  "max_posts_per_fetch": 50              // Upper bound for one live fetch
 }
 ```
 
-**Default Settings (hardcoded):**
-```python
-{
-    "fetch_delay_seconds": 1,
-    "priority": 999,
-    "max_posts_per_fetch": 50
-}
-```
+**Defaults** depend on the platform (`SourcesRepository._platform_defaults` in `db/repo_sources.py`).
+For `rss`: `fetch_delay_seconds` 1, `priority` 999, `max_posts_per_fetch` 20.
 
 ### How Settings Work
 
@@ -303,39 +297,18 @@ Body: {"display_name": "New Name", "priority": 5}
 GET /api/sources/with-settings
 ```
 
-### Settings in Connectors
+### Settings in ingestion
 
-Connectors receive settings and apply delays:
+The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged settings:
 
-```python
-# Connector receives settings
-await connector.fetch_posts(
-    source="https://example.com/feed",
-    limit=100,
-    settings={"fetch_delay_seconds": 5, "priority": 1}
-)
+- Due sources are fetched in `priority` order, then interleaved by host.
+- `fetch_delay_seconds` is passed to `FetchGates.slot` and sets the minimum gap between
+  requests to that source's host. The host floors in `ingestion/gates.py` still apply.
+- `max_posts_per_fetch` feeds the cadence rules in `ingestion/schedule.py`, which decide each
+  fetch's post limit.
 
-# Delay is applied AFTER fetching
-if settings and "fetch_delay_seconds" in settings:
-    delay = settings["fetch_delay_seconds"]
-    if delay > 0:
-        await asyncio.sleep(delay)
-```
-
-### Priority-Based Fetching
-
-Sources are fetched in priority order (lower number = higher priority):
-
-```python
-# Engine sorts sources by priority before fetching
-enabled_sources = service.get_all_sources_with_settings()
-enabled_sources = [s for s in enabled_sources if s.get("enabled")]
-enabled_sources.sort(key=lambda s: s.get("settings", {}).get("priority", 999))
-
-for source in enabled_sources:
-    # Fetch in priority order
-    await connector.fetch_posts(..., settings=source["settings"])
-```
+How sources are fetched at all is described in
+`backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 
 ---
 
@@ -364,149 +337,35 @@ SELECT COUNT(*) FROM posts WHERE source_id = %s
 
 ---
 
-## Testing Your Feature (REQUIRED!)
+## Testing Your Feature
 
-**IMPORTANT:** Every backend feature MUST be tested before integration. Write tests in `backend/insight_core/tests/`.
+Every backend feature needs tests in `backend/insight_core/tests/`. They are plain
+`unittest` modules (`test_*.py`).
 
-### Test File Structure
+- Test through the module's interface: a route function's JSON, saved rows, a `RunReport`.
+- Prior art: `test_feed_routes` (route functions, error redaction), `test_repo_reader` and
+  `test_ingestion_db` (a real database through the test database helpers),
+  `test_ingestion_runner` and `test_source_kinds` (fakes, no network).
 
-Create a test file following this pattern:
-
-```python
-# test_your_feature.py
-import sys
-from pathlib import Path
-
-# Add backend to path
-BACKEND_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(BACKEND_DIR))
-
-import psycopg
-from insight_core.db.ensure_db import ensure_database
-from insight_core.logs.core.logger_config import setup_logging, get_component_logger
-
-# Setup
-setup_logging(debug_mode=True)
-logger = get_component_logger("test_your_feature")
-
-# Connect to DB
-db_url = ensure_database()
-
-class YourFeatureTest:
-    def __init__(self, db_url: str):
-        self.db_url = db_url
-        # Initialize repos/services you need
-    
-    def test_repository_layer(self):
-        """Test repository method directly"""
-        # Your test code here
-        pass
-    
-    def test_service_layer(self):
-        """Test service layer"""
-        # Your test code here
-        pass
-
-# Run tests
-if __name__ == "__main__":
-    test = YourFeatureTest(db_url)
-    test.test_repository_layer()
-    test.test_service_layer()
-    logger.info("✅ All tests passed!")
-```
-
-### Testing Checklist
-
-For each new feature, you MUST test:
-
-1. ✅ **Repository Layer** - Test SQL queries return correct data
-2. ✅ **Service Layer** - Test business logic works correctly
-3. ✅ **API Layer** - Test HTTP endpoints (manual with curl/Postman)
-
-### Example: Testing Posts by Source
-
-```python
-# test_posts_by_source.py
-import sys
-from pathlib import Path
-
-BACKEND_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(BACKEND_DIR))
-
-import psycopg
-from insight_core.db.repo_posts import PostsRepository
-from insight_core.services.posts_service import PostsService
-from insight_core.db.ensure_db import ensure_database
-from insight_core.logs.core.logger_config import setup_logging, get_component_logger
-
-setup_logging(debug_mode=True)
-logger = get_component_logger("test_posts_by_source")
-db_url = ensure_database()
-
-class PostsBySourceTest:
-    def __init__(self, db_url: str):
-        self.db_url = db_url
-        self.repo = PostsRepository(db_url)
-        self.service = PostsService(db_url)
-
-    def test_repo(self, source_id: str):
-        """Test repository layer"""
-        logger.info(f"Testing repo.get_posts_by_source({source_id})")
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                posts = self.repo.get_posts_by_source(cur, source_id)
-                logger.info(f"Retrieved {len(posts)} posts")
-                if posts:
-                    logger.info(f"Sample post: {posts[0].get('title', 'No title')}")
-                return posts
-    
-    def test_service(self, source_id: str):
-        """Test service layer"""
-        logger.info(f"Testing service.get_posts_by_source({source_id})")
-        posts = self.service.get_posts_by_source(source_id)
-        logger.info(f"Retrieved {len(posts)} posts")
-        return posts
-
-# Run test
-if __name__ == "__main__":
-    test = PostsBySourceTest(db_url)
-    
-    # Replace with actual source_id from your database
-    test_source_id = "YOUR-SOURCE-UUID-HERE"
-    
-    # Test repository
-    posts = test.test_repo(test_source_id)
-    
-    # Test service
-    posts = test.test_service(test_source_id)
-    
-    logger.info("✅ All tests passed!")
-```
-
-### Running Tests
+Run them inside the backend image, never on the host:
 
 ```bash
-# Navigate to tests directory
-cd backend/insight_core/tests/
-
-# Run your test
-python test_posts_by_source.py
+./run-tests.sh                                        # whole suite
+./run-tests.sh insight_core.tests.test_feed_routes    # one module
+MIGRATE=1 ./run-tests.sh                              # migrate the test database first
 ```
+
+It uses the scratch database `insight_test`, never the live `insight`.
 
 ### Manual API Testing
 
-After backend tests pass, test the API endpoint:
-
 ```bash
-# Start backend server
+# Start the API (or use docker compose)
 cd backend
-python start_api.py
+uvicorn main:app --reload --port 8000 --env-file ../.env
 
-# In another terminal, test endpoint
+# In another terminal
 curl http://localhost:8000/api/posts/source/{source_id}
-
-# Or use httpie (prettier output)
-http GET http://localhost:8000/api/posts/source/{source_id}
 ```
 
 ---

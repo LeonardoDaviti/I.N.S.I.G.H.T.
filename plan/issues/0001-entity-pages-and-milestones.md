@@ -23,6 +23,26 @@ Status: **discussion** (owner, 2026-10-10). Future feature — don't build yet. 
 - **Lanes are model lineages only** (e.g. "Claude Haiku", "Claude Sonnet"). There is no company → lanes grouping yet, and no notion of an "official" source.
 - **Entities exist:** `entities`, `entity_aliases`, `entity_mentions`, `post_entities`, `events`, `event_entities`, `event_evidence`, filled by the rule-based `Enricher` on every save batch. With `INSIGHT_ANALYSIS=off` (reading-finish S2) that enricher becomes a no-op.
 
+## Old code (analysis archive)
+
+The milestones and entity code was removed from `main` by issue 0005. It is kept at the git tag
+`mark-ix-analysis-archive` (created on the last commit that still holds analysis). Read a file
+with `git show mark-ix-analysis-archive:<path>`. Rebuild on the reading core; don't restore it
+wholesale. Files to look at:
+
+- Milestones:
+  - `backend/insight_core/services/milestones_service.py`;
+  - `backend/insight_core/db/repo_milestones.py`;
+  - the `/api/milestones*` routes in `backend/main.py`;
+  - migrations `0017_milestones.sql` and `0018_folder_milestone_scope.sql`;
+  - `frontend/src/components/MilestonesRail.tsx` (shown on a track in `ReaderPage.tsx`).
+- Entities and events:
+  - `backend/insight_core/services/entity_memory_service.py`;
+  - `backend/insight_core/utils/entity_memory.py`;
+  - `backend/insight_core/ingestion/enrichment.py` (the `Enricher` on each save batch);
+  - migration `0008_entity_event_memory.sql`.
+- Plan: `plan/archive/INSIGHT_entity_event_memory_plan.md`.
+
 ## Open questions for the discussion
 
 1. **"Official":** how do we tell a company's own post from commentary? A per-source "official for entity X" flag, or the URL host (`anthropic.com`, `openai.com/index`)?

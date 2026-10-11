@@ -17,7 +17,7 @@ This is the beginning of story intelligence.
 
 For the concrete implementation shape of this idea, also read:
 
-- `plan/STORIES_IMPLEMENTATION_PLAN.md`
+- `plan/archive/INSIGHT_stories_plan_revised.md`
 
 ## Mental Model
 

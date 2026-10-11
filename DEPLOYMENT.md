@@ -10,6 +10,17 @@ feature overview; this file covers deploying, updating and troubleshooting.
 | `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`. |
 | `frontend` | `insight-frontend` | The built React app behind Nginx (`FRONTEND_PORT`), proxying `/api` to the backend. |
 
+## Networking
+
+- All four services share one bridge network, `insight-network`. The API and the scheduler
+  reach the database as `postgres:5432`. PostgreSQL has no host port.
+- The Telegram RSS bridge and Nitter are self-hosted outside this compose file. Sources reach
+  them as `https://telegram.local/...` and `https://nitter.local/...`, so those names must
+  resolve from inside the `backend` and `ingestion` containers.
+- `.local` HTTPS hosts are fetched without TLS verification. Add other internal hosts to
+  `RSS_SKIP_TLS_VERIFY_HOSTS`.
+- Never use `localhost` in a source URL: inside a container it is the container itself.
+
 ## Prerequisites
 
 - Docker with the Compose plugin.
@@ -63,6 +74,7 @@ docker compose build --pull
 docker compose up -d --remove-orphans
 ```
 
+`./update` does the same without the dump: `git pull`, `docker compose down`, build, `up -d`.
 If only environment variables changed: `docker compose up -d --force-recreate`.
 
 ## Development mode
@@ -71,7 +83,7 @@ If only environment variables changed: `docker compose up -d --force-recreate`.
 # backend (needs PostgreSQL and DATABASE_URL in .env)
 pip install -r backend/requirements.txt
 python backend/insight_core/db/migrate.py
-python backend/start_api.py
+(cd backend && uvicorn main:app --reload --port 8000 --env-file ../.env)
 
 # scheduler, in another shell (optional)
 python backend/insight_core/scripts/run_scheduler.py
@@ -94,7 +106,7 @@ Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/a
 
 - **Feed is stale ("last fetch N days ago").** Check that the scheduler runs:
   `docker compose ps ingestion` and `docker compose logs --tail=100 ingestion`. The
-  `/ingestion` page shows the next tick and the last run report.
+  ingestion tab (`/settings/sources?tab=ingestion`) shows the scheduler status and the last run report.
 - **A source shows failing.** Open `/settings/sources?tab=health&status=error`. The row shows the
   last error and when the next retry is. `Fetch now` retries it immediately.
 - **Run reports `skipped_busy`.** Another all-sources run holds the run lock. It finishes on its
