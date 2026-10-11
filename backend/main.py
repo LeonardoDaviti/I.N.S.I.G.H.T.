@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import psycopg
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -103,6 +104,8 @@ def _known_error(exc: Exception) -> Optional[tuple[int, str, Dict[str, str]]]:
         return 400, exc.message, {}
     if isinstance(exc, LookupError) and not isinstance(exc, (KeyError, IndexError)):
         return 404, str(exc), {}
+    if isinstance(exc, psycopg.errors.InvalidTextRepresentation):
+        return 404, "Not found.", {}       # an id that is not a uuid names no row
     if isinstance(exc, ValueError):
         return 400, str(exc), {}
     return None

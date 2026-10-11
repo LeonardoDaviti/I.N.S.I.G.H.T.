@@ -13,6 +13,8 @@ from types import SimpleNamespace
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+import psycopg
+
 import main
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.services import registry
@@ -180,6 +182,13 @@ class ErrorHandlerTests(unittest.TestCase):
         with self.assertLogs("main", "ERROR"):
             status, _, body = call(main.app, "GET", "/api/folders")
         self.assertEqual((status, body), (500, {"detail": "Could not load the folders. Check the backend logs."}))
+
+    def test_an_id_the_database_cannot_read_is_a_404(self):
+        def update_folder(folder_id, fields):
+            raise psycopg.errors.InvalidTextRepresentation(f'invalid input syntax for type uuid: "{folder_id}"')
+        self.update_folder = update_folder
+        status, _, body = call(main.app, "PUT", "/api/folders/not-a-uuid", json_body={"name": "x"})
+        self.assertEqual((status, body), (404, {"detail": "Not found."}))
 
     def test_a_message_the_caller_can_act_on_passes_without_the_dsn(self):
         status, _, body = call(main.app, "PUT", "/api/folders/f1", json_body={"name": "x"})
