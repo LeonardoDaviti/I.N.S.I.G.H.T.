@@ -1,4 +1,3 @@
-import functools
 import logging
 import math
 import os
@@ -16,7 +15,6 @@ from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, Fe
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.services.credentials_service import CredentialInvalid, CredentialNotFound, LoginFailed
 from insight_core.services.media_proxy_service import MediaFetchFailed, MediaNotAllowed, MediaProxyService
-from insight_core.settings import get_settings
 from insight_core.services.operations_service import (
     CADENCE_OVERRIDE_MAX_HOURS,
     CADENCE_OVERRIDE_MIN_HOURS,
@@ -67,8 +65,6 @@ media_proxy = MediaProxyService(api_bridge.db)
 # Request models
 class CorpusStatus(BaseModel):
     total_posts: int = 0
-    total_topics: int = 0
-    total_briefings: int = 0
     enabled_sources: int = 0
     total_sources: int = 0
     latest_post_at: str | None = None
@@ -84,16 +80,6 @@ class FolderStatus(BaseModel):
     post_count: int = 0
 
 
-class ExpertStatus(BaseModel):
-    id: str
-    name: str
-    folder_id: str
-    schedule: str | None = None
-    lookback_days: int = 7
-    enabled: bool = True
-    last_briefing_at: str | None = None
-
-
 class JobStatus(BaseModel):
     id: str
     job_type: str
@@ -106,22 +92,12 @@ class JobStatus(BaseModel):
 class SystemStatus(BaseModel):
     success: bool = True
     healthy: bool = True
-    gemini_configured: bool = False
     generated_at: str
     corpus: CorpusStatus
     scheduler: Dict[str, Any] = {}
     folders: List[FolderStatus] = []
-    experts: List[ExpertStatus] = []
     recent_jobs: List[JobStatus] = []
     source_health_summary: Dict[str, int] = {}
-
-
-class BriefingRequest(BaseModel):
-    date: str  # Format: "YYYY-MM-DD"
-    includeTopics: bool | None = None
-    includeUnreferenced: bool | None = True
-    refresh: bool | None = False
-    asyncMode: bool | None = False
 
 
 class ArchiveRequest(BaseModel):
@@ -138,17 +114,6 @@ class ArchiveRequest(BaseModel):
 class YouTubeChannelRequest(BaseModel):
     source: str
     limit: int | None = None
-
-
-class YouTubeVideoRequest(BaseModel):
-    source: str
-    video: str
-
-
-class YouTubeChatRequest(BaseModel):
-    source: str
-    video: str
-    question: str
 
 
 class YouTubeProgressRequest(BaseModel):
@@ -176,27 +141,7 @@ class IngestionRunRequest(BaseModel):
 class SchedulerConfigRequest(BaseModel):
     intervalHours: float | None = None
     syncSourcesEachCycle: bool | None = None
-    generateDailyBriefing: bool | None = None
-    generateTopicBriefing: bool | None = None
     ingestTickMinutes: float | None = None
-
-
-class PostNotesRequest(BaseModel):
-    notesMarkdown: str
-
-
-class PostSummaryRequest(BaseModel):
-    refresh: bool | None = False
-    asyncMode: bool | None = False
-
-
-class PostHighlightsRequest(BaseModel):
-    refresh: bool | None = False
-
-
-class PostChatRequest(BaseModel):
-    question: str
-    asyncMode: bool | None = False
 
 
 class PostReaderSessionRequest(BaseModel):
@@ -227,55 +172,10 @@ class PostOpenRequest(BaseModel):
     metadata: Dict[str, Any] | None = None
 
 
-class PostTimelineRequest(BaseModel):
-    refresh: bool | None = False
-
-
 class PostCommentsRequest(BaseModel):
     limit: int | None = 80
     refresh: bool | None = False
     asyncMode: bool | None = False
-
-
-class EvidenceRebuildPostRequest(BaseModel):
-    postId: str
-
-
-class EvidenceRebuildDateRequest(BaseModel):
-    date: str
-    limit: int | None = None
-
-
-class MemoryRebuildPostRequest(BaseModel):
-    postId: str
-
-
-class MemoryRebuildDateRequest(BaseModel):
-    date: str
-    limit: int | None = None
-
-
-class EventRebuildPostRequest(BaseModel):
-    postId: str
-
-
-class EventRebuildDateRequest(BaseModel):
-    date: str
-    limit: int | None = None
-
-
-class InboxRebuildRequest(BaseModel):
-    generatedForDate: str | None = None
-    scopeType: str | None = "daily_queue"
-    scopeValue: str | None = None
-    limit: int | None = 20
-    actorId: str | None = None
-
-
-class InboxActionRequest(BaseModel):
-    actionType: str
-    actorId: str | None = None
-    payload: Dict[str, Any] | None = None
 
 
 async def _run_async_job_background(task_name: str, fn, *args, **kwargs):
@@ -283,13 +183,6 @@ async def _run_async_job_background(task_name: str, fn, *args, **kwargs):
         await fn(*args, **kwargs)
     except Exception:
         logger.exception("Background async job failed: %s", task_name)
-
-
-async def _run_sync_job_background(task_name: str, fn, *args, **kwargs):
-    try:
-        await asyncio.to_thread(fn, *args, **kwargs)
-    except Exception:
-        logger.exception("Background sync job failed: %s", task_name)
 
 
 def _accepted_job_response(job_id: str, job_type: str, *, message: str | None = None) -> Dict[str, Any]:
@@ -392,30 +285,6 @@ def _unavailable_or(result: Any) -> Any:
     return result
 
 
-ANALYSIS_DISABLED = "analysis_disabled"
-"""The error code the frontend and tests match while INSIGHT_ANALYSIS is off."""
-
-
-def analysis_disabled_response() -> JSONResponse:
-    """409 {"success": false, "error": "analysis_disabled"} (reading-finish R3)."""
-    return JSONResponse(status_code=409, content={"success": False, "error": ANALYSIS_DISABLED})
-
-
-def analysis_only(endpoint):
-    """409 {"error": "analysis_disabled"} while INSIGHT_ANALYSIS is off (reading-finish R3).
-
-    For endpoints that write analysis output or call Gemini; it answers before the bridge is
-    touched, so no GeminiProcessor is built. functools.wraps keeps the signature FastAPI reads.
-    """
-    @functools.wraps(endpoint)
-    async def guarded(*args, **kwargs):
-        if not get_settings().analysis_enabled:
-            return analysis_disabled_response()
-        return await endpoint(*args, **kwargs)
-
-    return guarded
-
-
 @app.get("/")
 async def root():
     return {
@@ -424,12 +293,6 @@ async def root():
         "engine": "DB-backed Archive Engine",
         "status": "operational"
     }
-
-@app.get("/api/config")
-async def get_config():
-    """What this backend runs (reading-finish R3). The frontend reads it at runtime so the
-    two can't disagree; the runtime value wins over the build flag."""
-    return {"analysis_enabled": get_settings().analysis_enabled}
 
 # ============= SOURCES ENDPOINTS (DATABASE-BACKED) =============
 
@@ -547,18 +410,7 @@ async def get_post_detail(post_id: str):
         return api_bridge.get_post_detail(post_id)
     except Exception as e:
         logger.exception("Failed to get post detail")
-        return {"success": False, "error": str(e), "post": None, "summary": None, "summary_references": [], "highlights": [], "reader_state": None}
-
-
-@app.post("/api/posts/item/{post_id}/highlights")
-@analysis_only
-async def get_post_highlights(post_id: str, request: PostHighlightsRequest):
-    try:
-        logger.info(f"✨ Fetching post highlights: {post_id}")
-        return api_bridge.get_post_highlights(post_id, refresh=bool(request.refresh))
-    except Exception as e:
-        logger.exception("Failed to get post highlights")
-        return {"success": False, "error": str(e), "post_id": post_id, "highlights": []}
+        return {"success": False, "error": str(e), "post": None, "reader_state": None}
 
 
 @app.get("/api/posts/item/{post_id}/reader-state")
@@ -730,408 +582,6 @@ async def set_post_read(post_id: str, request: PostReadRequest):
         raise _server_error("update read state")
 
 
-@app.get("/api/posts/item/{post_id}/evidence")
-async def get_post_evidence(post_id: str):
-    """Get the evidence/debug view for a single post."""
-    try:
-        logger.info(f"🧩 Fetching post evidence: {post_id}")
-        return api_bridge.get_post_evidence(post_id)
-    except Exception as e:
-        logger.exception("Failed to get post evidence")
-        return {"success": False, "error": str(e), "evidence": None}
-
-
-@app.get("/api/posts/item/{post_id}/memory")
-async def get_post_memory(post_id: str):
-    """Get the entity-memory debug view for a single post."""
-    try:
-        logger.info(f"🧠 Fetching post memory: {post_id}")
-        return api_bridge.get_post_memory(post_id)
-    except Exception as e:
-        logger.exception("Failed to get post memory")
-        return {"success": False, "error": str(e), "memory": None}
-
-
-@app.post("/api/evidence/rebuild-for-post")
-@analysis_only
-async def rebuild_evidence_for_post(request: EvidenceRebuildPostRequest):
-    try:
-        logger.info(f"🔄 Rebuilding evidence for post: {request.postId}")
-        return api_bridge.rebuild_post_evidence(request.postId)
-    except Exception as e:
-        logger.exception("Failed to rebuild post evidence")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/evidence/rebuild-for-date")
-@analysis_only
-async def rebuild_evidence_for_date(request: EvidenceRebuildDateRequest):
-    try:
-        logger.info(f"🔄 Rebuilding evidence for date: {request.date}")
-        return api_bridge.rebuild_evidence_for_date(request.date, limit=request.limit)
-    except Exception as e:
-        logger.exception("Failed to rebuild evidence for date")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/memory/rebuild-for-post")
-@analysis_only
-async def rebuild_memory_for_post(request: MemoryRebuildPostRequest):
-    try:
-        logger.info(f"🔄 Rebuilding entity memory for post: {request.postId}")
-        return api_bridge.rebuild_post_memory(request.postId)
-    except Exception as e:
-        logger.exception("Failed to rebuild entity memory for post")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/memory/rebuild-for-date")
-@analysis_only
-async def rebuild_memory_for_date(request: MemoryRebuildDateRequest):
-    try:
-        logger.info(f"🔄 Rebuilding entity memory for date: {request.date}")
-        return api_bridge.rebuild_memory_for_date(request.date, limit=request.limit)
-    except Exception as e:
-        logger.exception("Failed to rebuild entity memory for date")
-        return {"success": False, "error": str(e)}
-
-
-@app.get("/api/posts/item/{post_id}/events")
-async def get_post_events(post_id: str):
-    """Get the event-memory debug view for a single post."""
-    try:
-        logger.info(f"📅 Fetching post events: {post_id}")
-        return api_bridge.get_post_events(post_id)
-    except Exception as e:
-        logger.exception("Failed to get post events")
-        return {"success": False, "error": str(e), "events": None}
-
-
-@app.get("/api/posts/item/{post_id}/story")
-async def get_post_story(post_id: str):
-    """Get the connected story view for a single post."""
-    try:
-        logger.info(f"📖 Fetching post story: {post_id}")
-        return api_bridge.get_post_story(post_id)
-    except Exception as e:
-        logger.exception("Failed to get post story")
-        return {"success": False, "error": str(e), "stories": []}
-
-
-@app.get("/api/posts/item/{post_id}/timeline")
-async def get_post_timeline(post_id: str):
-    """Get the post-centric story timeline view. With INSIGHT_ANALYSIS off it only reads the
-    stored candidates; it never computes or writes new ones (reading-finish R3)."""
-    try:
-        logger.info(f"🕰️ Fetching post timeline: {post_id}")
-        return api_bridge.get_post_timeline(post_id, refresh=False,
-                                            read_only=not get_settings().analysis_enabled)
-    except Exception as e:
-        logger.exception("Failed to get post timeline")
-        return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
-
-
-@app.post("/api/posts/item/{post_id}/timeline/refresh")
-@analysis_only
-async def refresh_post_timeline(post_id: str, request: PostTimelineRequest | None = None):
-    """Refresh the candidate links and timeline for a single post."""
-    try:
-        logger.info(f"🕰️ Refreshing post timeline: {post_id}")
-        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
-        return api_bridge.get_post_timeline(post_id, refresh=bool(payload.get("refresh", True) or True))
-    except Exception as e:
-        logger.exception("Failed to refresh post timeline")
-        return {"success": False, "error": str(e), "post_id": post_id, "timeline": None, "related_candidates": []}
-
-
-@app.post("/api/story-candidates/{candidate_id}/accept")
-@analysis_only
-async def accept_story_candidate(candidate_id: str):
-    """Accept one story candidate into the target story timeline."""
-    try:
-        logger.info(f"🕰️ Accepting story candidate: {candidate_id}")
-        return api_bridge.accept_story_candidate(candidate_id)
-    except Exception as e:
-        logger.exception("Failed to accept story candidate")
-        return {"success": False, "error": str(e), "candidate": None}
-
-
-@app.post("/api/story-candidates/{candidate_id}/reject")
-@analysis_only
-async def reject_story_candidate(candidate_id: str):
-    """Reject one story candidate from the timeline."""
-    try:
-        logger.info(f"🕰️ Rejecting story candidate: {candidate_id}")
-        return api_bridge.reject_story_candidate(candidate_id)
-    except Exception as e:
-        logger.exception("Failed to reject story candidate")
-        return {"success": False, "error": str(e), "candidate": None}
-
-
-@app.post("/api/events/rebuild-for-post")
-@analysis_only
-async def rebuild_events_for_post(request: EventRebuildPostRequest):
-    try:
-        logger.info(f"🔄 Rebuilding event memory for post: {request.postId}")
-        return api_bridge.rebuild_post_events(request.postId)
-    except Exception as e:
-        logger.exception("Failed to rebuild event memory for post")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/events/rebuild-for-date")
-@analysis_only
-async def rebuild_events_for_date(request: EventRebuildDateRequest):
-    try:
-        logger.info(f"🔄 Rebuilding event memory for date: {request.date}")
-        return api_bridge.rebuild_events_for_date(request.date, limit=request.limit)
-    except Exception as e:
-        logger.exception("Failed to rebuild event memory for date")
-        return {"success": False, "error": str(e)}
-
-
-@app.get("/api/stories")
-async def get_stories(
-    status: str | None = Query(default=None),
-    story_kind: str | None = Query(default=None, alias="storyKind"),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-):
-    """List persisted stories."""
-    try:
-        logger.info("📚 Fetching stories")
-        return api_bridge.get_stories(
-            status=status,
-            story_kind=story_kind,
-            limit=int(limit or 100),
-            offset=int(offset or 0),
-        )
-    except Exception as e:
-        logger.exception("Failed to get stories")
-        return {"success": False, "error": str(e), "stories": [], "total": 0}
-
-
-@app.get("/api/stories/{story_id}")
-async def get_story(story_id: str):
-    """Get a single story with attached evidence and updates."""
-    try:
-        logger.info(f"📚 Fetching story: {story_id}")
-        return api_bridge.get_story(story_id)
-    except Exception as e:
-        logger.exception("Failed to get story")
-        return {"success": False, "error": str(e), "story": None}
-
-
-@app.get("/api/stories/{story_id}/timeline")
-async def get_story_timeline(story_id: str):
-    """Get a story timeline with update-level evidence."""
-    try:
-        logger.info(f"📚 Fetching story timeline: {story_id}")
-        return api_bridge.get_story_timeline(story_id)
-    except Exception as e:
-        logger.exception("Failed to get story timeline")
-        return {"success": False, "error": str(e), "story": None, "timeline": []}
-
-
-@app.get("/api/inbox")
-async def get_inbox(batchId: str | None = None, limit: int = 20):
-    """Get the current inbox batch and its items."""
-    try:
-        logger.info("📥 Fetching inbox")
-        return api_bridge.get_inbox(batch_id=batchId, limit=int(limit or 20))
-    except Exception as e:
-        logger.exception("Failed to get inbox")
-        return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
-
-
-@app.get("/api/inbox/batches")
-async def get_inbox_batches(
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-):
-    """List inbox batches."""
-    try:
-        logger.info("📥 Fetching inbox batches")
-        return api_bridge.get_inbox_batches(limit=int(limit or 50), offset=int(offset or 0))
-    except Exception as e:
-        logger.exception("Failed to get inbox batches")
-        return {"success": False, "error": str(e), "batches": [], "total": 0}
-
-
-@app.get("/api/inbox/items")
-async def get_inbox_items(
-    batchId: str | None = None,
-    status: str | None = None,
-    targetType: str | None = None,
-    sourceId: str | None = None,
-    generatedForDate: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-):
-    """List inbox items with optional filters."""
-    try:
-        logger.info("📥 Fetching inbox items")
-        return api_bridge.get_inbox_items(
-            batch_id=batchId,
-            status=status,
-            target_type=targetType,
-            source_id=sourceId,
-            generated_for_date=generatedForDate,
-            limit=int(limit or 100),
-            offset=int(offset or 0),
-        )
-    except Exception as e:
-        logger.exception("Failed to get inbox items")
-        return {"success": False, "error": str(e), "items": [], "total": 0}
-
-
-@app.get("/api/inbox/items/{item_id}")
-async def get_inbox_item(item_id: str):
-    """Get one inbox item with target detail and prior actions."""
-    try:
-        logger.info(f"📥 Fetching inbox item: {item_id}")
-        return api_bridge.get_inbox_item(item_id)
-    except Exception as e:
-        logger.exception("Failed to get inbox item")
-        return {"success": False, "error": str(e), "item": None, "target": None, "actions": []}
-
-
-@app.post("/api/inbox/rebuild")
-@analysis_only
-async def rebuild_inbox(request: InboxRebuildRequest | None = None):
-    """Rebuild the analyst inbox queue."""
-    try:
-        logger.info("🔄 Rebuilding inbox")
-        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
-        return api_bridge.rebuild_inbox(
-            generated_for_date=payload.get("generatedForDate") or payload.get("generated_for_date"),
-            scope_type=payload.get("scopeType") or payload.get("scope_type") or "daily_queue",
-            scope_value=payload.get("scopeValue") or payload.get("scope_value"),
-            limit=int(payload.get("limit") or 20),
-            actor_id=payload.get("actorId") or payload.get("actor_id"),
-        )
-    except Exception as e:
-        logger.exception("Failed to rebuild inbox")
-        return {"success": False, "error": str(e), "batch": None, "items": [], "total": 0}
-
-
-@app.post("/api/inbox/items/{item_id}/actions")
-@analysis_only
-async def record_inbox_action(item_id: str, request: InboxActionRequest):
-    """Record a durable analyst action for one inbox item."""
-    try:
-        logger.info(f"🧭 Recording inbox action for item: {item_id}")
-        payload = request.model_dump() if hasattr(request, "model_dump") else (request or {})
-        return api_bridge.record_inbox_action(
-            item_id,
-            payload.get("actionType") or payload.get("action_type"),
-            actor_id=payload.get("actorId") or payload.get("actor_id"),
-            payload=payload.get("payload"),
-        )
-    except Exception as e:
-        logger.exception("Failed to record inbox action")
-        return {"success": False, "error": str(e), "action": None, "item": None, "side_effects": []}
-
-
-@app.get("/api/inbox/actions")
-async def get_inbox_actions(
-    limit: int = 100,
-    offset: int = 0,
-    targetType: str | None = None,
-    targetId: str | None = None,
-    inboxItemId: str | None = None,
-):
-    """List inbox action audit records."""
-    try:
-        logger.info("🧭 Fetching inbox actions")
-        return api_bridge.get_inbox_actions(
-            limit=int(limit or 100),
-            offset=int(offset or 0),
-            target_type=targetType,
-            target_id=targetId,
-            inbox_item_id=inboxItemId,
-        )
-    except Exception as e:
-        logger.exception("Failed to get inbox actions")
-        return {"success": False, "error": str(e), "actions": [], "total": 0}
-
-
-@app.get("/api/posts/item/{post_id}/notes")
-async def get_post_notes(post_id: str):
-    try:
-        logger.info(f"📝 Fetching notes for post: {post_id}")
-        return api_bridge.get_post_notes(post_id)
-    except Exception as e:
-        logger.exception("Failed to get post notes")
-        return {"success": False, "error": str(e), "post_id": post_id, "notes_markdown": ""}
-
-
-@app.put("/api/posts/item/{post_id}/notes")
-async def save_post_notes(post_id: str, request: PostNotesRequest):
-    try:
-        logger.info(f"📝 Saving notes for post: {post_id}")
-        return api_bridge.save_post_notes(post_id, request.notesMarkdown)
-    except Exception as e:
-        logger.exception("Failed to save post notes")
-        return {"success": False, "error": str(e), "post_id": post_id}
-
-
-@app.post("/api/posts/item/{post_id}/summary")
-@analysis_only
-async def get_post_summary(post_id: str, request: PostSummaryRequest, background_tasks: BackgroundTasks):
-    try:
-        logger.info(f"🧠 Generating summary for post: {post_id}")
-        if request.asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "post_analysis",
-                trigger="manual",
-                message=f"Generate summary for post {post_id}",
-                payload={"post_id": post_id, "refresh": bool(request.refresh)},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_sync_job_background,
-                    "post_analysis",
-                    api_bridge.get_post_summary,
-                    post_id,
-                    refresh=bool(request.refresh),
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "post_analysis", message="Post summary generation started")
-        return api_bridge.get_post_summary(post_id, refresh=bool(request.refresh))
-    except Exception as e:
-        logger.exception("Failed to get post summary")
-        return {"success": False, "error": str(e), "post_id": post_id}
-
-
-@app.post("/api/posts/item/{post_id}/chat")
-@analysis_only
-async def chat_about_post(post_id: str, request: PostChatRequest, background_tasks: BackgroundTasks):
-    try:
-        logger.info(f"💬 Chat about post: {post_id}")
-        if request.asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "post_chat_message",
-                trigger="manual",
-                message=f"Chat about post {post_id}",
-                payload={"post_id": post_id, "question_chars": len(request.question or "")},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_sync_job_background,
-                    "post_chat_message",
-                    api_bridge.chat_about_post,
-                    post_id,
-                    request.question,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "post_chat_message", message="Post chat request started")
-        return api_bridge.chat_about_post(post_id, request.question)
-    except Exception as e:
-        logger.exception("Failed to chat about post")
-        return {"success": False, "error": str(e), "post_id": post_id}
-
-
 @app.post("/api/posts/item/{post_id}/reddit-comments")
 async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
     try:
@@ -1163,38 +613,6 @@ async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, back
         logger.exception("Failed to fetch Reddit comments")
         return {"success": False, "error": str(e), "post_id": post_id}
 
-
-@app.post("/api/posts/item/{post_id}/reddit-comments/briefing")
-@analysis_only
-async def get_reddit_comments_briefing(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
-    try:
-        logger.info(f"🧠 Generating Reddit comments briefing for post: {post_id}")
-        if request.asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "reddit_comments_briefing",
-                trigger="manual",
-                message=f"Generate Reddit comments briefing for {post_id}",
-                payload={"post_id": post_id, "limit": int(request.limit or 80), "refresh": bool(request.refresh)},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "reddit_comments_briefing",
-                    api_bridge.get_reddit_comments_briefing,
-                    post_id,
-                    limit=int(request.limit or 80),
-                    refresh=bool(request.refresh),
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "reddit_comments_briefing", message="Reddit comments briefing started")
-        return await api_bridge.get_reddit_comments_briefing(
-            post_id,
-            limit=int(request.limit or 80),
-            refresh=bool(request.refresh),
-        )
-    except Exception as e:
-        logger.exception("Failed to generate Reddit comments briefing")
-        return {"success": False, "error": str(e), "post_id": post_id}
 
 @app.get("/api/sources/with-counts")
 async def get_sources_with_counts():
@@ -1390,8 +808,8 @@ async def set_source_main_digest(source_id: str, body: dict):
 async def set_folder_main_digest(folder_id: str, body: dict):
     """Apply the digest switch to every source in a folder/track.
 
-    Body: {in_main_digest: bool}. Sending false is what makes a track's sources stop
-    appearing in the daily and weekly briefings while still being ingested.
+    Body: {in_main_digest: bool}. Sending false keeps a track's sources out of the "all"
+    feed while they are still ingested.
     """
     try:
         value = bool(body.get("in_main_digest", True))
@@ -1410,255 +828,6 @@ async def remove_folder_source(folder_id: str, source_id: str):
         return api_bridge.remove_source_from_folder(folder_id, source_id)
     except Exception as e:
         logger.exception("Failed to remove source from folder")
-        return {"success": False, "error": str(e)}
-
-
-# ============= MILESTONES ENDPOINTS =============
-
-
-@app.get("/api/milestones")
-async def get_milestones(
-    folder_id: str | None = Query(None),
-    include_hidden: bool = Query(False),
-):
-    """The milestone tree for a scope. Computed on read; no LLM, no derive job.
-
-    folder_id omitted = all non-arXiv sources (the default landing scope: both
-    Telegram release feeds belong to no folder).
-    """
-    try:
-        logger.info(f"🏁 Milestones folder_id={folder_id} hidden={include_hidden}")
-        # Same treatment as /api/milestones/node, and more necessary here: this is the route
-        # that actually pays the ~6.6s cold derivation. Only the cheap node route was moved
-        # off the loop, leaving the expensive one blocking every other request behind it.
-        return await asyncio.to_thread(
-            api_bridge.get_milestones, folder_id=folder_id, include_hidden=include_hidden
-        )
-    except Exception as e:
-        logger.exception("Failed to build milestones")
-        return {"success": False, "error": str(e), "vendors": [], "papers": []}
-
-
-@app.get("/api/milestones/node")
-async def get_milestone_node(
-    node_key: str = Query(..., min_length=1, max_length=200),
-    folder_id: str | None = Query(None),
-    include_hidden: bool = Query(False),
-):
-    """Evidence and comparison edges for one node, on demand.
-
-    node_key is a query param, not a path segment, for the same reason node-state
-    puts it in the body: keys are 'release:<lane_id>:<version>' / 'paper:<post_id>'
-    and carry ':' and '.'.
-
-    include_hidden must match what the list call used, or this rebuilds the tree
-    against a second cache key instead of reading the one already in memory.
-
-    OFF THE EVENT LOOP, unlike its neighbours. The bridge call is fully synchronous
-    psycopg, and on a node-cache miss it can spend seconds deriving the tree - the
-    measured cold derivation is 6.6s. Awaiting it inline in an `async def` would park
-    the single event loop for that whole time and stall every other in-flight request
-    (feed, briefings, operations polling). asyncio.to_thread is the same mechanism
-    _run_sync_job_background already uses to keep blocking work off the loop.
-    """
-    try:
-        logger.info(f"🏁 Milestone node {node_key} folder_id={folder_id}")
-        return await asyncio.to_thread(
-            api_bridge.get_milestone_node,
-            node_key=node_key, folder_id=folder_id, include_hidden=include_hidden,
-        )
-    except Exception as e:
-        logger.exception("Failed to load milestone node")
-        return {"success": False, "error": str(e), "evidence": [], "comparisons": []}
-
-
-@app.get("/api/milestones/lanes")
-async def get_milestone_lanes(folder_id: str | None = Query(None)):
-    """Lane vocabulary: global lanes plus this folder's own."""
-    try:
-        logger.info(f"🏁 Milestone lanes folder_id={folder_id}")
-        return api_bridge.get_milestone_lanes(folder_id)
-    except Exception as e:
-        logger.exception("Failed to list milestone lanes")
-        return {"success": False, "error": str(e), "lanes": []}
-
-
-@app.post("/api/milestones/lanes")
-async def create_milestone_lane(config: dict):
-    """Create a lane. Body: {name, vendor?, match_pattern?, folder_id?, lane_order?}"""
-    try:
-        logger.info("🏁 Creating milestone lane")
-        return api_bridge.create_milestone_lane(config)
-    except Exception as e:
-        logger.exception("Failed to create milestone lane")
-        return {"success": False, "error": str(e), "lane": None}
-
-
-@app.put("/api/milestones/lanes/{lane_id}")
-async def update_milestone_lane(lane_id: str, fields: dict):
-    """Update a lane. Body: any of {name, vendor, match_pattern, lane_order, enabled}"""
-    try:
-        logger.info(f"🏁 Updating milestone lane {lane_id}")
-        return api_bridge.update_milestone_lane(lane_id, fields)
-    except Exception as e:
-        logger.exception("Failed to update milestone lane")
-        return {"success": False, "error": str(e), "lane": None}
-
-
-@app.delete("/api/milestones/lanes/{lane_id}")
-async def delete_milestone_lane(lane_id: str):
-    """Delete a lane."""
-    try:
-        logger.info(f"🏁 Deleting milestone lane {lane_id}")
-        return api_bridge.delete_milestone_lane(lane_id)
-    except Exception as e:
-        logger.exception("Failed to delete milestone lane")
-        return {"success": False, "error": str(e)}
-
-
-@app.get("/api/milestones/preview")
-async def preview_milestone_pattern(
-    pattern: str = Query(..., min_length=1, max_length=400),
-    folder_id: str | None = Query(None),
-):
-    """Dry-run a lane pattern before committing it. Free: no writes, no tokens."""
-    try:
-        logger.info(f"🏁 Milestone pattern preview folder_id={folder_id}")
-        return api_bridge.preview_milestone_pattern(pattern, folder_id)
-    except Exception as e:
-        logger.exception("Failed to preview milestone pattern")
-        return {"success": False, "error": str(e), "total_hits": 0,
-                "versions": [], "samples": []}
-
-
-@app.post("/api/milestones/node-state")
-async def set_milestone_node_state(payload: dict):
-    """Hide / pin / rename one node. Body: {node_key, state?, custom_title?, note?}
-
-    node_key is deterministic ('release:<lane_id>:<version>' or 'paper:<post_id>')
-    and goes in the body, not the path, because it contains ':'.
-    """
-    try:
-        logger.info(f"🏁 Milestone node state {payload.get('node_key')}")
-        return api_bridge.set_milestone_node_state(payload)
-    except Exception as e:
-        logger.exception("Failed to set milestone node state")
-        return {"success": False, "error": str(e)}
-
-
-# ============= EXPERTS ENDPOINTS =============
-
-
-@app.get("/api/experts")
-async def get_experts():
-    """List all experts."""
-    try:
-        logger.info("🧑‍🔬 Fetching experts")
-        return api_bridge.get_experts()
-    except Exception as e:
-        logger.exception("Failed to get experts")
-        return {"success": False, "error": str(e), "experts": []}
-
-
-@app.post("/api/experts")
-async def create_expert(config: dict):
-    """Create an expert. Body: {name, folder_id, system_prompt, focus_instructions?, output_variant?, lookback_days?, schedule?, enabled?}"""
-    try:
-        logger.info("🧑‍🔬 Creating expert")
-        return api_bridge.create_expert(config)
-    except Exception as e:
-        logger.exception("Failed to create expert")
-        return {"success": False, "error": str(e), "expert": None}
-
-
-@app.get("/api/experts/{expert_id}")
-async def get_expert(expert_id: str):
-    """Get a single expert."""
-    try:
-        logger.info(f"🧑‍🔬 Fetching expert: {expert_id}")
-        return api_bridge.get_expert(expert_id)
-    except Exception as e:
-        logger.exception("Failed to get expert")
-        return {"success": False, "error": str(e), "expert": None}
-
-
-@app.put("/api/experts/{expert_id}")
-async def update_expert(expert_id: str, fields: dict):
-    """Update expert fields."""
-    try:
-        logger.info(f"🧑‍🔬 Updating expert: {expert_id}")
-        return api_bridge.update_expert(expert_id, fields)
-    except Exception as e:
-        logger.exception("Failed to update expert")
-        return {"success": False, "error": str(e), "expert": None}
-
-
-@app.delete("/api/experts/{expert_id}")
-async def delete_expert(expert_id: str):
-    """Delete an expert."""
-    try:
-        logger.info(f"🧑‍🔬 Deleting expert: {expert_id}")
-        return api_bridge.delete_expert(expert_id)
-    except Exception as e:
-        logger.exception("Failed to delete expert")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/experts/{expert_id}/run")
-@analysis_only
-async def run_expert(expert_id: str, background_tasks: BackgroundTasks, body: dict | None = None):
-    """Generate an expert's folder-scoped briefing.
-    Optional body: {as_of_date: 'YYYY-MM-DD', refresh: bool, asyncMode: bool}"""
-    try:
-        logger.info(f"🧑‍🔬 Running expert: {expert_id}")
-        body = body or {}
-        as_of_date = body.get("as_of_date")
-        refresh = bool(body.get("refresh"))
-        if body.get("asyncMode"):
-            job_id = api_bridge._start_job_safe(
-                "expert_briefing",
-                trigger="manual",
-                message=f"Run expert {expert_id}",
-                payload={"expert_id": expert_id, "refresh": refresh},
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "expert_briefing",
-                    api_bridge.run_expert,
-                    expert_id,
-                    as_of_date=as_of_date,
-                    refresh=refresh,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "expert_briefing", message="Expert briefing started")
-        return await api_bridge.run_expert(expert_id, as_of_date=as_of_date, refresh=refresh)
-    except Exception as e:
-        logger.exception("Failed to run expert")
-        return {"success": False, "error": str(e), "expert_id": expert_id}
-
-
-@app.get("/api/experts/{expert_id}/briefings")
-async def list_expert_briefings(expert_id: str, limit: int = Query(60, ge=1, le=200)):
-    """History of an expert's briefings, newest first. Metadata only, no content."""
-    try:
-        logger.info(f"\U0001F4DA Listing briefing history for expert: {expert_id}")
-        return api_bridge.list_expert_briefings(expert_id, limit)
-    except Exception as e:
-        logger.exception("Failed to list expert briefings")
-        return {"success": False, "error": str(e), "briefings": []}
-
-
-@app.get("/api/experts/{expert_id}/briefing")
-async def get_expert_briefing(expert_id: str, date: str | None = Query(None)):
-    """Fetch the most recent stored briefing for an expert."""
-    try:
-        logger.info(f"🧑‍🔬 Fetching latest briefing for expert: {expert_id}")
-        if date:
-            return api_bridge.get_expert_briefing_for_date(expert_id, date)
-        return api_bridge.get_expert_latest_briefing(expert_id)
-    except Exception as e:
-        logger.exception("Failed to get expert briefing")
         return {"success": False, "error": str(e)}
 
 
@@ -1930,343 +1099,6 @@ async def telegram_login_cancel():
     return api_bridge.telegram_login_cancel()
 
 
-# Briefing generation endpoints
-
-
-@app.post("/api/daily")
-@analysis_only
-async def generate_daily_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
-    try:
-        date = request.date
-        logger.info(f"🚀 Generating daily briefing for date: {date}")
-        
-        if not date:
-            raise HTTPException(status_code=400, detail="Date parameter required")
-        
-        if request.asyncMode:
-            if request.includeTopics:
-                job_id = api_bridge._start_job_safe(
-                    "topic_briefing",
-                    trigger="manual",
-                    message=f"Generate topic briefing for {date}",
-                    payload={
-                        "date": date,
-                        "include_unreferenced": True if request.includeUnreferenced is None else request.includeUnreferenced,
-                        "refresh": bool(request.refresh),
-                    },
-                )
-                if job_id:
-                    background_tasks.add_task(
-                        _run_async_job_background,
-                        "topic_briefing",
-                        api_bridge.generate_daily_briefing_with_topics,
-                        date,
-                        include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
-                        refresh=bool(request.refresh),
-                        job_id=job_id,
-                    )
-                    return _accepted_job_response(job_id, "topic_briefing", message="Topic briefing generation started")
-            else:
-                job_id = api_bridge._start_job_safe(
-                    "daily_briefing",
-                    trigger="manual",
-                    message=f"Generate daily briefing for {date}",
-                    payload={"date": date},
-                )
-                if job_id:
-                    background_tasks.add_task(
-                        _run_async_job_background,
-                        "daily_briefing",
-                        api_bridge.generate_daily_briefing,
-                        date,
-                        bool(request.refresh),
-                        job_id=job_id,
-                    )
-                    return _accepted_job_response(job_id, "daily_briefing", message="Daily briefing generation started")
-
-        if request.includeTopics:
-            result = await api_bridge.generate_daily_briefing_with_topics(
-                date,
-                include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
-                refresh=bool(request.refresh),
-            )
-        else:
-            result = await api_bridge.generate_daily_briefing(date, bool(request.refresh))
-        
-        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
-            logger.error(f"❌ Engine error: {result['error']}")
-            return {"success": False, "error": result["error"]}
-        
-        logger.info("✅ Briefing generated successfully")
-        response_payload = {
-            "success": True,
-            "briefing": result.get("briefing", result) if isinstance(result, dict) else result,
-            "format": result.get("format", "markdown") if isinstance(result, dict) else "markdown",
-            "saved_briefing_id": result.get("saved_briefing_id") if isinstance(result, dict) else None,
-            "date": result.get("date", date) if isinstance(result, dict) else date,
-            "posts_processed": result.get("posts_processed", 0) if isinstance(result, dict) else 0,
-            "total_posts_fetched": result.get("total_posts_fetched", 0) if isinstance(result, dict) else 0,
-            "posts": result.get("posts", []) if isinstance(result, dict) else [],
-            "one_sentence_takeaway": result.get("one_sentence_takeaway") if isinstance(result, dict) else None,
-            "references": result.get("references", []) if isinstance(result, dict) else [],
-        }
-        # If enhanced data exists, include it without token usage
-        if isinstance(result, dict) and result.get("topics") is not None:
-            response_payload.update({
-                "enhanced": result.get("enhanced", True),
-                "cached": result.get("cached", False),
-                "topics": result.get("topics", []),
-                "unreferenced_posts": result.get("unreferenced_posts", [])
-            })
-
-        return response_payload
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Failed to generate briefing: {e}")
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/daily/topics")
-@analysis_only
-async def generate_daily_briefing_with_topics(request: BriefingRequest, background_tasks: BackgroundTasks):
-    try:
-        date = request.date
-        logger.info(f"🚀 Generating topic-based daily briefing for date: {date}")
-        if not date:
-            raise HTTPException(status_code=400, detail="Date parameter required")
-
-        if request.asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "topic_briefing",
-                trigger="manual",
-                message=f"Generate topic briefing for {date}",
-                payload={
-                    "date": date,
-                    "include_unreferenced": True if request.includeUnreferenced is None else request.includeUnreferenced,
-                    "refresh": bool(request.refresh),
-                },
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "topic_briefing",
-                    api_bridge.generate_daily_briefing_with_topics,
-                    date,
-                    include_unreferenced=True if request.includeUnreferenced is None else request.includeUnreferenced,
-                    refresh=bool(request.refresh),
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "topic_briefing", message="Topic briefing generation started")
-
-        include_unreferenced = True if request.includeUnreferenced is None else request.includeUnreferenced
-        result = await api_bridge.generate_daily_briefing_with_topics(
-            date,
-            include_unreferenced=include_unreferenced,
-            refresh=bool(request.refresh),
-        )
-        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
-            logger.error(f"❌ Engine error: {result['error']}")
-            return {"success": False, "error": result["error"]}
-
-        # Construct payload (no token costs exposed)
-        return {
-            "success": True,
-            "enhanced": result.get("enhanced", True),
-            # Topic-based daily briefing string (top-level summary)
-            "briefing": result.get("briefing", ""),
-            "format": result.get("format", "markdown"),
-            "saved_briefing_id": result.get("saved_briefing_id"),
-            "cached": result.get("cached", False),
-            "topics": result.get("topics", []),
-            "unreferenced_posts": result.get("unreferenced_posts", []),
-            "posts": result.get("posts", {}),
-            "date": result.get("date", date),
-            "posts_processed": result.get("posts_processed", 0),
-            "total_posts_fetched": result.get("total_posts_fetched", 0),
-            "one_sentence_takeaway": result.get("one_sentence_takeaway"),
-            "references": result.get("references", []),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Failed to generate topic-based briefing: {e}")
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/weekly")
-@analysis_only
-async def generate_weekly_briefing(request: BriefingRequest, background_tasks: BackgroundTasks):
-    try:
-        date = request.date
-        logger.info(f"🚀 Generating weekly briefing anchored at date: {date}")
-        if not date:
-            raise HTTPException(status_code=400, detail="Date parameter required")
-
-        if request.asyncMode:
-            if request.includeTopics:
-                job_id = api_bridge._start_job_safe(
-                    "weekly_topic_briefing",
-                    trigger="manual",
-                    message=f"Generate weekly topic briefing for {date}",
-                    payload={"date": date, "refresh": bool(request.refresh)},
-                )
-                if job_id:
-                    background_tasks.add_task(
-                        _run_async_job_background,
-                        "weekly_topic_briefing",
-                        api_bridge.generate_weekly_topic_briefing,
-                        date,
-                        refresh=bool(request.refresh),
-                        job_id=job_id,
-                    )
-                    return _accepted_job_response(job_id, "weekly_topic_briefing", message="Weekly topic briefing generation started")
-            else:
-                job_id = api_bridge._start_job_safe(
-                    "weekly_briefing",
-                    trigger="manual",
-                    message=f"Generate weekly briefing for {date}",
-                    payload={"date": date, "refresh": bool(request.refresh)},
-                )
-                if job_id:
-                    background_tasks.add_task(
-                        _run_async_job_background,
-                        "weekly_briefing",
-                        api_bridge.generate_weekly_briefing,
-                        date,
-                        refresh=bool(request.refresh),
-                        job_id=job_id,
-                    )
-                    return _accepted_job_response(job_id, "weekly_briefing", message="Weekly briefing generation started")
-
-        if request.includeTopics:
-            result = await api_bridge.generate_weekly_topic_briefing(date, refresh=bool(request.refresh))
-        else:
-            result = await api_bridge.generate_weekly_briefing(date, refresh=bool(request.refresh))
-        if isinstance(result, dict) and (result.get("error") or not result.get("success", True)):
-            logger.error(f"❌ Engine error: {result['error']}")
-            return {"success": False, "error": result["error"]}
-
-        return {
-            "success": True,
-            "briefing": result.get("briefing", ""),
-            "format": result.get("format", "markdown"),
-            "saved_briefing_id": result.get("saved_briefing_id"),
-            "cached": result.get("cached", False),
-            "date": result.get("date", date),
-            "week_start": result.get("week_start"),
-            "week_end": result.get("week_end"),
-            "subject_key": result.get("subject_key"),
-            "daily_briefings_used": result.get("daily_briefings_used", 0),
-            "days_covered": result.get("days_covered", []),
-            "estimated_tokens": result.get("estimated_tokens"),
-            "topics": result.get("topics", []),
-            "posts": result.get("posts", {}),
-            "variant": result.get("variant", "default"),
-            "one_sentence_takeaway": result.get("one_sentence_takeaway"),
-            "references": result.get("references", []),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Failed to generate weekly briefing: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@app.get("/api/briefings/vertical/source/{source_id}")
-async def get_source_vertical_briefing(
-    source_id: str,
-    background_tasks: BackgroundTasks,
-    start: str | None = None,
-    end: str | None = None,
-    asyncMode: bool = Query(False),
-):
-    """Generate or fetch a cached source-scoped vertical briefing.
-
-    With INSIGHT_ANALYSIS off this is a read of the stored briefing only (reading-finish R3):
-    a cache miss or asyncMode answers 409 analysis_disabled instead of generating.
-    """
-    try:
-        logger.info(f"🧭 Fetching vertical briefing for source {source_id}")
-        if not get_settings().analysis_enabled:
-            cached = None if asyncMode else api_bridge.get_cached_source_vertical_briefing(source_id, start, end)
-            if cached is None:
-                return analysis_disabled_response()
-            return cached
-        if asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "vertical_briefing_source",
-                trigger="manual",
-                message=f"Generate vertical briefing for {source_id}",
-                payload={
-                    "source_id": source_id,
-                    "start_date": start,
-                    "end_date": end,
-                    "refresh": False,
-                },
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "vertical_briefing_source",
-                    api_bridge.generate_source_vertical_briefing,
-                    source_id,
-                    start,
-                    end,
-                    refresh=False,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "vertical_briefing_source", message="Vertical briefing generation started")
-        return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=False)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to get source vertical briefing")
-        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}, "references": []}
-
-
-@app.post("/api/briefings/vertical/source/{source_id}/refresh")
-@analysis_only
-async def refresh_source_vertical_briefing(
-    source_id: str,
-    background_tasks: BackgroundTasks,
-    start: str | None = None,
-    end: str | None = None,
-    asyncMode: bool = Query(False),
-):
-    """Force regeneration of a source-scoped vertical briefing."""
-    try:
-        logger.info(f"🔄 Refreshing vertical briefing for source {source_id}")
-        if asyncMode:
-            job_id = api_bridge._start_job_safe(
-                "vertical_briefing_source",
-                trigger="manual",
-                message=f"Generate vertical briefing for {source_id}",
-                payload={
-                    "source_id": source_id,
-                    "start_date": start,
-                    "end_date": end,
-                    "refresh": True,
-                },
-            )
-            if job_id:
-                background_tasks.add_task(
-                    _run_async_job_background,
-                    "vertical_briefing_source",
-                    api_bridge.generate_source_vertical_briefing,
-                    source_id,
-                    start,
-                    end,
-                    refresh=True,
-                    job_id=job_id,
-                )
-                return _accepted_job_response(job_id, "vertical_briefing_source", message="Vertical briefing refresh started")
-        return await api_bridge.generate_source_vertical_briefing(source_id, start, end, refresh=True)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to refresh source vertical briefing")
-        return {"success": False, "error": str(e), "vertical_briefing": "", "tracks": [], "posts": {}, "references": []}
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring"""
@@ -2281,7 +1113,7 @@ async def health_check():
 @app.get("/api/status", response_model=SystemStatus)
 async def get_status():
     """Unified machine-readable system state: corpus freshness, sources, folders,
-    experts (with last-briefing time), scheduler config, and recent jobs.
+    scheduler config, and recent jobs.
     Designed as the single read an agent makes to understand the whole system."""
     try:
         return api_bridge.get_status()
@@ -2354,10 +1186,6 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
             payload["interval_hours"] = request.intervalHours
         if request.syncSourcesEachCycle is not None:
             payload["sync_sources_each_cycle"] = request.syncSourcesEachCycle
-        if request.generateDailyBriefing is not None:
-            payload["generate_daily_briefing"] = request.generateDailyBriefing
-        if request.generateTopicBriefing is not None:
-            payload["generate_topic_briefing"] = request.generateTopicBriefing
         if request.ingestTickMinutes is not None:
             if request.ingestTickMinutes < 15:
                 raise HTTPException(status_code=400, detail="ingestTickMinutes must be at least 15")
@@ -2379,49 +1207,6 @@ async def list_youtube_channel_videos(request: YouTubeChannelRequest):
         return api_bridge.list_youtube_channel_videos(request.source, request.limit)
     except Exception as e:
         logger.exception("Failed to list YouTube videos")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/youtube/channel/roadmap")
-@analysis_only
-async def build_youtube_channel_roadmap(request: YouTubeChannelRequest):
-    try:
-        logger.info(f"🗺️ Building YouTube roadmap for {request.source}")
-        return api_bridge.build_youtube_channel_roadmap(request.source, request.limit)
-    except Exception as e:
-        logger.exception("Failed to build YouTube roadmap")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/youtube/channel/playlists")
-async def build_youtube_playlists(request: YouTubeChannelRequest):
-    try:
-        logger.info(f"📚 Building YouTube playlists for {request.source}")
-        return api_bridge.build_youtube_playlists(request.source, request.limit or 20)
-    except Exception as e:
-        logger.exception("Failed to build YouTube playlists")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/youtube/video/evaluate")
-@analysis_only
-async def evaluate_youtube_video(request: YouTubeVideoRequest):
-    try:
-        logger.info(f"🎥 Evaluating YouTube video {request.video}")
-        return await api_bridge.evaluate_youtube_video(request.source, request.video)
-    except Exception as e:
-        logger.exception("Failed to evaluate YouTube video")
-        return {"success": False, "error": str(e)}
-
-
-@app.post("/api/youtube/video/chat")
-@analysis_only
-async def chat_with_youtube_video(request: YouTubeChatRequest):
-    try:
-        logger.info(f"💬 Chatting with YouTube video {request.video}")
-        return await api_bridge.chat_with_youtube_video(request.source, request.video, request.question)
-    except Exception as e:
-        logger.exception("Failed to chat with YouTube video")
         return {"success": False, "error": str(e)}
 
 
@@ -2452,173 +1237,3 @@ async def save_youtube_watch_progress(video_id: str, request: YouTubeProgressReq
     except Exception as e:
         logger.exception("Failed to save watch progress")
         return {"success": False, "error": str(e), "progress": None}
-
-# ============= TOPICS ENDPOINTS =============
-
-@app.get("/api/topics/{date}")
-async def get_topics(date: str):
-    """
-    Get all topics for a specific date with their associated posts.
-    This is the main endpoint for the topics view.
-    """
-    try:
-        logger.info(f"📋 Fetching topics for date: {date}")
-        
-        result = api_bridge.get_topics_by_date(date)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Retrieved {result.get('total', 0)} topics")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception("Failed to get topics")
-        return {"success": False, "error": str(e)}
-
-@app.get("/api/topics/topic/{topic_id}")
-async def get_topic(topic_id: str):
-    """Get a single topic with its posts."""
-    try:
-        logger.info(f"📋 Fetching topic: {topic_id}")
-        
-        result = api_bridge.get_topic_by_id(topic_id)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Retrieved topic: {topic_id}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to get topic {topic_id}")
-        return {"success": False, "error": str(e)}
-
-@app.get("/api/topics/{topic_id}/posts")
-async def get_topic_posts(topic_id: str):
-    """Get all posts for a specific topic."""
-    try:
-        logger.info(f"📋 Fetching posts for topic: {topic_id}")
-        
-        result = api_bridge.get_posts_for_topic(topic_id)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Retrieved {result.get('total', 0)} posts for topic")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to get posts for topic {topic_id}")
-        return {"success": False, "error": str(e)}
-
-@app.get("/api/topics/check/{date}")
-async def check_topics(date: str):
-    """Check if topics exist for a specific date."""
-    try:
-        logger.info(f"🔍 Checking if topics exist for date: {date}")
-        
-        result = api_bridge.check_topics_exist(date)
-        
-        # Log result
-        if result.get("success"):
-            exists = result.get("exists", False)
-            logger.info(f"✅ Topics exist for {date}: {exists}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to check topics for {date}")
-        return {"success": False, "error": str(e)}
-
-@app.get("/api/topics/{topic_id}/similar")
-async def get_similar_topics(topic_id: str, threshold: float = 0.75, limit: int = 10):
-    """
-    Find topics similar to a given topic (future: when embeddings are added).
-    
-    Query params:
-        - threshold: Minimum similarity score (0-1), default 0.75
-        - limit: Maximum number of results, default 10
-    """
-    try:
-        logger.info(f"🔍 Finding similar topics for: {topic_id}")
-        
-        result = api_bridge.find_similar_topics(topic_id, threshold, limit)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Found {result.get('total', 0)} similar topics")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to find similar topics for {topic_id}")
-        return {"success": False, "error": str(e)}
-
-@app.put("/api/topics/{topic_id}/title")
-async def update_topic_title(topic_id: str, data: dict):
-    """
-    Update the title of a topic.
-    
-    Request body:
-        - title: New title for the topic
-    """
-    try:
-        logger.info(f"✏️  Updating title for topic: {topic_id}")
-        
-        new_title = data.get("title")
-        if not new_title:
-            return {"success": False, "error": "Title is required"}
-        
-        result = api_bridge.update_topic_title(topic_id, new_title)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Updated topic title: {topic_id}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to update topic title for {topic_id}")
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/topics/{topic_id}/posts/{post_id}/move-to-outlier")
-async def move_post_to_outlier(topic_id: str, post_id: str, data: dict):
-    """
-    Move a post from a topic to the outlier topic.
-    
-    Request body:
-        - date: Date string (YYYY-MM-DD) for finding/creating outlier topic
-    """
-    try:
-        logger.info(f"✂️  Moving post {post_id} from topic {topic_id} to outlier")
-        
-        date_str = data.get("date")
-        if not date_str:
-            return {"success": False, "error": "Date is required"}
-        
-        result = api_bridge.move_post_to_outlier(post_id, topic_id, date_str)
-        
-        # Log success
-        if result.get("success"):
-            logger.info(f"✅ Moved post to outlier topic: {result.get('outlier_topic_id')}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"Failed to move post {post_id} to outlier")
-        return {"success": False, "error": str(e)}
-
-# ============= TOPIC MODELING ENDPOINTS (TESTING) =============
-
-@app.post("/api/model-topics")
-@analysis_only
-async def model_topics(posts: List[Dict[str, Any]]):
-    """Model topics from a list of posts (testing only)."""
-    try:
-        logger.info("🚀 Modeling topics from a list of posts")
-        result = await api_bridge.model_topics(posts)
-        return result
-    except Exception as e:
-        logger.exception("Failed to model topics")
-        return {"success": False, "error": str(e)}

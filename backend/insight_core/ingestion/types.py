@@ -1,7 +1,7 @@
 """Request, outcome and report vocabulary shared by the ingestion module and its callers.
 
 Spec: plan/INSIGHT_mark_ix_plan.md §A.1. Import-light (no DB, no kinds): the report types
-reference enrichment and save results only by duck type.
+reference save results only by duck type.
 """
 from __future__ import annotations
 
@@ -134,7 +134,6 @@ class RunReport:
     posts_failed: int = 0
     failures: list[SourceFailure] = field(default_factory=list)
     post_failures: list[Any] = field(default_factory=list)     # PostSaveFailure
-    enrichment: Any = None                                      # EnrichmentReport
     inserted_by_source: list[InsertedBySource] = field(default_factory=list)
 
     @property
@@ -156,7 +155,6 @@ class RunReport:
         )
 
     def to_payload(self) -> dict[str, Any]:
-        enrichment = self.enrichment.as_dict() if self.enrichment is not None else None
         return {
             "run_id": self.run_id,
             "trigger": getattr(self.trigger, "value", self.trigger),
@@ -180,7 +178,6 @@ class RunReport:
                 {"url": (f.url or "")[:1000] or None, "source_id": f.source_id, "stage": f.stage, "error": _cap(f.error)}
                 for f in self.post_failures[:LIST_CAP]
             ],
-            "enrichment": enrichment,
             "inserted_by_source": [
                 {"source_id": i.source_id, "display_name": i.display_name, "inserted": i.inserted}
                 for i in self.inserted_by_source[:LIST_CAP]

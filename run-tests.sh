@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ./run-tests.sh                                   # whole suite
-#   ./run-tests.sh insight_core.tests.test_inbox_service   # one module
+#   ./run-tests.sh insight_core.tests.test_ingestion_runner   # one module
 set -euo pipefail
 
 cd "$(dirname "$0")"

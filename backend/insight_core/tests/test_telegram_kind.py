@@ -20,7 +20,6 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.ingestion.credentials import MappingCredentials
-from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.gates import HOST_FLOORS, FetchGates
 from insight_core.ingestion.inspection import DbInspectionRefresher
 from insight_core.ingestion.kinds import KindRegistry
@@ -195,7 +194,6 @@ class Harness:
             catalog=InMemorySourceCatalog(sources),
             state=self.state,
             saver=self.saver,
-            enricher=Enricher(_NoopProcessor(), _NoopProcessor()),
             inspections=self.inspections,
             registry=KindRegistry([self.rss, self.kind]),
             gates=self.gates,
@@ -208,11 +206,6 @@ class Harness:
 
     def outcome(self, source_id: str):
         return next(o for o in self.state.outcomes if o.source_id == source_id)
-
-
-class _NoopProcessor:
-    def process_posts(self, posts):
-        return {"posts_processed": len(posts)}
 
 
 class _OpenSession:

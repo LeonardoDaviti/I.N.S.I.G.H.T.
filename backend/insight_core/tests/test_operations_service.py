@@ -27,8 +27,6 @@ class OperationsServiceTests(unittest.TestCase):
         self.service.get_scheduler_config = lambda: {  # type: ignore[method-assign]
             "interval_hours": 20.0,
             "sync_sources_each_cycle": True,
-            "generate_daily_briefing": True,
-            "generate_topic_briefing": False,
             "updated_at": None,
         }
         self.service.list_recent_jobs = lambda limit=30: [  # type: ignore[method-assign]
@@ -59,8 +57,6 @@ class OperationsServiceTests(unittest.TestCase):
         }
         self.service.get_database_counts = lambda: {  # type: ignore[method-assign]
             "total_posts": 140,
-            "total_topics": 12,
-            "total_briefings": 7,
             "enabled_sources": 4,
         }
 
@@ -78,7 +74,7 @@ class OperationsServiceTests(unittest.TestCase):
 
     def test_prepare_payload_preserves_full_result_payloads(self):
         payload = {
-            "briefing": "x" * 900,
+            "message": "x" * 900,
             "posts": {
                 "post-1": {"title": "Anchor"},
                 "post-2": {"title": "Commentary"},
@@ -88,7 +84,7 @@ class OperationsServiceTests(unittest.TestCase):
         stored = self.service._prepare_payload(payload, compact=False)
         preview = self.service._prepare_payload(payload, compact=True)
 
-        self.assertEqual(stored["briefing"], "x" * 900)
+        self.assertEqual(stored["message"], "x" * 900)
         self.assertIn("post-1", stored["posts"])
         self.assertEqual(preview["posts"]["count"], 2)
         self.assertEqual(preview["posts"]["sample_ids"], ["post-1", "post-2"])

@@ -13,8 +13,7 @@ from psycopg import Connection, Cursor
 
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 from insight_core.db.ensure_db import ensure_database
-from insight_core.utils.entity_memory import build_post_memory_fields
-from insight_core.utils.evidence import build_post_evidence_fields
+from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
 
 
@@ -67,9 +66,6 @@ class SaveBatchResult:
     updated_ids: List[str] = field(default_factory=list)
     failures: List[PostSaveFailure] = field(default_factory=list)
     by_source: Dict[str, Dict[str, int]] = field(default_factory=dict)
-    # The inserted posts themselves ({**post, id, source_id}), for enrichment: the entity and
-    # event processors read post bodies, not ids.
-    inserted_posts: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def inserted(self) -> int:
@@ -181,16 +177,13 @@ class PostsRepository:
         content_html = post.get("content_html", None)
         lang = post.get("lang", None)
         metadata = self._json_dumps(post.get("metadata", {}))
-        memory_fields = build_post_memory_fields(post)
-        evidence = build_post_evidence_fields(post)
-        content_hash = evidence.get("content_hash") or self._build_content_hash(title, content, content_html)
-        language_code = evidence.get("language_code")
-        language_confidence = evidence.get("language_confidence")
-        normalized_url = evidence.get("normalized_url")
-        canonical_url = evidence.get("canonical_url")
-        url_host = evidence.get("url_host")
-        title_hash = evidence.get("title_hash")
-        normalization_version = evidence.get("normalization_version")
+        fields = build_post_fields(post)
+        content_hash = fields.get("content_hash") or self._build_content_hash(title, content, content_html)
+        language_code = fields.get("language_code")
+        language_confidence = fields.get("language_confidence")
+        normalized_url = fields.get("normalized_url")
+        canonical_url = fields.get("canonical_url")
+        url_host = fields.get("url_host")
 
         # Named parameters (not positional) so the INSERT and the three recovery UPDATEs can
         # share one dict; the recovery statements touch different column subsets.
@@ -203,20 +196,12 @@ class PostsRepository:
             "content": content,
             "content_html": content_html,
             "lang": lang,
-            "title_original": memory_fields.get("title_original"),
-            "body_original": memory_fields.get("body_original"),
-            "title_pivot": memory_fields.get("title_pivot"),
-            "summary_pivot": memory_fields.get("summary_pivot"),
-            "title_pivot_version": memory_fields.get("title_pivot_version"),
-            "summary_pivot_version": memory_fields.get("summary_pivot_version"),
             "content_hash": content_hash,
             "language_code": language_code,
             "language_confidence": language_confidence,
             "normalized_url": normalized_url,
             "canonical_url": canonical_url,
             "url_host": url_host,
-            "title_hash": title_hash,
-            "normalization_version": normalization_version,
             "metadata": metadata,
             "media_urls": media_urls,
             "categories": categories,
@@ -234,21 +219,12 @@ class PostsRepository:
                 content,
                 content_html,
                 lang,
-                title_original,
-                body_original,
-                title_pivot,
-                summary_pivot,
-                title_pivot_version,
-                summary_pivot_version,
                 content_hash,
                 language_code,
                 language_confidence,
                 normalized_url,
                 canonical_url,
                 url_host,
-                title_hash,
-                normalization_version,
-                enriched_at,
                 metadata,
                 media_urls,
                 categories
@@ -262,21 +238,12 @@ class PostsRepository:
                 %(content)s,
                 %(content_html)s,
                 %(lang)s,
-                %(title_original)s,
-                %(body_original)s,
-                %(title_pivot)s,
-                %(summary_pivot)s,
-                %(title_pivot_version)s,
-                %(summary_pivot_version)s,
                 %(content_hash)s,
                 %(language_code)s,
                 %(language_confidence)s,
                 %(normalized_url)s,
                 %(canonical_url)s,
                 %(url_host)s,
-                %(title_hash)s,
-                %(normalization_version)s,
-                now(),
                 %(metadata)s::jsonb,
                 %(media_urls)s::jsonb,
                 %(categories)s::jsonb
@@ -365,9 +332,9 @@ class PostsRepository:
             # cannot instead move that row's url onto this one because url is NOT NULL and
             # totally unique - it has nowhere to go. So the url row wins the identity, the
             # clash is stamped into metadata for a human to merge, and neither row is
-            # deleted: post_artifacts / story_posts / topic_posts / the entity and event
-            # mention tables all cascade on delete and would take curated analyst work with
-            # them. Merging is a reviewable operation, not an ingest-loop side effect.
+            # deleted: the reader state, interactions and notes cascade on delete and would
+            # take the owner's reading history with them. Merging is a reviewable operation,
+            # not an ingest-loop side effect.
             self.logger.warning(
                 "external_id collision: post %s holds url %s while post %s holds "
                 "(source_id=%s, external_id=%s); updating the url row and leaving its "
@@ -470,21 +437,12 @@ class PostsRepository:
             f"content = COALESCE(%(content)s, {row}content)",
             f"content_html = COALESCE(%(content_html)s, {row}content_html)",
             f"lang = COALESCE(%(lang)s, {row}lang)",
-            f"title_original = COALESCE(%(title_original)s, {row}title_original)",
-            f"body_original = COALESCE(%(body_original)s, {row}body_original)",
-            "title_pivot = %(title_pivot)s",
-            "summary_pivot = %(summary_pivot)s",
-            "title_pivot_version = %(title_pivot_version)s",
-            "summary_pivot_version = %(summary_pivot_version)s",
             f"content_hash = COALESCE(%(content_hash)s, {row}content_hash)",
             "language_code = %(language_code)s",
             "language_confidence = %(language_confidence)s",
             "normalized_url = %(normalized_url)s",
             "canonical_url = %(canonical_url)s",
             "url_host = %(url_host)s",
-            "title_hash = %(title_hash)s",
-            "normalization_version = %(normalization_version)s",
-            "enriched_at = now()",
             f"metadata = {metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'}",
             "media_urls = %(media_urls)s::jsonb",
             "categories = %(categories)s::jsonb",
@@ -571,7 +529,6 @@ class PostsRepository:
                     window.append((draft, post_id, was_inserted))
                     if was_inserted:
                         result.inserted_ids.append(post_id)
-                        result.inserted_posts.append({**post, "id": post_id, "source_id": draft.source_id})
                         result._count(draft.source_id, "inserted")
                     else:
                         result.updated_ids.append(post_id)
@@ -589,7 +546,6 @@ class PostsRepository:
         lost_ids = {post_id for _, post_id, _ in window}
         result.inserted_ids = [i for i in result.inserted_ids if i not in lost_ids]
         result.updated_ids = [i for i in result.updated_ids if i not in lost_ids]
-        result.inserted_posts = [p for p in result.inserted_posts if p["id"] not in lost_ids]
         for draft, _post_id, was_inserted in window:
             result._count(draft.source_id, "inserted" if was_inserted else "updated", -1)
             result._count(draft.source_id, "failed")

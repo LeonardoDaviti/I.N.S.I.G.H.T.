@@ -10,8 +10,7 @@ Providers:
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
   the browser sign-in (login_start -> login_code -> login_password), the only session.
 - reddit, youtube: public feeds, nothing to add.
-- gemini {api_key}: analysis_only, shown by the frontend only while INSIGHT_ANALYSIS is on.
-  Read by the lazy Gemini client.
+A row stored for a provider not listed here (an old gemini key) is kept but never shown.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
 substack.com whether the cookie is signed in); telegram connects and calls get_me.
@@ -55,7 +54,6 @@ class ProviderSpec:
     needed: bool = True
     testable: bool = False
     sign_in: bool = False
-    analysis_only: bool = False
 
 
 PROVIDERS: Tuple[ProviderSpec, ...] = (
@@ -79,12 +77,6 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
     ),
     ProviderSpec("reddit", "Reddit", "Not needed: public feeds.", needed=False),
     ProviderSpec("youtube", "YouTube", "Not needed: public feeds.", needed=False),
-    ProviderSpec(
-        "gemini", "Gemini",
-        "The Google AI key the analysis features (briefings, topics, post analysis) call.",
-        (FieldSpec("api_key", "API key", "Create one at aistudio.google.com → Get API key."),),
-        analysis_only=True,
-    ),
 )
 _SPECS = {spec.provider: spec for spec in PROVIDERS}
 
@@ -215,7 +207,6 @@ class CredentialsService:
         return {
             "provider": spec.provider, "label": spec.label, "description": spec.description,
             "needed": spec.needed, "testable": spec.testable, "sign_in": spec.sign_in,
-            "analysis_only": spec.analysis_only,
             "configured": bool(fields) and all(f["set"] for f in fields),
             "fields": fields,
             "test": self._test_view(spec.provider, rows),

@@ -9,7 +9,7 @@ Scripts for data ingestion and its scheduler.
 Every fetch - the scheduler tick, the UI's "Run cycle", track fetch, fetch-now and the CLI -
 is one call to `insight_core.ingestion.run_ingestion(FetchRequest) -> RunReport`, so each
 applies the same policy: the yt-dlp switch, backoff, politeness gates, fetch-state
-recording, the save batch, enrichment and the archive-metadata (inspection) refresh.
+recording, the save batch and the archive-metadata (inspection) refresh.
 `scripts/ingest.py` and the `/api/ingest-posts` and `/api/safe-ingest-posts` routes are gone.
 
 ### CLI: safe_ingest.py
@@ -41,12 +41,10 @@ process cannot fetch (yt-dlp off, no usable Telegram session) answers 409.
 Secrets are added in the UI, **Sources → Connections**, and stored encrypted in the
 `credentials` table (spec `plan/INSIGHT_mark_ix_plan.md` §10.1). No API ever returns a
 saved value; the UI shows whether it is set and its last 4 characters. It is the only place
-a secret is read from: no API key comes from `.env`. Providers: Telegram, Substack and, shown
-only with analysis on, Gemini (`api_key`).
+a secret is read from: no API key comes from `.env`. Providers: Telegram and Substack.
 
-To move the keys of an older `.env` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`,
-`GEMINI_API_KEY` or `GOOGLE_API_KEY`) into the
-store once:
+To move the keys of an older `.env` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`)
+into the store once:
 
 ```bash
 docker compose exec backend python -m insight_core.scripts.import_env_secrets
@@ -132,7 +130,7 @@ for yt-dlp), capped by a backlog guard so a fast feed is polled before it can ov
   one run over all enabled sources; cadence makes it touch only the due ones. Two full runs
   never overlap (a Postgres advisory run lock); a second one reports `skipped_busy`.
 - **Daily work** once `interval_hours` have passed since the last one: prune job_runs,
-  refresh source cadence, sync sources.json, experts, daily / topic briefings. The first
+  refresh source cadence, sync sources.json. The first
   tick after a deploy seeds the gate from the last successful `scheduler_cycle` job.
 - The state (`last_tick_at`, `next_tick_at`, `last_daily_work_at`, `next_daily_work_at`) is in
   `system_settings['scheduler_state']` and served by `GET /api/operations/scheduler`.
@@ -145,7 +143,7 @@ for yt-dlp), capped by a backlog guard so a fast feed is polled before it can ov
 - `INSIGHT_BACKOFF_BASE_MINUTES` (60), `INSIGHT_BACKOFF_MAX_HOURS` (24),
   `INSIGHT_BACKOFF_DORMANT_AFTER` (10), `INSIGHT_BACKOFF_DORMANT_MAX_HOURS` (168)
 - `INSIGHT_FETCH_MAX_CONCURRENCY` (8), `INSIGHT_YTDLP_CONCURRENCY` (2), `INSIGHT_YTDLP_MIN_INTERVAL` (3s)
-- `INSIGHT_SAVE_COMMIT_BATCH` (20), `INSIGHT_ENRICH_CHUNK_SIZE` (100)
+- `INSIGHT_SAVE_COMMIT_BATCH` (20)
 - `INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS` (168), `INSIGHT_REFRESH_ARCHIVE_METADATA` (1; 0 skips
   the inspection refresh)
 

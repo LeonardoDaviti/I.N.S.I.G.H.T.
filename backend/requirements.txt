@@ -1,7 +1,6 @@
 telethon
 python-dotenv
 yt-dlp
-google-genai
 fastapi
 uvicorn
 psycopg[binary]

@@ -128,7 +128,6 @@ class SaveBatchTests(unittest.TestCase):
         self.assertEqual(result.inserted + result.failed, 45)
         self.assertEqual(result.inserted, 40)
         self.assertEqual(len(result.inserted_ids), 40)
-        self.assertEqual(len(result.inserted_posts), 40)
 
     def test_external_id_collision_is_an_update(self):
         first = PostDraft(self.source_a, {"url": f"https://test.invalid/mark-ix-post/{self.tag}/old",
@@ -146,12 +145,6 @@ class SaveBatchTests(unittest.TestCase):
         result = self._save(drafts)
         self.assertEqual(result.by_source[self.source_a], {"inserted": 2, "updated": 1, "failed": 0})
         self.assertEqual(result.by_source[self.source_b], {"inserted": 2, "updated": 0, "failed": 0})
-
-    def test_inserted_posts_carry_id_and_source_for_enrichment(self):
-        result = self._save(_drafts(self.source_a, 2, tag=self.tag))
-        for post in result.inserted_posts:
-            self.assertIn(post["id"], result.inserted_ids)
-            self.assertEqual(post["source_id"], self.source_a)
 
 
 if __name__ == "__main__":

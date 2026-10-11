@@ -38,9 +38,6 @@ JOB_LABELS: Dict[str, str] = {
     "ingestion_run": "Ingestion run",
     "scheduler_cycle": "Daily work",
     "archive_source": "Archive",
-    "daily_briefing": "Daily briefing",
-    "topic_briefing": "Topic briefing",
-    "expert_briefing": "Expert briefing",
 }
 LEGACY_JOB_LABELS: Dict[str, str] = {
     "safe_ingest": "Ingestion cycle (legacy)",
@@ -264,8 +261,6 @@ class OperationsService:
         payload = {
             "interval_hours": merged["interval_hours"],
             "sync_sources_each_cycle": merged["sync_sources_each_cycle"],
-            "generate_daily_briefing": merged["generate_daily_briefing"],
-            "generate_topic_briefing": merged["generate_topic_briefing"],
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
         }
 
@@ -336,9 +331,8 @@ class OperationsService:
     ) -> None:
         """Close out a job run.
 
-        Pass compact=True when the payload is a full result graph (expert/briefing
-        runs return every cited post, complete with content and content_html).
-        Those rows averaged 1.3MB each and grew job_runs without bound. Callers
+        Pass compact=True when the payload is a full result graph, so long lists and
+        long strings are cut before they land in job_runs. Callers
         that poll the job for its result - see pollOperationJob in the frontend -
         must keep compact=False.
         """
@@ -461,11 +455,7 @@ class OperationsService:
                       -- to the OS. Full payloads are still served by get_job().
                       jsonb_strip_nulls(jsonb_build_object(
                         'progress',          jr.payload->'progress',
-                        'estimated_tokens',  jr.payload->'estimated_tokens',
-                        'token_usage',       jr.payload->'token_usage',
-                        'error',             jr.payload->'error',
-                        'posts_processed',   jr.payload->'posts_processed',
-                        'saved_briefing_id', jr.payload->'saved_briefing_id'
+                        'error',             jr.payload->'error'
                       )),
                       jr.started_at,
                       jr.finished_at,
@@ -599,8 +589,6 @@ class OperationsService:
                     """
                     SELECT
                       (SELECT COUNT(*) FROM posts) AS total_posts,
-                      (SELECT COUNT(*) FROM topics) AS total_topics,
-                      (SELECT COUNT(*) FROM briefings) AS total_briefings,
                       (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
                     """
                 )
@@ -608,9 +596,7 @@ class OperationsService:
 
         return {
             "total_posts": int(row[0] or 0),
-            "total_topics": int(row[1] or 0),
-            "total_briefings": int(row[2] or 0),
-            "enabled_sources": int(row[3] or 0),
+            "enabled_sources": int(row[1] or 0),
         }
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
@@ -709,8 +695,6 @@ class OperationsService:
             {
                 "interval_hours": float(os.getenv("INSIGHT_INGEST_INTERVAL_HOURS", "20")),
                 "sync_sources_each_cycle": os.getenv("INSIGHT_SYNC_SOURCES_EACH_CYCLE", "true").lower() == "true",
-                "generate_daily_briefing": os.getenv("INSIGHT_GENERATE_DAILY_BRIEFING", "true").lower() == "true",
-                "generate_topic_briefing": os.getenv("INSIGHT_GENERATE_TOPIC_BRIEFING", "false").lower() == "true",
                 "ingest_tick_minutes": float(os.getenv("INSIGHT_INGEST_TICK_MINUTES", "60")),
                 "updated_at": None,
             }
@@ -727,8 +711,6 @@ class OperationsService:
         return {
             "interval_hours": interval_hours,
             "sync_sources_each_cycle": bool(config.get("sync_sources_each_cycle", True)),
-            "generate_daily_briefing": bool(config.get("generate_daily_briefing", True)),
-            "generate_topic_briefing": bool(config.get("generate_topic_briefing", False)),
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
             "updated_at": config.get("updated_at"),
         }
@@ -775,24 +757,6 @@ class OperationsService:
             if parent_key == "events":
                 return [self._compact_payload(item, parent_key=parent_key) for item in value[-200:]]
 
-            if parent_key == "topics":
-                summarized = []
-                for item in value[:12]:
-                    if isinstance(item, dict):
-                        summarized.append(
-                            {
-                                "id": item.get("id"),
-                                "title": item.get("title"),
-                                "post_count": len(item.get("post_ids", []) or []),
-                                "is_outlier": item.get("is_outlier", False),
-                            }
-                        )
-                    else:
-                        summarized.append(self._compact_payload(item, parent_key=parent_key))
-                if len(value) > 12:
-                    summarized.append({"truncated_topics": len(value) - 12})
-                return summarized
-
             if len(value) > 20:
                 preview = [self._compact_payload(item, parent_key=parent_key) for item in value[:10]]
                 preview.append({"truncated_items": len(value) - 10})
@@ -800,7 +764,7 @@ class OperationsService:
             return [self._compact_payload(item, parent_key=parent_key) for item in value]
 
         if isinstance(value, str):
-            limit = 1200 if parent_key not in {"briefing", "summary_markdown", "content", "content_html"} else 600
+            limit = 1200 if parent_key not in {"content", "content_html"} else 600
             if len(value) > limit:
                 return value[:limit] + "... [truncated]"
             return value

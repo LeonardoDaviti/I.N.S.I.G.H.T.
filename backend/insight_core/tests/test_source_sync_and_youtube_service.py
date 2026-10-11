@@ -174,20 +174,6 @@ class YouTubeServiceTests(unittest.TestCase):
         self.assertEqual(result["channel_id"], "UCHkYOD-3fZbuGhwsADBd9ZQ")
         self.assertIn("/channel/UCHkYOD-3fZbuGhwsADBd9ZQ", result["channel_url"])
 
-    def test_group_videos_clusters_series_titles(self):
-        videos = [
-            {"video_id": "aaa111bbb22", "title": "Agent Systems: Part 1", "published_at": "2025-01-01T00:00:00+00:00"},
-            {"video_id": "ccc333ddd44", "title": "Agent Systems: Part 2", "published_at": "2025-01-02T00:00:00+00:00"},
-            {"video_id": "eee555fff66", "title": "Random Office Tour", "published_at": "2025-01-03T00:00:00+00:00"},
-        ]
-
-        groups = self.service._group_videos(videos)
-
-        self.assertEqual(len(groups), 2)
-        clustered = next(group for group in groups if group["group_type"] == "topic_cluster")
-        self.assertEqual(clustered["title"], "Agent Systems")
-        self.assertEqual(len(clustered["videos"]), 2)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,8 +2,8 @@
 
 Nine repositories each carried their own private `_json_default` that handled
 `datetime`/`date` and raised on everything else. Rows come back from psycopg with
-`id` columns as `uuid.UUID`, so any payload built from a fetched row - an inbox
-action referencing a post_id, a story metadata blob, an evidence artifact - raised
+`id` columns as `uuid.UUID`, so any payload built from a fetched row - a job
+payload referencing a post_id, a source settings blob - raised
 `TypeError: Object of type <class 'uuid.UUID'> is not JSON serializable` at write
 time. Fixing it in one place keeps the nine from drifting apart again.
 """

@@ -52,11 +52,9 @@ stored encrypted in the `credentials` table with the key in the `insight_secrets
   https://my.telegram.org, then sign in there with your phone number. The session is saved
   encrypted; until then those sources show as unavailable in the health table, not as failing.
 - **Substack** (paid posts in full, optional): the `substack.sid` cookie.
-- **Gemini**: shown only with analysis on.
 
-Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `SUBSTACK_SID`
-or `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)? Copy them into the store once,
-then delete those lines from `.env`:
+Upgrading from a `.env` that still has `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` or `SUBSTACK_SID`?
+Copy them into the store once, then delete those lines from `.env`:
 
 ```bash
 docker compose exec backend python -m insight_core.scripts.import_env_secrets
@@ -76,6 +74,11 @@ docker compose up -d --remove-orphans
 
 `./update` does the same without the dump: `git pull`, `docker compose down`, build, `up -d`.
 If only environment variables changed: `docker compose up -d --force-recreate`.
+
+An older `.env` may still hold `INSIGHT_ANALYSIS`, `VITE_INSIGHT_ANALYSIS`, `GEMINI_*`,
+`GOOGLE_API_KEY` or `INSIGHT_GENERATE_*_BRIEFING` from the analysis version. Nothing reads them
+any more, so they are harmless; delete them when convenient. A Gemini key saved in Connections
+stays in the `credentials` table and is no longer shown.
 
 ## Development mode
 

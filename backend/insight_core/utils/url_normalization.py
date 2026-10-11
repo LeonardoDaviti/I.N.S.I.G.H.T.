@@ -1,4 +1,4 @@
-"""Deterministic URL normalization helpers for evidence processing."""
+"""Deterministic URL normalization helpers for saved posts."""
 
 from __future__ import annotations
 

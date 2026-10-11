@@ -1,6 +1,5 @@
 """
 Business logic for folders: a grouping layer over sources.
-An expert runs over a folder.
 """
 import psycopg
 from typing import List, Dict, Any, Optional

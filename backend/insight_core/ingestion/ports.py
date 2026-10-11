@@ -86,7 +86,7 @@ class _NullProgress:
 NULL_PROGRESS: ProgressSink = _NullProgress()
 
 # Rough job progress per phase, so the Operations panel's bar moves.
-_PHASE_PROGRESS = {"decided": 10.0, "fetched": 60.0, "saved": 75.0, "enriched": 90.0, "inspected": 100.0}
+_PHASE_PROGRESS = {"decided": 10.0, "fetched": 60.0, "saved": 80.0, "inspected": 100.0}
 
 
 class JobProgressSink:

@@ -16,7 +16,6 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.ports import (
     RUN_LOCK_KEY,
@@ -31,11 +30,6 @@ from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.tests._ingestion_fakes import RecordingInspectionRefresher, SpyFetchGates
 from insight_core.tests._kind_fakes import FakeKind
-
-
-class _NoopProcessor:
-    def process_posts(self, posts):
-        return None
 
 
 @requires_test_db
@@ -59,7 +53,6 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
             catalog=DbSourceCatalog(self.url),
             state=DbFetchStateStore(self.url),
             saver=DbPostSaver(self.url),
-            enricher=Enricher(_NoopProcessor(), _NoopProcessor()),
             inspections=RecordingInspectionRefresher(),
             registry=KindRegistry([kind]),
             gates=SpyFetchGates(),

@@ -19,11 +19,10 @@ from typing import Any, Dict, List, Optional
 import psycopg
 
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.processors.ai.lazy import lazy_gemini_processor
 
 
 class YouTubeService:
-    """Shared YouTube backend for archive, roadmap, evaluation, and progress tracking."""
+    """Shared YouTube backend for fetching, archive, channel listing and watch progress."""
 
     DEFAULT_PAGE_SIZE = 15
     DEFAULT_LANGUAGES = ("en", "en-US", "en-GB", "ru", "ka")
@@ -46,13 +45,6 @@ class YouTubeService:
     # Total wall-clock allowed for pulling subtitles for one video: the format loop used to
     # be unbounded at 60s per HTTP attempt across every format of every language.
     DEFAULT_TRANSCRIPT_BUDGET_SECONDS = 90
-    STOPWORDS = {
-        "the", "and", "for", "with", "from", "into", "about", "your", "this", "that",
-        "what", "when", "how", "why", "are", "you", "our", "their", "will", "just",
-        "part", "episode", "ep", "video", "new", "live", "podcast", "interview",
-    }
-
-    processor = lazy_gemini_processor()
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -136,127 +128,6 @@ class YouTubeService:
             "channel": channel_ref,
             "total_videos": len(videos),
             "videos": videos,
-        }
-
-    def build_channel_roadmap(self, source_handle: str, limit: Optional[int] = None) -> Dict[str, Any]:
-        listing = self.list_channel_videos(source_handle, limit=limit)
-        videos = listing["videos"]
-        groups = self._group_videos(videos)
-        roadmap_groups = []
-        for index, group in enumerate(groups, start=1):
-            ordered_videos = sorted(group["videos"], key=lambda item: item.get("published_at") or "")
-            roadmap_groups.append(
-                {
-                    "group_id": str(index),
-                    "title": group["title"],
-                    "group_type": group["group_type"],
-                    "recommended_order": [video["video_id"] for video in ordered_videos],
-                    "videos": ordered_videos,
-                    "video_count": len(ordered_videos),
-                }
-            )
-
-        return {
-            "channel": listing["channel"],
-            "total_videos": len(videos),
-            "groups": roadmap_groups,
-        }
-
-    def build_playlists(self, source_handle: str, limit: int = 20) -> Dict[str, Any]:
-        listing = self.list_channel_videos(source_handle, limit=limit)
-        groups = self._group_videos(listing["videos"], collapse_singletons=True)
-        return {
-            "channel": listing["channel"],
-            "total_videos": len(listing["videos"]),
-            "playlists": groups,
-        }
-
-    async def evaluate_video(self, source_handle: str, video_ref: str) -> Dict[str, Any]:
-        post = self._build_video_post(video_ref, source_handle)
-        if not post:
-            raise ValueError(f"Unable to load video metadata for {video_ref}")
-
-        from insight_core.services.briefings_store_service import BriefingsStoreService
-
-        store = BriefingsStoreService(self.db_url)
-        cached = store.get_briefing("youtube_video", post["external_id"], "tldr")
-        if cached:
-            payload = dict(cached.get("payload") or {})
-            if cached.get("content") and not payload.get("summary_markdown"):
-                payload["summary_markdown"] = cached.get("content", "")
-            if payload:
-                return payload
-
-        fallback = self._fallback_video_evaluation(post)
-        if not self.processor.setup_processor():
-            self._persist_video_tldr(post, fallback)
-            return fallback
-
-        try:
-            await self.processor.connect()
-            prompt = f"""
-Return ONLY valid JSON with this exact structure:
-{{
-  "summary_markdown": "2-3 minute read markdown summary",
-  "chapters": [
-    {{
-      "title": "chapter title",
-      "start_seconds": 0
-    }}
-  ],
-  "depth": "low|medium|high",
-  "novelty": "low|medium|high",
-  "worth_watching": "summary_enough|watch_selected_sections|watch_full_video",
-  "reasoning": "short explanation"
-}}
-
-Use only the supplied video transcript and metadata.
-
-VIDEO:
-Title: {post.get("title", "")}
-Source: {post.get("source", "")}
-Published: {post.get("date")}
-Duration seconds: {post.get("metadata", {}).get("duration_seconds")}
-Description:
-{post.get("metadata", {}).get("description", "")[:4000]}
-
-Transcript:
-{post.get("content", "")[:20000]}
-"""
-            raw = await self.processor._generate_text(prompt)
-            result = self.processor._extract_json_from_response(raw)
-        except Exception as exc:
-            self.logger.warning("Falling back to deterministic video evaluation for %s: %s", video_ref, exc)
-            result = fallback
-        finally:
-            try:
-                await self.processor.disconnect()
-            except Exception:
-                pass
-
-        self._persist_video_tldr(post, result)
-        return result
-
-    async def chat_with_video(self, source_handle: str, video_ref: str, question: str) -> Dict[str, Any]:
-        post = self._build_video_post(video_ref, source_handle)
-        if not post:
-            raise ValueError(f"Unable to load video metadata for {video_ref}")
-
-        if self.processor.setup_processor():
-            answer = self.processor.ask_single_post(post, question)
-            if answer.get("success"):
-                return {
-                    "success": True,
-                    "video_id": post["external_id"],
-                    "answer": answer["answer"],
-                    "source": "gemini",
-                }
-
-        return {
-            "success": True,
-            "video_id": post["external_id"],
-            "answer": self._fallback_video_answer(post, question),
-            "source": "fallback",
         }
 
     def get_watch_progress(self, video_id: str) -> Optional[Dict[str, Any]]:
@@ -706,122 +577,6 @@ Transcript:
             "channel_id": entry.get("channel_id") or entry.get("uploader_id"),
             "source_handle": source_handle,
         }
-
-    def _group_videos(self, videos: List[Dict[str, Any]], collapse_singletons: bool = False) -> List[Dict[str, Any]]:
-        grouped: Dict[str, Dict[str, Any]] = {}
-        singletons: List[Dict[str, Any]] = []
-
-        for video in videos:
-            key = self._topic_key(video["title"])
-            if key == video["video_id"]:
-                singletons.append(video)
-                continue
-
-            group = grouped.setdefault(
-                key,
-                {
-                    "title": self._group_title_from_key(key, video["title"]),
-                    "group_type": "topic_cluster",
-                    "videos": [],
-                },
-            )
-            group["videos"].append(video)
-
-        if collapse_singletons and singletons:
-            grouped["singletons"] = {
-                "title": "General Watch Queue",
-                "group_type": "general_queue",
-                "videos": singletons,
-            }
-        else:
-            for video in singletons:
-                grouped[video["video_id"]] = {
-                    "title": video["title"],
-                    "group_type": "single_video",
-                    "videos": [video],
-                }
-
-        groups = list(grouped.values())
-        groups.sort(
-            key=lambda item: min(
-                (video.get("published_at") or "9999-12-31T00:00:00+00:00" for video in item["videos"]),
-                default="9999-12-31T00:00:00+00:00",
-            )
-        )
-        return groups
-
-    def _topic_key(self, title: str) -> str:
-        cleaned = re.sub(r"\s+", " ", title or "").strip()
-        for separator in ("|", ":", " - ", " – ", " — "):
-            if separator in cleaned:
-                prefix = cleaned.split(separator, 1)[0].strip()
-                if 2 <= len(prefix.split()) <= 8:
-                    return prefix.lower()
-
-        normalized = re.sub(r"\b(part|episode|ep|lesson|chapter)\s*\d+\b", "", cleaned, flags=re.IGNORECASE)
-        tokens = re.findall(r"[A-Za-z0-9]+", normalized.lower())
-        keywords = [token for token in tokens if token not in self.STOPWORDS]
-        if len(keywords) >= 3:
-            return " ".join(keywords[:3])
-        return self._extract_video_id(cleaned) or cleaned
-
-    def _group_title_from_key(self, key: str, original_title: str) -> str:
-        if key == original_title:
-            return original_title
-        return " ".join(part.capitalize() for part in key.split())
-
-    def _fallback_video_evaluation(self, post: Dict[str, Any]) -> Dict[str, Any]:
-        metadata = post.get("metadata", {})
-        chapters = metadata.get("chapters") or []
-        duration = metadata.get("duration_seconds") or 0
-        transcript = post.get("content", "")
-        transcript_length = len(transcript.split())
-        depth = "high" if transcript_length > 2200 or duration > 2400 else "medium" if transcript_length > 900 else "low"
-        novelty = "high" if len(metadata.get("tags") or []) >= 6 else "medium" if transcript_length > 1200 else "low"
-        worth = "watch_full_video" if depth == "high" else "watch_selected_sections" if chapters else "summary_enough"
-        summary = self._summarize_text(transcript or metadata.get("description", ""), limit=1200)
-
-        return {
-            "summary_markdown": f"## TL;DR\n{summary}",
-            "chapters": chapters[:12],
-            "depth": depth,
-            "novelty": novelty,
-            "worth_watching": worth,
-            "reasoning": "Derived from transcript coverage, duration, and chapter structure.",
-        }
-
-    def _persist_video_tldr(self, post: Dict[str, Any], result: Dict[str, Any]) -> None:
-        from insight_core.services.briefings_store_service import BriefingsStoreService
-
-        store = BriefingsStoreService(self.db_url)
-        store.save_briefing(
-            subject_type="youtube_video",
-            subject_key=post["external_id"],
-            variant="tldr",
-            render_format="markdown",
-            title=post.get("title"),
-            content=result.get("summary_markdown", ""),
-            payload=result,
-        )
-
-    def _fallback_video_answer(self, post: Dict[str, Any], question: str) -> str:
-        transcript = post.get("content") or ""
-        snippets = [line for line in transcript.splitlines() if line.strip()]
-        if not snippets:
-            return "No transcript or description is available for this video yet."
-        if question:
-            lowered = question.lower()
-            for snippet in snippets:
-                if any(token in snippet.lower() for token in re.findall(r"[a-z0-9]+", lowered)[:4]):
-                    return snippet[:600]
-        return snippets[0][:600]
-
-    def _summarize_text(self, text: str, limit: int = 1200) -> str:
-        normalized = " ".join(text.split())
-        if not normalized:
-            return "Transcript is not available yet."
-        clipped = normalized[:limit].rstrip()
-        return clipped if clipped.endswith((".", "!", "?")) else f"{clipped}."
 
     def _escape_html(self, value: str) -> str:
         return (

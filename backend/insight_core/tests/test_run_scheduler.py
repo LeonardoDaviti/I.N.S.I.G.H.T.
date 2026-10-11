@@ -12,8 +12,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from insight_core.ingestion import FetchRequest, RunReport, SourceSelector, Trigger
 from unittest import mock
 
-from insight_core.scripts.run_scheduler import DailyWorkSummary, SchedulerState, daily_work, tick, tracked_job
-from insight_core.settings import Settings
+from insight_core.scripts.run_scheduler import SchedulerState, daily_work, tick
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 CONFIG = {"interval_hours": 20, "ingest_tick_minutes": 60}
@@ -102,7 +101,7 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_tick_is_seeded_from_the_last_daily_cycle(self):
         state = await self._tick(ops=FakeOps(last_cycle_success=NOW - timedelta(hours=2)))
-        self.assertEqual(self.daily.calls, 0, "a fresh deploy must not produce an extra briefing")
+        self.assertEqual(self.daily.calls, 0, "a fresh deploy must not run the daily work again")
         self.assertEqual(state.last_daily_work_at, NOW - timedelta(hours=2))
         self.assertEqual(state.next_daily_work_at, NOW + timedelta(hours=18))
 
@@ -130,15 +129,6 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
                            ingest=self.ingest, daily_work=self.daily, ops=self.ops)
         self.assertEqual(state.next_tick_at, NOW + timedelta(minutes=15))
 
-    async def test_skipped_daily_steps_are_recorded_on_the_scheduler_cycle_job(self):
-        skipped = DailyWorkSummary(skipped=("experts", "daily_briefing", "topic_briefing"), reason="analysis off")
-        await self._tick(SchedulerState(last_daily_work_at=NOW - timedelta(hours=21)), daily=FakeDailyWork(skipped))
-        _, cycle = self.ops.finished[-1]
-        self.assertEqual(cycle["status"], "success")
-        self.assertEqual(cycle["payload"]["daily_work"],
-                         {"skipped": ["experts", "daily_briefing", "topic_briefing"], "reason": "analysis off"})
-        self.assertEqual(cycle["message"], "Daily work completed (analysis off: skipped experts, daily_briefing, topic_briefing)")
-
     def test_state_round_trips_through_its_dict(self):
         state = SchedulerState(NOW, NOW + timedelta(hours=1), NOW - timedelta(hours=3), NOW + timedelta(hours=17))
         self.assertEqual(SchedulerState.from_dict(state.as_dict()), state)
@@ -155,77 +145,19 @@ class PruneOps(FakeOps):
         return 0
 
 
-class DailyWorkAnalysisOffTests(unittest.IsolatedAsyncioTestCase):
-    """INSIGHT_ANALYSIS=off (reading-finish R3): upkeep runs; experts and briefings don't."""
-
-    async def test_upkeep_runs_and_experts_and_briefings_are_skipped_without_gemini(self):
+class DailyWorkTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_upkeep_runs_and_starts_no_jobs(self):
         ops = PruneOps()
-        never = AssertionError
         with mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=3) as cadence, \
              mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.sync_json_to_db",
-                        return_value={"success": True}) as sync, \
-             mock.patch("insight_core.services.experts_service.ExpertsService.__init__", side_effect=never("experts")), \
-             mock.patch("insight_core.services.briefing_service.BriefingService.__init__", side_effect=never("briefing")), \
-             mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
-                        side_effect=never("GeminiProcessor built")):
-            result = await daily_work("postgresql://unused@localhost/none", ops,
-                                      {"generate_daily_briefing": True, "generate_topic_briefing": True},
-                                      settings=Settings(analysis_enabled=False))
+                        return_value={"success": True}) as sync:
+            # An old stored config may still carry the retired briefing switches: ignored.
+            await daily_work("postgresql://unused@localhost/none", ops,
+                             {"generate_daily_briefing": True, "generate_topic_briefing": True})
         self.assertEqual(ops.pruned, 1)
         self.assertEqual(cadence.call_count, 1)
         self.assertEqual(sync.call_count, 1)
-        self.assertEqual(ops.job_types(), [], "no expert or briefing jobs start")
-        self.assertEqual(result, DailyWorkSummary(skipped=("experts", "daily_briefing", "topic_briefing"), reason="analysis off"))
-
-
-class TrackedJobTests(unittest.IsolatedAsyncioTestCase):
-    """E5 for the daily-work jobs: a started job_runs row is finished in every case."""
-
-    async def test_a_result_finishes_the_job_with_its_status(self):
-        ops = FakeOps()
-
-        async def work():
-            return {"success": True, "posts_processed": 4}
-
-        result = await tracked_job(ops, "daily_briefing", {"date": "2026-10-09"}, work)
-        self.assertEqual(result, {"success": True, "posts_processed": 4})
-        self.assertEqual(ops.job_types(), ["daily_briefing"])
-        self.assertEqual(ops.started[0][1]["trigger"], "scheduler")
-        job_id, finished = ops.finished[0]
-        self.assertEqual(job_id, "job-1")
-        self.assertEqual(finished["status"], "success")
-        self.assertEqual(finished["message"], "Processed 4 posts")
-
-    async def test_an_unsuccessful_result_is_failed_with_its_error(self):
-        ops = FakeOps()
-
-        async def work():
-            return {"success": False, "error": "no posts"}
-
-        await tracked_job(ops, "topic_briefing", {}, work)
-        self.assertEqual(ops.finished[0][1]["status"], "failed")
-        self.assertEqual(ops.finished[0][1]["message"], "no posts")
-
-    async def test_an_exception_finishes_the_job_as_failed_and_propagates(self):
-        ops = FakeOps()
-
-        async def work():
-            raise RuntimeError("db down")
-
-        with self.assertRaises(RuntimeError):
-            await tracked_job(ops, "daily_briefing", {}, work)
-        self.assertEqual(len(ops.finished), 1)
-        self.assertEqual(ops.finished[0][1]["status"], "failed")
-        self.assertEqual(ops.finished[0][1]["message"], "db down")
-
-    async def test_an_exception_can_be_contained(self):
-        ops = FakeOps()
-
-        async def work():
-            raise RuntimeError("llm down")
-
-        self.assertIsNone(await tracked_job(ops, "expert_briefing", {}, work, reraise=False))
-        self.assertEqual(ops.finished[0][1]["status"], "failed")
+        self.assertEqual(ops.job_types(), [])
 
 
 if __name__ == "__main__":

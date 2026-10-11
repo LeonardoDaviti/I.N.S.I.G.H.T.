@@ -3,10 +3,10 @@
 Orchestration only. Every collaborator is a port injected through the keyword
 constructor, so the scheduler tick, the manual "Run cycle", track fetch, fetch-now and the
 CLI all apply the same policy: the yt-dlp switch, backoff (read and write), politeness
-gates, status recording, save isolation, enrichment and the inspection refresh.
+gates, status recording, save isolation and the inspection refresh.
 
 Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
-record decisions -> fetch under the gates -> record outcomes -> one save batch -> enrich ->
+record decisions -> fetch under the gates -> record outcomes -> one save batch ->
 refresh inspections -> report. Kind sessions (B8, telegram_mtproto) are opened lazily
 inside the gate slot of a kind's first due source and closed in a finally after the
 inspection refresh; a session that cannot open makes that kind's sources unavailable. A fetch never raises out of the runner; a failing store
@@ -24,7 +24,6 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
-from insight_core.ingestion.enrichment import Enricher, EnrichmentReport
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindSession, KindUnavailable, SourceKind
@@ -120,7 +119,6 @@ class IngestionRunner:
         catalog: SourceCatalog,
         state: FetchStateStore,
         saver: PostSaver,
-        enricher: Enricher,
         inspections: InspectionRefresher,
         registry: KindRegistry,
         gates: FetchGates,
@@ -132,7 +130,6 @@ class IngestionRunner:
         self.catalog = catalog
         self.state = state
         self.saver = saver
-        self.enricher = enricher
         self.inspections = inspections
         self.registry = registry
         self.gates = gates
@@ -197,12 +194,12 @@ class IngestionRunner:
 
         sessions = _RunSessions()
         try:
-            return await self._fetch_save_enrich(request, progress, started, run_id, sources, due, counts,
+            return await self._fetch_and_save(request, progress, started, run_id, sources, due, counts,
                                                  sessions)
         finally:
             await sessions.close_all()
 
-    async def _fetch_save_enrich(self, request: FetchRequest, progress: ProgressSink, started: datetime,
+    async def _fetch_and_save(self, request: FetchRequest, progress: ProgressSink, started: datetime,
                                  run_id: str, sources: List[Dict[str, Any]],
                                  due: List[tuple[Dict[str, Any], SourceKind, FetchDecision]],
                                  counts: Dict[str, int], sessions: _RunSessions) -> RunReport:
@@ -262,15 +259,7 @@ class IngestionRunner:
             now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
         )
 
-        # Enrich the inserted posts.
-        try:
-            enrichment = await self.enricher.run(saved.inserted_posts)
-        except Exception as exc:  # noqa: BLE001 - Enricher counts chunk failures; this is belt and braces
-            logger.exception("Enrichment failed: %s", exc)
-            enrichment = EnrichmentReport.empty()
         counts_by_source = dict(saved.by_source)
-        saved.inserted_posts.clear()
-        progress.event("enriched", enrichment.as_dict())
 
         # Refresh inspections for every source that fetched at least one post.
         refreshable = [f for f in fetched if f.outcome.status == OutcomeStatus.HEALTHY]
@@ -303,7 +292,7 @@ class IngestionRunner:
             sources_failed=len(failed_sources), decisions=counts,
             posts_fetched=posts_fetched, posts_inserted=saved.inserted, posts_updated=saved.updated,
             posts_failed=saved.failed, failures=failures[:LIST_CAP],
-            post_failures=saved.failures[:LIST_CAP], enrichment=enrichment,
+            post_failures=saved.failures[:LIST_CAP],
             inserted_by_source=inserted_by_source,
         )
 
@@ -359,6 +348,5 @@ class IngestionRunner:
             status=status,  # type: ignore[arg-type]
             started_at=started,
             finished_at=self.clock(),
-            enrichment=fields.pop("enrichment", EnrichmentReport.empty()),
             **fields,
         )

@@ -5,13 +5,13 @@ The shortest path from a clone to reading your sources. `DEPLOYMENT.md` has the 
 ## With Docker (recommended)
 
 ```bash
-cp .env.example .env          # set DB_*, BACKEND_PORT, FRONTEND_PORT; leave INSIGHT_ANALYSIS=off
+cp .env.example .env          # set DB_*, BACKEND_PORT, FRONTEND_PORT
 docker compose up -d --build
 docker compose ps             # postgres, backend, ingestion and frontend should be up
 ```
 
 Open `http://localhost:${FRONTEND_PORT}`. API keys never go in `.env`: add them in the app under
-**Sources → Connections** (Telegram, Substack; with analysis on, Gemini). They are
+**Sources → Connections** (Telegram, Substack). They are
 stored encrypted in the database. Coming from an older `.env` that still holds keys? Run
 `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once, then delete those lines.
 
@@ -41,11 +41,8 @@ The top bar reads `feed / sources`.
 - **sources** (`/settings/sources`): tabs `sources / connections / ingestion`. The `ingestion`
   tab holds the run report, `Run due sources`, the scheduler status and the job history.
 
-That is the reading-only app, and it is the default. Briefings, stories, the inbox and experts sit
-behind one switch, `INSIGHT_ANALYSIS`. To bring them back, set `INSIGHT_ANALYSIS=on` and
-`VITE_INSIGHT_ANALYSIS=on` in `.env`, then run `docker compose up -d --build`. They also need
-a Gemini API key, added in Sources → Connections → Gemini. The README's "Analysis switch" section has the details. Nothing is deleted
-either way.
+That is the whole app: a reader. The old analysis layer (briefings, stories, the inbox, experts)
+was retired; the tag `mark-ix-analysis-archive` holds its last version.
 
 ## First steps in the app
 

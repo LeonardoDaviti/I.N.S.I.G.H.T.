@@ -97,15 +97,13 @@ class ProviderStoreOnlyTests(unittest.TestCase):
         self.assertEqual(creds.get("substack", "sid"), "from-db")
 
     def test_the_environment_is_never_read(self):
-        env = {"SUBSTACK_SID": "from-env", "TELEGRAM_API_ID": "7", "TELEGRAM_API_HASH": HASH,
-               "GEMINI_API_KEY": "g"}
+        env = {"SUBSTACK_SID": "from-env", "TELEGRAM_API_ID": "7", "TELEGRAM_API_HASH": HASH}
         creds = StoredCredentials(load=lambda: {}, env=env)
         saved = dict(os.environ)
         os.environ.update(env)
         try:
             self.assertIsNone(creds.get("substack", "sid"))
             self.assertIsNone(creds.get("telegram", "api_id"))
-            self.assertIsNone(creds.get("gemini", "api_key"))
         finally:
             os.environ.clear()
             os.environ.update(saved)
@@ -430,25 +428,13 @@ class CredentialsServiceTests(unittest.TestCase):
     def test_listing_names_every_provider_and_public_feeds_need_nothing(self):
         listing = self.service.list()
         self.assertEqual([p["provider"] for p in listing["providers"]],
-                         ["substack", "telegram", "reddit", "youtube", "gemini"])
+                         ["substack", "telegram", "reddit", "youtube"])
         reddit = self._provider(listing, "reddit")
         self.assertFalse(reddit["needed"])
         self.assertEqual(reddit["fields"], [])
         sid = self._field(self._provider(listing, "substack"), "sid")
         self.assertEqual((sid["set"], sid["source"], sid["last4"]), (False, "none", None))
         self.assertNotIn("env", sid)
-
-    def test_gemini_is_an_analysis_only_connection(self):
-        listing = self.service.list()
-        flags = {p["provider"]: p["analysis_only"] for p in listing["providers"]}
-        self.assertEqual(flags, {"substack": False, "telegram": False, "reddit": False, "youtube": False,
-                                 "gemini": True})
-        self.assertEqual([f["key"] for f in self._provider(listing, "gemini")["fields"]], ["api_key"])
-        view = self.service.put("gemini", "api_key", " AIzaSyExampleKey1234 ")
-        self.assertEqual((self._field(view, "api_key")["set"], self._field(view, "api_key")["last4"]), (True, "1234"))
-        self.assertTrue(view["configured"])
-        self.assertNotIn("AIzaSyExampleKey1234", json.dumps(self.service.list()))
-        self.assertEqual(self.service.credentials.get("gemini", "api_key"), "AIzaSyExampleKey1234")
 
     def test_a_saved_value_is_encrypted_and_never_echoed(self):
         view = self.service.put("substack", "sid", f"substack.sid={SID}")

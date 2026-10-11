@@ -25,26 +25,21 @@ from insight_core.ingestion.types import (
 if TYPE_CHECKING:
     from insight_core.ingestion.ports import ProgressSink
     from insight_core.ingestion.runner import IngestionRunner
-    from insight_core.settings import Settings
 
 
-def default_runner(db_url: Optional[str] = None, *, settings: "Optional[Settings]" = None) -> "IngestionRunner":
+def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     """The runner with every real port: Db* stores, PgAdvisoryRunLock, availability_from_env
     and the process-wide FetchGates.shared() (call it inside the running event loop).
 
     This is the composition root, so it is the one place in ingestion/ that wires services
-    in: the enrichment processors (entity and event memory), YouTubeService for the
-    youtube_channel kind, and the posts/sources services the archive metadata writer reads.
-
-    With INSIGHT_ANALYSIS off (`settings`, default the process settings) the enricher is a
-    SkippedEnricher: saving posts never touches entity or event memory.
+    in: YouTubeService for the youtube_channel kind, and the posts/sources services the
+    archive metadata writer reads.
     """
     import os
     from datetime import datetime, timezone
 
     from insight_core.db.ensure_db import ensure_database
     from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
-    from insight_core.ingestion.enrichment import enricher_for
     from insight_core.ingestion.gates import FetchGates
     from insight_core.ingestion.http import KindHttp
     from insight_core.ingestion.inspection import DbInspectionRefresher
@@ -57,14 +52,10 @@ def default_runner(db_url: Optional[str] = None, *, settings: "Optional[Settings
     )
     from insight_core.ingestion.runner import IngestionRunner
     from insight_core.ingestion.schedule import availability_from_env
-    from insight_core.services.entity_memory_service import EntityMemoryService
-    from insight_core.services.event_memory_service import EventMemoryService
     from insight_core.services.posts_service import PostsService
     from insight_core.services.sources_service import SourcesService
     from insight_core.services.youtube_service import YouTubeService
-    from insight_core.settings import get_settings
 
-    settings = settings or get_settings()
     db_url = db_url or os.getenv("DATABASE_URL") or ensure_database()
 
     def clock() -> datetime:
@@ -75,7 +66,6 @@ def default_runner(db_url: Optional[str] = None, *, settings: "Optional[Settings
         catalog=DbSourceCatalog(db_url),
         state=DbFetchStateStore(db_url),
         saver=DbPostSaver(db_url),
-        enricher=enricher_for(settings, EntityMemoryService(db_url), EventMemoryService(db_url)),
         inspections=DbInspectionRefresher(
             writer=ArchiveMetadataWriter(posts=PostsService(db_url), sources=SourcesService(db_url)),
             gates=gates,

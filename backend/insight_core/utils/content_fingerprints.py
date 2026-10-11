@@ -1,11 +1,10 @@
-"""Cheap deterministic content fingerprints for evidence processing."""
+"""Cheap deterministic content fingerprints: the post content hash and HTML stripping."""
 
 from __future__ import annotations
 
 import hashlib
 import html
 import re
-from typing import Any, Dict, Optional
 
 
 HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
@@ -32,14 +31,6 @@ def normalize_text(value: str | None) -> str:
     return text.strip().casefold()
 
 
-def hash_text(value: str | None) -> str:
-    """Hash normalized text with SHA-256."""
-    normalized = normalize_text(value)
-    if not normalized:
-        return ""
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def hash_post_content(title: str | None, content: str | None, content_html: str | None) -> str:
     """Hash a post's textual payload for update tracking and dedupe seeds."""
     parts = [
@@ -51,15 +42,3 @@ def hash_post_content(title: str | None, content: str | None, content_html: str 
     if not payload:
         return ""
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def build_post_fingerprints(
-    title: str | None,
-    content: str | None,
-    content_html: str | None,
-) -> Dict[str, str]:
-    """Return deterministic title and content fingerprints."""
-    return {
-        "title_hash": hash_text(title),
-        "content_hash": hash_post_content(title, content, content_html),
-    }
