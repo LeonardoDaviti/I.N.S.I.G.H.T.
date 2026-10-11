@@ -1,9 +1,17 @@
 # 0005 — Minimal codebase: keep what reading uses, retire the rest
 
-Status: **planned** · Label: `ready-for-agent` · Drafted 2026-10-10 from the whole-codebase audit (owner request).
+Status: **built** 2026-10-12, not yet deployed (migration 0027 waits for the owner's go) · Drafted 2026-10-10 from the whole-codebase audit (owner request).
 Renumbered from 0003 on 2026-10-11 (0003 is the source-name issue folded into the Design Studio spec as S7).
 
 **Owner decision, 2026-10-11:** retire analysis **completely** and remove it; better analysis comes back later as new work. No exceptions (milestones and the track briefing go too). Slices 4–6 are confirmed; nothing is built until the owner says go.
+
+## Outcome (2026-10-12)
+
+- All 11 slices are built on `main`, one commit per slice (slices 1 and 11 in a backend and a frontend half), plus the code-review fixes. The tag `mark-ix-analysis-archive` holds the analysis code.
+- Tracked lines 111,293 → 64,809 (backend 52,331 → 24,809, frontend 39,678 → 27,476, docs 18,974 → 12,236). Short of the 55–60k target: the Design Studio (~7k) and `plan/` (~12k) were kept.
+- Backend image 464 MB → 427 MB (uncompressed). The preview database copy went 293 MB → 70 MB with every post kept.
+- Routes 129 → 51. Changed paths for outside callers are in `BACKEND.md`, "HTTP API".
+- Migration 0027 drops 30 analysis tables (the spec said 31; the migrations hold 30), 9 `posts` columns and `folders.use_global_milestone_lanes`.
 
 ## Problem Statement
 
