@@ -8,13 +8,14 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.services.credentials_service import CredentialInvalid, CredentialNotFound, LoginFailed
+from insight_core.services.media_proxy_service import MediaFetchFailed, MediaNotAllowed, MediaProxyService
 from insight_core.settings import get_settings
 from insight_core.services.operations_service import (
     CADENCE_OVERRIDE_MAX_HOURS,
@@ -61,6 +62,7 @@ app.add_middleware(
 
 # Initialize the bridge to Mark I API Engine
 api_bridge = InsightApiBridge()
+media_proxy = MediaProxyService(api_bridge.db)
 
 # Request models
 class CorpusStatus(BaseModel):
@@ -667,6 +669,30 @@ async def get_feed_unread_counts():
         return api_bridge.get_unread_counts()
     except Exception:
         raise _server_error("load unread counts")
+
+
+# An image is served with the headers a stranger's file needs on our origin: no sniffing,
+# and an SVG opened on its own can run nothing.
+_MEDIA_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+}
+
+
+@app.get("/api/media")
+async def get_media(post: str, url: str):
+    """One image of one post, fetched now (issue 0006). Not stored: the frontend nginx caches
+    it for 24 hours and the browser as long. 404: not an image of this post or not a host we
+    fetch from; 502: the origin failed. Failures are cached for 10 minutes."""
+    try:
+        image = await asyncio.to_thread(media_proxy.fetch, post, url)
+    except MediaNotAllowed:
+        return Response(status_code=404, headers={**_MEDIA_HEADERS, "Cache-Control": "public, max-age=600"})
+    except MediaFetchFailed as exc:
+        logger.info("Media proxy: %s for post %s", exc, post)
+        return Response(status_code=502, headers={**_MEDIA_HEADERS, "Cache-Control": "public, max-age=600"})
+    return Response(content=image.body, media_type=image.content_type,
+                    headers={**_MEDIA_HEADERS, "Cache-Control": "public, max-age=86400"})
 
 
 @app.post("/api/feed/mark-read")

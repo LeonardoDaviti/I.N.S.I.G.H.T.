@@ -160,11 +160,16 @@ describe('PostDetailPage images', () => {
     render(baseApi(rssPost({ content_html, images: IMAGES } as Partial<Post>)));
     const heading = await screen.findByRole('heading', { level: 1 });
     const figures = Array.from(document.querySelectorAll('[data-post-image]'));
-    expect(figures.map((figure) => figure.querySelector('img')!.getAttribute('src'))).toEqual([
+    // Every image loads through /api/media (issue 0006), naming its post and its original URL.
+    const proxied = (img: Element) => new URL(img.getAttribute('src')!, 'http://insight.test');
+    const sources = figures.map((figure) => proxied(figure.querySelector('img')!));
+    expect(sources.every((src) => src.pathname === '/api/media')).toBe(true);
+    expect(sources.map((src) => src.searchParams.get('url'))).toEqual([
       'https://static.example.com/hero.webp',
       'https://static.example.com/second.png',
     ]);
     const article = screen.getByRole('article', { name: 'Post content' });
+    expect(proxied(article.querySelector('img')!).searchParams.get('url')).toBe('https://static.example.com/inline.webp');
     expect(heading.compareDocumentPosition(figures[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(figures[0].compareDocumentPosition(article) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(article.compareDocumentPosition(figures[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
