@@ -35,6 +35,8 @@ export function docHref(doc: DesignDoc): string {
 export interface RailItem {
   label: string;
   href: string;
+  /** A quiet note after the label in the third tone (a prototype's status and age). */
+  note?: string;
   /** Shown under the item while it (or a child) is the current place. */
   children?: RailItem[];
 }
@@ -47,6 +49,8 @@ export interface RailGroup {
 export interface PrototypeRef {
   id: string;
   label: string;
+  /** Status and age, `review · 1 day`. */
+  note?: string;
 }
 
 /** Pages in the order you meet them: the feed, a post, where it's managed, the frame around all three. */
@@ -89,7 +93,7 @@ export function railGroups(
     { label: 'Pages', items: [...under('pages')].sort(byOrder(PAGE_ORDER)).map(link) },
     {
       label: 'Prototypes',
-      items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}` })),
+      items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}`, note: prototype.note })),
     },
     { label: 'Parked', items: [...under('parked')].sort(byOrder([])).map(link) },
   ];

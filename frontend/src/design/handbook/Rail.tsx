@@ -28,6 +28,7 @@ function RailLink({ item, pathname, nested = false }: { item: RailItem; pathname
       )}
     >
       <span className="min-w-0 truncate">{item.label}</span>
+      {item.note ? <span className="ml-auto shrink-0 pl-3 text-[0.75rem] font-normal tabular-nums text-fg-3">{item.note}</span> : null}
     </Link>
   );
 }
@@ -81,7 +82,7 @@ export function RailPicker({ groups }: { groups: readonly RailGroup[] }) {
       {groups.map((group) => (
         <optgroup key={group.label} label={group.label}>
           {group.items.flatMap((item) => [item, ...(item.children ?? []).map((child) => ({ ...child, label: `  ${child.label}` }))]).map((item) => (
-            <option key={item.href} value={item.href}>{item.label}</option>
+            <option key={item.href} value={item.href}>{item.note ? `${item.label} (${item.note})` : item.label}</option>
           ))}
         </optgroup>
       ))}

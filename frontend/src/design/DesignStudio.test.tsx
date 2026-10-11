@@ -70,6 +70,10 @@ describe('the studio shell', () => {
 describe('the Handbook', () => {
   const rail = () => screen.getByRole('navigation', { name: 'Design studio' });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('reaches every page doc from the rail, which marks the current one', async () => {
     const user = userEvent.setup();
     renderStudio('/design');
@@ -111,9 +115,27 @@ describe('the Handbook', () => {
     expect(where()).toBe('/design');
   });
 
-  it('lists no open prototype yet, and names an unknown one', () => {
+  it('lists the prototypes in the rail with their status and age', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-11T12:00:00'));
+    renderStudio('/design');
+    const link = within(rail()).getByRole('link', { name: /title-wrap/ });
+    expect(link).toHaveAttribute('href', '/design/prototypes/2026-10-10-title-wrap');
+    expect(link).toHaveTextContent('review · 1 day');
+  });
+
+  it('shows a prototype\'s README, without its meta, with a way into Bench', async () => {
+    const user = userEvent.setup();
+    renderStudio('/design/prototypes/2026-10-10-title-wrap');
+    expect(screen.getByRole('heading', { level: 1, name: 'Post title: normal wrap' })).toBeInTheDocument();
+    expect(screen.queryByText(/status: review/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Open in Bench' }));
+    expect(where()).toBe('/design?mode=bench&subject=2026-10-10-title-wrap');
+    expect(screen.getByRole('region', { name: 'Bench' })).toBeInTheDocument();
+  });
+
+  it('names an unknown prototype', () => {
     renderStudio('/design/prototypes/2026-01-01-nothing');
-    expect(within(rail()).getByText('none open')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();
     expect(screen.getByText(/No prototype lives at this address/)).toBeInTheDocument();
   });
