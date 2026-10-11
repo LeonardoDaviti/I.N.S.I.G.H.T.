@@ -80,6 +80,42 @@ An older `.env` may still hold `INSIGHT_ANALYSIS`, `VITE_INSIGHT_ANALYSIS`, `GEM
 any more, so they are harmless; delete them when convenient. A Gemini key saved in Connections
 stays in the `credentials` table and is no longer shown.
 
+## Retiring analysis (migration 0027)
+
+Migration `0027_drop_analysis.sql` removes the analysis data for good. It runs by itself on
+the next start of the `backend` or `ingestion` container after the pull, so pull it only on
+the owner's go, and back up the database first.
+
+1. Back up, before `git pull`:
+
+   ```bash
+   docker exec insight-db pg_dump -U insight -Fc insight > ~/insight_pre_0027_$(date +%F).dump
+   ls -lh ~/insight_pre_0027_*.dump    # check it is not empty
+   ```
+
+   (Use your `DB_USER` and `DB_NAME` if they are not `insight`.) To restore it into a fresh
+   database: `docker exec -i insight-db pg_restore -U insight -d insight --clean < <file>`.
+
+2. Pull and roll the containers as in "Updating". The migration runs at start.
+
+What it drops:
+
+- 30 tables: `topics`, `topic_posts`, `topic_connections`, `briefings`, `post_ai_cache`,
+  `post_highlights`, `artifacts`, `artifact_post_references`, `post_artifacts`,
+  `post_relations`, `source_profiles`, `entities`, `entity_aliases`, `entity_mentions`,
+  `mention_entity_candidates`, `post_entities`, `events`, `event_entities`, `event_evidence`,
+  `analyst_actions`, `stories`, `story_posts`, `story_updates`, `story_update_posts`,
+  `story_candidate_links`, `inbox_batches`, `inbox_items`, `experts`, `milestone_lanes`,
+  `milestone_overrides`.
+- 9 `posts` columns: `title_original`, `body_original`, `title_pivot`, `summary_pivot`,
+  `title_pivot_version`, `summary_pivot_version`, `title_hash`, `normalization_version`,
+  `enriched_at`.
+- 1 `folders` column: `use_global_milestone_lanes`.
+
+It keeps every reading table, `post_notes` included, and the post columns reading uses
+(content hash, normalised and canonical URL, URL host, language). The migration is
+idempotent: running it again changes nothing.
+
 ## Development mode
 
 ```bash

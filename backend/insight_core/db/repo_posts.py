@@ -1,6 +1,5 @@
 import os, sys, json, hashlib
 from contextlib import contextmanager
-from datetime import date, datetime
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, Iterator, List, Literal, Sequence, Tuple, Optional
@@ -590,16 +589,7 @@ class PostsRepository:
                 p.normalized_url,
                 p.canonical_url,
                 p.url_host,
-                p.title_hash,
                 p.content_hash,
-                p.normalization_version,
-                p.enriched_at,
-                p.title_original,
-                p.body_original,
-                p.title_pivot,
-                p.summary_pivot,
-                p.title_pivot_version,
-                p.summary_pivot_version,
                 s.platform,
                 s.handle_or_url
             FROM posts p
@@ -641,19 +631,10 @@ class PostsRepository:
                 'normalized_url': row[14],
                 'canonical_url': row[15],
                 'url_host': row[16],
-                'title_hash': row[17],
-                'content_hash': row[18],
-                'normalization_version': row[19],
-                'enriched_at': row[20],
-                'title_original': row[21],
-                'body_original': row[22],
-                'title_pivot': row[23],
-                'summary_pivot': row[24],
-                'title_pivot_version': row[25],
-                'summary_pivot_version': row[26],
-                'platform': row[27],
-                'handle_or_url': row[28],
-                'source': row[28],              # For Frontend
+                'content_hash': row[17],
+                'platform': row[18],
+                'handle_or_url': row[19],
+                'source': row[19],              # For Frontend
             }
             posts.append(post)
 
@@ -703,16 +684,7 @@ class PostsRepository:
                 p.normalized_url,
                 p.canonical_url,
                 p.url_host,
-                p.title_hash,
                 p.content_hash,
-                p.normalization_version,
-                p.enriched_at,
-                p.title_original,
-                p.body_original,
-                p.title_pivot,
-                p.summary_pivot,
-                p.title_pivot_version,
-                p.summary_pivot_version,
                 s.platform,
                 s.handle_or_url,
                 COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
@@ -754,20 +726,11 @@ class PostsRepository:
                 'normalized_url': row[14],
                 'canonical_url': row[15],
                 'url_host': row[16],
-                'title_hash': row[17],
-                'content_hash': row[18],
-                'normalization_version': row[19],
-                'enriched_at': row[20],
-                'title_original': row[21],
-                'body_original': row[22],
-                'title_pivot': row[23],
-                'summary_pivot': row[24],
-                'title_pivot_version': row[25],
-                'summary_pivot_version': row[26],
-                'platform': row[27],
-                'handle_or_url': row[28],
-                'source': row[28],              # For Frontend
-                'source_display_name': row[29],
+                'content_hash': row[17],
+                'platform': row[18],
+                'handle_or_url': row[19],
+                'source': row[19],              # For Frontend
+                'source_display_name': row[20],
             }
             posts.append(post)
 
@@ -785,10 +748,9 @@ class PostsRepository:
     ) -> List[Dict[str, Any]]:
         """Newest-first reading feed across many sources, in ONE query.
 
-        get_posts_by_source_and_range issues a query per source; a track with 54 sources
-        meant 54 round trips and an in-Python sort. This uses source_id = ANY(%s) with a
-        server-side LIMIT so the reading view stays flat as tracks grow. Deliberately does
-        not project content_html/body_original - the list view never renders them.
+        One query with source_id = ANY(%s) and a server-side LIMIT, so the reading view
+        stays flat as tracks grow (a query per source meant 54 round trips for a 54-source
+        track). Deliberately does not project content_html - the list view never renders it.
         """
         if not source_ids:
             return []
@@ -851,198 +813,6 @@ class PostsRepository:
             cur.execute("SELECT count(*) FROM posts WHERE source_id = ANY(%s)", (list(source_ids),))
         return int(cur.fetchone()[0] or 0)
 
-    def get_posts_by_source_and_range(
-        self,
-        cur: Cursor,
-        source_id: str,
-        start_date: date,
-        end_date: date,
-    ) -> List[Dict[str, Any]]:
-        """Retrieve posts for a specific source within an inclusive date range."""
-        query = """
-            SELECT
-                p.id,
-                p.url,
-                p.content,
-                p.published_at,
-                p.fetched_at,
-                p.content_html,
-                p.metadata,
-                p.media_urls,
-                p.categories,
-                p.title,
-                p.source_id,
-                p.lang,
-                p.language_code,
-                p.language_confidence,
-                p.normalized_url,
-                p.canonical_url,
-                p.url_host,
-                p.title_hash,
-                p.content_hash,
-                p.normalization_version,
-                p.enriched_at,
-                p.title_original,
-                p.body_original,
-                p.title_pivot,
-                p.summary_pivot,
-                p.title_pivot_version,
-                p.summary_pivot_version,
-                s.platform,
-                s.handle_or_url,
-                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
-            FROM posts p
-            JOIN sources s ON p.source_id = s.id
-            WHERE p.source_id = %s
-              AND DATE(COALESCE(p.published_at, p.fetched_at)) BETWEEN %s AND %s
-            ORDER BY DATE(COALESCE(p.published_at, p.fetched_at)) ASC, COALESCE(p.published_at, p.fetched_at) ASC, p.created_at ASC
-        """
-        cur.execute(query, (source_id, start_date, end_date))
-        rows = cur.fetchall()
-
-        if not rows:
-            self.logger.info(
-                "No posts found for source %s in range %s to %s",
-                source_id,
-                start_date,
-                end_date,
-            )
-            return []
-
-        posts = []
-        for row in rows:
-            post = {
-                'id': str(row[0]),
-                'url': row[1],
-                'content': row[2],
-                'date': row[3],
-                'published_at': row[3],
-                'fetched_at': row[4],
-                'content_html': row[5],
-                'metadata': row[6] or {},
-                'media_urls': row[7],
-                'categories': row[8],
-                'title': row[9],
-                'source_id': str(row[10]),
-                'lang': row[11],
-                'language_code': row[12],
-                'language_confidence': row[13],
-                'normalized_url': row[14],
-                'canonical_url': row[15],
-                'url_host': row[16],
-                'title_hash': row[17],
-                'content_hash': row[18],
-                'normalization_version': row[19],
-                'enriched_at': row[20],
-                'title_original': row[21],
-                'body_original': row[22],
-                'title_pivot': row[23],
-                'summary_pivot': row[24],
-                'title_pivot_version': row[25],
-                'summary_pivot_version': row[26],
-                'platform': row[27],
-                'handle_or_url': row[28],
-                'source': row[28],
-                'source_display_name': row[29],
-            }
-            posts.append(post)
-
-        self.logger.info(
-            "Successfully got %s posts for source %s in range %s to %s",
-            len(posts),
-            source_id,
-            start_date,
-            end_date,
-        )
-        return posts
-
-    def get_posts_by_ids(self, cur: Cursor, post_ids: List[str]) -> List[Dict[str, Any]]:
-        """Retrieve multiple posts by UUID, preserving caller order as much as possible."""
-        if not post_ids:
-            return []
-
-        requested_rows = ", ".join(f"(%s::uuid, {index})" for index in range(1, len(post_ids) + 1))
-        query = """
-            SELECT
-                p.id,
-                p.url,
-                p.content,
-                p.published_at,
-                p.fetched_at,
-                p.content_html,
-                p.metadata,
-                p.media_urls,
-                p.categories,
-                p.title,
-                p.source_id,
-                p.lang,
-                p.language_code,
-                p.language_confidence,
-                p.normalized_url,
-                p.canonical_url,
-                p.url_host,
-                p.title_hash,
-                p.content_hash,
-                p.normalization_version,
-                p.enriched_at,
-                p.title_original,
-                p.body_original,
-                p.title_pivot,
-                p.summary_pivot,
-                p.title_pivot_version,
-                p.summary_pivot_version,
-                s.platform,
-                s.handle_or_url,
-                COALESCE(s.settings->>'display_name', s.handle_or_url) AS source_display_name
-            FROM posts p
-            JOIN sources s ON p.source_id = s.id
-            JOIN (VALUES {requested_rows}) AS requested(post_id, ord) ON p.id = requested.post_id
-            ORDER BY requested.ord
-        """.format(requested_rows=requested_rows)
-        cur.execute(query, tuple(post_ids))
-        rows = cur.fetchall()
-
-        posts_by_id = {
-            str(row[0]): {
-                'id': str(row[0]),
-                'url': row[1],
-                'content': row[2],
-                'date': row[3],
-                'published_at': row[3],
-                'fetched_at': row[4],
-                'content_html': row[5],
-                'metadata': row[6] or {},
-                'media_urls': row[7],
-                'categories': row[8],
-                'title': row[9],
-                'source_id': str(row[10]),
-                'lang': row[11],
-                'language_code': row[12],
-                'language_confidence': row[13],
-                'normalized_url': row[14],
-                'canonical_url': row[15],
-                'url_host': row[16],
-                'title_hash': row[17],
-                'content_hash': row[18],
-                'normalization_version': row[19],
-                'enriched_at': row[20],
-                'title_original': row[21],
-                'body_original': row[22],
-                'title_pivot': row[23],
-                'summary_pivot': row[24],
-                'title_pivot_version': row[25],
-                'summary_pivot_version': row[26],
-                'platform': row[27],
-                'handle_or_url': row[28],
-                'source': row[28],
-                'source_display_name': row[29],
-            }
-            for row in rows
-        }
-
-        ordered = [posts_by_id[post_id] for post_id in post_ids if post_id in posts_by_id]
-        return ordered
-
     def get_source_post_stats(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
         """Return aggregate storage stats for a single source."""
         query = """
@@ -1063,18 +833,6 @@ class PostsRepository:
             "latest_published_at": row[2],
             "latest_fetched_at": row[3],
         }
-
-    def update_post_categories(self, cur: Cursor, post_id: str, categories: List[str]) -> bool:
-        """Persist generated categories for a single post."""
-        query = """
-            UPDATE posts
-            SET categories = %s::jsonb,
-                updated_at = now()
-            WHERE id = %s
-            RETURNING id
-        """
-        cur.execute(query, (self._json_dumps(categories), post_id))
-        return cur.fetchone() is not None
 
     def update_post_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> bool:
         """Persist metadata for a single post."""
