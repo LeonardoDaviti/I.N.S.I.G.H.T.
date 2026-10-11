@@ -1,4 +1,4 @@
-import type { Dispatch, MutableRefObject, ReactNode } from 'react';
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type ReactNode } from 'react';
 import { Pause, Play, RotateCcw, SkipForward, X } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
@@ -31,7 +31,7 @@ function status({ current, running, ready, error }: WalkState): string {
  * The walk (prototype verdict B): one large interactive frame replaying the
  * journey at real speed, with play / pause / step / restart and the steps
  * listed, the one shown marked. It runs on fixtures, whatever the Wall shows:
- * the script clicks fixture pages.
+ * the script clicks fixture pages. A theme change starts it over.
  */
 export default function WalkPanel({
   state, dispatch, frame, theme, onClose,
@@ -43,6 +43,13 @@ export default function WalkPanel({
   onClose: () => void;
 }) {
   const atEnd = state.current >= WALK.length - 1;
+  // A new theme reloads the frame at the feed, so the walk starts over with it.
+  const shownTheme = useRef(theme);
+  useEffect(() => {
+    if (shownTheme.current === theme) return;
+    shownTheme.current = theme;
+    dispatch({ type: 'restart' });
+  }, [theme, dispatch]);
   return (
     <section aria-label="Walk" className="flex min-h-0 w-[52%] shrink-0 flex-col overflow-y-auto border-l border-line bg-bg">
       <div className="flex items-center gap-1 px-4 pb-2 pt-3">

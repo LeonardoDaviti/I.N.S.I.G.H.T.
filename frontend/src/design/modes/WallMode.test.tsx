@@ -125,6 +125,25 @@ describe('the walk', () => {
     expect(within(panel).getByRole('button', { name: 'Step' })).toBeDisabled();
   });
 
+  it('starts the walk over when the theme changes mid-walk', async () => {
+    const user = userEvent.setup();
+    renderWall('?mode=wall&walk=1');
+    const panel = screen.getByRole('region', { name: 'Walk' });
+    const frame = within(panel).getByTitle(/^reader · normal/) as HTMLIFrameElement;
+    vi.spyOn(frame.contentWindow!, 'postMessage');
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: WALK_MESSAGE.ready }, source: frame.contentWindow, origin: window.location.origin }));
+    });
+    await user.click(within(panel).getByRole('button', { name: 'Step' }));
+    expect(within(panel).getByRole('status')).toHaveTextContent(WALK[0].label);
+
+    await user.click(screen.getByRole('radio', { name: 'light' }));
+
+    expect(within(panel).getByRole('status')).toHaveTextContent('loading the feed');
+    expect(within(panel).getByRole('button', { name: 'Step' })).toBeDisabled();
+    expect(within(panel).getByTitle(/^reader · normal/)).not.toBe(frame);
+  });
+
   it('ignores messages that are not from its frame', async () => {
     renderWall('?mode=wall&walk=1');
     const panel = screen.getByRole('region', { name: 'Walk' });
