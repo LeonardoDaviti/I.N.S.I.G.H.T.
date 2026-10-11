@@ -188,6 +188,83 @@ class PlanArchiveRateOverrideTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["estimated_pages"], 10)
 
 
+class _SupportSources(_Sources):
+    def __init__(self, max_posts_per_fetch=50, available=None):
+        super().__init__()
+        self.max_posts_per_fetch = max_posts_per_fetch
+        self.current = {} if available is None else {"available_posts": available}
+
+    def get_source_by_id(self, source_id):
+        return {"id": source_id, "platform": "rss", "handle_or_url": "https://example.com/feed",
+                "settings": {"max_posts_per_fetch": self.max_posts_per_fetch}}
+
+
+class ArchiveSupportTests(unittest.TestCase):
+    """What the source sheet shows before anything touches the network: can this source archive?"""
+
+    def support(self, kind, sources, availability=None):
+        service = SourceFetchService(
+            "postgresql://test:test@localhost/test",
+            kinds=KindRegistry([kind]),
+            availability=availability or (lambda: Availability(ytdlp_enabled=True, telegram_credentials=True)),
+        )
+        service.sources_service = sources
+        return service.archive_support("s1")
+
+    def history_kind(self, profile=None):
+        kind = FakeKind("fake_history", profile)
+        kind.available_basis = "exact"
+        return kind
+
+    def feed_kind(self):
+        kind = FakeKind("fake_feed")
+        kind.available_basis = "feed_window"
+        return kind
+
+    def test_a_kind_with_history_can_archive_and_says_what_its_count_means(self):
+        support = self.support(self.history_kind(), _SupportSources())
+        self.assertEqual(support, {"kind": "fake_history", "available_basis": "exact", "archivable": True,
+                                   "reason": None, "unavailable": False, "live_fetch_limit": 50})
+
+    def test_an_unavailable_kind_cannot_archive_and_says_why(self):
+        support = self.support(self.history_kind(YOUTUBE_PROFILE), _SupportSources(),
+                               availability=lambda: Availability(ytdlp_enabled=False, telegram_credentials=False))
+        self.assertFalse(support["archivable"])
+        self.assertTrue(support["unavailable"])
+        self.assertIn("yt-dlp", support["reason"])
+
+    def test_a_feed_no_longer_than_one_fetch_has_nothing_older_to_archive(self):
+        support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50, available=20))
+        self.assertFalse(support["archivable"])
+        self.assertFalse(support["unavailable"])
+        self.assertEqual(support["reason"],
+                         "This feed only lists its latest 20 posts, and every fetch already reads up to 50.")
+
+    def test_a_feed_longer_than_one_fetch_can_archive_its_window(self):
+        support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50, available=503))
+        self.assertTrue(support["archivable"])
+        self.assertIsNone(support["reason"])
+
+    def test_an_unmeasured_feed_can_be_planned(self):
+        support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50))
+        self.assertTrue(support["archivable"])
+
+
+class PlanAvailableBasisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_plan_says_what_its_available_count_means(self):
+        kind = FakeKind("fake_capped", inspection=Inspection(250, 100, None))
+        kind.available_basis = "listing_cap"
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]))
+        service.sources_service = sources = _PlanSources()
+        service.posts_service = _Posts()
+        service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)
+
+        plan = await service.plan_archive("s1", 100)
+
+        self.assertEqual(plan["available_posts"], 250)
+        self.assertEqual(plan["available_basis"], "listing_cap")
+
+
 class _RecordingProcessor:
     def __init__(self):
         self.ids = []

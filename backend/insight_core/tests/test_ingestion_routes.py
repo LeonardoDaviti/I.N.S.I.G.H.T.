@@ -21,6 +21,7 @@ class FakeBridge:
         self.jobs: list[tuple[str, dict]] = []
         self.awaited: list[tuple[str, tuple, dict]] = []
         self.archive_result: dict = {"success": True}
+        self.support: dict = {"archivable": True, "unavailable": False, "reason": None}
 
     def _start_job_safe(self, job_type, **kwargs):
         self.jobs.append((job_type, kwargs))
@@ -39,7 +40,11 @@ class FakeBridge:
         return {"status": "success"}
 
     async def run_archive(self, source_id, desired_posts=None, **kwargs):
+        self.awaited.append(("run_archive", (source_id, desired_posts), kwargs))
         return self.archive_result
+
+    def archive_support(self, source_id):
+        return self.support
 
     async def get_archive_plan(self, source_id, desired_posts=None, **kwargs):
         return self.archive_result
@@ -128,11 +133,46 @@ class IngestionRouteTests(unittest.TestCase):
 
     def test_archive_run_on_an_unavailable_kind_is_409(self):
         self.bridge.archive_result = {"success": False, "error": "yt-dlp disabled", "unavailable": True}
-        response = run(main.run_archive("s1", main.ArchiveRequest()))
+        response = run(main.run_archive("s1", main.ArchiveRequest(), BackgroundTasks()))
         self.assertEqual(response.status_code, 409)
         self.assertEqual(body(response)["detail"], "yt-dlp disabled")
         response = run(main.plan_archive("s1", main.ArchiveRequest()))
         self.assertEqual(response.status_code, 409)
+
+    def test_a_background_archive_starts_a_job_and_returns_202(self):
+        tasks = BackgroundTasks()
+        request = main.ArchiveRequest(desiredPosts=500, resume=False, background=True)
+        response = run(main.run_archive("s1", request, tasks))
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(body(response)["job_id"], "job-1")
+        self.assertEqual(body(response)["job_type"], "archive_source")
+        job_type, job = self.bridge.jobs[0]
+        self.assertEqual(job_type, "archive_source")
+        self.assertEqual(job["source_id"], "s1")
+        self.assertEqual(job["payload"]["desired_posts"], 500)
+        self.assertEqual(self.bridge.awaited, [], "the archive runs in the background, not in the request")
+        self._drain(tasks)
+        self.assertEqual(len(self.bridge.awaited), 1)
+        name, args, kwargs = self.bridge.awaited[0]
+        self.assertEqual((name, args), ("run_archive", ("s1", 500)))
+        self.assertEqual(kwargs["job_id"], "job-1")
+        self.assertFalse(kwargs["resume"])
+
+    def test_a_background_archive_on_a_source_that_cannot_archive_is_409_and_starts_nothing(self):
+        self.bridge.support = {"archivable": False, "unavailable": True, "reason": "yt-dlp disabled"}
+        tasks = BackgroundTasks()
+        response = run(main.run_archive("s1", main.ArchiveRequest(background=True), tasks))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(body(response)["error"], "yt-dlp disabled")
+        self.assertEqual(self.bridge.jobs, [])
+        self.assertEqual(len(tasks.tasks), 0)
+
+    def test_a_background_archive_without_job_tracking_is_503(self):
+        self.bridge.job_id = None
+        tasks = BackgroundTasks()
+        response = run(main.run_archive("s1", main.ArchiveRequest(background=True), tasks))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(len(tasks.tasks), 0)
 
 
 if __name__ == "__main__":

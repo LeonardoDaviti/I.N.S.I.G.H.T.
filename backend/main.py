@@ -128,6 +128,9 @@ class ArchiveRequest(BaseModel):
     pageDelaySeconds: int | None = None
     batchSize: int | None = None
     batchCooldownSeconds: int | None = None
+    # True: start an archive_source job and answer 202 at once (the source sheet polls
+    # the job). False keeps the old synchronous answer for the Mark VIII archive tab.
+    background: bool = False
 
 
 class YouTubeChannelRequest(BaseModel):
@@ -325,6 +328,42 @@ def _accept_ingestion_run(
         content={"success": True, "accepted": True, "job_id": job_id, "job_type": "ingestion_run",
                  "status": "running", "message": message},
     )
+
+
+def _accept_archive_run(
+    background_tasks: BackgroundTasks,
+    source_id: str,
+    request: "ArchiveRequest",
+    rate_limit_overrides: Dict[str, Any],
+) -> JSONResponse:
+    """Start an archive_source job and run the archive in the background.
+
+    A source that cannot archive (kind unavailable, a feed with nothing older) is 409
+    before any job exists; untracked jobs never run (503), like a manual fetch.
+    """
+    try:
+        support = api_bridge.archive_support(source_id)
+    except Exception as exc:
+        return JSONResponse(status_code=404, content={"success": False, "error": str(exc)})
+    if not support.get("archivable"):
+        reason = support.get("reason") or "This source cannot archive"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason,
+                                                      "unavailable": bool(support.get("unavailable"))})
+    resume = bool(request.resume)
+    job_id = api_bridge._start_job_safe(
+        "archive_source",
+        trigger="manual",
+        source_id=source_id,
+        message="Archive",
+        payload={"desired_posts": request.desiredPosts, "resume": resume, "rate_limit": rate_limit_overrides},
+    )
+    if not job_id:
+        return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    background_tasks.add_task(
+        _run_async_job_background, "archive_source", api_bridge.run_archive, source_id, request.desiredPosts,
+        resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
+    )
+    return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source", message="Archive started"))
 
 
 def _unavailable_or(result: Any) -> Any:
@@ -1691,19 +1730,22 @@ async def plan_archive(source_id: str, request: ArchiveRequest):
 
 
 @app.post("/api/archive/{source_id}/run")
-async def run_archive(source_id: str, request: ArchiveRequest):
-    """Run an archive job for a single source."""
+async def run_archive(source_id: str, request: ArchiveRequest, background_tasks: BackgroundTasks):
+    """Run an archive job for a single source (202 + archive_source job when background)."""
+    rate_limit_overrides = {
+        "page_delay_seconds": request.pageDelaySeconds,
+        "batch_size": request.batchSize,
+        "batch_cooldown_seconds": request.batchCooldownSeconds,
+    }
+    if request.background:
+        return _accept_archive_run(background_tasks, source_id, request, rate_limit_overrides)
     try:
         logger.info(f"📦 Running archive for source: {source_id}")
         return _unavailable_or(await api_bridge.run_archive(
             source_id,
             request.desiredPosts,
             resume=bool(request.resume),
-            rate_limit_overrides={
-                "page_delay_seconds": request.pageDelaySeconds,
-                "batch_size": request.batchSize,
-                "batch_cooldown_seconds": request.batchCooldownSeconds,
-            },
+            rate_limit_overrides=rate_limit_overrides,
         ))
     except Exception as e:
         logger.exception(f"Failed to run archive for {source_id}")
