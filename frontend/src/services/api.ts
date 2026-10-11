@@ -1932,6 +1932,35 @@ class ApiService {
     }
   }
 
+  // ---- The source sheet's archive section (Mark IX). These throw (ApiError) instead of
+  // resolving {success:false}; a backend without `support` still answers the status.
+
+  async getSourceArchive(sourceId: string): Promise<ArchiveStatusResponse> {
+    const response = await this.makeRequest<ArchiveStatusResponse>(`/api/archive/${encodeURIComponent(sourceId)}/status`);
+    if (response.success === false) throw new Error(response.error || 'Could not read the archive status');
+    return response;
+  }
+
+  /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts. */
+  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<ArchivePlan> {
+    const response = await this.makeRequest<{ success?: boolean; error?: string; archive?: ArchivePlan }>(
+      `/api/archive/${encodeURIComponent(sourceId)}/plan`,
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume }) },
+    );
+    if (!response.success || !response.archive) throw new Error(response.error || 'Could not plan the archive');
+    return response.archive;
+  }
+
+  /** Start an archive_source job (202); poll it with getOperationJob. */
+  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<{ job_id: string }> {
+    const response = await this.makeRequest<{ success?: boolean; error?: string; job_id?: string }>(
+      `/api/archive/${encodeURIComponent(sourceId)}/run`,
+      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true }) },
+    );
+    if (!response.success || !response.job_id) throw new Error(response.error || 'Could not start the archive');
+    return { job_id: response.job_id };
+  }
+
   // ---- Mark IX ingestion (spec §4). These throw (ApiError, JobTimeoutError, AbortError)
   // instead of resolving {success:false}; a finished run resolves with its RunReport even
   // when some sources failed (a `partial` run is a failed job but still a report).
