@@ -37,3 +37,12 @@ It renders at `/design/frame/prototype/<id>/<state>`, on the same fixtures, them
 - **`reject prototype <id>: <reason>`:** the agent deletes the folder, and the decisions log keeps one line with the reason.
 
 Draft and review are open. The Handbook rail and Bench's picker list open prototypes first, with their status and age, so nothing rots silently.
+
+## Screenshots (D9)
+
+`npm run design:shots` writes every page × state (the frame scenarios) and every prototype × its states, at 1400 and 390, dark and light, to `frontend/.design-shots/<page>/<state>.<width>.<theme>.png` (prototypes under `prototypes/<id>/`). It is git-ignored: shoot before and after a change and compare.
+
+- It starts its own dev server on 5198 (or the next free port) and stops it; `--base-url <url>` shoots a running one instead.
+- Filters take comma lists: `--page reader,prototypes --state error --width 390 --theme light`.
+- A frame fails, and the run exits non-zero, when it never marks `html[data-frame-ready]`, shows the unmocked-request bar or logs a console error.
+- Playwright is not a dependency: it resolves from `~/.cache/insight-pw-scripts` (`INSIGHT_PW_SCRIPTS`) with the browser in `~/.cache/insight-pw`.
