@@ -8,6 +8,7 @@ import { LoadingState } from './components/states';
 import { ApiProvider } from './services/ApiContext';
 import { useAnalysis } from './hooks/useAnalysis';
 import { sourcesIngestionHref } from './lib/ingestionNavigation';
+import { isFramePath } from './design/frame/frameUrl';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
@@ -19,6 +20,7 @@ const IngestionControl = lazy(() => import('./pages/IngestionControl'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const ExpertsPage = lazy(() => import('./pages/ExpertsPage'));
+const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
 
 /** The error boundary resets when the route changes, so leaving a broken page recovers. */
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
@@ -111,6 +113,11 @@ export function AppRoutes() {
 }
 
 function App() {
+  // The Design Studio's chromeless frame (`/design/frame/:page/:state`, D4): its
+  // own router, providers and fixture fetch, so it replaces the app, not a route in it.
+  if (isFramePath(window.location.pathname)) {
+    return <Suspense fallback={null}><DesignFrame /></Suspense>;
+  }
   return (
     <QueryClientProvider client={queryClient}>
       <ApiProvider>
