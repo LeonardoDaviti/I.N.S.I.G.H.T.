@@ -11,6 +11,7 @@ const MANIFEST = {
   '_feed.js': { file: 'assets/feed.js', imports: ['_dates.js'] },
   '_dates.js': { file: 'assets/dates.js' },
   'src/design/DesignStudio.tsx': { file: 'assets/DesignStudio.js', isDynamicEntry: true, imports: ['index.html', '_feed.js'] },
+  'src/design/frame/FrameApp.tsx': { file: 'assets/FrameApp.js', isDynamicEntry: true, imports: ['index.html'] },
 };
 
 test('the reader loads the entry, the reader chunk and their static imports, never a lazy one', () => {
@@ -45,5 +46,17 @@ test('the studio must be its own lazy chunk, never part of the reader\'s initial
   void _gone;
   assert.deepEqual(budgetProblems({ manifest: missing, sizes: SIZES, baselineBytes: 1_000_000 }), [
     'src/design/DesignStudio.tsx is not a lazy chunk',
+  ]);
+});
+
+test('the frame app must be its own lazy chunk too', () => {
+  const eager = {
+    ...MANIFEST,
+    'index.html': { ...MANIFEST['index.html'], imports: ['src/design/frame/FrameApp.tsx'] },
+    'src/design/frame/FrameApp.tsx': { file: 'assets/FrameApp.js', imports: [] },
+  };
+  assert.deepEqual(budgetProblems({ manifest: eager, sizes: SIZES, baselineBytes: 1_000_000 }), [
+    'src/design/frame/FrameApp.tsx is not a lazy chunk',
+    'the reader\'s initial JS includes src/design/frame/FrameApp.tsx',
   ]);
 });

@@ -18,8 +18,8 @@ export type Manifest = Record<string, ManifestChunk>;
 /** What `/` loads before the first paint: the app entry and the reader route. */
 export const READER_ENTRIES = ['index.html', 'src/pages/ReaderPage.tsx'] as const;
 
-/** The studio's own chunk: it must stay lazy. */
-export const STUDIO_ENTRY = 'src/design/DesignStudio.tsx';
+/** The studio's own chunks, the studio and the frame route inside its iframes: they must stay lazy. */
+export const STUDIO_ENTRIES = ['src/design/DesignStudio.tsx', 'src/design/frame/FrameApp.tsx'] as const;
 
 /** The growth the reader's initial JS may take over its baseline. */
 export const BUDGET = 0.01;
@@ -56,7 +56,9 @@ export function budgetProblems({
   baselineBytes: number;
 }): string[] {
   const problems: string[] = [];
-  if (!manifest[STUDIO_ENTRY]?.isDynamicEntry) problems.push(`${STUDIO_ENTRY} is not a lazy chunk`);
+  for (const entry of STUDIO_ENTRIES) {
+    if (!manifest[entry]?.isDynamicEntry) problems.push(`${entry} is not a lazy chunk`);
+  }
   const initial = new Set(initialFiles(manifest, READER_ENTRIES));
   for (const [key, chunk] of Object.entries(manifest)) {
     if (key.startsWith('src/design/') && initial.has(chunk.file)) problems.push(`the reader's initial JS includes ${key}`);
