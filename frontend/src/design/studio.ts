@@ -61,6 +61,11 @@ function byOrder(order: readonly string[]) {
   return (a: DesignDoc, b: DesignDoc) => rank(docSlug(a)) - rank(docSlug(b)) || docTitle(a).localeCompare(docTitle(b));
 }
 
+/** The page docs (`pages/*.md`) in the order you meet the pages. */
+export function pageDocsInOrder(docs: readonly DesignDoc[]): DesignDoc[] {
+  return docs.filter((doc) => doc.path.startsWith('pages/')).sort(byOrder(PAGE_ORDER));
+}
+
 const link = (doc: DesignDoc): RailItem => ({ label: docTitle(doc), href: docHref(doc) });
 
 /**
@@ -90,7 +95,7 @@ export function railGroups(
         { label: 'Decisions', href: '/design/decisions' },
       ],
     },
-    { label: 'Pages', items: [...under('pages')].sort(byOrder(PAGE_ORDER)).map(link) },
+    { label: 'Pages', items: pageDocsInOrder(docs).map(link) },
     {
       label: 'Prototypes',
       items: prototypes.map((prototype) => ({ label: prototype.label, href: `/design/prototypes/${prototype.id}`, note: prototype.note })),
