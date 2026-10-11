@@ -4,6 +4,7 @@ import { railGroups } from '../studio';
 import { Rail, RailPicker } from '../handbook/Rail';
 import DocView from '../handbook/DocView';
 import NotFound from '../handbook/NotFound';
+import PageSpecimen from '../handbook/PageSpecimen';
 
 const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
 
@@ -13,10 +14,27 @@ function DocAt({ href }: { href: string }) {
   return doc ? <DocView doc={doc} /> : <NotFound what="doc" />;
 }
 
-/** A doc under a section by its slug (`/design/parked/:slug`). */
-function SectionDoc({ section }: { section: 'system' | 'parked' | 'pages' }) {
+/** A doc under a section by its slug (`/design/system/:slug`). */
+function SectionDoc({ section }: { section: 'system' }) {
   const { slug = '' } = useParams();
   return <DocAt href={`/design/${section}/${slug}`} />;
+}
+
+/**
+ * A page or parked doc, then its specimen at full width. A page specimen
+ * offers the doc's `states:`; a parked page has one, its normal state.
+ */
+function PageDoc({ section }: { section: 'pages' | 'parked' }) {
+  const { slug = '' } = useParams();
+  const doc = docAt(`/design/${section}/${slug}`);
+  if (!doc) return <NotFound what="page doc" />;
+  const states = doc.meta.states?.length ? doc.meta.states : ['normal'];
+  return (
+    <>
+      <DocView doc={doc} />
+      <PageSpecimen key={slug} page={slug} states={states} />
+    </>
+  );
 }
 
 /**
@@ -39,8 +57,8 @@ export default function HandbookMode() {
           <Route path="decisions" element={<DocAt href="/design/decisions" />} />
           <Route path="system/:slug" element={<SectionDoc section="system" />} />
           <Route path="components" element={<DocAt href="/design/components" />} />
-          <Route path="pages/:slug" element={<SectionDoc section="pages" />} />
-          <Route path="parked/:slug" element={<SectionDoc section="parked" />} />
+          <Route path="pages/:slug" element={<PageDoc section="pages" />} />
+          <Route path="parked/:slug" element={<PageDoc section="parked" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>

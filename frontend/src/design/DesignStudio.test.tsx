@@ -66,3 +66,53 @@ describe('the studio shell', () => {
     field.remove();
   });
 });
+
+describe('the Handbook', () => {
+  const rail = () => screen.getByRole('navigation', { name: 'Design studio' });
+
+  it('reaches every page doc from the rail, which marks the current one', async () => {
+    const user = userEvent.setup();
+    renderStudio('/design');
+    await user.click(within(rail()).getByRole('link', { name: 'Post' }));
+    expect(where()).toBe('/design/pages/post');
+    expect(screen.getByRole('heading', { level: 1, name: 'Post' })).toBeInTheDocument();
+    expect(within(rail()).getByRole('link', { name: 'Post' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('puts a specimen slot under a page doc, driven by the doc\'s states, a width and a theme', async () => {
+    const user = userEvent.setup();
+    renderStudio('/design/pages/reader');
+    const states = screen.getByRole('radiogroup', { name: 'State' });
+    expect(within(states).getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
+      'normal', 'empty', 'empty-scope', 'loading', 'error', 'worst',
+    ]);
+    expect(screen.getByRole('figure', { name: 'reader · normal · 1400 · dark' })).toBeInTheDocument();
+    await user.click(within(states).getByRole('radio', { name: 'loading' }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Width' })).getByRole('radio', { name: '390' }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Theme' })).getByRole('radio', { name: 'light' }));
+    expect(where()).toBe('/design/pages/reader?state=loading&width=390&theme=light');
+    expect(screen.getByRole('figure', { name: 'reader · loading · 390 · light' })).toBeInTheDocument();
+  });
+
+  it('gives a parked doc its slot at the normal state', () => {
+    renderStudio('/design/parked/inbox');
+    expect(screen.getByRole('heading', { level: 1, name: 'Analyst inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('figure', { name: 'inbox · normal · 1400 · dark' })).toBeInTheDocument();
+  });
+
+  it('renders the decisions log', () => {
+    renderStudio('/design/decisions');
+    expect(screen.getByRole('heading', { level: 1, name: 'Decisions' })).toBeInTheDocument();
+    expect(screen.getByText(/Mark IX is monochrome/)).toBeInTheDocument();
+  });
+
+  it('sends /design/principles to the home', () => {
+    renderStudio('/design/principles');
+    expect(where()).toBe('/design');
+  });
+
+  it('says so when nothing lives at an address', () => {
+    renderStudio('/design/pages/nowhere');
+    expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();
+  });
+});
