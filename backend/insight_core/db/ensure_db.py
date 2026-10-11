@@ -5,7 +5,6 @@ import os, socket
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
-import psycopg
 from psycopg import Connection, Cursor
 from psycopg import sql
 import sys
@@ -13,6 +12,7 @@ import sys
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from insight_core.db.database import session_connection
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 
 setup_logging(debug_mode=False)
@@ -91,7 +91,7 @@ def ensure_database() -> str:
 
     # Create role/database if needed - USE AUTOCOMMIT
     try:
-        conn = psycopg.connect(admin_url, autocommit=True)
+        conn = session_connection(admin_url, autocommit=True)
         with conn.cursor() as cur:
             _ensure_role(cur, db_user, db_pass)
             _ensure_database(cur, db_name, db_user)

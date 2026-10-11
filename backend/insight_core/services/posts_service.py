@@ -5,8 +5,7 @@ Coordinates between API and database repository.
 from typing import List, Dict, Any, Optional
 from datetime import date
 
-import psycopg
-from psycopg import Connection
+from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.logs.core.logger_config import get_component_logger
@@ -25,7 +24,7 @@ class PostsService:
 
     def get_posts_by_date(self, date: date, main_digest_only: bool = False) -> List[Dict[str, Any]]:
         """Get posts for a specific date."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_date(cur, date, main_digest_only=main_digest_only)
     
@@ -37,7 +36,7 @@ class PostsService:
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Get posts for a specific source, sorted by date descending."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_posts_by_source(cur, source_id, limit=limit, offset=offset)
 
@@ -48,7 +47,7 @@ class PostsService:
         """Newest-first reading feed for a set of sources, with a real total."""
         if not folder_id_source_ids:
             return {"posts": [], "total": 0, "returned": 0, "has_more": False}
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 posts = self.repo.get_posts_for_source_ids(
                     cur, folder_id_source_ids, limit=limit, offset=offset, since_days=since_days
@@ -63,13 +62,13 @@ class PostsService:
 
     def get_source_post_stats(self, source_id: str) -> Dict[str, Any]:
         """Get aggregate storage stats for a source."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_source_post_stats(cur, source_id)
 
     def update_post_metadata(self, post_id: str, metadata: Dict[str, Any]) -> bool:
         """Update the stored metadata for a post."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 updated = self.repo.update_post_metadata(cur, post_id, metadata)
                 conn.commit()

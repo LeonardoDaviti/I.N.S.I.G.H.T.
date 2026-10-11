@@ -17,6 +17,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from insight_core.db import database
 from insight_core.db.repo_reader import FEED_FILTERS, FEED_VIEWS, FeedCursor, FeedScope
 from insight_core.ingestion import run_ingestion
 from insight_core.ingestion.kinds.base import KindUnavailable
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
     yield
+    database.close_all()
 
 
 app = FastAPI(

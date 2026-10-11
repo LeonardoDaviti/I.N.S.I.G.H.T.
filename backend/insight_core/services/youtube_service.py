@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.logs.core.logger_config import get_component_logger
 
@@ -131,7 +131,7 @@ class YouTubeService:
         }
 
     def get_watch_progress(self, video_id: str) -> Optional[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -180,7 +180,7 @@ class YouTubeService:
         percent = round((progress / duration) * 100, 2) if duration else None
         completed = completed if completed is not None else (bool(duration) and progress >= duration)
 
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

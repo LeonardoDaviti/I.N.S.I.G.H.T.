@@ -73,16 +73,24 @@ def get_something(self, cur: Cursor, param: str) -> List[Dict[str, Any]]:
 
 **Pattern:**
 ```python
+from insight_core.db import database as db
+
 def get_something(self, param: str) -> List[Dict[str, Any]]:
     """Get something from database."""
-    with psycopg.connect(self.db_url) as conn:
-        with conn.cursor() as cur:
-            return self.repo.get_something(cur, param)
+    with db.connection(self.db_url) as conn, conn.cursor() as cur:
+        return self.repo.get_something(cur, param)
+
+def save_something(self, param: str) -> None:
+    with db.transaction(self.db_url) as cur:   # commits, or rolls back if it raises
+        self.repo.save_something(cur, param)
 ```
 
 **Key Points:**
-- Use context managers for connections/cursors (automatic cleanup)
-- Call `conn.commit()` after write operations
+- Every connection comes from `insight_core/db/database.py`: a small pool per process,
+  a statement timeout (60 s by default) and the transaction scope. Never call
+  `psycopg.connect` yourself (the migration runner is the exception).
+- A connection commits when its block ends cleanly and rolls back when it raises
+- Do not hold a connection across a network fetch
 - Keep business logic here, not in repositories
 - Services use repositories, never direct SQL
 

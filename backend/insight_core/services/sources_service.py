@@ -2,8 +2,11 @@
 Business logic for source management.
 Handles CRUD operations for sources table.
 """
-import psycopg
 from typing import List, Dict, Any
+
+import psycopg
+
+from insight_core.db import database as db
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.logs.core.logger_config import get_component_logger
 
@@ -17,25 +20,25 @@ class SourcesService:
     
     def get_all_sources(self) -> List[Dict[str, Any]]:
         """Get all sources from database."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_all_sources(cur)
     
     def get_enabled_sources(self) -> List[Dict[str, Any]]:
         """Get only enabled sources."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_enabled_sources(cur)
 
     def get_source_by_id(self, source_id: str) -> Dict[str, Any] | None:
         """Get a single source by UUID."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_source_by_id(cur, source_id)
     
     def update_source_status(self, source_id: str, enabled: bool) -> Dict[str, Any]:
         """Enable or disable a source."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 success = self.repo.update_enabled(cur, source_id, enabled)
                 conn.commit()
@@ -48,7 +51,7 @@ class SourcesService:
     
     def set_in_main_digest(self, source_id: str, in_main_digest: bool) -> Dict[str, Any]:
         """Include/exclude a single source from the main digests."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 ok = self.repo.set_in_main_digest(cur, source_id, in_main_digest)
                 conn.commit()
@@ -59,7 +62,7 @@ class SourcesService:
 
     def set_folder_in_main_digest(self, folder_id: str, in_main_digest: bool) -> Dict[str, Any]:
         """Apply the digest switch to every source in a folder/track."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 changed = self.repo.set_in_main_digest_for_folder(cur, folder_id, in_main_digest)
                 conn.commit()
@@ -67,17 +70,20 @@ class SourcesService:
                 return {"folder_id": folder_id, "in_main_digest": in_main_digest, "sources_updated": changed}
 
     def add_source(self, platform: str, handle: str, *, in_main_digest: bool = True) -> Dict[str, Any]:
-        """Add new source to database."""
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                source_id = self.repo.insert_source(cur, platform, handle, in_main_digest=in_main_digest)
-                conn.commit()
-                self.logger.info(f"Added source: {platform}/{handle}")
-                return {"source_id": source_id, "platform": platform, "handle": handle}
+        """Add new source to database. ValueError when it is already a source."""
+        try:
+            with db.connection(self.db_url) as conn:
+                with conn.cursor() as cur:
+                    source_id = self.repo.insert_source(cur, platform, handle, in_main_digest=in_main_digest)
+                    conn.commit()
+        except psycopg.errors.UniqueViolation:
+            raise ValueError(f"{platform}/{handle} is already a source") from None
+        self.logger.info(f"Added source: {platform}/{handle}")
+        return {"source_id": source_id, "platform": platform, "handle": handle}
     
     def delete_source(self, source_id: str) -> bool:
         """Delete source (and cascade delete its posts)."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 deleted = self.repo.delete_source(cur, source_id)
                 conn.commit()
@@ -87,13 +93,13 @@ class SourcesService:
     
     def get_sources_with_post_counts(self) -> List[Dict[str, Any]]:
         """Get all sources with their post counts."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_sources_with_post_counts(cur)
     
     def get_source_with_settings(self, source_id: str) -> Dict[str, Any]:
         """Get source with merged settings (platform defaults + overrides)."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 # Get source basic info
                 sources = self.repo.get_all_sources(cur)
@@ -112,7 +118,7 @@ class SourcesService:
     
     def get_all_sources_with_settings(self) -> List[Dict[str, Any]]:
         """Get all sources with their merged settings and post counts."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 sources_with_counts = self.repo.get_sources_with_post_counts(cur)
                 
@@ -139,7 +145,7 @@ class SourcesService:
         if "max_posts_per_fetch" in validated_settings:
             validated_settings["max_posts_per_fetch"] = int(validated_settings["max_posts_per_fetch"])
         
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 merged_settings = self.repo.merge_source_settings(cur, source_id, validated_settings)
                 conn.commit()
@@ -155,7 +161,7 @@ class SourcesService:
 
     def merge_source_settings(self, source_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
         """Merge internal settings payloads, including archive metadata."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 merged_settings = self.repo.merge_source_settings(cur, source_id, settings)
                 conn.commit()

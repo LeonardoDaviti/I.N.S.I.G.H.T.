@@ -228,7 +228,7 @@ class ReaderServiceDaysTests(unittest.TestCase):
         conn = mock.MagicMock()
         conn.__enter__.return_value = conn
         conn.cursor.return_value = nullcontext(object())
-        with mock.patch("insight_core.services.reader_service.psycopg.connect", return_value=conn):
+        with mock.patch("insight_core.db.database.connection", return_value=conn):
             service.feed(FeedScope("all", None), filter="all", view=view, cursor=None, limit=30, days=days)
         return repo.calls[0], now - timedelta(days=days) if days else None
 

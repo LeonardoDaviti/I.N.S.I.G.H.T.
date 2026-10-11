@@ -3,5 +3,5 @@ python-dotenv
 yt-dlp
 fastapi
 uvicorn
-psycopg[binary]
+psycopg[binary,pool]
 cryptography

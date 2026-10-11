@@ -1,8 +1,9 @@
 """The ingestion runner's ports (Protocols) and their real adapters (spec §A.1, §3).
 
-The runner sees only the Protocols. Each Db* adapter opens one connection per method call,
-does its work and commits, so the runner makes one store call per phase (through
-asyncio.to_thread) rather than holding a connection across a fetch. The test adapters live
+The runner sees only the Protocols. Each Db* adapter takes a pooled connection
+(insight_core.db.database) per method call, does its work and commits, so the runner makes
+one store call per phase (through asyncio.to_thread) rather than holding a connection across
+a fetch. The test adapters live
 in tests/_ingestion_fakes.py.
 """
 from __future__ import annotations
@@ -24,8 +25,7 @@ from typing import (
     Sequence,
 )
 
-import psycopg
-
+from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.schedule import FetchDecision, backoff_delay
@@ -131,7 +131,7 @@ class DbSourceCatalog:
                 uuid.UUID(str(selector.id))
             except (TypeError, ValueError):
                 return []
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.repo.load_for_ingestion(cur, selector.kind, selector.id)
 
 
@@ -159,12 +159,12 @@ class DbFetchStateStore:
         self.backoff = backoff
 
     def load(self, source_ids: Sequence[str]) -> Dict[str, FetchStateRow]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.repo.load(cur, source_ids)
 
     def record_decisions(self, decisions: Sequence[tuple[str, FetchDecision]], *,
                          now: Optional[datetime] = None) -> None:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 self.repo.record_decisions(cur, decisions, now or self.clock())
             conn.commit()
@@ -179,7 +179,7 @@ class DbFetchStateStore:
                         backoff: Optional[Callable[[int], timedelta]] = None) -> List[FetchStateRow]:
         if not outcomes:
             return []
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 rows = self.repo.record_outcomes(
                     cur, outcomes, trigger=trigger, now=now or self.clock(), backoff=backoff or self.backoff
@@ -188,7 +188,7 @@ class DbFetchStateStore:
         return rows
 
     def refresh_cadence(self) -> int:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 updated = self.repo.refresh_cadence(cur)
             conn.commit()
@@ -208,7 +208,7 @@ class DbPostSaver:
     def save(self, drafts: Sequence[PostDraft]) -> SaveBatchResult:
         if not drafts:
             return SaveBatchResult()
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             return self.repo.save_batch(conn, drafts)
 
 
@@ -230,7 +230,7 @@ class PgAdvisoryRunLock:
         self.key = key
 
     def _acquire(self):
-        conn = psycopg.connect(self.db_url, autocommit=True)
+        conn = db.session_connection(self.db_url, autocommit=True)
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (self.key,))

@@ -19,7 +19,7 @@ import asyncio
 import contextlib
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
@@ -357,7 +357,7 @@ class SourceFetchService:
 
     def _save_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> SaveBatchResult:
         """One save batch for one source's posts (blocking; run it in a thread)."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             return self.posts_repo.save_batch(conn, [PostDraft(source_id, post) for post in posts])
 
     async def _record_archive_metadata(

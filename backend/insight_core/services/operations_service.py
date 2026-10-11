@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_operations import JobRunsRepository, SystemSettingsRepository
@@ -240,7 +240,7 @@ class OperationsService:
 
     def get_scheduler_config(self) -> Dict[str, Any]:
         defaults = self._default_scheduler_config()
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER)
 
         if not row:
@@ -264,7 +264,7 @@ class OperationsService:
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
         }
 
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 updated_at = SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER, payload)
             conn.commit()
@@ -276,12 +276,12 @@ class OperationsService:
 
     def get_scheduler_state(self) -> Dict[str, Any]:
         """{last_tick_at, next_tick_at, last_daily_work_at, next_daily_work_at} as ISO strings (or {})."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER_STATE)
         return dict(row[0] or {}) if row else {}
 
     def set_scheduler_state(self, state: Dict[str, Any]) -> None:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER_STATE,
                                                 self._json_safe(state or {}))
@@ -289,12 +289,12 @@ class OperationsService:
 
     def latest_successful_job_finished_at(self, job_type: str) -> Optional[datetime]:
         """When the newest successful job of this type finished (seeds the daily-work gate)."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return JobRunsRepository.latest_success_finished_at(cur, job_type)
 
     def latest_job_for_source(self, job_type: str, source_id: str) -> Optional[Dict[str, Any]]:
         """The newest job of this type for one source, summarised (the source sheet's archive)."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return JobRunsRepository.latest_for_source(cur, job_type, source_id)
 
     def start_job(
@@ -306,7 +306,7 @@ class OperationsService:
         message: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> str:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -337,7 +337,7 @@ class OperationsService:
         must keep compact=False.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
                 row = cur.fetchone()
@@ -387,7 +387,7 @@ class OperationsService:
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
                 row = cur.fetchone()
@@ -451,7 +451,7 @@ class OperationsService:
         more memory-hungry. Called once per scheduler cycle.
         """
         retain_days = max(1, int(retain_days))
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM job_runs WHERE started_at < now() - make_interval(days => %s)",
@@ -463,7 +463,7 @@ class OperationsService:
 
     def list_recent_jobs(self, limit: int = 80) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -528,7 +528,7 @@ class OperationsService:
         return jobs
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -610,7 +610,7 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -628,7 +628,7 @@ class OperationsService:
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
         """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -704,7 +704,7 @@ class OperationsService:
         return self._kinds
 
     def _load_schedule_view(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return FetchStateRepository().load_schedule_view(cur, source_ids)
 
     def _write_cadence_override(self, source_id: str, hours: Optional[float]) -> bool:
@@ -712,7 +712,7 @@ class OperationsService:
             uuid.UUID(str(source_id))
         except (TypeError, ValueError):
             return False
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             written = FetchStateRepository().set_cadence_override(cur, source_id, hours)
             conn.commit()
             return written

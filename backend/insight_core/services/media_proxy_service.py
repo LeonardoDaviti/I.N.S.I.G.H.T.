@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Set
 
 import psycopg
 
+from insight_core.db import database as db
 from insight_core.utils.media import clean_url, feed_thumb, post_media
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -119,7 +120,7 @@ class MediaProxyService:
 
     def _allowed(self, post_id: str) -> Set[str]:
         try:
-            with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 cur.execute("SELECT url, media_urls, content_html, content FROM posts WHERE id = %s::uuid",
                             (post_id,))
                 row = cur.fetchone()

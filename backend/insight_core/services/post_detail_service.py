@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
@@ -28,7 +28,7 @@ class PostDetailService:
         self.reader_repo = ReaderRepository()
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -100,13 +100,13 @@ class PostDetailService:
         }
 
     def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.interactions.get_post_reader_state(cur, post_id)
 
     def record_post_open(self, post_id: str, *, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Log the open and mark the post read (the first read time is kept), in one transaction."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 stored = self.interactions.record_post_interaction(cur, post_id, "opened", metadata or {})
                 self.reader_repo.set_read(cur, [post_id], True)
@@ -124,7 +124,7 @@ class PostDetailService:
             **(metadata or {}),
             "duration_seconds": max(0, int(duration_seconds)),
         }
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 stored = self.interactions.record_post_interaction(cur, post_id, "reading_session", payload)
             conn.commit()
@@ -132,7 +132,7 @@ class PostDetailService:
 
     def toggle_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
         interaction_type = "favorited" if favorited else "unfavorited"
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 stored = self.interactions.record_post_interaction(
                     cur, post_id, interaction_type, {"favorited": favorited}

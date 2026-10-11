@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import psycopg
 
+from insight_core.db import database as db
 from insight_core.db.repo_credentials import CredentialRow, CredentialsRepository
 from insight_core.ingestion.credentials import (
     SecretBox,
@@ -175,14 +176,14 @@ class CredentialsService:
     # ------------------------------------------------------------------ listing
 
     def list(self) -> Dict[str, Any]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             rows = {(row.provider, row.key): row for row in self.repo.list(cur)}
         readable = self.credentials.stored()
         return {"providers": [self._provider_view(spec, rows, readable) for spec in PROVIDERS]}
 
     def provider(self, provider: str) -> Dict[str, Any]:
         spec = self._spec(provider)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             rows = {(row.provider, row.key): row for row in self.repo.list(cur) if row.provider == provider}
         return self._provider_view(spec, rows, self.credentials.stored())
 
@@ -257,7 +258,7 @@ class CredentialsService:
 
     def _store(self, provider: str, key: str, value: str, *, show_last4: bool = True) -> None:
         ciphertext = self._box().encrypt(value)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             self.repo.upsert(cur, provider, key, ciphertext, _last4(value) if show_last4 else None)
         self._tests.pop(provider, None)
         self._invalidate()
@@ -277,7 +278,7 @@ class CredentialsService:
 
     def delete(self, provider: str, key: str) -> Dict[str, Any]:
         self._field(provider, key)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             self.repo.delete(cur, provider, key)
         self._tests.pop(provider, None)
         self._invalidate()
@@ -287,7 +288,7 @@ class CredentialsService:
         tested_at = self.clock()
         self._tests[provider] = TestResult(ok, message, tested_at)
         try:
-            with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 self.repo.record_test(cur, provider, ok, message, tested_at)
         except psycopg.Error:
             pass
@@ -306,7 +307,7 @@ class CredentialsService:
         return self.provider(provider)
 
     def _substack_source(self) -> Optional[dict]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, platform, handle_or_url, settings FROM sources
