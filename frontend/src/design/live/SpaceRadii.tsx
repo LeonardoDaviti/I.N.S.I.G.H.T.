@@ -24,7 +24,8 @@ function useMeasured<T extends HTMLElement>(read: (style: CSSStyleDeclaration) =
 }
 
 const readWidth = (style: CSSStyleDeclaration) => style.width;
-const readRadius = (style: CSSStyleDeclaration) => style.borderTopLeftRadius;
+/** A pill's radius is a huge number; call it what it is. */
+const readRadius = (style: CSSStyleDeclaration) => (parseFloat(style.borderTopLeftRadius) >= 999 ? 'full' : style.borderTopLeftRadius);
 
 function Space({ step, className }: { step: string; className: string }) {
   const [ref, width] = useMeasured<HTMLSpanElement>(readWidth);

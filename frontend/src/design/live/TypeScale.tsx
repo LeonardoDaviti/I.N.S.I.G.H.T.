@@ -18,7 +18,9 @@ function Step({ step, className, sample }: (typeof STEPS)[number]) {
   useLayoutEffect(() => {
     if (!ref.current) return;
     const style = getComputedStyle(ref.current);
-    setMeasure(style.fontSize ? `${style.fontSize} / ${style.lineHeight} · ${style.fontWeight}` : '');
+    const size = parseFloat(style.fontSize);
+    const leading = parseFloat(style.lineHeight) / size;
+    setMeasure(size ? `${size}px / ${Number.isFinite(leading) ? Number(leading.toFixed(2)) : style.lineHeight} · ${style.fontWeight}` : '');
   }, []);
   return (
     <li className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1 border-b border-line py-3 last:border-b-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_auto]">

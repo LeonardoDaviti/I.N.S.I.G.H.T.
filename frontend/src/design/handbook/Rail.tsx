@@ -42,8 +42,8 @@ export function Rail({ groups }: { groups: readonly RailGroup[] }) {
   return (
     <nav aria-label="Design studio" className="pb-8">
       {groups.map((group) => (
-        <section key={group.label} aria-labelledby={`rail-${group.label}`}>
-          <h2 id={`rail-${group.label}`} className="px-2.5 pb-1.5 pt-6 text-[0.8125rem] lowercase text-fg-3 first:pt-0">
+        <section key={group.label} aria-labelledby={`rail-${group.label}`} className="mt-6 first:mt-0">
+          <h2 id={`rail-${group.label}`} className="px-2.5 pb-1.5 text-[0.8125rem] lowercase text-fg-3">
             {group.label}
           </h2>
           {group.items.length === 0 ? (
