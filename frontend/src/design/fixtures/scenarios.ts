@@ -192,9 +192,6 @@ function worstSiteJobs(s: Site, now: Date): Site {
   return { ...s, jobs: [ingestionJob(now, report), ...s.jobs.map((job) => ({ ...job, id: 'job-earlier' }))] };
 }
 
-/** Every page with frames, in the studio's order. */
-export const FRAME_PAGES = ['reader', 'post', 'sources', 'shell', 'blog'] as const;
-
 export function frameScenarios(page?: string): FrameScenario[] {
   return page ? SCENARIOS.filter((scenario) => scenario.page === page) : [...SCENARIOS];
 }

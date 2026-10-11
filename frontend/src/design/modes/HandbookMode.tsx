@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { Link, Navigate, Route, Routes, useParams } from 'react-router-dom';
 import Button from '../../components/ui/Button';
-import { COMPONENT_SPECIMENS, DOCS, docAt, prototypeById, prototypeRefs } from '../library';
+import { COMPONENT_SPECIMENS, DOCS, docAt, prototypeRefs } from '../library';
+import { prototypeById } from '../prototypeRegistry';
 import { railGroups } from '../studio';
 import { parseDoc } from '../coverage';
 import { prototypeAge } from '../prototypes';

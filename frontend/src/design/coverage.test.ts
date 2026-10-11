@@ -19,6 +19,14 @@ describe('appRoutes', () => {
       </Routes>`;
     expect(appRoutes(source)).toEqual(['/', '/read/:scopeKind/:scopeId?', '*']);
   });
+
+  it('refuses a <Route> whose path is not a literal string, which no doc could claim', () => {
+    const source = `
+      <Route path="/" element={<ReaderPage />} />
+      <Route path={BLOG_PATH} element={<BlogPage />} />
+      <Route index element={<Home />} />`;
+    expect(() => appRoutes(source)).toThrow('2 of 3 <Route> elements have no literal path="…"');
+  });
 });
 
 describe('unclaimedRoutes', () => {

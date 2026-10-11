@@ -9,8 +9,6 @@ import { docHref, type PrototypeRef } from './studio';
 import { PROTOTYPES } from './prototypeRegistry';
 import { isOpen, prototypeAge } from './prototypes';
 
-export { PROTOTYPES, prototypeById } from './prototypeRegistry';
-
 const docFiles = import.meta.glob<string>('./docs/**/*.md', { query: '?raw', import: 'default', eager: true });
 
 /** Every design doc, by its path under docs/. */

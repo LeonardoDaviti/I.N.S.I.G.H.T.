@@ -45,9 +45,16 @@ export function parseDoc(path: string, text: string): DesignDoc {
   return { path, text, meta };
 }
 
-/** Every `<Route path="…">` in the router source, in order. */
+/**
+ * Every `<Route path="…">` in the router source, in order. Throws when a
+ * `<Route>` has no literal path (`path={…}`, `index`): the test could not
+ * check that a doc claims it.
+ */
 export function appRoutes(source: string): string[] {
-  return [...source.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]);
+  const paths = [...source.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]);
+  const total = [...source.matchAll(/<Route\b/g)].length;
+  if (total !== paths.length) throw new Error(`${total - paths.length} of ${total} <Route> elements have no literal path="…"`);
+  return paths;
 }
 
 /** Every route a doc claims, as a page, a parked page or a redirect. */
