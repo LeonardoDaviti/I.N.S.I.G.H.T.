@@ -131,7 +131,17 @@ const SCENARIOS: FrameScenario[] = [
     })),
   },
 
+  { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
+
   // ---- shell ----
+  {
+    page: 'shell', state: 'switcher', label: '⌘K open over the feed', url: '/', routes: site(normalSite), documented: false,
+    setup: async (frame) => {
+      await frame.find('a', /Prompt caching/);
+      await frame.press({ key: 'k', ctrlKey: true });
+      await frame.find('[role="listbox"]');
+    },
+  },
   {
     page: 'shell', state: 'switcher-many-tracks', label: '⌘K with 44 tracks, long and RTL names', url: '/', documented: true,
     routes: (now) => withSite(now, (s) => ({ ...s, folders: [...s.folders, ...manyTracks()] })),
