@@ -18,13 +18,13 @@ export interface Size { width: number; height: number }
 /** A frame card: a 1400 × 900 page at 0.24. */
 export const CARD: Size = { width: 336, height: 216 };
 /** Room under a card for its name, route and principles. */
-export const CAPTION_HEIGHT = 64;
-const COL_GAP = 208;
+export const CAPTION_HEIGHT = 84;
+const COL_GAP = 240;
 const ROW_GAP = 84;
 /** The lane over the top of the wall, for moves across more than one column. */
 const LANE_Y = -44;
 const CORNER = 12;
-export const LABEL_HEIGHT = 18;
+export const LABEL_HEIGHT = 22;
 const LABEL_GAP = 10;
 const PADDING = 32;
 
@@ -57,9 +57,9 @@ export interface WallLayout {
 
 type Side = 'left' | 'right' | 'top' | 'bottom';
 
-/** A label's width at 11px: an average glyph and the pill's padding. */
+/** A label's width at 13px: an average glyph and the pill's padding. */
 export function labelWidth(text: string): number {
-  return Math.ceil(text.length * 6.2 + 14);
+  return Math.ceil(text.length * 7.4 + 18);
 }
 
 function sides(from: SiteNode, to: SiteNode): [Side, Side] {

@@ -76,7 +76,7 @@ export default function WalkPanel({
       <p role="status" className={cn('px-4 pt-3 text-[0.8125rem] tabular-nums', state.error ? 'font-semibold text-fg' : 'text-fg-2')}>
         {status(state)}
       </p>
-      <ol className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-6 pt-3 text-[0.8125rem]">
+      <ol className="grid grid-flow-col grid-rows-4 gap-x-6 gap-y-1 px-4 pb-6 pt-3 text-[0.8125rem]">
         {WALK.map((step, index) => {
           const current = index === state.current;
           return (

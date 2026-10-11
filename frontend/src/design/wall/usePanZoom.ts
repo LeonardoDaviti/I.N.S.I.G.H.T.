@@ -11,6 +11,9 @@ const EASE = 'transform 240ms cubic-bezier(0.23, 1, 0.32, 1)';
 /** The view settles into React state (zoom %, which frames mount) once a gesture rests. */
 const SETTLE_MS = 90;
 
+/** A pinch sends small deltas, a mouse wheel ±100 a notch: about 1.35× a notch, smooth for a pinch. */
+const wheelZoom = (deltaY: number) => Math.exp(-Math.max(-50, Math.min(50, deltaY)) * 0.006);
+
 const prefersReducedMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function sizeOf(element: HTMLElement | null): Size {
@@ -81,7 +84,7 @@ export function usePanZoom(bounds: Rect) {
       const current = view.current;
       if (event.ctrlKey || event.metaKey) {
         const box = element.getBoundingClientRect();
-        apply(zoomAt(current, { x: event.clientX - box.left, y: event.clientY - box.top }, Math.exp(-event.deltaY * 0.01)), false);
+        apply(zoomAt(current, { x: event.clientX - box.left, y: event.clientY - box.top }, wheelZoom(event.deltaY)), false);
       } else {
         apply({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }, false);
       }

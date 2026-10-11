@@ -63,15 +63,15 @@ function PageCard({
           <div aria-hidden="true" className="flex h-full items-center justify-center text-[0.8125rem] text-fg-3">{node.name}</div>
         )}
       </div>
-      <figcaption className="mt-2 w-[80%] text-[0.8125rem] leading-[1.35]">
+      <figcaption className="mt-2.5 w-[80%] text-[1.0625rem] leading-[1.3]">
         <Link
           to={`/design/pages/${node.page}?state=${encodeURIComponent(node.state)}`}
           className="font-semibold text-fg underline-offset-2 hover:underline"
         >
           {node.name}
         </Link>
-        <span className="block truncate font-mono text-[0.6875rem] text-fg-2" title={node.route}>{node.route}</span>
-        <span className="block text-[0.6875rem] tabular-nums text-fg-3">{node.principles.map((n) => `P${n}`).join(' ')}</span>
+        <span className="mt-0.5 block truncate font-mono text-[0.8125rem] text-fg-2" title={node.route}>{node.route}</span>
+        <span className="block text-[0.8125rem] tabular-nums text-fg-3">{node.principles.map((n) => `P${n}`).join(' ')}</span>
       </figcaption>
     </figure>
   );
@@ -226,7 +226,7 @@ export default function WallMode() {
                 <span
                   key={edge.id}
                   className={cn(
-                    'absolute whitespace-nowrap rounded-full border text-center text-[0.6875rem]',
+                    'absolute whitespace-nowrap rounded-full border text-center text-[0.8125rem]',
                     current ? 'border-inverse bg-inverse font-semibold text-inverse-fg' : 'border-line bg-surface text-fg-2',
                   )}
                   style={{
