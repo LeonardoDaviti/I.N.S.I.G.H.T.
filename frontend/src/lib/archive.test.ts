@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   archiveCeiling,
   archivePresets,
+  archiveResultLine,
   clampDesired,
   defaultDesired,
   describeAvailable,
@@ -91,4 +92,13 @@ test('rate limits read as pauses', () => {
   assert.equal(describeRate({ page_delay_seconds: 1 }), '1s between pages');
   assert.equal(describeRate({ page_delay_seconds: 0 }), 'no pause between pages');
   assert.equal(describeRate(null), null);
+});
+
+test('an archive result reads as counts, leaving out what was not recorded', () => {
+  assert.equal(
+    archiveResultLine({ posts_fetched: 500, posts_inserted: 475, posts_updated: 25, pages_fetched: 25, stored_posts: 500 }),
+    '500 posts fetched, 475 new, 25 updated · 25 pages · 500 stored',
+  );
+  assert.equal(archiveResultLine({ posts_fetched: 1, posts_inserted: 1, pages_fetched: 1 }), '1 post fetched, 1 new · 1 page');
+  assert.equal(archiveResultLine({}), null);
 });

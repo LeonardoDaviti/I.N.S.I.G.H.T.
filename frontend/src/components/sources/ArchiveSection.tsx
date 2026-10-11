@@ -9,6 +9,7 @@ import { errorMessage } from '../../lib/apiError';
 import {
   archiveCeiling,
   archivePresets,
+  archiveResultLine,
   clampDesired,
   defaultDesired,
   describeAvailable,
@@ -79,14 +80,26 @@ function fromSummary(job: ArchiveJobSummary): RunView {
   };
 }
 
-/** "500 posts fetched, 475 new · 25 pages". */
 function resultLine(run: RunView): string {
-  const parts = [
-    run.fetched !== undefined ? `${plural(run.fetched, 'post')} fetched` : null,
-    run.inserted !== undefined ? `${formatCount(run.inserted)} new` : null,
-  ].filter(Boolean).join(', ');
-  const pages = run.pages !== undefined ? plural(run.pages, 'page') : null;
-  return [parts || run.message || 'Finished', pages].filter(Boolean).join(' · ');
+  return archiveResultLine({ posts_fetched: run.fetched, posts_inserted: run.inserted, pages_fetched: run.pages })
+    ?? run.message ?? 'Finished';
+}
+
+/** A monochrome progress bar (the sheet and the job history). */
+export function ArchiveProgressBar({ percent }: { percent: number }) {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  return (
+    <div
+      role="progressbar"
+      aria-label="Archive progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+      className="h-1 overflow-hidden rounded-full bg-raised"
+    >
+      <div className="h-full bg-fg" style={{ width: `${value}%` }} />
+    </div>
+  );
 }
 
 function Progress({ run, now }: { run: RunView; now: Date }) {
@@ -97,16 +110,7 @@ function Progress({ run, now }: { run: RunView; now: Date }) {
         <StatusGlyph status="running" label="archiving…" />
         <span className="tabular-nums text-fg">{percent}%</span>
       </div>
-      <div
-        role="progressbar"
-        aria-label="Archive progress"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        className="h-1 overflow-hidden rounded-full bg-raised"
-      >
-        <div className="h-full bg-fg" style={{ width: `${percent}%` }} />
-      </div>
+      <ArchiveProgressBar percent={percent} />
       {run.lastEvent ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{run.lastEvent}</p> : null}
       {run.startedAt ? <p className="text-[0.75rem] text-fg-3">started {formatRelativeTime(run.startedAt, now)}</p> : null}
     </div>

@@ -5,7 +5,7 @@
  * Pure.
  */
 import type { ArchiveRateLimit, AvailableBasis } from '../services/api';
-import { formatCount } from './format.ts';
+import { formatCount, plural } from './format.ts';
 
 /** The most one archive run may ask for when the source reports no total. */
 export const MAX_ARCHIVE_POSTS = 10_000;
@@ -90,4 +90,25 @@ export function describeRate(rate: ArchiveRateLimit | null | undefined): string 
     parts.push(`${rate.batch_cooldown_seconds}s every ${rate.batch_size} pages`);
   }
   return parts.join(', ');
+}
+
+/** "500 posts fetched, 475 new, 25 updated · 25 pages · 500 stored"; null when nothing was recorded. */
+export function archiveResultLine(result: {
+  posts_fetched?: number;
+  posts_inserted?: number;
+  posts_updated?: number;
+  pages_fetched?: number;
+  stored_posts?: number;
+}): string | null {
+  const counts = [
+    typeof result.posts_fetched === 'number' ? `${plural(result.posts_fetched, 'post')} fetched` : null,
+    typeof result.posts_inserted === 'number' ? `${formatCount(result.posts_inserted)} new` : null,
+    result.posts_updated ? `${formatCount(result.posts_updated)} updated` : null,
+  ].filter(Boolean).join(', ');
+  const parts = [
+    counts || null,
+    typeof result.pages_fetched === 'number' ? plural(result.pages_fetched, 'page') : null,
+    typeof result.stored_posts === 'number' ? `${formatCount(result.stored_posts)} stored` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
 }
