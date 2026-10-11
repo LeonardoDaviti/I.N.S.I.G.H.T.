@@ -1022,6 +1022,8 @@ class InsightApiBridge:
                 },
                 "source": source,
                 "support": self._archive_support_or_none(source_id),
+                # The newest archive job: a running one the sheet attaches to, or the last result.
+                "latest_job": self._latest_archive_job_or_none(source_id),
             }
         except Exception as e:
             return {
@@ -1029,6 +1031,12 @@ class InsightApiBridge:
                 "error": str(e),
                 "source_id": source_id,
             }
+
+    def _latest_archive_job_or_none(self, source_id: str) -> Dict[str, Any] | None:
+        try:
+            return self.operations_service.latest_job_for_source("archive_source", source_id)
+        except Exception:
+            return None
 
     def _archive_support_or_none(self, source_id: str) -> Dict[str, Any] | None:
         try:
