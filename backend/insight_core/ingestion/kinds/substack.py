@@ -74,6 +74,7 @@ def _text(value: Any) -> str:
 
 class SubstackKind(BaseKind):
     name = "substack"
+    available_basis = "unknown"   # /api/v1/archive pages carry no total
     profile = SUBSTACK_PROFILE
 
     def __init__(self, http: KindHttp, *, sid: Optional[str] = None,

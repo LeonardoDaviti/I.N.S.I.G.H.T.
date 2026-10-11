@@ -18,6 +18,15 @@ from typing import Any, AsyncIterator, Literal, Mapping, Optional, Protocol, run
 # A source row as the services return it: id, platform, handle_or_url, settings, ...
 Source = Mapping[str, Any]
 
+# What a kind's inspected available_posts means (the archive UI words it from this):
+#   exact        the source reports its full size
+#   upper_bound  a number that can only overcount (the newest post number)
+#   estimate     an approximate count (a profile counter, discovered candidate pages)
+#   listing_cap  the source is bigger, but its listings stop at this many
+#   feed_window  only what the feed lists right now; nothing older is reachable
+#   unknown      the source reports no total
+AvailableBasis = Literal["exact", "upper_bound", "estimate", "listing_cap", "feed_window", "unknown"]
+
 _RATE_KEYS = ("page_delay_seconds", "batch_size", "batch_cooldown_seconds")
 
 
@@ -155,6 +164,7 @@ class NullKindSession:
 class SourceKind(Protocol):
     name: str                                # persisted as settings.archive.source_type
     profile: PolitenessProfile
+    available_basis: AvailableBasis          # what inspect()'s available_posts means
 
     def matches(self, source: Source) -> bool: ...
 
@@ -205,6 +215,7 @@ class BaseKind:
 
     name: str = "base"
     profile: PolitenessProfile = PolitenessProfile(concurrency_pool="host-lock")
+    available_basis: AvailableBasis = "unknown"
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError
