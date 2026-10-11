@@ -5,6 +5,10 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // dist/.vite/manifest.json: the bundle check (scripts/bundle-check.mjs) reads the chunk graph from it.
+  build: {
+    manifest: true,
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
