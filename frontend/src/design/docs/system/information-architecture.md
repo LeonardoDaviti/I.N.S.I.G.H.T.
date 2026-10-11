@@ -7,11 +7,11 @@ redirects: /hub, /tracks/:trackId, *
 
 Implements P1, P7, P9 and P10. Source: `src/App.tsx`, `components/layout/navigation.ts`.
 
-INSIGHT is reading-only by default (`INSIGHT_ANALYSIS` off): three places, **feed / sources / post**.
+INSIGHT is reading-only by default (`INSIGHT_ANALYSIS` off): three places, **feed / sources / post**, plus the **blog**.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ [INSIGHT]                              feed / sources  [go to ⌘K] ☾ │
+│ [INSIGHT]                       feed / sources / blog  [go to ⌘K] ☾ │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -19,8 +19,9 @@ INSIGHT is reading-only by default (`INSIGHT_ANALYSIS` off): three places, **fee
 | --- | --- | --- |
 | feed | `/` | `/`, `/read/*`, `/posts/*` (and `/tracks*` reading-only) |
 | sources | `/settings/sources` | `/settings/*` |
+| blog | `/blog` | `/blog*` |
 
-With analysis on, the bar is `feed / tracks / briefings / sources / ingestion`:
+With analysis on, the bar is `feed / tracks / briefings / sources / ingestion / blog`:
 
 | Nav word | Route | Active on |
 | --- | --- | --- |
@@ -35,6 +36,7 @@ With analysis on, the bar is `feed / tracks / briefings / sources / ingestion`:
 | `/`, `/read/:scopeKind/:scopeId?` | `pages/reader.md` |
 | `/posts/:postId` | `pages/post.md` |
 | `/settings/sources` (tabs sources · connections · ingestion) | `pages/sources.md` |
+| `/blog`, `/blog/:slug` | `pages/blog.md` |
 | `/briefing`, `/briefing/topics` | `parked/briefing.md` |
 | `/briefing/vertical`, `/briefing/vertical/source/:sourceId` | `parked/vertical-briefing.md` |
 | `/stories` | `parked/stories.md` |

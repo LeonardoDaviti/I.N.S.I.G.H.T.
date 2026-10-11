@@ -160,6 +160,10 @@ const SCENARIOS: FrameScenario[] = [
       await frame.find('[role="dialog"]');
     },
   },
+  // ---- blog ----
+  { page: 'blog', state: 'index', label: 'Every post, newest first', url: '/blog', routes: site(normalSite), documented: true },
+  { page: 'blog', state: 'article', label: 'A post with figures, code and the quiz', url: '/blog/junior-to-senior', routes: site(normalSite), documented: true },
+  { page: 'blog', state: 'unknown', label: 'An unknown slug lands on the list', url: '/blog/no-such-post', routes: site(normalSite), documented: true },
   {
     page: 'shell', state: 'dialog', label: 'A dialog open: Add source', url: '/settings/sources', routes: site(normalSite), documented: false,
     setup: async (frame) => {
@@ -189,7 +193,7 @@ function worstSiteJobs(s: Site, now: Date): Site {
 }
 
 /** Every page with frames, in the studio's order. */
-export const FRAME_PAGES = ['reader', 'post', 'sources', 'shell'] as const;
+export const FRAME_PAGES = ['reader', 'post', 'sources', 'shell', 'blog'] as const;
 
 export function frameScenarios(page?: string): FrameScenario[] {
   return page ? SCENARIOS.filter((scenario) => scenario.page === page) : [...SCENARIOS];

@@ -133,7 +133,7 @@ describe('the design docs', () => {
   });
 
   it('give every page doc the fixed template and its states', () => {
-    expect(pageDocs.map((doc) => doc.path).sort()).toEqual(['pages/post.md', 'pages/reader.md', 'pages/shell.md', 'pages/sources.md']);
+    expect(pageDocs.map((doc) => doc.path).sort()).toEqual(['pages/blog.md', 'pages/post.md', 'pages/reader.md', 'pages/shell.md', 'pages/sources.md']);
     expect(pageDocs.flatMap(pageDocProblems)).toEqual([]);
   });
 

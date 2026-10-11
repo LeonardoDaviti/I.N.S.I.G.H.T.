@@ -166,5 +166,15 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     },
     { path: '/api/posts/item/:postId', respond: (request) => postDetail(request, site) },
     { path: '/api/youtube/progress/:videoId', respond: () => ({ success: true, progress: null }) },
+    // The source sheet's archive section (feat/archive-sheet): a source that can fetch its history.
+    {
+      path: '/api/archive/:sourceId/status',
+      respond: () => ({
+        success: true,
+        archive: { status: 'idle', stored_posts: 120, available_posts: 480 },
+        support: { kind: 'generic_rss', available_basis: 'feed_window', archivable: true, reason: null, unavailable: false, live_fetch_limit: 50 },
+        latest_job: null,
+      }),
+    },
   ];
 }
