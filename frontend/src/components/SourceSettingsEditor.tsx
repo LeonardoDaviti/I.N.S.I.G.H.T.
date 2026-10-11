@@ -13,9 +13,8 @@ import { formatCount, plural } from '../lib/format';
 import { STATUS_GLYPH } from './sources/sourceList';
 import { Button, FilterChip, Input, Sheet, SheetContent, StatusGlyph, Switch } from './ui';
 import { Notice } from './states';
-import { sourceLabel } from '../lib/sourceLabel';
+import { getPlatformLabel, sourceLabel } from '../lib/sourceLabel';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
-import { getPlatformLabel } from '../lib/sourcePresentation';
 import { ConnectionsLink } from './connections';
 import { writeToClipboard } from '../lib/clipboard';
 import ArchiveSection from './sources/ArchiveSection';
@@ -279,7 +278,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <div>
               <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
               <p className="mt-0.5 text-[0.75rem] text-fg-3">
-                Off keeps it fetched and readable through its tracks, but out of the feed and the daily briefing. Saves instantly.
+                Off keeps it fetched and readable through its tracks, but out of the feed. Saves instantly.
               </p>
             </div>
             <Switch

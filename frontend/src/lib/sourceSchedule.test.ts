@@ -7,11 +7,9 @@ import {
   effectiveHealthStatus,
   filterHealthRows,
   formatDue,
-  formatHours,
   intervalLabel,
   parseOverrideHours,
   sortHealthRows,
-  summarizeHealthRows,
   tierLabel,
   withEffectiveStatus,
 } from './sourceSchedule.ts';
@@ -91,13 +89,7 @@ test('tierLabel names every cadence tier', () => {
   assert.equal(tierLabel('unknown'), 'Probation');
 });
 
-test('formatHours and intervalLabel', () => {
-  assert.equal(formatHours(0.5), '30m');
-  assert.equal(formatHours(6), '6h');
-  assert.equal(formatHours(1.5), '1.5h');
-  assert.equal(formatHours(48), '2d');
-  assert.equal(formatHours(36), '1.5d');
-  assert.equal(formatHours(null), '—');
+test('intervalLabel', () => {
   assert.equal(intervalLabel(row({ interval_hours: 6, interval_basis: 'override' })), 'every 6h · override');
   assert.equal(intervalLabel(row({ interval_hours: 24, interval_basis: 'probation' })), 'every 1d · probation');
   assert.equal(intervalLabel(row({ interval_hours: 3, interval_basis: 'backlog_guard' })), 'every 3h · backlog guard');
@@ -174,13 +166,15 @@ test('effectiveHealthStatus: a failed last attempt is failing, or backoff while 
   assert.equal(effectiveHealthStatus(row({ status: 'unavailable', ...failed }), NOW), 'unavailable');
 });
 
-test('summarizeHealthRows counts derived statuses, so failing rows count as failing', () => {
-  const rows = withEffectiveStatus([
+test('withEffectiveStatus derives each row status, so failing rows count as failing', () => {
+  const input = [
     row({ status: 'due', last_outcome: 'error', last_error: 'HTTP 429' }),
     row({ status: 'due' }),
     row({ status: 'deferred' }),
     row({ status: 'unavailable' }),
     row({ status: 'backoff' }),
-  ], NOW);
-  assert.deepEqual(summarizeHealthRows(rows), { due_now: 1, deferred: 1, backoff: 1, unavailable: 1, errors: 1 });
+  ];
+  const rows = withEffectiveStatus(input, NOW);
+  assert.deepEqual(rows.map((r) => r.status), ['error', 'due', 'deferred', 'unavailable', 'backoff']);
+  assert.equal(rows[1], input[1]);
 });

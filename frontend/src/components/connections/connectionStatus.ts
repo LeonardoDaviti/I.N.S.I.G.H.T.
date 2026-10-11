@@ -1,6 +1,6 @@
 import type { CredentialField, CredentialProviderView, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
-import { localDateISO } from '../../lib/dates';
+import { localDateISO, toDate } from '../../lib/dates';
 
 /** The Connections tab's URL (spec §10.1); one place so every link agrees. */
 export const CONNECTIONS_PATH = '/settings/sources?tab=connections';
@@ -41,10 +41,8 @@ export function providerStatus(view: CredentialProviderView): ProviderStatus {
 export function fieldSummary(field: CredentialField): string {
   const parts = ['set'];
   if (field.last4) parts.push(`••••${field.last4}`);
-  if (field.updated_at) {
-    const date = new Date(field.updated_at);
-    if (!Number.isNaN(date.getTime())) parts.push(`updated ${localDateISO(date)}`);
-  }
+  const updated = toDate(field.updated_at);
+  if (updated) parts.push(`updated ${localDateISO(updated)}`);
   return parts.join(' · ');
 }
 

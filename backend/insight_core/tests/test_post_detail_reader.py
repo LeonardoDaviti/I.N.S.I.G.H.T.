@@ -16,7 +16,13 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+from types import SimpleNamespace
+
+import main
+from insight_core.services import registry
 from insight_core.services.post_detail_service import PostDetailService
+from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.tests._asgi import call
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 
 
@@ -96,6 +102,32 @@ class PostDetailReaderStateTests(unittest.TestCase):
         self.assertFalse(state["is_favorited"])
         self.assertIsNone(state["read_at"])
         self.assertEqual(state["open_count"], 0)
+
+
+@requires_test_db
+class UnknownIdRouteTests(unittest.TestCase):
+    """A well-formed id that names no row is a 404, not a ValueError 400 or an FK 500."""
+
+    def setUp(self):
+        previous = registry.use(SimpleNamespace(post_detail=PostDetailService(db_url()),
+                                                source_fetch=SourceFetchService(db_url())))
+        self.addCleanup(registry.use, previous)
+        self.unknown = str(uuid.uuid4())
+
+    def test_an_interaction_on_an_unknown_post_is_a_404(self):
+        for path, json_body in (("opened", {}), ("reading-session", {"durationSeconds": 5}),
+                                ("favorite", {"favorited": True})):
+            with self.subTest(path=path), self.assertLogs("main", "WARNING"):
+                status, _, body = call(main.app, "POST", f"/api/posts/item/{self.unknown}/{path}",
+                                       json_body=json_body)
+                self.assertEqual((status, body), (404, {"detail": f"Post {self.unknown} not found"}))
+
+    def test_an_archive_of_an_unknown_source_is_a_404(self):
+        with self.assertLogs("main", "WARNING"):
+            status, _, body = call(main.app, "POST", f"/api/archive/{self.unknown}/plan", json_body={})
+        self.assertEqual((status, body), (404, {"detail": f"Source {self.unknown} not found"}))
+        status, _, body = call(main.app, "POST", f"/api/archive/{self.unknown}/run", json_body={"background": True})
+        self.assertEqual(status, 404)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Lightweight deterministic language detection for evidence enrichment."""
+"""Lightweight deterministic language detection for posts."""
 
 from __future__ import annotations
 

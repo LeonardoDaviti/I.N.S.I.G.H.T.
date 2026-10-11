@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { ArchiveJobSummary, ArchivePlan, ArchiveStatusResponse, ArchiveSupport, JobRun } from '../../services/api';
+import type { ArchiveJobSummary, ArchivePacing, ArchivePlan, ArchiveRateLimit, ArchiveStatusResponse, ArchiveSupport, JobRun } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
 import { useOperationJob } from '../../hooks/useOperations';
 import { SOURCES_HEALTH_KEY } from '../../hooks/useSourcesHealth';
@@ -14,14 +14,42 @@ import {
   defaultDesired,
   describeAvailable,
   describeRate,
-  formatEstimate,
 } from '../../lib/archive';
 import { formatRelativeTime } from '../../lib/dates';
+import { formatEstimate } from '../../lib/duration';
 import { formatCount, plural } from '../../lib/format';
 import { Button, FilterChip, Input, StatusGlyph } from '../ui';
 import { Notice } from '../states';
 
 const archiveStatusKey = (sourceId: string) => ['archive-status', sourceId] as const;
+/** Every source's archive state (the ingestion tab's catalog); refreshed when an archive here moves. */
+export const ARCHIVE_CATALOG_KEY = ['archive-catalog'] as const;
+
+/** The pacing fields, in the order shown: the saved key, the request's name, the smallest value. */
+const PACING: Array<{ key: keyof ArchiveRateLimit; field: keyof ArchivePacing; label: string; min: number }> = [
+  { key: 'page_delay_seconds', field: 'pageDelaySeconds', label: 'Page delay (s)', min: 0 },
+  { key: 'batch_size', field: 'batchSize', label: 'Batch size', min: 1 },
+  { key: 'batch_cooldown_seconds', field: 'batchCooldownSeconds', label: 'Batch cooldown (s)', min: 0 },
+];
+type PacingText = Record<keyof ArchiveRateLimit, string>;
+
+function pacingText(rate?: ArchiveRateLimit | null): PacingText {
+  const text = (value?: number) => (typeof value === 'number' ? String(value) : '');
+  return {
+    page_delay_seconds: text(rate?.page_delay_seconds),
+    batch_size: text(rate?.batch_size),
+    batch_cooldown_seconds: text(rate?.batch_cooldown_seconds),
+  };
+}
+
+/** The filled pacing fields as overrides; a blank field keeps the kind's own value. */
+function pacingOverrides(text: PacingText): ArchivePacing {
+  const out: ArchivePacing = {};
+  for (const { key, field, min } of PACING) {
+    if (text[key] !== '') out[field] = Math.max(min, Number(text[key]));
+  }
+  return out;
+}
 
 /** A backend older than this section has no `support`: archive allowed, the count unqualified. */
 function supportOf(status: ArchiveStatusResponse): ArchiveSupport {
@@ -50,6 +78,8 @@ interface RunView {
   pages?: number;
 }
 
+const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
+
 function fromJob(job: JobRun): RunView {
   const events = Array.isArray(job.payload?.events) ? job.payload.events as Array<{ message?: string }> : [];
   const payload = job.payload ?? {};
@@ -60,9 +90,9 @@ function fromJob(job: JobRun): RunView {
     lastEvent: events.length ? events[events.length - 1]?.message ?? null : null,
     startedAt: job.started_at ?? null,
     finishedAt: job.finished_at ?? null,
-    fetched: payload.posts_fetched,
-    inserted: payload.posts_inserted,
-    pages: payload.pages_fetched,
+    fetched: count(payload.posts_fetched),
+    inserted: count(payload.posts_inserted),
+    pages: count(payload.pages_fetched),
   };
 }
 
@@ -121,8 +151,10 @@ function Progress({ run, now }: { run: RunView; now: Date }) {
  * The source sheet's archive: what is stored, what the source has (worded by what
  * the source can tell), how many to fetch, the plan, then run or resume with
  * progress and the last result. A source that cannot archive is one quiet line.
+ * With `pacing` (the ingestion tab's backfill) it also sets the page delay, batch
+ * size and batch cooldown the plan and the run use.
  */
-export default function ArchiveSection({ sourceId }: { sourceId: string }) {
+export default function ArchiveSection({ sourceId, pacing = false }: { sourceId: string; pacing?: boolean }) {
   const api = useApi();
   const queryClient = useQueryClient();
   const status = useQuery({
@@ -143,18 +175,21 @@ export default function ArchiveSection({ sourceId }: { sourceId: string }) {
       sourceId={sourceId}
       status={status.data}
       support={support}
+      pacing={pacing}
       onChanged={() => {
         void queryClient.invalidateQueries({ queryKey: [...archiveStatusKey(sourceId)] });
         void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
+        void queryClient.invalidateQueries({ queryKey: [...ARCHIVE_CATALOG_KEY] });
       }}
     />
   );
 }
 
-function ArchiveControls({ sourceId, status, support, onChanged }: {
+function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
   sourceId: string;
   status: ArchiveStatusResponse;
   support: ArchiveSupport;
+  pacing: boolean;
   onChanged: () => void;
 }) {
   const api = useApi();
@@ -172,6 +207,9 @@ function ArchiveControls({ sourceId, status, support, onChanged }: {
   const desired = clampDesired(Number(desiredText), ceiling);
   const resumeReady = Boolean(archive.resume_ready);
   const [resume, setResume] = useState(resumeReady);
+  const [pace, setPace] = useState<PacingText>(() => pacingText(archive.rate_limit));
+  // The sheet sends no pacing at all, so the kind's saved values apply untouched.
+  const rateArgs: [ArchivePacing?] = pacing ? [pacingOverrides(pace)] : [];
   const [plannedFor, setPlannedFor] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -190,7 +228,7 @@ function ArchiveControls({ sourceId, status, support, onChanged }: {
     if (finished) onChanged();
   }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once per finish
 
-  const planKey = `${desired}:${resume}`;
+  const planKey = `${desired}:${resume}:${pacing ? JSON.stringify(pacingOverrides(pace)) : ''}`;
   const planCurrent = plan !== null && plannedFor === planKey;
 
   const choose = (value: number) => setDesiredText(String(clampDesired(value, ceiling)));
@@ -199,7 +237,7 @@ function ArchiveControls({ sourceId, status, support, onChanged }: {
     setPlanning(true);
     setError(null);
     try {
-      const next = await api.planSourceArchive(sourceId, desired, resume);
+      const next = await api.planSourceArchive(sourceId, desired, resume, ...rateArgs);
       setPlan(next);
       setPlannedFor(planKey);
     } catch (err) {
@@ -214,7 +252,7 @@ function ArchiveControls({ sourceId, status, support, onChanged }: {
     setStarting(true);
     setError(null);
     try {
-      const { job_id: started } = await api.startSourceArchive(sourceId, desired, resume);
+      const { job_id: started } = await api.startSourceArchive(sourceId, desired, resume, ...rateArgs);
       setJobId(started);
       setPlan(null);
       setPlannedFor(null);
@@ -288,6 +326,29 @@ function ArchiveControls({ sourceId, status, support, onChanged }: {
                 ) : null}
               </span>
             </label>
+          ) : null}
+
+          {pacing ? (
+            <fieldset>
+              <legend className="mb-1.5 text-[0.8125rem] font-medium text-fg">Pacing</legend>
+              <div className="flex flex-wrap gap-3">
+                {PACING.map(({ key, label: text, min }) => (
+                  <div key={key}>
+                    <label htmlFor={`${ids}-${key}`} className={label}>{text}</label>
+                    <Input
+                      id={`${ids}-${key}`}
+                      inputMode="numeric"
+                      value={pace[key]}
+                      placeholder={plan?.rate_limit?.[key] !== undefined ? String(plan.rate_limit[key]) : 'default'}
+                      onChange={(e) => setPace((prev) => ({ ...prev, [key]: e.target.value.replace(/[^\d]/g, '') }))}
+                      onBlur={() => setPace((prev) => (prev[key] === '' ? prev : { ...prev, [key]: String(Math.max(min, Number(prev[key]))) }))}
+                      className="mt-1 w-24 tabular-nums"
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1 text-[0.75rem] text-fg-3">Slower is politer to the source. A blank field keeps the source's own value.</p>
+            </fieldset>
           ) : null}
 
           {planCurrent && plan ? (

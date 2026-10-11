@@ -5,32 +5,22 @@ default. The design rules (principles, tokens, component inventory, page docs)
 live in `frontend/src/design/docs`, shown at `/design`; this file is the how-to. Never introduce colour fills, gradients,
 pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyph`).
 
-## Three places, and the analysis flag
+## Three places
 
-The app ships reading-only. It has three places: **feed** (`/`, plus `/read/...` and
+The app is a reader. It has three places: **feed** (`/`, plus `/read/...` and
 `/tracks/:id`), **post** (`/posts/:id`) and **sources** (`/settings/sources`, with tabs
-`sources / connections / ingestion`). The top bar reads `feed / sources`. Ingestion is the
-`?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not a page.
+`sources / connections / ingestion`), plus the blog. The top bar reads `feed / sources / blog`.
+Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not a page.
 
-Everything that processes posts (briefings, stories, the inbox, experts, the tracks list, a
-track's briefing panel and milestones rail, and the post page's summary, inspector, notes, chat
-and related posts) is hidden, not deleted, behind one flag:
-
-- `useAnalysis()` / `useAnalysisEnabled()` (`hooks/useAnalysis.ts`) is the only way a component
-  reads it. It asks the backend's `GET /api/config` → `{ analysis_enabled }` once, and that answer
-  wins. The build flag `VITE_INSIGHT_ANALYSIS=on|off` (`lib/features.ts`, `ANALYSIS_ENABLED`;
-  it accepts the backend's words: `on`, `true`, `1`, `yes`) decides only until the backend answers, or when it can't. Don't read `ANALYSIS_ENABLED`
-  directly in a component.
-- Routes: `App.tsx` wraps analysis pages in `<AnalysisOnly>`. With the flag off they redirect to
-  `/` (replace). `IngestionRoute` sends `/ingestion/:tab` to `/settings/sources?tab=ingestion`
-  (`sourcesIngestionHref`; `jobs`/`missions` add `&sub=jobs`, the only other view there).
-  Both guards wait for `settled`, so a deep link isn't bounced before the runtime value is known.
-- Navigation: `navItems(analysisEnabled)` and the switcher list in
-  `components/layout/navigation.ts`. Off, the top bar is `feed / sources`, and ⌘K drops the
-  briefing, stories, inbox and experts entries, adds one entry per track and points "Ingestion"
-  at the sources tab.
-- A new analysis surface must check the flag, and come with a test for both values. With the flag
-  on, every surface must look and behave as before.
+- Routes: `App.tsx` has the route table. `/ingestion/:tab` redirects to
+  `/settings/sources?tab=ingestion` (`sourcesIngestionHref`; the old tab becomes `&sub=`).
+  The old analysis paths (`/briefing*`, `/stories`, `/inbox`, `/experts`, `/tracks`) redirect
+  to `/`, replacing the history entry.
+- Navigation: `NAV_ITEMS` and the switcher list in `components/layout/navigation.ts`. ⌘K has
+  one entry per track and points "Ingestion" at the sources tab.
+- Analysis (briefings, stories, the inbox, experts, milestones, the post page's summary, notes and
+  chat) was removed in issue 0005. Its code is at the git tag `mark-ix-analysis-archive`; it comes
+  back, if at all, as new work on the reading core.
 
 ## Layout of `frontend/src`
 
@@ -38,7 +28,7 @@ and related posts) is hidden, not deleted, behind one flag:
 | --- | --- |
 | `pages/` | One component per route (`App.tsx` has the route table). |
 | `components/layout/` | The shell: `AppShell`, `TopBar` (wordmark, slash nav, theme toggle), `QuickSwitcher` (Cmd/Ctrl+K). |
-| `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Table`, `Row`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
+| `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
 | `components/states/` | `LoadingState`, `EmptyState`, `ErrorState`, `Notice`. Every async view uses these. |
 | `components/reader/`, `components/ops/` | The reader (feed, rail, toolbar) and the ingestion/health parts. |
 | `components/sources/` | The sources page's parts, including the `connections` and `ingestion` tabs. |
@@ -49,9 +39,10 @@ and related posts) is hidden, not deleted, behind one flag:
 
 ## Adding a feature
 
-1. **Types and the API method** in `services/api.ts`. Mark IX methods throw an `ApiError`
-   (`lib/apiError.ts`) instead of returning `{success: false}`. Background jobs are polled with
-   `lib/jobPolling.ts`.
+1. **Types and the API method** in `services/api.ts`: one line that calls `request` (`lib/request.ts`).
+   It throws an `ApiError` (`lib/apiError.ts`) for a network error, a non-2xx answer or the
+   `{success: false}` envelope. Wrap it in `settle` only for a screen that reads `{success: false, error}`
+   instead of catching. Background jobs are polled with `lib/jobPolling.ts`.
 2. **A hook** in `hooks/` that reads the client through `useApi()` and wraps it in `useQuery` or
    `useMutation`. Export the query key as a constant, so invalidation is greppable:
 
@@ -96,13 +87,15 @@ and related posts) is hidden, not deleted, behind one flag:
   primary action.
 - Destructive actions (delete a source or folder, force a full run, mark all read) confirm first
   with `components/ops/ConfirmDialog.tsx` (or a `Dialog` with a `danger` button), and the dialog
-  says what cascades (deleting a track also deletes its experts and its milestone lanes).
+  says what cascades (deleting a source also deletes its posts).
 - Dialogs, key caps and switches: `Dialog`/`DialogContent`, `Kbd` and `Switch` from
   `components/ui`; never a hand-built overlay, `<kbd>` or `role="switch"` button.
 - Sticky chrome under the top bar says so in markup: `sticky top-topbar` (and
   `h-[calc(100dvh-var(--topbar-h))]` for a full-height rail), not a CSS override.
 - Toasts: `sonner` through `components/ui/Toaster`, monochrome. Say the outcome and link to the job.
 - Source names: always `sourceLabel()` (`lib/sourceLabel.ts`), never a raw feed URL.
+- Dates and times: `lib/dates.ts`; durations: `lib/duration.ts`. Never a hand-rolled
+  `toLocaleString()` or minutes-and-seconds sum in a component.
 - Motion and reading typography (durations, reduced motion, title wrap, the heading scale): the
   design docs are the one source, `frontend/src/design/docs/system/motion.md` and `typography.md`
   (shown at `/design`).
@@ -117,7 +110,7 @@ the `?` help (WCAG 2.1.4).
 
 ```bash
 cd frontend
-npm run dev         # Vite on :5173, proxies /api to :8000 (the backend's /api/config sets the flag)
+npm run dev         # Vite on :5173, proxies /api to :8000
 npm run typecheck
 npm test            # node --test for lib/, then vitest
 npx eslint <touched files>

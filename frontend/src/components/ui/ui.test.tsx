@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
 
 import { DEFAULT_THEME, THEME_STORAGE_KEY, ThemeProvider, useTheme } from '../ThemeProvider';
 import ThemeToggle from '../ThemeToggle';
@@ -12,7 +11,6 @@ import {
   DialogContent,
   FilterChip,
   PageHeader,
-  Row,
   STATUS_LABEL,
   StatusGlyph,
   Tabs,
@@ -175,24 +173,7 @@ describe('Chip and FilterChip', () => {
   });
 });
 
-describe('Row, PageHeader, Tabs, Dialog', () => {
-  it('a Row with `to` is one link carrying meta and title', () => {
-    render(
-      <MemoryRouter>
-        <Row to="/posts/1" meta="Sep 09" title="not much happened today" />
-      </MemoryRouter>,
-    );
-    const link = screen.getByRole('link');
-    expect(link).toHaveAttribute('href', '/posts/1');
-    expect(link).toHaveTextContent('Sep 09');
-    expect(link).toHaveTextContent('not much happened today');
-  });
-
-  it('a muted Row drops the title weight', () => {
-    render(<Row title="Read post" muted />);
-    expect(screen.getByText('Read post')).toHaveClass('font-normal', 'text-fg-2');
-  });
-
+describe('PageHeader, Tabs, Dialog', () => {
   it('PageHeader renders one h1, the meta line and actions', () => {
     render(<PageHeader title="Sources" meta="90 sources · as of just now" actions={<Button variant="primary">Add source</Button>} />);
     expect(screen.getByRole('heading', { level: 1, name: 'Sources' })).toBeInTheDocument();

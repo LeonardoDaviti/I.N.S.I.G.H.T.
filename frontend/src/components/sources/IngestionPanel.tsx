@@ -1,46 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import type { RunReport, SchedulerConfig } from '../../services/api';
-import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
-import { INGESTION_SUB_VIEWS, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
+import { INGESTION_SUB_VIEWS, ingestionSubViewHref, normalizeIngestionSubView, type IngestionSubView } from '../../lib/ingestionNavigation';
 import { useApi } from '../../services/ApiContext';
+import { useNow } from '../../hooks/useNow';
 import { asRunReport } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
-import { formatTimeRemaining, schedulerStaleness } from '../../lib/schedulerStatus';
+import { nextTickLabel, schedulerStaleness } from '../../lib/schedulerStatus';
 import IngestionStatusNotice from '../ops/IngestionStatusNotice';
 import RunCycleButton from '../ops/RunCycleButton';
 import RunReportSummary from '../ops/RunReportSummary';
 import { Button, tabTriggerClass } from '../ui';
 import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
-import IngestionAnalysisActions from './IngestionAnalysisActions';
+import IngestionArchive from './IngestionArchive';
+import IngestionLogs from './IngestionLogs';
 import { Notice } from '../states';
-
-/** Now, every 30 seconds while the page is visible: enough for a minute countdown. */
-function useClock(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') setNow(Date.now());
-    }, 30_000);
-    return () => window.clearInterval(id);
-  }, []);
-  return now;
-}
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
 
 /**
  * Sources → ingestion (reading-finish R3, S4): the useful parts of the old
- * ingestion page, under the sources it fetches.
+ * ingestion page, under the sources it fetches. Views as `?sub=`: overview,
+ * archive (backfill, issue 0005 slice 3), jobs and logs.
  */
 export default function IngestionPanel() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const analysis = useAnalysisEnabled();
   const [sessionReport, setSessionReport] = useState<RunReport | null>(null);
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +39,8 @@ export default function IngestionPanel() {
   const overview = useOperationsOverview();
   const jobs = overview.data?.jobs ?? [];
   const scheduler = useSchedulerConfig();
-  const nowMs = useClock();
+  // Every 30 seconds: enough for a minute countdown.
+  const nowMs = useNow(30_000).getTime();
 
   // The newest stored ingestion run, so the report survives a reload.
   const storedReport = (() => {
@@ -88,12 +78,8 @@ export default function IngestionPanel() {
     const tickMinutes = Number(scheduler.data.ingest_tick_minutes ?? 60);
     const stalled = schedulerStaleness(scheduler.data.state ?? {}, tickMinutes, nowMs);
     if (stalled) return <IngestionStatusNotice state="stopped" message={stalled} />;
-    const parts = [`Checks for due sources every ${formatCount(tickMinutes)} min`];
-    const next = scheduler.data.state?.next_tick_at ? new Date(scheduler.data.state.next_tick_at).getTime() : NaN;
-    if (!Number.isNaN(next)) {
-      const remaining = next - nowMs;
-      parts.push(remaining <= 0 ? 'next tick due now' : `next tick in ${formatTimeRemaining(remaining).replace(/ \d+s$/, '')}`);
-    }
+    const next = nextTickLabel(scheduler.data.state, nowMs);
+    const parts = [`Checks for due sources every ${formatCount(tickMinutes)} min`, ...(next ? [next] : [])];
     return <p className="text-[0.875rem] tabular-nums text-fg-2">{parts.join(' · ')}</p>;
   })();
 
@@ -103,7 +89,7 @@ export default function IngestionPanel() {
         {INGESTION_SUB_VIEWS.map((key) => (
           <Link
             key={key}
-            to={key === 'jobs' ? '?tab=ingestion&sub=jobs' : '?tab=ingestion'}
+            to={ingestionSubViewHref(key)}
             replace
             aria-current={key === sub ? 'page' : undefined}
             className={tabTriggerClass}
@@ -113,7 +99,7 @@ export default function IngestionPanel() {
         ))}
       </nav>
       {error ? <Notice tone="error" title={error} action={{ label: 'Dismiss', onClick: () => setError(null) }} /> : null}
-      {sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : (
+      {sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : sub === 'archive' ? <IngestionArchive /> : sub === 'logs' ? <IngestionLogs /> : (
         <div className="space-y-10">
           <section aria-labelledby="ingestion-scheduler" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -133,16 +119,12 @@ export default function IngestionPanel() {
               </p>
             )}
           </section>
-          {analysis ? (
-            <IngestionAnalysisActions onDone={() => void queryClient.invalidateQueries({ queryKey: [...OPERATIONS_OVERVIEW_KEY] })} />
-          ) : null}
         </div>
       )}
       {scheduler.data && schedulerOpen ? (
         <SchedulerDialog
           open
           config={scheduler.data}
-          analysis={analysis}
           onClose={() => setSchedulerOpen(false)}
           onSave={saveScheduler}
         />

@@ -1,13 +1,13 @@
 ```meta
 kind: system
-redirects: /hub, /tracks/:trackId, *
+redirects: /hub, /tracks/:trackId, /ingestion, /ingestion/:tab, /briefing, /briefing/topics, /briefing/vertical/*, /stories, /inbox, /experts, /tracks, *
 ```
 
 # Information architecture
 
 Implements P1, P7, P9 and P10. Source: `src/App.tsx`, `components/layout/navigation.ts`.
 
-INSIGHT is reading-only by default (`INSIGHT_ANALYSIS` off): three places, **feed / sources / post**, plus the **blog**.
+INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -17,17 +17,9 @@ INSIGHT is reading-only by default (`INSIGHT_ANALYSIS` off): three places, **fee
 
 | Nav word | Route | Active on |
 | --- | --- | --- |
-| feed | `/` | `/`, `/read/*`, `/posts/*` (and `/tracks*` reading-only) |
+| feed | `/` | `/`, `/read/*`, `/posts/*`, `/tracks/*` |
 | sources | `/settings/sources` | `/settings/*` |
 | blog | `/blog` | `/blog*` |
-
-With analysis on, the bar is `feed / tracks / briefings / sources / ingestion / blog`:
-
-| Nav word | Route | Active on |
-| --- | --- | --- |
-| tracks | `/tracks` (tracks & experts) | `/tracks*`, `/experts` |
-| briefings | `/briefing` | `/briefing*`, `/stories`, `/inbox` |
-| ingestion | `/ingestion` | `/ingestion*` |
 
 ## Where each route lives
 
@@ -37,20 +29,14 @@ With analysis on, the bar is `feed / tracks / briefings / sources / ingestion / 
 | `/posts/:postId` | `pages/post.md` |
 | `/settings/sources` (tabs sources · connections · ingestion) | `pages/sources.md` |
 | `/blog`, `/blog/:slug` | `pages/blog.md` |
-| `/briefing`, `/briefing/topics` | `parked/briefing.md` |
-| `/briefing/vertical`, `/briefing/vertical/source/:sourceId` | `parked/vertical-briefing.md` |
-| `/stories` | `parked/stories.md` |
-| `/inbox` | `parked/inbox.md` |
-| `/tracks`, `/experts` | `parked/experts-tracks.md` |
-| `/ingestion`, `/ingestion/:tab` | `parked/ingestion.md` |
 | `/design/*` (the Design Studio, described in `system/studio.md`) | `pages/shell.md` |
 
 **Redirects** (claimed in this doc's meta block):
 - `/hub` → `/` (the Mark VIII hub is deleted, P1).
 - `/tracks/:trackId` → `/read/folder/:trackId`, replacing the history entry (the track page is retired into the reader, P9).
+- `/ingestion`, `/ingestion/:tab` → `/settings/sources?tab=ingestion`, the old page's tab carried as `sub` and the rest of the query kept, replacing the history entry (the old ingestion page is deleted, `pages/sources.md`).
+- `/briefing`, `/briefing/topics`, `/briefing/vertical/*`, `/stories`, `/inbox`, `/experts`, `/tracks` → `/`, replacing the history entry. These were the analysis pages, retired with analysis (decision 016, P10); old bookmarks land on the feed.
 - `*` (any unknown path) → `/`.
-
-Parked routes redirect to `/` while analysis is off (P10), after `GET /api/config` settles so a deep link isn't bounced early. The flag is the backend's `INSIGHT_ANALYSIS` (default off) read from `GET /api/config`, falling back to the build flag `VITE_INSIGHT_ANALYSIS`; on, every parked surface comes back unchanged and the post page regains its analysis (`parked/post-analysis.md`). `/ingestion[/:tab]` goes to `/settings/sources?tab=ingestion` instead, carrying the tab and query.
 
 ## Cross-links (P8)
 

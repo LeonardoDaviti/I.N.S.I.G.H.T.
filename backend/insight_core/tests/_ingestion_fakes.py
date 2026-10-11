@@ -106,7 +106,6 @@ class InMemoryPostSaver:
             post_id = f"post-{len(self.known) + 1}"
             self.known[url] = post_id
             result.inserted_ids.append(post_id)
-            result.inserted_posts.append({**draft.post, "id": post_id, "source_id": draft.source_id})
             result._count(draft.source_id, "inserted")
         return result
 

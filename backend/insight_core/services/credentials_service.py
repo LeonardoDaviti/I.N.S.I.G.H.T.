@@ -10,8 +10,7 @@ Providers:
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
   the browser sign-in (login_start -> login_code -> login_password), the only session.
 - reddit, youtube: public feeds, nothing to add.
-- gemini {api_key}: analysis_only, shown by the frontend only while INSIGHT_ANALYSIS is on.
-  Read by the lazy Gemini client.
+A row stored for a provider not listed here (an old gemini key) is kept but never shown.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
 substack.com whether the cookie is signed in); telegram connects and calls get_me.
@@ -26,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import psycopg
 
+from insight_core.db import database as db
 from insight_core.db.repo_credentials import CredentialRow, CredentialsRepository
 from insight_core.ingestion.credentials import (
     SecretBox,
@@ -33,6 +33,7 @@ from insight_core.ingestion.credentials import (
     StoredCredentials,
     default_credentials,
 )
+from insight_core.utils.json_safe import iso
 
 LOGIN_TTL_S = 10 * 60
 
@@ -55,7 +56,6 @@ class ProviderSpec:
     needed: bool = True
     testable: bool = False
     sign_in: bool = False
-    analysis_only: bool = False
 
 
 PROVIDERS: Tuple[ProviderSpec, ...] = (
@@ -79,12 +79,6 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
     ),
     ProviderSpec("reddit", "Reddit", "Not needed: public feeds.", needed=False),
     ProviderSpec("youtube", "YouTube", "Not needed: public feeds.", needed=False),
-    ProviderSpec(
-        "gemini", "Gemini",
-        "The Google AI key the analysis features (briefings, topics, post analysis) call.",
-        (FieldSpec("api_key", "API key", "Create one at aistudio.google.com → Get API key."),),
-        analysis_only=True,
-    ),
 )
 _SPECS = {spec.provider: spec for spec in PROVIDERS}
 
@@ -106,10 +100,6 @@ class LoginFailed(Exception):
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
 
 
 def _last4(value: str) -> str:
@@ -183,14 +173,14 @@ class CredentialsService:
     # ------------------------------------------------------------------ listing
 
     def list(self) -> Dict[str, Any]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             rows = {(row.provider, row.key): row for row in self.repo.list(cur)}
         readable = self.credentials.stored()
         return {"providers": [self._provider_view(spec, rows, readable) for spec in PROVIDERS]}
 
     def provider(self, provider: str) -> Dict[str, Any]:
         spec = self._spec(provider)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             rows = {(row.provider, row.key): row for row in self.repo.list(cur) if row.provider == provider}
         return self._provider_view(spec, rows, self.credentials.stored())
 
@@ -206,7 +196,7 @@ class CredentialsService:
                 "set": False, "last4": None, "updated_at": None, "source": "none", "error": None,
             }
             if row is not None:
-                view.update(set=True, source="db", updated_at=_iso(row.updated_at),
+                view.update(set=True, source="db", updated_at=iso(row.updated_at),
                             last4=row.last4 if field_spec.show_last4 else None)
                 if ident not in readable:
                     view["error"] = "The saved value cannot be read (the secret key changed); save it again"
@@ -215,7 +205,6 @@ class CredentialsService:
         return {
             "provider": spec.provider, "label": spec.label, "description": spec.description,
             "needed": spec.needed, "testable": spec.testable, "sign_in": spec.sign_in,
-            "analysis_only": spec.analysis_only,
             "configured": bool(fields) and all(f["set"] for f in fields),
             "fields": fields,
             "test": self._test_view(spec.provider, rows),
@@ -229,9 +218,9 @@ class CredentialsService:
             row = max(tested, key=lambda r: r.last_tested_at)
             if memory is None or memory.tested_at <= row.last_tested_at:
                 return {"ok": row.last_test_ok, "message": row.last_test_message,
-                        "tested_at": _iso(row.last_tested_at)}
+                        "tested_at": iso(row.last_tested_at)}
         if memory is not None:
-            return {"ok": memory.ok, "message": memory.message, "tested_at": _iso(memory.tested_at)}
+            return {"ok": memory.ok, "message": memory.message, "tested_at": iso(memory.tested_at)}
         return None
 
     def _login_view(self) -> Optional[Dict[str, Any]]:
@@ -266,7 +255,7 @@ class CredentialsService:
 
     def _store(self, provider: str, key: str, value: str, *, show_last4: bool = True) -> None:
         ciphertext = self._box().encrypt(value)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             self.repo.upsert(cur, provider, key, ciphertext, _last4(value) if show_last4 else None)
         self._tests.pop(provider, None)
         self._invalidate()
@@ -286,7 +275,7 @@ class CredentialsService:
 
     def delete(self, provider: str, key: str) -> Dict[str, Any]:
         self._field(provider, key)
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             self.repo.delete(cur, provider, key)
         self._tests.pop(provider, None)
         self._invalidate()
@@ -296,7 +285,7 @@ class CredentialsService:
         tested_at = self.clock()
         self._tests[provider] = TestResult(ok, message, tested_at)
         try:
-            with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
                 self.repo.record_test(cur, provider, ok, message, tested_at)
         except psycopg.Error:
             pass
@@ -315,7 +304,7 @@ class CredentialsService:
         return self.provider(provider)
 
     def _substack_source(self) -> Optional[dict]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, platform, handle_or_url, settings FROM sources

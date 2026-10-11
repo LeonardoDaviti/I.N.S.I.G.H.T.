@@ -471,7 +471,7 @@ class ConnectorRemovalTests(unittest.TestCase):
             "import sys\n"
             "import insight_core.adapters\n"
             "import insight_core.ingestion\n"
-            "from insight_core.ingestion import (archive_metadata, enrichment, gates, http, inspection,\n"
+            "from insight_core.ingestion import (archive_metadata, gates, http, inspection,\n"
             "    ports, runner, schedule, types)\n"
             "from insight_core.ingestion.kinds import (base, generic_rss, nitter_rss, parsing, reddit,\n"
             "    telegram_mtproto, telegram_rss, youtube)\n"

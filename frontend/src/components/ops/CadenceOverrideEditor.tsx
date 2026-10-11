@@ -5,7 +5,8 @@ import { useApi } from '../../services/ApiContext';
 import type { SourceHealthRow } from '../../services/api';
 import { replaceHealthRow } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
-import { formatHours, intervalLabel, parseOverrideHours, tierLabel } from '../../lib/sourceSchedule';
+import { intervalLabel, parseOverrideHours, tierLabel } from '../../lib/sourceSchedule';
+import { formatHours } from '../../lib/duration';
 import { Button, Input } from '../ui';
 
 /**

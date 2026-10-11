@@ -5,8 +5,9 @@ Handles all SQL queries for source management.
 import json
 import psycopg
 from psycopg import Cursor
-from datetime import date, datetime
 from typing import List, Dict, Any, Optional
+
+from insight_core.utils.json_safe import json_safe
 from insight_core.logs.core.logger_config import get_component_logger
 
 class SourcesRepository:
@@ -63,28 +64,6 @@ class SourcesRepository:
             "created_at": row[5],
             "updated_at": row[6],
         }
-    
-    def get_enabled_sources(self, cur: Cursor) -> List[Dict[str, Any]]:
-        """Get only enabled sources."""
-        query = """
-            SELECT id, platform, handle_or_url
-            FROM sources
-            WHERE enabled = TRUE
-            ORDER BY platform, handle_or_url
-        """
-        cur.execute(query)
-        rows = cur.fetchall()
-        
-        sources = []
-        for row in rows:
-            sources.append({
-                "id": str(row[0]),
-                "platform": row[1],
-                "handle_or_url": row[2]
-            })
-        
-        self.logger.debug(f"Retrieved {len(sources)} enabled sources")
-        return sources
     
     def update_enabled(self, cur: Cursor, source_id: str, enabled: bool) -> bool:
         """Update source enabled status."""
@@ -151,7 +130,8 @@ class SourcesRepository:
                 s.mean_gap_seconds,
                 s.cadence_sample_size,
                 s.cadence_tier,
-                s.fetch_interval_hours_override
+                s.fetch_interval_hours_override,
+                s.in_main_digest
             FROM sources s
             LEFT JOIN posts p ON s.id = p.source_id
             GROUP BY s.id
@@ -174,6 +154,7 @@ class SourcesRepository:
                 "cadence_sample_size": row[8],
                 "cadence_tier": row[9],
                 "fetch_interval_hours_override": row[10],
+                "in_main_digest": row[11],
             })
         
         self.logger.debug(f"Retrieved {len(sources)} sources with post counts")
@@ -300,7 +281,7 @@ class SourcesRepository:
             WHERE id = %s
             RETURNING id
         """
-        json_safe_settings = self._make_json_safe(merged_settings)
+        json_safe_settings = json_safe(merged_settings)
         cur.execute(query, (json.dumps(json_safe_settings), source_id))
         row = cur.fetchone()
 
@@ -361,16 +342,6 @@ class SourcesRepository:
                 merged[key] = value
 
         return merged
-
-    def _make_json_safe(self, value: Any) -> Any:
-        """Convert nested datetime values into JSON-safe ISO strings."""
-        if isinstance(value, dict):
-            return {key: self._make_json_safe(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._make_json_safe(item) for item in value]
-        if isinstance(value, (datetime, date)):
-            return value.isoformat()
-        return value
 
     def _platform_defaults(self, platform: str) -> Dict[str, Any]:
         defaults_by_platform = {

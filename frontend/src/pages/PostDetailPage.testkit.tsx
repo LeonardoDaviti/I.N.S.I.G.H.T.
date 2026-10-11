@@ -6,7 +6,7 @@ import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
 import type { Api, Post } from '../services/api';
 
-/** Shared fixtures for the post page tests (reading-only and analysis). */
+/** Shared fixtures for the post page tests. */
 export const POST_ID = '7dbe33ac-ddda-429f-a8a2-d51a05f5ecaf';
 
 export function rssPost(overrides: Partial<Post> = {}): Post {
@@ -22,7 +22,6 @@ export function rssPost(overrides: Partial<Post> = {}): Post {
     // Feed HTML arrives indented; four spaces must not turn it into a code block.
     content_html: '\n    <p>On Friday I gave the closing keynote.</p>\n    <p>Agents shipped everywhere this year.</p>',
     categories: ['ai', 'llms'],
-    topics: [],
     metadata: {},
     ...overrides,
   };
@@ -47,13 +46,8 @@ export function baseApi(post: Post, methods: Partial<Record<keyof Api, unknown>>
     getPostDetail: vi.fn().mockResolvedValue({
       success: true,
       post,
-      notes: null,
-      summary: null,
-      summary_references: [],
-      highlights: [],
       reader_state: { post_id: POST_ID, is_favorited: false, open_count: 2, total_read_seconds: 252 },
     }),
-    getPostTimeline: vi.fn().mockResolvedValue({ success: true, primary_story: null, story: null, timeline: null, related_candidates: [] }),
     recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
     recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
     getYouTubeWatchProgress: vi.fn().mockResolvedValue({ success: true, progress: null }),

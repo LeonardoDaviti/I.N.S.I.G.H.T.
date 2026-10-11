@@ -1,18 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatTimeRemaining, schedulerStaleness } from './schedulerStatus.ts';
+import { nextTickLabel, schedulerStaleness } from './schedulerStatus.ts';
 
 const NOW = Date.parse('2026-10-10T12:00:00Z');
 const minutesAgo = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
-
-test('formatTimeRemaining picks the two or three largest units', () => {
-  assert.equal(formatTimeRemaining(9_000), '9s');
-  assert.equal(formatTimeRemaining(250_000), '4m 10s');
-  assert.equal(formatTimeRemaining(3_902_000), '1h 5m 2s');
-  assert.equal(formatTimeRemaining((2 * 86400 + 3 * 3600 + 4 * 60) * 1000), '2d 3h 4m');
-  assert.equal(formatTimeRemaining(-5_000), '0s');
-});
 
 test('schedulerStaleness is null when the state is unknown', () => {
   assert.equal(schedulerStaleness(null, 60, NOW), null);
@@ -31,4 +23,12 @@ test('schedulerStaleness waits two tick intervals before calling it stalled', ()
 test('schedulerStaleness waits at least 90 minutes for short tick intervals', () => {
   assert.equal(schedulerStaleness({ last_tick_at: minutesAgo(89) }, 15, NOW), null);
   assert.match(schedulerStaleness({ last_tick_at: minutesAgo(91) }, 15, NOW) ?? '', /looks stalled/);
+});
+
+test('nextTickLabel counts down to the next tick, without seconds', () => {
+  const inMs = (ms: number) => new Date(NOW + ms).toISOString();
+  assert.equal(nextTickLabel({ next_tick_at: inMs(3_902_000) }, NOW), 'next tick in 1h 5m');
+  assert.equal(nextTickLabel({ next_tick_at: inMs(-1_000) }, NOW), 'next tick due now');
+  assert.equal(nextTickLabel({}, NOW), null);
+  assert.equal(nextTickLabel(undefined, NOW), null);
 });

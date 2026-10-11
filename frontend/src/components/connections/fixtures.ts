@@ -32,7 +32,6 @@ export function substackView(overrides: Partial<CredentialProviderView> = {}, si
     needed: true,
     testable: true,
     sign_in: false,
-    analysis_only: false,
     configured: sidField.set,
     fields: [sidField],
     test: null,
@@ -56,7 +55,6 @@ export function telegramView(
     needed: true,
     testable: true,
     sign_in: true,
-    analysis_only: false,
     configured: fields.every((f) => f.set),
     fields,
     test: null,
@@ -73,28 +71,10 @@ export function publicView(provider: 'reddit' | 'youtube'): CredentialProviderVi
     needed: false,
     testable: false,
     sign_in: false,
-    analysis_only: false,
     configured: false,
     fields: [],
     test: null,
     login: null,
-  };
-}
-
-export function geminiView(overrides: Partial<CredentialProviderView> = {}): CredentialProviderView {
-  return {
-    provider: 'gemini',
-    label: 'Gemini',
-    description: 'The Google AI key the analysis features (briefings, topics, post analysis) call.',
-    needed: true,
-    testable: false,
-    sign_in: false,
-    analysis_only: true,
-    configured: false,
-    fields: [field({ key: 'api_key', label: 'API key', hint: 'Create one at aistudio.google.com → Get API key.' })],
-    test: null,
-    login: null,
-    ...overrides,
   };
 }
 

@@ -8,7 +8,7 @@ import type { Api } from '../../services/api';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import AppShell from './AppShell';
-import { activeNavKey, destinations, filterDestinations, insideDesignFrame, NAV_ITEMS, navItems } from './navigation';
+import { activeNavKey, destinations, filterDestinations, insideDesignFrame, NAV_ITEMS } from './navigation';
 
 function Where() {
   const location = useLocation();
@@ -20,17 +20,13 @@ const FOLDERS = [
   { id: 'b2', name: 'Security', kind: 'track', sort_order: 1 },
 ];
 
-/** The backend's runtime answer (GET /api/config); `null` = the call fails. */
-function shellApi(analysis: boolean | null): Api {
+function shellApi(): Api {
   return makeFakeApi({
-    getConfig: analysis === null
-      ? vi.fn().mockRejectedValue(new Error('Not Found'))
-      : vi.fn().mockResolvedValue({ analysis_enabled: analysis }),
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: FOLDERS }),
   });
 }
 
-function renderShell(route: string, { analysis = true }: { analysis?: boolean | null } = {}) {
+function renderShell(route: string) {
   return renderWithProviders(
     <ThemeProvider>
       <AppShell>
@@ -39,7 +35,7 @@ function renderShell(route: string, { analysis = true }: { analysis?: boolean | 
         </Routes>
       </AppShell>
     </ThemeProvider>,
-    { api: shellApi(analysis), route },
+    { api: shellApi(), route },
   );
 }
 
@@ -49,27 +45,22 @@ async function navWords() {
 }
 
 describe('navigation model', () => {
-  it('the top bar has exactly the five lowercase words, in order, with analysis on', () => {
-    expect(navItems(true).map((item) => item.label)).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion', 'blog']);
-    expect(NAV_ITEMS).toEqual(navItems(true));
+  it('the top bar is feed / sources / blog', () => {
+    expect(NAV_ITEMS.map((item) => item.key)).toEqual(['feed', 'sources', 'blog']);
+    expect(NAV_ITEMS.map((item) => item.to)).toEqual(['/', '/settings/sources', '/blog']);
   });
 
-  it('the reading-only top bar is feed / sources / blog', () => {
-    expect(navItems(false).map((item) => item.key)).toEqual(['feed', 'sources', 'blog']);
-    expect(navItems(false).map((item) => item.to)).toEqual(['/', '/settings/sources', '/blog']);
-  });
-
-  it('the reading-only switcher has no briefing, stories, inbox or experts entries', () => {
-    const ids = destinations(false).map((d) => d.id);
-    for (const d of destinations(false)) {
+  it('the switcher has no briefing, stories, inbox or experts entries', () => {
+    const ids = destinations().map((d) => d.id);
+    for (const d of destinations()) {
       expect(d.to).not.toMatch(/^\/(briefing|stories|inbox|experts)/);
       expect(`${d.label} ${d.group}`.toLowerCase()).not.toMatch(/briefing|stor(y|ies)|inbox|expert/);
     }
     expect(ids).toEqual(expect.arrayContaining(['feed-unread', 'sources', 'sources-health', 'ingestion']));
   });
 
-  it('the reading-only switcher has one entry per track, and no tracks list', () => {
-    const items = destinations(false, [
+  it('the switcher has one entry per track, and no tracks list', () => {
+    const items = destinations([
       { id: 'a1', name: 'Agentic News' },
       { id: 'b 2', name: 'مراجعة' },
     ]);
@@ -83,71 +74,47 @@ describe('navigation model', () => {
     expect(filterDestinations('track', items).map((d) => d.to)).toEqual(['/read/folder/a1', '/read/folder/b%202']);
   });
 
-  it('with analysis on the switcher is unchanged, plus the design studio', () => {
-    expect(destinations(true, [{ id: 'a1', name: 'Agentic News' }]).map((d) => d.id)).toEqual([
-      'feed-unread', 'feed-starred', 'feed-all', 'feed-by-source', 'tracks', 'briefing', 'briefing-topics',
-      'briefing-vertical', 'stories', 'inbox', 'sources', 'sources-health', 'ingestion', 'blog', 'design-studio',
-    ]);
-  });
-
-  it('⌘K reaches the design studio with analysis on or off; the top bar never shows it', () => {
-    for (const analysis of [true, false]) {
-      const items = destinations(analysis, [{ id: 'a1', name: 'Agentic News' }]);
-      expect(items.at(-1)).toMatchObject({ id: 'design-studio', label: 'Design studio', to: '/design' });
-      expect(navItems(analysis).map((item) => item.to)).not.toContain('/design');
-    }
-    expect(filterDestinations('principles tokens', destinations(false)).map((d) => d.id)).toEqual(['design-studio']);
+  it('⌘K reaches the design studio; the top bar never shows it', () => {
+    const items = destinations([{ id: 'a1', name: 'Agentic News' }]);
+    expect(items.at(-1)).toMatchObject({ id: 'design-studio', label: 'Design studio', to: '/design' });
+    expect(NAV_ITEMS.map((item) => item.to)).not.toContain('/design');
+    expect(filterDestinations('principles tokens', destinations()).map((d) => d.id)).toEqual(['design-studio']);
   });
 
   it('inside a design studio frame, ⌘K leaves the design studio out', () => {
-    for (const analysis of [true, false]) {
-      expect(destinations(analysis, [], { studio: false }).map((d) => d.id)).not.toContain('design-studio');
-    }
+    expect(destinations([], { studio: false }).map((d) => d.id)).not.toContain('design-studio');
     window.history.pushState({}, '', '/design/frame/reader/normal?theme=dark');
     expect(insideDesignFrame()).toBe(true);
     window.history.pushState({}, '', '/');
     expect(insideDesignFrame()).toBe(false);
   });
 
-  it('reading-only, Ingestion in the switcher opens the ingestion tab under sources', () => {
-    const ingestion = destinations(false).find((d) => d.id === 'ingestion');
+  it('Ingestion in the switcher opens the ingestion tab under sources', () => {
+    const ingestion = destinations().find((d) => d.id === 'ingestion');
     expect(ingestion?.to).toBe('/settings/sources?tab=ingestion');
     expect(ingestion?.group).toBe('sources');
-    expect(destinations(true).find((d) => d.id === 'ingestion')?.to).toBe('/ingestion');
   });
 
   it('the ingestion tab under sources is the sources word', () => {
     expect(activeNavKey('/settings/sources?tab=ingestion')).toBe('sources');
   });
 
-  it('reading-only: a track page belongs to the feed (tracks live in the reader rail)', () => {
-    expect(activeNavKey('/tracks/abc', false)).toBe('feed');
-    expect(activeNavKey('/tracks/abc', true)).toBe('tracks');
-  });
-
   it.each([
     ['/', 'feed'],
     ['/read/folder/abc', 'feed'],
     ['/posts/42', 'feed'],
-    ['/tracks', 'tracks'],
-    ['/tracks/abc', 'tracks'],
-    ['/experts', 'tracks'],
-    ['/briefing/vertical/source/x', 'briefings'],
-    ['/stories', 'briefings'],
-    ['/inbox', 'briefings'],
+    ['/tracks/abc', 'feed'],
     ['/settings/sources', 'sources'],
-    ['/ingestion/jobs', 'ingestion'],
     ['/blog', 'blog'],
     ['/blog/junior-to-senior', 'blog'],
     ['/nowhere', null],
-    ['/briefingx', null],
   ])('%s → %s', (path, key) => {
     expect(activeNavKey(path)).toBe(key);
   });
 
   it('the switcher filter matches label, group and keywords, every word', () => {
     expect(filterDestinations('health').map((d) => d.id)).toEqual(['sources-health']);
-    expect(filterDestinations('BRIEF vert').map((d) => d.id)).toEqual(['briefing-vertical']);
+    expect(filterDestinations('starred feed').map((d) => d.id)).toEqual(['feed-starred']);
     expect(filterDestinations('zzz')).toEqual([]);
     expect(filterDestinations('').length).toBeGreaterThan(5);
   });
@@ -166,31 +133,17 @@ describe('AppShell', () => {
   it('the feed word is current on the reader home', async () => {
     renderShell('/');
     expect(screen.getByRole('link', { name: 'feed' })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByRole('link', { name: 'tracks' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'sources' })).not.toHaveAttribute('aria-current');
   });
 
-  it('the backend says analysis is on: the five words', async () => {
+  it('the top bar shows feed / sources / blog', async () => {
     renderShell('/');
-    await screen.findByRole('link', { name: 'briefings' });
-    expect(await navWords()).toEqual(['feed', 'tracks', 'briefings', 'sources', 'ingestion', 'blog']);
-  });
-
-  it('the backend says analysis is off: feed / sources / blog', async () => {
-    renderShell('/', { analysis: false });
-    await screen.findByRole('link', { name: 'sources' });
     expect(await navWords()).toEqual(['feed', 'sources', 'blog']);
   });
 
-  it('when /api/config fails, the build flag decides (off in tests)', async () => {
-    const { queryClient } = renderShell('/', { analysis: null });
-    await vi.waitFor(() => expect(queryClient.getQueryState(['config'])?.status).toBe('error'));
-    expect(await navWords()).toEqual(['feed', 'sources', 'blog']);
-  });
-
-  it('reading-only ⌘K: one entry per track, no briefings', async () => {
+  it('⌘K: one entry per track, no briefings', async () => {
     const user = userEvent.setup();
-    renderShell('/', { analysis: false });
-    await screen.findByRole('link', { name: 'sources' });
+    renderShell('/');
     await user.keyboard('{Control>}k{/Control}');
     await screen.findByRole('option', { name: /Agentic News/ });
     const labels = screen.getAllByRole('option').map((option) => option.textContent);
@@ -226,10 +179,9 @@ describe('AppShell', () => {
     expect(document.documentElement).toHaveClass('theme-light');
   });
 
-  it('reading-only, ⌘K opens the design studio', async () => {
+  it('⌘K opens the design studio', async () => {
     const user = userEvent.setup();
-    renderShell('/', { analysis: false });
-    await screen.findByRole('link', { name: 'sources' });
+    renderShell('/');
     await user.keyboard('{Control>}k{/Control}');
     await user.type(await screen.findByRole('combobox'), 'design');
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([expect.stringMatching(/^Design studio/)]);

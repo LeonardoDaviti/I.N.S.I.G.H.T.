@@ -1,22 +1,13 @@
 import { useEffect, useRef } from 'react';
 
+import { isEditable, isInDialog } from '../lib/shortcuts';
+
 /** Every key the reader binds (spec §F.5). `A` means Shift+A. */
 export type ShortcutKey = 'j' | 'k' | 'o' | 'Enter' | 'm' | 's' | 'u' | 'Escape' | 'A' | '?';
 
 export type ShortcutBindings = Partial<Record<ShortcutKey, () => void>>;
 
 const BOUND = new Set<string>(['j', 'k', 'o', 'Enter', 'm', 's', 'u', 'Escape', 'A', '?']);
-
-function isEditable(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
-}
-
-/** Inside an open dialog the dialog owns the keyboard (Esc closes it, Enter confirms). */
-function isInDialog(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && Boolean(target.closest('[role="dialog"], [role="alertdialog"]'));
-}
 
 /**
  * Bind the reader's single-key shortcuts on `document` (spec §F.5). Ignored while

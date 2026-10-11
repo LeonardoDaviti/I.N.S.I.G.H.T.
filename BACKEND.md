@@ -6,9 +6,7 @@ The INSIGHT backend follows a layered architecture:
 
 ```
 ┌─────────────────────────────────────┐
-│   API Layer (main.py)               │  FastAPI endpoints
-├─────────────────────────────────────┤
-│   Bridge Layer (insight_api_bridge) │  Business logic coordination
+│   API Layer (main.py)               │  FastAPI endpoints, one error handler
 ├─────────────────────────────────────┤
 │   Service Layer (services/)         │  Business operations
 ├─────────────────────────────────────┤
@@ -75,104 +73,53 @@ def get_something(self, cur: Cursor, param: str) -> List[Dict[str, Any]]:
 
 **Pattern:**
 ```python
+from insight_core.db import database as db
+
 def get_something(self, param: str) -> List[Dict[str, Any]]:
     """Get something from database."""
-    with psycopg.connect(self.db_url) as conn:
-        with conn.cursor() as cur:
-            return self.repo.get_something(cur, param)
+    with db.connection(self.db_url) as conn, conn.cursor() as cur:
+        return self.repo.get_something(cur, param)
+
+def save_something(self, param: str) -> None:
+    with db.transaction(self.db_url) as cur:   # commits, or rolls back if it raises
+        self.repo.save_something(cur, param)
 ```
 
 **Key Points:**
-- Use context managers for connections/cursors (automatic cleanup)
-- Call `conn.commit()` after write operations
+- Every connection comes from `insight_core/db/database.py`: a small pool per process,
+  a statement timeout (5 minutes by default) and the transaction scope. Never call
+  `psycopg.connect` yourself (the migration runner is the exception).
+- A connection commits when its block ends cleanly and rolls back when it raises
+- Do not hold a connection across a network fetch
 - Keep business logic here, not in repositories
 - Services use repositories, never direct SQL
 
 ---
 
-#### 3. **Bridge Layer** (`backend/insight_api_bridge.py`)
-   - Coordinates between API and services
-   - Transforms data for frontend consumption
-   - Handles data validation and error formatting
-
-**Pattern:**
-```python
-def get_something_by_param(self, param_str: str) -> Dict[str, Any]:
-    """
-    Get something for frontend display.
-    
-    Args:
-        param_str: String parameter from frontend
-        
-    Returns:
-        Dict with success, data, and metadata
-    """
-    try:
-        # Parse/validate input
-        parsed_param = self._parse_param(param_str)
-        
-        # Get data from service
-        items = self.service.get_something(parsed_param)
-        
-        return {
-            "success": True,
-            "data": items,
-            "total": len(items),
-            "param": param_str
-        }
-        
-    except ValueError as e:
-        return {
-            "success": False,
-            "error": f"Invalid parameter: {param_str}",
-            "data": []
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "data": []
-        }
-```
-
-**Key Points:**
-- Always return consistent response format
-- Include success/error status
-- Handle all exceptions
-- Transform data for frontend needs
-
----
-
-#### 4. **API Layer** (`backend/main.py`)
-   - Defines HTTP endpoints
-   - Validates request models
-   - Returns JSON responses
+#### 3. **API Layer** (`backend/main.py`)
+   - Defines HTTP endpoints and request models
+   - Calls the services directly, through `services()` from `insight_core/services/registry.py`
+   - Lets errors rise: one handler answers them (see Error Handling)
 
 **Pattern:**
 ```python
 @app.get("/api/something/{param}")
+@error_detail("load something")
 async def get_something(param: str):
     """Get something by parameter."""
-    try:
-        logger.info(f"📋 Fetching something for: {param}")
-        
-        result = api_bridge.get_something_by_param(param)
-        
-        if result.get("success"):
-            logger.info(f"✅ Retrieved {result.get('total', 0)} items")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception("Failed to get something")
-        return {"success": False, "error": str(e)}
+    items = services().something.get_something(param)
+    return {"success": True, "data": items, "total": len(items)}
 ```
 
 **Key Points:**
-- Use FastAPI route decorators (`@app.get`, `@app.post`, etc.)
-- Add logging at API level
-- Let bridge layer handle business errors
-- Return JSON directly
+- No try/except for service errors in a route. A `ValueError` is a 400 with its message, a
+  not-found `LookupError` a 404, anything else a 500 "Could not load something". Bad stored
+  data (`json.JSONDecodeError`, `UnicodeDecodeError`) is a 500 too. A path id
+  (`post_id`, `folder_id`, `source_id`, `job_id`) that is not a uuid is a 404 before the
+  route runs. Every 4xx is logged as a warning.
+- `@error_detail(what)` names the "what" in that message. Every route answers its errors
+  the same way: a real status code and `{"detail": ...}`.
+- The registry builds the services once. Tests swap them with `registry.use(...)`.
 
 ---
 
@@ -221,20 +168,14 @@ Each source can have optional settings stored in the `settings` JSONB field:
 ```json
 {
   "display_name": "Friendly Name",       // null = use handle_or_url
-  "fetch_delay_seconds": 5,              // Delay after fetching this source
+  "fetch_delay_seconds": 5,              // Minimum seconds between requests to this source's host
   "priority": 1,                         // Lower = fetch first (default: 999)
-  "max_posts_per_fetch": 50             // Stored but not enforced (future use)
+  "max_posts_per_fetch": 50              // Upper bound for one live fetch
 }
 ```
 
-**Default Settings (hardcoded):**
-```python
-{
-    "fetch_delay_seconds": 1,
-    "priority": 999,
-    "max_posts_per_fetch": 50
-}
-```
+**Defaults** depend on the platform (`SourcesRepository._platform_defaults` in `db/repo_sources.py`).
+For `rss`: `fetch_delay_seconds` 1, `priority` 999, `max_posts_per_fetch` 20.
 
 ### How Settings Work
 
@@ -292,64 +233,35 @@ service.update_source_settings(source_id, {
 
 **API Usage:**
 ```bash
-# Get source settings
-GET /api/sources/{source_id}/settings
+# Every source with its merged settings and post count
+GET /api/sources
 
 # Update source settings
 PUT /api/sources/{source_id}/settings
 Body: {"display_name": "New Name", "priority": 5}
-
-# Get all sources with settings
-GET /api/sources/with-settings
 ```
 
-### Settings in Connectors
+### Settings in ingestion
 
-Connectors receive settings and apply delays:
+The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged settings:
 
-```python
-# Connector receives settings
-await connector.fetch_posts(
-    source="https://example.com/feed",
-    limit=100,
-    settings={"fetch_delay_seconds": 5, "priority": 1}
-)
+- Due sources are fetched in `priority` order, then interleaved by host.
+- `fetch_delay_seconds` is passed to `FetchGates.slot` and sets the minimum gap between
+  requests to that source's host. The host floors in `ingestion/gates.py` still apply.
+- `max_posts_per_fetch` feeds the cadence rules in `ingestion/schedule.py`, which decide each
+  fetch's post limit.
 
-# Delay is applied AFTER fetching
-if settings and "fetch_delay_seconds" in settings:
-    delay = settings["fetch_delay_seconds"]
-    if delay > 0:
-        await asyncio.sleep(delay)
-```
-
-### Priority-Based Fetching
-
-Sources are fetched in priority order (lower number = higher priority):
-
-```python
-# Engine sorts sources by priority before fetching
-enabled_sources = service.get_all_sources_with_settings()
-enabled_sources = [s for s in enabled_sources if s.get("enabled")]
-enabled_sources.sort(key=lambda s: s.get("settings", {}).get("priority", 999))
-
-for source in enabled_sources:
-    # Fetch in priority order
-    await connector.fetch_posts(..., settings=source["settings"])
-```
+How sources are fetched at all is described in
+`backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 
 ---
 
 ## Common Patterns
 
-### Filtering Posts by Date
-```sql
-WHERE DATE(COALESCE(p.published_at, p.fetched_at)) = %s
-```
-
-### Filtering Posts by Source
-```sql
-WHERE p.source_id = %s
-```
+### Listing Posts
+Every post list goes through `ReaderRepository.list_posts(cur, FeedQuery(...), now=...)`
+(`db/repo_reader.py`): scope, read-state filter, time bound, cursor and view in one query.
+Add a filter there rather than writing a second listing query.
 
 ### Joining Posts with Sources
 ```sql
@@ -364,149 +276,36 @@ SELECT COUNT(*) FROM posts WHERE source_id = %s
 
 ---
 
-## Testing Your Feature (REQUIRED!)
+## Testing Your Feature
 
-**IMPORTANT:** Every backend feature MUST be tested before integration. Write tests in `backend/insight_core/tests/`.
+Every backend feature needs tests in `backend/insight_core/tests/`. They are plain
+`unittest` modules (`test_*.py`).
 
-### Test File Structure
+- Test through the module's interface: a route's status and JSON, saved rows, a `RunReport`.
+- Prior art: `test_feed_routes` (routes over ASGI with `tests/_asgi.py`, a swapped service,
+  the error handler), `test_feed_listing_routes` (real services), `test_repo_reader` and
+  `test_ingestion_db` (a real database through the test database helpers),
+  `test_ingestion_runner` and `test_source_kinds` (fakes, no network).
 
-Create a test file following this pattern:
-
-```python
-# test_your_feature.py
-import sys
-from pathlib import Path
-
-# Add backend to path
-BACKEND_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(BACKEND_DIR))
-
-import psycopg
-from insight_core.db.ensure_db import ensure_database
-from insight_core.logs.core.logger_config import setup_logging, get_component_logger
-
-# Setup
-setup_logging(debug_mode=True)
-logger = get_component_logger("test_your_feature")
-
-# Connect to DB
-db_url = ensure_database()
-
-class YourFeatureTest:
-    def __init__(self, db_url: str):
-        self.db_url = db_url
-        # Initialize repos/services you need
-    
-    def test_repository_layer(self):
-        """Test repository method directly"""
-        # Your test code here
-        pass
-    
-    def test_service_layer(self):
-        """Test service layer"""
-        # Your test code here
-        pass
-
-# Run tests
-if __name__ == "__main__":
-    test = YourFeatureTest(db_url)
-    test.test_repository_layer()
-    test.test_service_layer()
-    logger.info("✅ All tests passed!")
-```
-
-### Testing Checklist
-
-For each new feature, you MUST test:
-
-1. ✅ **Repository Layer** - Test SQL queries return correct data
-2. ✅ **Service Layer** - Test business logic works correctly
-3. ✅ **API Layer** - Test HTTP endpoints (manual with curl/Postman)
-
-### Example: Testing Posts by Source
-
-```python
-# test_posts_by_source.py
-import sys
-from pathlib import Path
-
-BACKEND_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(BACKEND_DIR))
-
-import psycopg
-from insight_core.db.repo_posts import PostsRepository
-from insight_core.services.posts_service import PostsService
-from insight_core.db.ensure_db import ensure_database
-from insight_core.logs.core.logger_config import setup_logging, get_component_logger
-
-setup_logging(debug_mode=True)
-logger = get_component_logger("test_posts_by_source")
-db_url = ensure_database()
-
-class PostsBySourceTest:
-    def __init__(self, db_url: str):
-        self.db_url = db_url
-        self.repo = PostsRepository(db_url)
-        self.service = PostsService(db_url)
-
-    def test_repo(self, source_id: str):
-        """Test repository layer"""
-        logger.info(f"Testing repo.get_posts_by_source({source_id})")
-        with psycopg.connect(self.db_url) as conn:
-            with conn.cursor() as cur:
-                posts = self.repo.get_posts_by_source(cur, source_id)
-                logger.info(f"Retrieved {len(posts)} posts")
-                if posts:
-                    logger.info(f"Sample post: {posts[0].get('title', 'No title')}")
-                return posts
-    
-    def test_service(self, source_id: str):
-        """Test service layer"""
-        logger.info(f"Testing service.get_posts_by_source({source_id})")
-        posts = self.service.get_posts_by_source(source_id)
-        logger.info(f"Retrieved {len(posts)} posts")
-        return posts
-
-# Run test
-if __name__ == "__main__":
-    test = PostsBySourceTest(db_url)
-    
-    # Replace with actual source_id from your database
-    test_source_id = "YOUR-SOURCE-UUID-HERE"
-    
-    # Test repository
-    posts = test.test_repo(test_source_id)
-    
-    # Test service
-    posts = test.test_service(test_source_id)
-    
-    logger.info("✅ All tests passed!")
-```
-
-### Running Tests
+Run them inside the backend image, never on the host:
 
 ```bash
-# Navigate to tests directory
-cd backend/insight_core/tests/
-
-# Run your test
-python test_posts_by_source.py
+./run-tests.sh                                        # whole suite
+./run-tests.sh insight_core.tests.test_feed_routes    # one module
+MIGRATE=1 ./run-tests.sh                              # migrate the test database first
 ```
+
+It uses the scratch database `insight_test`, never the live `insight`.
 
 ### Manual API Testing
 
-After backend tests pass, test the API endpoint:
-
 ```bash
-# Start backend server
+# Start the API (or use docker compose)
 cd backend
-python start_api.py
+uvicorn main:app --reload --port 8000 --env-file ../.env
 
-# In another terminal, test endpoint
-curl http://localhost:8000/api/posts/source/{source_id}
-
-# Or use httpie (prettier output)
-http GET http://localhost:8000/api/posts/source/{source_id}
+# In another terminal
+curl "http://localhost:8000/api/feed?scope=source:{source_id}"
 ```
 
 ---
@@ -525,20 +324,86 @@ self.logger.debug("Detailed info")
 
 ---
 
-## Error Handling Best Practices
+## Error Handling
 
-1. **Repository Layer:** Let errors propagate (database errors are important)
-2. **Service Layer:** Catch specific errors and add context
-3. **Bridge Layer:** Catch all errors and format for frontend
-4. **API Layer:** Log errors and return consistent error responses
+1. **Repository and service layers:** let errors propagate. Raise `ValueError` (bad input) or
+   `LookupError` (not found) with a message a person can act on.
+2. **API layer:** one handler, `service_error_response` in `main.py`, turns an error into a
+   safe `{"detail": ...}` answer with a real status code. Other exceptions are logged with their traceback
+   and answered "Could not ...": a driver message can carry a DSN or SQL, so it never reaches
+   the response.
+3. **Job tracking:** `OperationsService.try_start_job` / `try_append_job_event` /
+   `try_finish_job` log a failed `job_runs` write and let the work go on.
 
 ---
 
 ## Example: Complete Feature Implementation
 
-See the `get_posts_by_date` feature for a complete example:
-- Repository: `repo_posts.py::get_posts_by_date()`
-- Service: `posts_service.py::get_posts_by_date()`
-- Bridge: `insight_api_bridge.py::get_posts_by_date()`
-- API: `main.py::@app.get("/api/posts/{date}")`
+See the post listing for a complete example:
+- Repository: `repo_reader.py::ReaderRepository.list_posts()` with a `FeedQuery`
+- Service: `reader_service.py::ReaderService.list_posts()`
+- API: `main.py::@app.get("/api/feed")`
+- Tests: `test_repo_reader`, `test_feed_routes`, `test_feed_listing_routes`
 
+---
+
+## HTTP API
+
+Every route in `main.py`. Errors are a non-2xx status with `{"detail": "<message>"}`: 400 bad
+input, 404 not found, 409 conflict, 429 throttled, 500 "Could not ...", 503 job tracking down.
+Ingestion and archive runs answer `202 {job_id}`; `GET /api/operations/jobs/{job_id}` carries
+the result when the job finishes.
+
+| Method | Path | Purpose | Body or query |
+|---|---|---|---|
+| GET | `/` | Liveness text | |
+| GET | `/health` | Container health check | |
+| GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
+| GET | `/api/feed` | Every post list, newest first, one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|starred`, `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
+| GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder | |
+| PUT | `/api/feed/read` | Read state, answers `{updated, ids}` | `{ids, read}` (1-500 ids), or `{scope, through_cursor, newest_cursor}` to mark read through a cursor |
+| GET | `/api/media` | One image of one post, through the 24-hour cache | `post`, `url` |
+| GET | `/api/posts/item/{post_id}` | One post with its reader state | |
+| POST | `/api/posts/item/{post_id}/opened` | Record an open (marks it read) | `{metadata?}` |
+| POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
+| POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
+| POST | `/api/posts/item/{post_id}/reddit-comments` | Fetch a Reddit post's comments | `{limit?, refresh?, asyncMode?}` |
+| GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
+| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled"}` |
+| PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, max_posts_per_fetch}` |
+| PUT | `/api/sources/{source_id}/enabled` | Enable or disable | `{enabled}` |
+| PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |
+| PUT | `/api/sources/{source_id}/cadence` | Set or clear the fetch interval override | `{override_hours}` (1-2160, or null) |
+| DELETE | `/api/sources/{source_id}` | Delete a source and its posts | |
+| GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
+| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary | |
+| POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
+| GET | `/api/folders` | Folders and tracks with counts | |
+| POST | `/api/folders` | Create a folder or track | `{name, kind?="folder"\|"track", description?, sort_order?, exclude_from_main_digest?, match_keywords?}` |
+| PUT | `/api/folders/{folder_id}` | Edit a folder | any of the create fields |
+| DELETE | `/api/folders/{folder_id}` | Delete a folder (its sources stay) | |
+| POST | `/api/folders/{folder_id}/sources` | Add a source to a folder | `{source_id}` |
+| DELETE | `/api/folders/{folder_id}/sources/{source_id}` | Remove a source from a folder | |
+| PUT | `/api/folders/{folder_id}/main-digest` | Every source of a folder in or out of the "all" feed | `{in_main_digest}` |
+| POST | `/api/folders/{folder_id}/ingest` | Fetch a folder's enabled sources now (202 job) | `{limit?}` |
+| GET | `/api/archive/catalog` | Enabled sources with their archive state | |
+| GET | `/api/archive/{source_id}/status` | One source's archive state and newest archive job | |
+| POST | `/api/archive/{source_id}/plan` | Estimate an archive run | `{desiredPosts, resume?, pageDelaySeconds?, batchSize?, batchCooldownSeconds?}` |
+| POST | `/api/archive/{source_id}/run` | Run an archive (202 job with `background: true`) | as plan, plus `{background?}` |
+| POST | `/api/ingestion/run` | Run the ingestion cycle now (202 job) | `{force?}` |
+| GET | `/api/ingestion/logs` | Tail of a log file | `log`, `lines` (1-1000) |
+| GET | `/api/operations/overview` | Recent jobs, source health, alerts | |
+| GET | `/api/operations/jobs/{job_id}` | One job with its result | |
+| GET | `/api/operations/scheduler` | Scheduler settings and state | |
+| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, syncSourcesEachCycle?, ingestTickMinutes?}` (tick >= 15) |
+| GET | `/api/credentials` | Every connection, without its values | |
+| PUT | `/api/credentials/{provider}/{key}` | Save one secret | `{value}` |
+| DELETE | `/api/credentials/{provider}/{key}` | Remove one secret | |
+| POST | `/api/credentials/{provider}/test` | Test a connection | |
+| POST | `/api/credentials/telegram/login/start` | Telegram sign-in: send the code | `{phone}` |
+| POST | `/api/credentials/telegram/login/code` | Telegram sign-in: the code | `{code}` |
+| POST | `/api/credentials/telegram/login/password` | Telegram sign-in: two-step password | `{password}` |
+| POST | `/api/credentials/telegram/login/cancel` | Cancel the sign-in | |
+| POST | `/api/youtube/channel/videos` | List a channel's newest videos | `{source, limit?}` |
+| GET | `/api/youtube/progress/{video_id}` | Watch progress of a video | |
+| PUT | `/api/youtube/progress/{video_id}` | Save watch progress | `{videoUrl, title, progressSeconds, durationSeconds?, sourceId?, notesMarkdown?, completed?}` |

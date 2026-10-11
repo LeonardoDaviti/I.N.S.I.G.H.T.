@@ -10,7 +10,7 @@ Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImage
 
 ## Purpose
 
-Read one post, whole, in one centred column with nothing beside it (P4). Reading-only it is the content and three actions; nothing else.
+Read one post, whole, in one centred column with nothing beside it (P4). It is the content and three actions; nothing else.
 
 ## Entry & URL
 
@@ -67,7 +67,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). Reading
 
 ## Open issues
 
-- Reddit posts still offer "Fetch comments / Refresh comments" reading-only, which is fetching in a reading view (P7). Not yet filed.
+- Reddit posts still offer "Fetch comments / Refresh comments", which is fetching in a reading view (P7). Not yet filed.
 - The YouTube line shows view and like counts and the transcript source (P6). Not yet filed.
 - Title wrap `pretty` vs `normal` is the seed prototype (D6).
 - [0004](../../../../../plan/issues/0004-citation-graph-sources-of-truth.md): links between posts (analysis).

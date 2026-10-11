@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit
+from insight_core.utils.json_safe import iso
 
 
 class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
@@ -23,9 +24,6 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
     ISSUE_RE = re.compile(r'href="(?P<href>/cloud-attention/issue-\d+)"', re.IGNORECASE)
     PAGE_RE = re.compile(r"[?&]page=(\d+)")
     JSON_LD_RE = re.compile(r'(?is)<script type="application/ld\+json">\s*(?P<payload>\{.*?\})\s*</script>')
-    META_CONTENT_RE = re.compile(
-        r'(?is)<meta\b[^>]+(?:name|property)="(?P<name>[^"]+)"[^>]+content="(?P<content>[^"]*)"[^>]*>'
-    )
 
     def matches(self, source: Dict[str, Any]) -> bool:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
@@ -36,7 +34,7 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
         first_post_date = None
         if entries:
             oldest_post = await self._fetch_issue_post(source, entries[-1], include_html=False)
-            first_post_date = parsing.isoformat((oldest_post or {}).get("date"))
+            first_post_date = iso((oldest_post or {}).get("date"))
 
         return Inspection(len(entries), self.PAGE_SIZE, first_post_date)
 
@@ -92,7 +90,7 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
         article_html = parsing.extract_article_html(html) if include_html else ""
         content = parsing.strip_html(article_html or "")
         if not content.strip():
-            content = str(metadata.get("description") or self._extract_meta_content(html, "description") or "").strip()
+            content = str(metadata.get("description") or parsing.meta_content(html, "description") or "").strip()
         if not content.strip():
             return None
 
@@ -104,16 +102,16 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
             "url": url,
             "external_id": issue_slug,
             "guid": url,
-            "title": str(metadata.get("headline") or self._extract_meta_content(html, "og:title") or url).strip(),
+            "title": str(metadata.get("headline") or parsing.meta_content(html, "og:title") or url).strip(),
             "content": content,
             "content_html": article_html,
             "date": parsing.parse_datetime_value(str(metadata.get("datePublished") or "")),
-            "media_urls": [self._extract_meta_content(html, "og:image")] if self._extract_meta_content(html, "og:image") else [],
+            "media_urls": [parsing.meta_content(html, "og:image")] if parsing.meta_content(html, "og:image") else [],
             "categories": ["Cloud Attention"],
             "metadata": {
                 "adapter": self.adapter_type,
                 "issue_slug": issue_slug,
-                "description": metadata.get("description") or self._extract_meta_content(html, "description"),
+                "description": metadata.get("description") or parsing.meta_content(html, "description"),
                 "author": ((metadata.get("author") or {}).get("name") if isinstance(metadata.get("author"), dict) else None),
             },
         }
@@ -135,10 +133,3 @@ class PhilSchmidCloudAttentionAdapter(BaseSourceAdapter):
             if isinstance(payload, dict) and payload.get("@type") == "BlogPosting":
                 return payload
         return {}
-
-    def _extract_meta_content(self, html: str, meta_name: str) -> str:
-        meta_name = meta_name.lower()
-        for match in self.META_CONTENT_RE.finditer(html or ""):
-            if (match.group("name") or "").lower() == meta_name:
-                return match.group("content") or ""
-        return ""

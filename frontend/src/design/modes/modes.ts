@@ -19,9 +19,3 @@ export function parseMode(value: string | null): StudioMode {
 export function stepMode(mode: StudioMode, by: 1 | -1): StudioMode {
   return MODES[(MODES.indexOf(mode) + by + MODES.length) % MODES.length];
 }
-
-/** True when a key press belongs to a field (typing, a select, an editor), not to the page. */
-export function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-}

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit
+from insight_core.utils.json_safe import iso
 
 
 class DarioAmodeiAdapter(BaseSourceAdapter):
@@ -24,9 +25,6 @@ class DarioAmodeiAdapter(BaseSourceAdapter):
     TITLE_RE = re.compile(r'(?is)<h1 class="post-title">(.*?)</h1>')
     DATE_RE = re.compile(r'(?is)<div class="post-date">(.*?)</div>')
     CONTENT_RE = re.compile(r'(?is)<div data-toc-contents="" class="rich-text w-richtext">(.*?)</div>')
-    META_CONTENT_RE = re.compile(
-        r'(?is)<meta\b[^>]+(?:name|property)="(?P<name>[^"]+)"[^>]+content="(?P<content>[^"]*)"[^>]*>'
-    )
 
     def matches(self, source: Dict[str, Any]) -> bool:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
@@ -39,7 +37,7 @@ class DarioAmodeiAdapter(BaseSourceAdapter):
         first_post_date = None
         if entries:
             oldest_post = await self._fetch_entry_post(source, entries[-1], include_html=False)
-            first_post_date = parsing.isoformat((oldest_post or {}).get("date"))
+            first_post_date = iso((oldest_post or {}).get("date"))
 
         return Inspection(len(entries), self.PAGE_SIZE, first_post_date)
 
@@ -89,14 +87,14 @@ class DarioAmodeiAdapter(BaseSourceAdapter):
 
         content_text = parsing.strip_html(article_html or "")
         if not content_text.strip():
-            content_text = self._extract_meta_content(html, "description")
+            content_text = parsing.meta_content(html, "description")
         if not content_text.strip():
             return None
 
-        title = self._extract_text(self.TITLE_RE, html) or self._extract_meta_content(html, "og:title") or url
+        title = self._extract_text(self.TITLE_RE, html) or parsing.meta_content(html, "og:title") or url
         raw_date = self._extract_text(self.DATE_RE, html)
         published_at = self._parse_date(raw_date)
-        image_url = self._extract_meta_content(html, "og:image")
+        image_url = parsing.meta_content(html, "og:image")
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.rstrip("/") or "/"
 
@@ -138,13 +136,6 @@ class DarioAmodeiAdapter(BaseSourceAdapter):
         if not match:
             return ""
         return match.group(1).strip()
-
-    def _extract_meta_content(self, html: str, meta_name: str) -> str:
-        meta_name = meta_name.lower()
-        for match in self.META_CONTENT_RE.finditer(html or ""):
-            if (match.group("name") or "").lower() == meta_name:
-                return match.group("content") or ""
-        return ""
 
     def _parse_date(self, raw_date: str) -> Optional[datetime]:
         cleaned = (raw_date or "").strip()

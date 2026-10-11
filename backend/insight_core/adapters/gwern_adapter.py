@@ -41,9 +41,6 @@ class GwernAdapter(BaseSourceAdapter):
         ".css", ".js", ".xml",
     }
 
-    META_CONTENT_RE = re.compile(
-        r'(?is)<meta\b[^>]+(?:name|property)="(?P<name>[^"]+)"[^>]+content="(?P<content>[^"]*)"[^>]*>'
-    )
     LINK_TAG_RE = re.compile(r"(?is)<link\b(?P<attrs>[^>]+)>")
     ANCHOR_TAG_RE = re.compile(r"(?is)<a\b(?P<attrs>[^>]+)>")
 
@@ -128,8 +125,8 @@ class GwernAdapter(BaseSourceAdapter):
 
         canonical_url = self._extract_canonical_url(html) or url
         title = (
-            self._extract_meta_content(html, "citation_title")
-            or self._extract_meta_content(html, "title")
+            parsing.meta_content(html, "citation_title")
+            or parsing.meta_content(html, "title")
             or self._extract_html_title(html)
             or canonical_url
         )
@@ -142,16 +139,16 @@ class GwernAdapter(BaseSourceAdapter):
         except Exception:
             markdown_body = ""
 
-        content_text = markdown_body.strip() or parsing.strip_html(article_html) or (self._extract_meta_content(html, "description") or "")
+        content_text = markdown_body.strip() or parsing.strip_html(article_html) or (parsing.meta_content(html, "description") or "")
         if not content_text.strip():
             return None
 
         created_at = (
-            self._extract_meta_content(html, "citation_publication_date")
-            or self._extract_meta_content(html, "dc.date.issued")
-            or self._extract_meta_content(html, "dcterms.modified")
+            parsing.meta_content(html, "citation_publication_date")
+            or parsing.meta_content(html, "dc.date.issued")
+            or parsing.meta_content(html, "dcterms.modified")
         )
-        thumbnail = self._extract_meta_content(html, "og:image")
+        thumbnail = parsing.meta_content(html, "og:image")
         categories = self._extract_keywords(html)
         media_urls = [thumbnail] if thumbnail else []
         external_id = urllib.parse.urlparse(canonical_url).path.rstrip("/") or "/"
@@ -171,8 +168,8 @@ class GwernAdapter(BaseSourceAdapter):
             "metadata": {
                 "adapter": self.adapter_type,
                 "markdown_url": markdown_url,
-                "created": self._extract_meta_content(html, "citation_publication_date") or self._extract_meta_content(html, "dc.date.issued"),
-                "modified": self._extract_meta_content(html, "dcterms.modified"),
+                "created": parsing.meta_content(html, "citation_publication_date") or parsing.meta_content(html, "dc.date.issued"),
+                "modified": parsing.meta_content(html, "dcterms.modified"),
             },
         }
 
@@ -207,14 +204,6 @@ class GwernAdapter(BaseSourceAdapter):
     def _extract_attr(self, attrs: str, name: str) -> str:
         match = re.search(rf'\b{name}="([^"]*)"', attrs)
         return match.group(1) if match else ""
-
-    def _extract_meta_content(self, html: str, meta_name: str) -> str:
-        meta_name = meta_name.lower()
-        for match in self.META_CONTENT_RE.finditer(html):
-            name = (match.group("name") or "").lower()
-            if name == meta_name:
-                return match.group("content") or ""
-        return ""
 
     def _extract_canonical_url(self, html: str) -> str:
         for match in self.LINK_TAG_RE.finditer(html):
@@ -251,7 +240,7 @@ class GwernAdapter(BaseSourceAdapter):
         return text.strip()
 
     def _extract_keywords(self, html: str) -> List[str]:
-        raw = self._extract_meta_content(html, "keywords")
+        raw = parsing.meta_content(html, "keywords")
         if not raw:
             return []
         return [item.strip() for item in raw.split(",") if item.strip()]

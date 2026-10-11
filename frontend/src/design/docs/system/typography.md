@@ -18,7 +18,7 @@ Stack: `Inter, "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe
 | `small` | meta lines, table cells | 0.8125rem | 1.45 | 0.003em | 400 |
 | `micro` | column headers, kbd, chip counts | 0.75rem | 1.35 | 0.01em | 500 |
 
-- `tabular-nums` on every count, time, date and table number (the `.num` utility; `Table` sets it).
+- `tabular-nums` on every count, time, date and table number.
 - Lowercase is the voice of navigation and tabs (`feed / sources`); sentence case everywhere else. No ALL-CAPS eyebrows.
 - Headings balance their lines (`text-wrap: balance`) unless they opt out with `text-pretty`, as the post title does. Whether the post title keeps `pretty` is the seed prototype (D6).
 - Text that may be in any script carries `dir="auto"` (feed titles, post title, excerpts).

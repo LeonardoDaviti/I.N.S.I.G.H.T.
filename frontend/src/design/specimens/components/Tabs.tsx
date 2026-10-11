@@ -13,7 +13,7 @@ export default function TabsSpecimen() {
             <TabsTrigger value="ingestion">ingestion</TabsTrigger>
           </TabsList>
           <TabsContent value="sources" className="text-[0.875rem] text-fg-2">90 sources in 6 tracks.</TabsContent>
-          <TabsContent value="connections" className="text-[0.875rem] text-fg-2">Substack, Telegram, Gemini.</TabsContent>
+          <TabsContent value="connections" className="text-[0.875rem] text-fg-2">Substack, Telegram.</TabsContent>
           <TabsContent value="ingestion" className="text-[0.875rem] text-fg-2">Last run 14:20, 2 failing.</TabsContent>
         </Tabs>
       </Variant>

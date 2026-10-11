@@ -17,25 +17,19 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 
 from insight_core.ingestion.kinds.base import PolitenessProfile
 from insight_core.ingestion.types import OutcomeStatus
+from insight_core.utils.env import env_float
 
 if TYPE_CHECKING:
     from insight_core.db.repo_fetch_state import FetchStateRow
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-
-
 # Backoff ladder: 1h, 2h, 4h, 8h, 16h, 24h, 24h, ... and a 7d cap once a source has failed
 # DORMANT_AFTER times in a row (roughly a week of daily failures). 1h, not Mark VIII's 15m:
 # the scheduler ticks hourly, so any shorter step only rounds up to "next tick".
-BACKOFF_BASE = timedelta(minutes=_env_float("INSIGHT_BACKOFF_BASE_MINUTES", 60))
-BACKOFF_MAX = timedelta(hours=_env_float("INSIGHT_BACKOFF_MAX_HOURS", 24))
-BACKOFF_DORMANT_AFTER = int(_env_float("INSIGHT_BACKOFF_DORMANT_AFTER", 10))
-BACKOFF_DORMANT_MAX = timedelta(hours=_env_float("INSIGHT_BACKOFF_DORMANT_MAX_HOURS", 168))
+BACKOFF_BASE = timedelta(minutes=env_float("INSIGHT_BACKOFF_BASE_MINUTES", 60))
+BACKOFF_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_MAX_HOURS", 24))
+BACKOFF_DORMANT_AFTER = int(env_float("INSIGHT_BACKOFF_DORMANT_AFTER", 10))
+BACKOFF_DORMANT_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_DORMANT_MAX_HOURS", 168))
 
 PROBATION_INTERVAL = timedelta(hours=24)
 TIER_INTERVAL_MIN = timedelta(hours=24)

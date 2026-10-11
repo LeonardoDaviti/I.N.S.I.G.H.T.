@@ -3,7 +3,7 @@
 OperationsService.get_source_health over a fake schedule view, a FakeKind registry and a
 FixedClock: every row is what cadence_stats + decide_fetch say, the summary buckets are
 disjoint and add up to the enabled sources, and the sort puts the worst first. Then the
-two routes (FakeBridge) and the archive catalog's new fields. No DB, no network.
+two routes (a fake OperationsService) and the archive catalog's new fields. No DB, no network.
 """
 from __future__ import annotations
 
@@ -16,10 +16,11 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from types import SimpleNamespace
+
 from fastapi import HTTPException
 
 import main
-from insight_api_bridge import InsightApiBridge
 from insight_core.db.repo_fetch_state import FetchStateRow
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import PolitenessProfile
@@ -29,7 +30,10 @@ from insight_core.ingestion.schedule import (
     cadence_stats,
     decide_fetch,
 )
+from insight_core.services import registry as services_registry
 from insight_core.services.operations_service import OperationsService
+from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.tests._asgi import call
 from insight_core.tests._ingestion_fakes import FixedClock
 from insight_core.tests._kind_fakes import FakeKind
 
@@ -279,19 +283,23 @@ class SourceHealthTests(unittest.TestCase):
             self.service.set_cadence_override("missing", None)
 
 
-class FakeBridge:
+S1 = "00000000-0000-4000-8000-000000000001"
+MISSING = "00000000-0000-4000-8000-00000000dead"
+
+
+class FakeOperations:
     def __init__(self):
         self.calls = []
 
-    def get_sources_health(self):
-        self.calls.append(("get_sources_health",))
+    def get_source_health(self):
+        self.calls.append(("get_source_health",))
         return {"success": True, "rows": [], "summary": {}, "generated_at": NOW.isoformat()}
 
     def set_cadence_override(self, source_id, hours):
         self.calls.append(("set_cadence_override", source_id, hours))
-        if source_id == "missing":
-            raise LookupError("Source missing not found")
-        return {"success": True, "row": {"source_id": source_id, "override_hours": hours}}
+        if source_id == MISSING:
+            raise LookupError(f"Source {MISSING} not found")
+        return {"source_id": source_id, "override_hours": hours}
 
 
 def run(coro):
@@ -300,41 +308,43 @@ def run(coro):
 
 class SourceHealthRouteTests(unittest.TestCase):
     def setUp(self):
-        self.original = main.api_bridge
-        self.bridge = FakeBridge()
-        main.api_bridge = self.bridge
+        self.ops = FakeOperations()
+        previous = services_registry.use(SimpleNamespace(operations=self.ops))
+        self.addCleanup(services_registry.use, previous)
 
-    def tearDown(self):
-        main.api_bridge = self.original
+    def put_cadence(self, source_id, payload):
+        return call(main.app, "PUT", f"/api/sources/{source_id}/cadence", json_body=payload)
 
-    def test_health_route_returns_the_bridge_response(self):
-        self.assertEqual(run(main.get_sources_health())["generated_at"], NOW.isoformat())
-        paths = [getattr(r, "path", None) for r in main.app.routes]
-        self.assertIn("/api/sources/health", paths)
-        self.assertIn("/api/sources/{source_id}/cadence", paths)
+    def test_health_route_returns_the_service_response(self):
+        status, _, body = call(main.app, "GET", "/api/sources/health")
+        self.assertEqual((status, body["generated_at"]), (200, NOW.isoformat()))
 
     def test_cadence_route_validates_the_range(self):
-        for bad in (0, 0.5, 2161, 3000, float("nan"), float("inf")):
+        # NaN and infinity are not JSON; the route function itself refuses them.
+        for bad in (0, 0.5, 2161, 3000):
+            with self.subTest(hours=bad):
+                status, _, body = self.put_cadence(S1, {"override_hours": bad})
+                self.assertEqual(status, 400, body)
+        for bad in (float("nan"), float("inf")):
             with self.subTest(hours=bad):
                 with self.assertRaises(HTTPException) as ctx:
-                    run(main.set_source_cadence("s1", main.CadenceOverrideRequest(override_hours=bad)))
+                    run(main.set_source_cadence(S1, main.CadenceOverrideRequest(override_hours=bad)))
                 self.assertEqual(ctx.exception.status_code, 400)
-        self.assertEqual(self.bridge.calls, [], "nothing is written for an invalid value")
+        self.assertEqual(self.ops.calls, [], "nothing is written for an invalid value")
 
         for ok in (None, 1, 6.5, 2160):
             with self.subTest(hours=ok):
-                result = run(main.set_source_cadence("s1", main.CadenceOverrideRequest(override_hours=ok)))
-                self.assertTrue(result["success"])
-                self.assertEqual(self.bridge.calls[-1], ("set_cadence_override", "s1", ok))
+                status, _, body = self.put_cadence(S1, {"override_hours": ok})
+                self.assertEqual((status, body["success"]), (200, True))
+                self.assertEqual(self.ops.calls[-1], ("set_cadence_override", S1, ok))
 
     def test_cadence_route_body_may_omit_the_value(self):
-        result = run(main.set_source_cadence("s1", main.CadenceOverrideRequest()))
-        self.assertIsNone(result["row"]["override_hours"])
+        _, _, body = self.put_cadence(S1, {})
+        self.assertIsNone(body["row"]["override_hours"])
 
     def test_cadence_on_an_unknown_source_is_404(self):
-        with self.assertRaises(HTTPException) as ctx:
-            run(main.set_source_cadence("missing", main.CadenceOverrideRequest(override_hours=4)))
-        self.assertEqual(ctx.exception.status_code, 404)
+        status, _, body = self.put_cadence(MISSING, {"override_hours": 4})
+        self.assertEqual((status, body), (404, {"detail": f"Source {MISSING} not found"}))
 
 
 class _FakeSourcesService:
@@ -345,16 +355,10 @@ class _FakeSourcesService:
         return self.sources
 
 
-class _FakeFetchService:
-    def __init__(self):
-        self.kinds = registry()
-
-
 class ArchiveCatalogTests(unittest.TestCase):
     def test_entries_carry_kind_backlog_remaining_and_eta(self):
-        bridge = InsightApiBridge.__new__(InsightApiBridge)
-        bridge.source_fetch_service = _FakeFetchService()
-        bridge.sources_service = _FakeSourcesService([
+        service = SourceFetchService("postgresql:///unused", kinds=registry())
+        service.sources_service = _FakeSourcesService([
             {"id": "a", "platform": "youtube", "handle_or_url": "@a", "enabled": True, "post_count": 10,
              "settings": {"archive": {"available_posts": 40, "stored_posts": 10, "remaining_posts": 25,
                                       "estimated_seconds": 120, "status": "partial"}}},
@@ -363,9 +367,8 @@ class ArchiveCatalogTests(unittest.TestCase):
             {"id": "c", "platform": "rss", "handle_or_url": "https://c", "enabled": False, "post_count": 0,
              "settings": {}},
         ])
-        catalog = bridge.get_archive_catalog()
-        self.assertTrue(catalog["success"], catalog)
-        entries = {e["source_id"]: e for e in catalog["sources"]}
+        catalog = service.archive_catalog()
+        entries = {e["source_id"]: e for e in catalog}
         self.assertEqual(set(entries), {"a", "b"})
         self.assertEqual(entries["a"]["kind"], "youtube_channel")
         self.assertEqual(entries["a"]["backlog_posts"], 30)

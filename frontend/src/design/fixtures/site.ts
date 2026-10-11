@@ -6,14 +6,13 @@
  * The feed honours scope, filter, view and paging like the backend does.
  */
 import type {
-  AppConfig, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
+  ArchiveCatalogEntry, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
   SchedulerConfig, SourceHealthRow, SourceWithSettings, UnreadCounts,
 } from '../../services/api';
 import { healthResponse } from '../../components/ops/fixtures';
 import type { FixtureRequest, FixtureRoute } from '../frame/transport';
 
 export interface Site {
-  config: AppConfig;
   /** The whole feed, newest first. */
   items: FeedItem[];
   folders: Folder[];
@@ -140,16 +139,87 @@ function sourcesWithSettings(site: Site): { success: true; sources: SourceWithSe
   return { success: true, sources, total: sources.length };
 }
 
+/**
+ * The archive catalog the ingestion tab lists, made from the health rows: a
+ * feed holds all it lists, a channel has a backlog, Substack never says.
+ */
+export function archiveCatalog(site: Site): ArchiveCatalogEntry[] {
+  return site.health.filter((row) => row.enabled).map((row, i) => {
+    const stored = row.stored_posts;
+    const available = row.platform === 'substack' ? null
+      : row.platform === 'youtube' || row.platform === 'telegram' ? stored * 4 + 80
+        : stored;
+    return {
+      source_id: row.source_id,
+      display_name: row.display_name,
+      platform: row.platform,
+      enabled: row.enabled,
+      kind: row.kind,
+      stored_posts: stored,
+      available_posts: available,
+      backlog_posts: available === null ? null : Math.max(available - stored, 0),
+      archive_status: available !== null && stored >= available ? 'archived' : stored > 0 ? 'partial' : 'not_archived',
+      resume_ready: row.platform === 'youtube' && i % 2 === 0,
+      rate_limit: { page_delay_seconds: 5, batch_size: 10, batch_cooldown_seconds: 30 },
+    };
+  });
+}
+
+function archiveStatus({ params }: FixtureRequest, site: Site): ArchiveStatusResponse {
+  const entry = archiveCatalog(site).find((candidate) => candidate.source_id === params.sourceId);
+  const stored = entry?.stored_posts ?? 120;
+  return {
+    success: true,
+    archive: {
+      status: 'idle',
+      stored_posts: stored,
+      available_posts: entry ? entry.available_posts : 480,
+      resume_ready: entry?.resume_ready ?? false,
+      checkpoint: entry?.resume_ready ? { collected_posts: Math.round(stored / 2), pages_fetched: 6 } : null,
+      rate_limit: entry?.rate_limit ?? null,
+    },
+    support: {
+      kind: entry?.kind ?? 'generic_rss',
+      available_basis: entry && entry.available_posts === null ? 'unknown' : entry?.platform === 'rss' ? 'feed_window' : 'exact',
+      archivable: true,
+      reason: null,
+      unavailable: false,
+      live_fetch_limit: 50,
+    },
+    latest_job: null,
+  };
+}
+
+/** The tail of a backend log: a few fetches around the last run. */
+function logTail({ query }: FixtureRequest, site: Site) {
+  const log = query.get('log') ?? 'application';
+  const stamp = (site.jobs[0]?.started_at ?? '2026-10-11T08:00:00Z').replace('T', ' ').slice(0, 19);
+  const names = site.health.slice(0, 8).map((row) => row.display_name);
+  const lines = log === 'errors'
+    ? [`${stamp},412 - insight.connectors - ERROR - ${names[1] ?? 'A source'}: HTTP 503 from the feed, retrying in 30 minutes`]
+    : [
+      `${stamp},004 - insight.scheduler - INFO - Tick: 12 due, 66 deferred`,
+      ...names.map((name, i) => `${stamp},${String(120 + i * 61).padStart(3, '0')} - insight.ingestion - INFO - ${name}: ${i % 3} new posts`),
+      `${stamp},998 - insight.ingestion - INFO - Run finished: 12 due, 66 deferred, 0 failed; 48 new posts`,
+    ];
+  return {
+    success: true,
+    log,
+    available_logs: ['application', 'errors', 'rss', 'reddit', 'youtube', 'telegram', 'automated', 'interactive', 'recovery'],
+    exists: true,
+    updated_at: Date.parse(site.jobs[0]?.finished_at ?? site.jobs[0]?.started_at ?? '2026-10-11T08:00:00Z') / 1000,
+    lines,
+  };
+}
+
 /** The transport routes that serve one site. */
 export function siteRoutes(site: Site): FixtureRoute[] {
   return [
-    { path: '/api/config', respond: () => site.config },
     { path: '/api/feed', respond: (request) => feed(request, site) },
     { path: '/api/feed/unread-counts', respond: () => unreadCounts(site) },
     { path: '/api/folders', respond: () => ({ success: true, folders: site.folders }) },
-    { path: '/api/experts', respond: () => ({ success: true, experts: [] }) },
     { path: '/api/sources/health', respond: () => healthResponse(site.health) },
-    { path: '/api/sources/with-settings', respond: () => sourcesWithSettings(site) },
+    { path: '/api/sources', respond: () => sourcesWithSettings(site) },
     {
       path: '/api/sources/:sourceId/folders',
       respond: ({ params }) => ({
@@ -166,15 +236,9 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     },
     { path: '/api/posts/item/:postId', respond: (request) => postDetail(request, site) },
     { path: '/api/youtube/progress/:videoId', respond: () => ({ success: true, progress: null }) },
-    // The source sheet's archive section (feat/archive-sheet): a source that can fetch its history.
-    {
-      path: '/api/archive/:sourceId/status',
-      respond: () => ({
-        success: true,
-        archive: { status: 'idle', stored_posts: 120, available_posts: 480 },
-        support: { kind: 'generic_rss', available_basis: 'feed_window', archivable: true, reason: null, unavailable: false, live_fetch_limit: 50 },
-        latest_job: null,
-      }),
-    },
+    // The archive: the ingestion tab's catalog, and each source's status (the sheet and the tab).
+    { path: '/api/archive/catalog', respond: () => ({ success: true, sources: archiveCatalog(site), total: archiveCatalog(site).length }) },
+    { path: '/api/archive/:sourceId/status', respond: (request) => archiveStatus(request, site) },
+    { path: '/api/ingestion/logs', respond: (request) => logTail(request, site) },
   ];
 }

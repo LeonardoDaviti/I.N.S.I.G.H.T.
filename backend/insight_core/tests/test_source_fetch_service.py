@@ -8,7 +8,6 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_posts import SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
-from insight_core.ingestion.enrichment import Enricher
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, Inspection, KindUnavailable
@@ -265,14 +264,6 @@ class PlanAvailableBasisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["available_basis"], "listing_cap")
 
 
-class _RecordingProcessor:
-    def __init__(self):
-        self.ids = []
-
-    def process_posts(self, posts):
-        self.ids.extend(post["id"] for post in posts)
-
-
 class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_page_is_saved_and_checkpointed(self):
         pages = [ArchivePage([{"url": "u1"}, {"url": "u2"}], {"mode": "fake", "pages_fetched": 1, "collected_posts": 2}),
@@ -292,47 +283,21 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
                 post_id = f"id-{post['url']}"
                 if index == 0:
                     result.inserted_ids.append(post_id)
-                    result.inserted_posts.append({**post, "id": post_id, "source_id": source_id})
                 else:
                     result.updated_ids.append(post_id)
             return result
 
         service._save_posts = fake_save
-        entity, event = _RecordingProcessor(), _RecordingProcessor()
-        service.enricher = Enricher(entity, event)
         events = []
         result = await service.archive_source("s1", progress_callback=events.append)
 
         self.assertEqual(saved_batches, [["u1", "u2"], ["u3"]])
-        # Each page is a save batch followed by enrichment of the posts it inserted.
-        self.assertEqual(entity.ids, ["id-u1", "id-u3"])
-        self.assertEqual(event.ids, ["id-u1", "id-u3"])
         self.assertEqual(result["posts_inserted"], 2)
         self.assertEqual(result["posts_updated"], 1)
         self.assertEqual(result["posts_fetched"], 3)
         self.assertEqual(result["pages_fetched"], 2)
         self.assertEqual(result["checkpoint"]["collected_posts"], 3)
         self.assertEqual([e["stage"] for e in events], ["planning_complete", "page_fetched", "page_fetched", "completed"])
-
-
-class ArchiveAnalysisOffTests(unittest.IsolatedAsyncioTestCase):
-    """INSIGHT_ANALYSIS=off (reading-finish R3): archived posts are saved, never enriched."""
-
-    async def test_archive_saves_skip_enrichment_and_build_no_gemini_client(self):
-        from unittest import mock
-
-        from insight_core.settings import Settings
-
-        with mock.patch("insight_core.processors.ai.gemini_processor.GeminiProcessor.__init__",
-                        side_effect=AssertionError("GeminiProcessor built")), \
-             mock.patch("insight_core.services.entity_memory_service.EntityMemoryService.process_posts",
-                        side_effect=AssertionError("entity memory ran")), \
-             mock.patch("insight_core.services.event_memory_service.EventMemoryService.process_posts",
-                        side_effect=AssertionError("event memory ran")):
-            service = SourceFetchService("postgresql://test:test@localhost/test",
-                                         settings=Settings(analysis_enabled=False))
-            report = await service.enricher.run([{"id": "p1", "source_id": "s1"}])
-        self.assertEqual(report.as_dict(), {"skipped": "analysis off"})
 
 
 class ArchiveKindSessionTests(unittest.IsolatedAsyncioTestCase):

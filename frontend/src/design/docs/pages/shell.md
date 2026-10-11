@@ -20,8 +20,8 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 ## Anatomy
 
 - **Skip link** "Skip to content" (visible on focus) to `main#main`.
-- **Top bar** (sticky, translucent material, 3.5rem): the inverted `INSIGHT` wordmark (links to `/`); at the right the lowercase slash nav (`feed / sources / blog`; with analysis on `feed / tracks / briefings / sources / ingestion / blog`), the current word bold with a solid underline; a `go to ⌘K` button (Ctrl+K off Mac); the theme toggle (☾/☀). Its hairline appears only once content scrolls under it.
-- **Quick switcher:** a dialog at 18vh, 34rem wide: a "Go to…" combobox with `esc`, then a listbox of destinations, each with its group in `text-3` (feed, tracks, sources, theme). The active option is the inverted block with ↵. Reading-only: Unread, Starred, All posts, By source, one entry per track (to `/read/folder/<id>`), Sources, Source health, Ingestion, Design studio, then "Switch to light/dark theme". Design studio is the last destination with analysis on too, and absent inside a studio frame. "No page matches “…”" when the filter finds nothing.
+- **Top bar** (sticky, translucent material, 3.5rem): the inverted `INSIGHT` wordmark (links to `/`); at the right the lowercase slash nav (`feed / sources / blog`), the current word bold with a solid underline; a `go to ⌘K` button (Ctrl+K off Mac); the theme toggle (☾/☀). Its hairline appears only once content scrolls under it.
+- **Quick switcher:** a dialog at 18vh, 34rem wide: a "Go to…" combobox with `esc`, then a listbox of destinations, each with its group in `text-3` (feed, tracks, sources, theme). The active option is the inverted block with ↵. Unread, Starred, All posts, By source, one entry per track (to `/read/folder/<id>`), Sources, Source health, Ingestion, Blog, Design studio, then "Switch to light/dark theme". Design studio is the last destination, and absent inside a studio frame. "No page matches “…”" when the filter finds nothing.
 - **Keyboard help** (`?`): a dialog with the single-key switch and the key table (Feed / Post page columns).
 - **Design studio** (`/design`, ⌘K only, never in the top bar): its header, modes, Wall, walk, Bench and keys are described in `system/studio.md`.
 - **Dialogs and sheets:** `Dialog` centred with a scrim; `Sheet` from the right; `ConfirmDialog` for destructive actions; toasts bottom, monochrome, with an action (Undo) where reversible.
@@ -30,7 +30,7 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 
 - **switcher-many-tracks:** ⌘K with 40+ tracks and long names: the list scrolls inside `min(22rem, 60dvh)`, names truncate, the active option scrolls into view.
 - **narrow-topbar:** at 320px the nav words and the `go to` button give way to the `menu` icon; wordmark, menu and theme toggle fit without wrapping.
-- Also: scrolled (hairline on), analysis on (five words), route loading, route error.
+- Also: scrolled (hairline on), route loading, route error.
 
 ## Interactions & keys
 
@@ -42,7 +42,6 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 
 - Track names of 200 characters or in RTL scripts truncate in one line.
 - No tracks: the switcher shows only the fixed entries.
-- `GET /api/config` slow or failing: the bar shows the reading-only words (build flag fallback) and parked routes wait before redirecting.
 
 ## A11y & motion
 

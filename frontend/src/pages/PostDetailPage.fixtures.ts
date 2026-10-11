@@ -1,10 +1,10 @@
-import type { Api, Post, PostDetailResponse } from '../services/api';
+import type { Post, PostDetailResponse } from '../services/api';
 
 /**
  * Dev-only `?data=` fixtures for the post page (spec §F.7, break-ui). The post id in
- * the URL is ignored: every fixture answers for whichever post is open.
+ * the URL is ignored: every fixture answers for whichever post is open. The page
+ * imports this file on demand, in dev only.
  */
-export const POST_FIXTURE_NAMES = ['worst', 'empty', 'missing', 'slow'] as const;
 
 const UNBROKEN = 'https://github.com/anthropics/claude-code/commit/' + 'f0aaf74ef7184398'.repeat(6);
 
@@ -46,8 +46,6 @@ const DETAILS: Record<string, PostDetailResponse> = {
       content_html: WORST_HTML,
       categories: Array.from({ length: 24 }, (_, i) => `category-${i}-${'long'.repeat(i % 4)}`),
     }),
-    summary: null,
-    highlights: [],
     reader_state: { open_count: 98765, total_read_seconds: 987654, first_opened_at: '2024-01-01T00:00:00Z' } as PostDetailResponse['reader_state'],
   },
   empty: { success: true, post: post({ title: '', content: '', content_html: '', url: undefined, published_at: null, source_display_name: undefined }) },
@@ -55,26 +53,7 @@ const DETAILS: Record<string, PostDetailResponse> = {
   slow: { success: true, post: post({ title: 'Slow load: the skeleton should match this layout', content: WORST_HTML, content_html: WORST_HTML }) },
 };
 
-/** The post detail behind `?data=<name>`, for the studio's frames (Design Studio D4). */
+/** The post detail behind `?data=<name>`, for the post page and the studio's frames (Design Studio D4). */
 export function postFixtureDetail(name: string): PostDetailResponse | null {
   return DETAILS[name] ?? null;
-}
-
-/** The fixture API for `?data=<name>`: reads come from the fixtures, writes are no-ops. */
-export function postFixtureApi(name: string): Partial<Api> | null {
-  const detail = DETAILS[name];
-  if (!detail) return null;
-  const delay = name === 'slow' ? 2500 : 0;
-  const ok = async () => ({ success: true });
-  return {
-    getPostDetail: async () => {
-      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-      return detail;
-    },
-    getPostTimeline: async () => ({ success: true, has_story: false, timeline: null, related_candidates: [] }),
-    recordPostOpen: ok,
-    recordPostReadingSession: ok,
-    savePostNotes: ok,
-    togglePostFavorite: ok,
-  } as unknown as Partial<Api>;
 }

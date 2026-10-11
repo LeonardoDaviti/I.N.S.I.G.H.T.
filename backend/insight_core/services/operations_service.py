@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_operations import JobRunsRepository, SystemSettingsRepository
@@ -26,33 +26,22 @@ from insight_core.ingestion.schedule import (
     unavailable_reason,
 )
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.utils.env import env_float
+from insight_core.utils.json_safe import iso, json_safe
 
 
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
-
-
-# Human labels per job type. ingestion_run replaced safe_ingest, ingest_all,
-# fetch_source_now and folder_ingest in Mark IX; old rows keep their legacy labels.
+# Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
+# own name: "safe_ingest" -> "Safe ingest".
 JOB_LABELS: Dict[str, str] = {
     "ingestion_run": "Ingestion run",
     "scheduler_cycle": "Daily work",
     "archive_source": "Archive",
-    "daily_briefing": "Daily briefing",
-    "topic_briefing": "Topic briefing",
-    "expert_briefing": "Expert briefing",
-}
-LEGACY_JOB_LABELS: Dict[str, str] = {
-    "safe_ingest": "Ingestion cycle (legacy)",
-    "ingest_all": "Full ingest (legacy)",
-    "fetch_source_now": "Fetch now (legacy)",
-    "folder_ingest": "Track fetch (legacy)",
 }
 
 
 def job_label(job_type: Optional[str]) -> str:
     job_type = job_type or ""
-    return JOB_LABELS.get(job_type) or LEGACY_JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
+    return JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
 
 
 INGEST_TICK_MINUTES_MIN = 15
@@ -167,14 +156,14 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "folders": list(source.get("folders") or []),
         "stored_posts": stored,
         # When its newest post was published (fetched, if undated): the list's "last new post".
-        "last_post_at": _iso(source.get("last_post_at")),
+        "last_post_at": iso(source.get("last_post_at")),
         "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
         "tier": stats.tier.value,
         "mean_gap_hours": stats.mean_gap.total_seconds() / 3600 if stats.mean_gap is not None else None,
         "interval_hours": decision.interval.total_seconds() / 3600,
         "interval_basis": decision.interval_basis,
         "override_hours": stats.override_hours,
-        "next_due_at": _iso(decision.next_due_at),
+        "next_due_at": iso(decision.next_due_at),
         "would_fetch_now": decision.fetch,
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
@@ -183,14 +172,14 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # without a session: teasers only) says so here; None otherwise.
         "credential_notice": _credential_notice(kind),
         "status": health_status(enabled, decision, failures, state),
-        "last_attempt_at": _iso(state.last_attempt_at if state else None),
-        "last_success_at": _iso(state.last_success_at if state else None),
+        "last_attempt_at": iso(state.last_attempt_at if state else None),
+        "last_success_at": iso(state.last_success_at if state else None),
         "last_outcome": state.last_outcome if state else None,
         "last_fetched_posts": state.last_fetched_posts if state else None,
         "last_error": state.last_error if state else None,
-        "last_error_at": _iso(state.last_error_at if state else None),
+        "last_error_at": iso(state.last_error_at if state else None),
         "consecutive_failures": failures,
-        "next_retry_at": _iso(stats.next_retry_at),
+        "next_retry_at": iso(stats.next_retry_at),
         "dormant": failures >= BACKOFF_DORMANT_AFTER,
     }
 
@@ -243,7 +232,7 @@ class OperationsService:
 
     def get_scheduler_config(self) -> Dict[str, Any]:
         defaults = self._default_scheduler_config()
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER)
 
         if not row:
@@ -264,12 +253,10 @@ class OperationsService:
         payload = {
             "interval_hours": merged["interval_hours"],
             "sync_sources_each_cycle": merged["sync_sources_each_cycle"],
-            "generate_daily_briefing": merged["generate_daily_briefing"],
-            "generate_topic_briefing": merged["generate_topic_briefing"],
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
         }
 
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 updated_at = SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER, payload)
             conn.commit()
@@ -281,25 +268,25 @@ class OperationsService:
 
     def get_scheduler_state(self) -> Dict[str, Any]:
         """{last_tick_at, next_tick_at, last_daily_work_at, next_daily_work_at} as ISO strings (or {})."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             row = SystemSettingsRepository.get(cur, self.SETTINGS_KEY_SCHEDULER_STATE)
         return dict(row[0] or {}) if row else {}
 
     def set_scheduler_state(self, state: Dict[str, Any]) -> None:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER_STATE,
-                                                self._json_safe(state or {}))
+                                                json_safe(state or {}))
             conn.commit()
 
     def latest_successful_job_finished_at(self, job_type: str) -> Optional[datetime]:
         """When the newest successful job of this type finished (seeds the daily-work gate)."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return JobRunsRepository.latest_success_finished_at(cur, job_type)
 
     def latest_job_for_source(self, job_type: str, source_id: str) -> Optional[Dict[str, Any]]:
         """The newest job of this type for one source, summarised (the source sheet's archive)."""
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return JobRunsRepository.latest_for_source(cur, job_type, source_id)
 
     def start_job(
@@ -311,7 +298,7 @@ class OperationsService:
         message: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> str:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -336,14 +323,13 @@ class OperationsService:
     ) -> None:
         """Close out a job run.
 
-        Pass compact=True when the payload is a full result graph (expert/briefing
-        runs return every cited post, complete with content and content_html).
-        Those rows averaged 1.3MB each and grew job_runs without bound. Callers
+        Pass compact=True when the payload is a full result graph, so long lists and
+        long strings are cut before they land in job_runs. Callers
         that poll the job for its result - see pollOperationJob in the frontend -
         must keep compact=False.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
                 row = cur.fetchone()
@@ -393,7 +379,7 @@ class OperationsService:
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT payload FROM job_runs WHERE id = %s FOR UPDATE", (job_id,))
                 row = cur.fetchone()
@@ -423,6 +409,33 @@ class OperationsService:
                 )
             conn.commit()
 
+    # Tracked work (an archive, a fetch, a comment fetch) goes on when its job_runs row
+    # cannot be written: these log the failure and return, instead of raising.
+
+    def try_start_job(self, job_type: str, **kwargs: Any) -> Optional[str]:
+        """start_job, or None (logged) when the row cannot be written."""
+        try:
+            return self.start_job(job_type, **kwargs)
+        except Exception:
+            self.logger.exception("Could not start a %s job", job_type)
+            return None
+
+    def try_append_job_event(self, job_id: Optional[str], **kwargs: Any) -> None:
+        if not job_id:
+            return
+        try:
+            self.append_job_event(job_id, **kwargs)
+        except Exception:
+            self.logger.exception("Could not record an event on job %s", job_id)
+
+    def try_finish_job(self, job_id: Optional[str], **kwargs: Any) -> None:
+        if not job_id:
+            return
+        try:
+            self.finish_job(job_id, **kwargs)
+        except Exception:
+            self.logger.exception("Could not finish job %s", job_id)
+
     def prune_job_runs(self, retain_days: int = 30) -> int:
         """Delete job history older than retain_days. Returns rows removed.
 
@@ -430,7 +443,7 @@ class OperationsService:
         more memory-hungry. Called once per scheduler cycle.
         """
         retain_days = max(1, int(retain_days))
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM job_runs WHERE started_at < now() - make_interval(days => %s)",
@@ -442,7 +455,7 @@ class OperationsService:
 
     def list_recent_jobs(self, limit: int = 80) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -461,11 +474,7 @@ class OperationsService:
                       -- to the OS. Full payloads are still served by get_job().
                       jsonb_strip_nulls(jsonb_build_object(
                         'progress',          jr.payload->'progress',
-                        'estimated_tokens',  jr.payload->'estimated_tokens',
-                        'token_usage',       jr.payload->'token_usage',
-                        'error',             jr.payload->'error',
-                        'posts_processed',   jr.payload->'posts_processed',
-                        'saved_briefing_id', jr.payload->'saved_briefing_id'
+                        'error',             jr.payload->'error'
                       )),
                       jr.started_at,
                       jr.finished_at,
@@ -511,7 +520,7 @@ class OperationsService:
         return jobs
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -593,14 +602,12 @@ class OperationsService:
         }
 
     def get_database_counts(self) -> Dict[str, int]:
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT
                       (SELECT COUNT(*) FROM posts) AS total_posts,
-                      (SELECT COUNT(*) FROM topics) AS total_topics,
-                      (SELECT COUNT(*) FROM briefings) AS total_briefings,
                       (SELECT COUNT(*) FROM sources WHERE enabled = TRUE) AS enabled_sources
                     """
                 )
@@ -608,14 +615,12 @@ class OperationsService:
 
         return {
             "total_posts": int(row[0] or 0),
-            "total_topics": int(row[1] or 0),
-            "total_briefings": int(row[2] or 0),
-            "enabled_sources": int(row[3] or 0),
+            "enabled_sources": int(row[1] or 0),
         }
 
     def get_corpus_freshness(self) -> Dict[str, Any]:
         """Corpus-wide freshness: newest/oldest post, latest fetch, last-24h volume."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -628,9 +633,6 @@ class OperationsService:
                     """
                 )
                 row = cur.fetchone()
-
-        def iso(value: Any) -> Optional[str]:
-            return value.isoformat() if value else None
 
         return {
             "latest_post_at": iso(row[0]),
@@ -691,7 +693,7 @@ class OperationsService:
         return self._kinds
 
     def _load_schedule_view(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return FetchStateRepository().load_schedule_view(cur, source_ids)
 
     def _write_cadence_override(self, source_id: str, hours: Optional[float]) -> bool:
@@ -699,7 +701,7 @@ class OperationsService:
             uuid.UUID(str(source_id))
         except (TypeError, ValueError):
             return False
-        with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
             written = FetchStateRepository().set_cadence_override(cur, source_id, hours)
             conn.commit()
             return written
@@ -707,11 +709,9 @@ class OperationsService:
     def _default_scheduler_config(self) -> Dict[str, Any]:
         return self._normalize_scheduler_config(
             {
-                "interval_hours": float(os.getenv("INSIGHT_INGEST_INTERVAL_HOURS", "20")),
+                "interval_hours": env_float("INSIGHT_INGEST_INTERVAL_HOURS", 20),
                 "sync_sources_each_cycle": os.getenv("INSIGHT_SYNC_SOURCES_EACH_CYCLE", "true").lower() == "true",
-                "generate_daily_briefing": os.getenv("INSIGHT_GENERATE_DAILY_BRIEFING", "true").lower() == "true",
-                "generate_topic_briefing": os.getenv("INSIGHT_GENERATE_TOPIC_BRIEFING", "false").lower() == "true",
-                "ingest_tick_minutes": float(os.getenv("INSIGHT_INGEST_TICK_MINUTES", "60")),
+                "ingest_tick_minutes": env_float("INSIGHT_INGEST_TICK_MINUTES", 60),
                 "updated_at": None,
             }
         )
@@ -727,28 +727,12 @@ class OperationsService:
         return {
             "interval_hours": interval_hours,
             "sync_sources_each_cycle": bool(config.get("sync_sources_each_cycle", True)),
-            "generate_daily_briefing": bool(config.get("generate_daily_briefing", True)),
-            "generate_topic_briefing": bool(config.get("generate_topic_briefing", False)),
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
             "updated_at": config.get("updated_at"),
         }
 
-    def _json_safe(self, value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: self._json_safe(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._json_safe(item) for item in value]
-        if isinstance(value, tuple):
-            return [self._json_safe(item) for item in value]
-        if hasattr(value, "isoformat"):
-            try:
-                return value.isoformat()
-            except Exception:
-                return str(value)
-        return value
-
     def _prepare_payload(self, payload: Dict[str, Any], *, compact: bool = False) -> Dict[str, Any]:
-        prepared = self._json_safe(payload)
+        prepared = json_safe(payload)
         if compact:
             return self._compact_payload(prepared)
         return prepared
@@ -775,24 +759,6 @@ class OperationsService:
             if parent_key == "events":
                 return [self._compact_payload(item, parent_key=parent_key) for item in value[-200:]]
 
-            if parent_key == "topics":
-                summarized = []
-                for item in value[:12]:
-                    if isinstance(item, dict):
-                        summarized.append(
-                            {
-                                "id": item.get("id"),
-                                "title": item.get("title"),
-                                "post_count": len(item.get("post_ids", []) or []),
-                                "is_outlier": item.get("is_outlier", False),
-                            }
-                        )
-                    else:
-                        summarized.append(self._compact_payload(item, parent_key=parent_key))
-                if len(value) > 12:
-                    summarized.append({"truncated_topics": len(value) - 12})
-                return summarized
-
             if len(value) > 20:
                 preview = [self._compact_payload(item, parent_key=parent_key) for item in value[:10]]
                 preview.append({"truncated_items": len(value) - 10})
@@ -800,7 +766,7 @@ class OperationsService:
             return [self._compact_payload(item, parent_key=parent_key) for item in value]
 
         if isinstance(value, str):
-            limit = 1200 if parent_key not in {"briefing", "summary_markdown", "content", "content_html"} else 600
+            limit = 1200 if parent_key not in {"content", "content_html"} else 600
             if len(value) > limit:
                 return value[:limit] + "... [truncated]"
             return value

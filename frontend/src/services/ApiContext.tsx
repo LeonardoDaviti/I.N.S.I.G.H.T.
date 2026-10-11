@@ -1,16 +1,15 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { apiService, type Api } from './api';
+import { createApi, type Api } from './api';
 
 /**
- * The API seam for components (Mark IX §3). New components call `useApi()` and
- * never import `apiService` directly, so a test can render them inside
- * `<ApiProvider value={fakeApi}>`. The default value is the real singleton, so a
- * component rendered without a provider (and the Mark VIII files that import
- * `apiService` directly) keep working unchanged.
+ * The API seam for components (Mark IX §3). Screens and hooks call `useApi()`, so
+ * a test can render them inside `<ApiProvider value={fakeApi}>`. The default
+ * value is the real client.
  */
-const ApiContext = createContext<Api>(apiService);
+const realApi = createApi();
+const ApiContext = createContext<Api>(realApi);
 
-export function ApiProvider({ value = apiService, children }: { value?: Api; children: ReactNode }) {
+export function ApiProvider({ value = realApi, children }: { value?: Api; children: ReactNode }) {
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;
 }
 

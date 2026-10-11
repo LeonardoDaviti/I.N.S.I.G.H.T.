@@ -25,7 +25,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
 from insight_core.ingestion.http import KindHttp
-from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
     BaseKind,
@@ -44,6 +43,7 @@ from insight_core.ingestion.kinds.telegram_session import (
     TelegramFloodWait,
     TelethonClientFactory,
 )
+from insight_core.utils.json_safe import iso
 
 # The connector's 10-request / 18s throttle becomes the batch cooldown. Every MTProto source
 # shares one client, so the host key is one constant (2s floor in gates.HOST_FLOORS).
@@ -231,7 +231,7 @@ class TelegramKind(BaseKind):
         return Inspection(
             available_posts=int(total) if total is not None else None,
             page_size=CHUNK_SIZE,
-            first_post_date=parsing.isoformat(oldest[0].date) if oldest else None,
+            first_post_date=iso(oldest[0].date) if oldest else None,
             raw={"latest_message_id": latest[0].id if latest else None},
         )
 

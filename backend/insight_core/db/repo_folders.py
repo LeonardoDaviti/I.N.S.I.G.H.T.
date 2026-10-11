@@ -11,8 +11,7 @@ class FoldersRepository:
     """Database access layer for folders and source_folders tables."""
 
     UPDATABLE_FIELDS = {"name", "description", "sort_order", "kind",
-                        "exclude_from_main_digest", "match_keywords",
-                        "use_global_milestone_lanes"}
+                        "exclude_from_main_digest", "match_keywords"}
 
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -26,10 +25,9 @@ class FoldersRepository:
             "kind": row[3],
             "exclude_from_main_digest": bool(row[4]),
             "match_keywords": list(row[5] or []),
-            "use_global_milestone_lanes": bool(row[6]),
-            "sort_order": row[7],
-            "created_at": row[8],
-            "updated_at": row[9],
+            "sort_order": row[6],
+            "created_at": row[7],
+            "updated_at": row[8],
         }
 
     def create_folder(
@@ -47,7 +45,7 @@ class FoldersRepository:
             INSERT INTO folders (name, description, sort_order, kind,
                                  exclude_from_main_digest, match_keywords)
             VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, use_global_milestone_lanes, sort_order, created_at, updated_at
+            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
         """
         cur.execute(query, (name, description, sort_order, kind,
                             exclude_from_main_digest, list(match_keywords or [])))
@@ -58,7 +56,7 @@ class FoldersRepository:
     def get_folder(self, cur: Cursor, folder_id: str) -> Optional[Dict[str, Any]]:
         """Get a single folder by UUID."""
         query = """
-            SELECT id, name, description, kind, exclude_from_main_digest, match_keywords, use_global_milestone_lanes, sort_order, created_at, updated_at
+            SELECT id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
             FROM folders
             WHERE id = %s
         """
@@ -71,7 +69,7 @@ class FoldersRepository:
         query = """
             SELECT
                 f.id, f.name, f.description, f.kind, f.exclude_from_main_digest,
-                f.match_keywords, f.use_global_milestone_lanes, f.sort_order,
+                f.match_keywords, f.sort_order,
                 f.created_at, f.updated_at,
                 COUNT(DISTINCT sf.source_id) AS source_count,
                 COUNT(p.id) AS post_count
@@ -79,7 +77,7 @@ class FoldersRepository:
             LEFT JOIN source_folders sf ON sf.folder_id = f.id
             LEFT JOIN posts p ON p.source_id = sf.source_id
             GROUP BY f.id, f.name, f.description, f.kind, f.exclude_from_main_digest,
-                     f.match_keywords, f.use_global_milestone_lanes, f.sort_order,
+                     f.match_keywords, f.sort_order,
                      f.created_at, f.updated_at
             ORDER BY f.sort_order, f.name
         """
@@ -87,8 +85,8 @@ class FoldersRepository:
         folders = []
         for row in cur.fetchall():
             folder = self._folder_from_row(row)
-            folder["source_count"] = row[10]
-            folder["post_count"] = row[11]
+            folder["source_count"] = row[9]
+            folder["post_count"] = row[10]
             folders.append(folder)
         self.logger.debug(f"Retrieved {len(folders)} folders")
         return folders
@@ -105,7 +103,7 @@ class FoldersRepository:
             UPDATE folders
             SET {set_clause}, updated_at = now()
             WHERE id = %s
-            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, use_global_milestone_lanes, sort_order, created_at, updated_at
+            RETURNING id, name, description, kind, exclude_from_main_digest, match_keywords, sort_order, created_at, updated_at
         """
         cur.execute(query, values)
         row = cur.fetchone()
@@ -151,26 +149,6 @@ class FoldersRepository:
         if removed:
             self.logger.info(f"Removed source {source_id} from folder {folder_id}")
         return removed
-
-    def list_sources_in_folder(self, cur: Cursor, folder_id: str) -> List[Dict[str, Any]]:
-        """List the sources attached to a folder."""
-        query = """
-            SELECT s.id, s.platform, s.handle_or_url, s.enabled
-            FROM source_folders sf
-            JOIN sources s ON s.id = sf.source_id
-            WHERE sf.folder_id = %s
-            ORDER BY s.platform, s.handle_or_url
-        """
-        cur.execute(query, (folder_id,))
-        return [
-            {"id": str(row[0]), "platform": row[1], "handle_or_url": row[2], "enabled": row[3]}
-            for row in cur.fetchall()
-        ]
-
-    def list_source_ids_in_folder(self, cur: Cursor, folder_id: str) -> List[str]:
-        """Return just the source UUIDs attached to a folder."""
-        cur.execute("SELECT source_id FROM source_folders WHERE folder_id = %s", (folder_id,))
-        return [str(row[0]) for row in cur.fetchall()]
 
     def list_folder_ids_for_source(self, cur: Cursor, source_id: str) -> List[str]:
         """Return the folder UUIDs a source belongs to."""

@@ -80,7 +80,7 @@ Each job has exactly one page; a second view of the same thing is retired into t
 
 ## P10 Retire it, keep the idea
 
-A surface that doesn't serve reading leaves `main`: hidden behind `INSIGHT_ANALYSIS` while its retirement is in flight, then its code goes to a git tag and its idea stays as an issue in `plan/issues`.
+A surface that doesn't serve reading leaves `main`: its code goes to a git tag and its idea stays as an issue in `plan/issues`.
 
 - *Why:* hidden code costs every build and change, and the owner wants better versions later, not the old ones back (decision 016).
 - *Do:* an off route redirects to the feed, and what the owner liked is written down.

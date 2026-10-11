@@ -9,7 +9,6 @@ import {
   defaultDesired,
   describeAvailable,
   describeRate,
-  formatEstimate,
 } from './archive.ts';
 
 test('an exact count is the figure, with nothing to qualify', () => {
@@ -77,14 +76,6 @@ test('the default asks for 500 or everything, whichever is less', () => {
   assert.equal(defaultDesired(1722), 500);
   assert.equal(defaultDesired(126), 126);
   assert.equal(defaultDesired(null), 100);
-});
-
-test('time estimates read as rough durations', () => {
-  assert.equal(formatEstimate(null), null);
-  assert.equal(formatEstimate(0), 'under a minute');
-  assert.equal(formatEstimate(45), 'under a minute');
-  assert.equal(formatEstimate(300), '~5m');
-  assert.equal(formatEstimate(7800), '~2h 10m');
 });
 
 test('rate limits read as pauses', () => {

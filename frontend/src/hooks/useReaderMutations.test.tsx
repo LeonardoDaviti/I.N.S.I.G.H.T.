@@ -45,7 +45,7 @@ describe('useReaderMutations', () => {
   it('a failed read rolls back only its own change, keeping a later star', async () => {
     const read = deferred();
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockReturnValue(read.promise),
+      setPostsRead: vi.fn().mockReturnValue(read.promise),
       setPostStarred: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 2, by_source: { s1: 1, s2: 1 }, by_folder: {} }),
     });
@@ -67,7 +67,7 @@ describe('useReaderMutations', () => {
 
   it('a failed star restores only that post', async () => {
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       setPostStarred: vi.fn().mockRejectedValue(new Error('offline')),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: { s1: 0, s2: 1 }, by_folder: {} }),
     });
@@ -83,7 +83,7 @@ describe('useReaderMutations', () => {
   it('reports the change actually applied to each scope count', async () => {
     const changes: UnreadChange[] = [];
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: { s1: 0, s2: 1 }, by_folder: {} }),
     });
     const { result } = setup(api, (change) => changes.push(change));
@@ -96,10 +96,27 @@ describe('useReaderMutations', () => {
     expect(scopeDelta(changes[0], 'folder:f1')).toBe(0);
   });
 
+  it('undoes a big mark-through in batches of 500, as one change', async () => {
+    const setPostsRead = vi.fn().mockResolvedValue(undefined);
+    const api = makeFakeApi({ setPostsRead, getUnreadCounts: vi.fn().mockReturnValue(new Promise(() => {})) });
+    const { result, queryClient } = setup(api);
+    await act(async () => { await result.current.setRead(A, true); await result.current.setRead(B, true); });
+    setPostsRead.mockClear();
+    const ids = ['a', 'b', ...Array.from({ length: 1198 }, (_, i) => `x${i}`)];
+
+    await act(async () => { await result.current.markUnread(ids); });
+
+    expect(setPostsRead.mock.calls.map(([batch, read]) => [batch.length, read])).toEqual([[500, false], [500, false], [200, false]]);
+    expect(setPostsRead.mock.calls.flatMap(([batch]) => batch)).toEqual(ids);
+    expect(cached(queryClient, 'a').read_at).toBeNull();
+    expect(cached(queryClient, 'b').read_at).toBeNull();
+    expect(queryClient.getQueryData<UnreadCounts>([...UNREAD_COUNTS_KEY])?.total).toBe(2);
+  });
+
   it('in a track, a read moves that track’s count even before the health rows load', async () => {
     const changes: UnreadChange[] = [];
     const api = makeFakeApi({
-      setPostRead: vi.fn().mockResolvedValue(undefined),
+      setPostsRead: vi.fn().mockResolvedValue(undefined),
       getUnreadCounts: vi.fn().mockReturnValue(new Promise(() => {})),
     });
     const { result, queryClient } = setup(api, (change) => changes.push(change), 'folder:f1');

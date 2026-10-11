@@ -12,7 +12,7 @@ import { feedNavigation, initialNavState, type NavAction, type NavIntent } from 
 import { postHref, type FeedContext } from '../../lib/feedContext';
 import { errorMessage } from '../../lib/apiError';
 import { plural } from '../../lib/format';
-import { feedDayHeading, feedDayKey } from '../../lib/feedDates';
+import { feedDayHeading, feedDayKey } from '../../lib/dates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 import ConfirmDialog from '../ops/ConfirmDialog';
 import FeedItem from './FeedItem';

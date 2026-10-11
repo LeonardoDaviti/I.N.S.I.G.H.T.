@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit
+from insight_core.utils.json_safe import iso
 
 
 class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
@@ -22,9 +23,6 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
     BLOG_PREFIX = "/blog/"
     PAGE_SIZE = 9
     PAGE_DELAY_SECONDS = 1
-    META_CONTENT_RE = re.compile(
-        r'(?is)<meta\b[^>]+(?:name|property)="(?P<name>[^"]+)"[^>]+content="(?P<content>[^"]*)"[^>]*>'
-    )
 
     def matches(self, source: Dict[str, Any]) -> bool:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
@@ -34,7 +32,7 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
 
     async def inspect(self, source: Dict[str, Any]) -> Inspection:
         entries = await self._discover_entries(source)
-        first_post_date = parsing.isoformat((entries[-1] or {}).get("date")) if entries else None
+        first_post_date = iso((entries[-1] or {}).get("date")) if entries else None
         return Inspection(len(entries), self.PAGE_SIZE, first_post_date)
 
     async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
@@ -81,11 +79,11 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
         article_html = parsing.extract_article_html(html)
         content = parsing.strip_html(article_html or "")
         if not content.strip():
-            content = str(entry.get("excerpt") or self._extract_meta_content(html, "description") or "").strip()
+            content = str(entry.get("excerpt") or parsing.meta_content(html, "description") or "").strip()
         if not content.strip():
             return None
 
-        image_url = str(entry.get("hero_image") or self._extract_meta_content(html, "og:image") or "").strip()
+        image_url = str(entry.get("hero_image") or parsing.meta_content(html, "og:image") or "").strip()
         author = entry.get("author") or {}
         return {
             "platform": "rss",
@@ -93,7 +91,7 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
             "url": url,
             "external_id": str(entry.get("slug") or ""),
             "guid": url,
-            "title": str(entry.get("title") or self._extract_meta_content(html, "og:title") or url).strip(),
+            "title": str(entry.get("title") or parsing.meta_content(html, "og:title") or url).strip(),
             "content": content,
             "content_html": article_html,
             "date": entry.get("date"),
@@ -169,10 +167,3 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
 
     def _archive_url(self, source: Dict[str, Any]) -> str:
         return urllib.parse.urljoin(self._base_url(source), f"{self.ARCHIVE_PREFIX}/1/")
-
-    def _extract_meta_content(self, html: str, meta_name: str) -> str:
-        meta_name = meta_name.lower()
-        for match in self.META_CONTENT_RE.finditer(html or ""):
-            if (match.group("name") or "").lower() == meta_name:
-                return match.group("content") or ""
-        return ""

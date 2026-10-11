@@ -1,60 +1,16 @@
-// API service for INSIGHT backend communication
-import type { SourceConfig } from '../types';
-import { apiErrorFromResponse, errorMessage, isAbortError, toApiError } from '../lib/apiError';
+// The INSIGHT API client: one method per endpoint a screen calls, all through `request`.
 import { JobFailedError, pollJob } from '../lib/jobPolling';
+import { request, settle, type Envelope } from '../lib/request';
 import { asRunReport } from '../lib/runReport';
 
-// Use relative base by default (Vite dev proxy will forward /api to backend). Override with VITE_API_URL in production.
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
-
-export interface PostsResponse {
-  success: boolean;
-  posts: Post[];
-  date: string;
-  total: number;
-  source: string;  // "database"
-  error?: string;
-}
-
-export interface PostsBySourceResponse {
-  success: boolean;
-  posts: Post[];
-  source_id: string;
-  total: number;
-  returned?: number;
-  offset?: number;
-  limit?: number | null;
-  has_more?: boolean;
-  error?: string;
-}
-
-export interface SourceWithCount {
-  id: string;
-  handle_or_url: string;
-  display_name: string;  // Display name from settings, fallback to handle_or_url
-  enabled: boolean;
-  post_count: number;
-  priority: number;  // Priority for sorting
-}
-
-export interface PlatformData {
-  sources: SourceWithCount[];
-  total_count: number;
-}
-
-export interface SourcesWithCountsResponse {
-  success: boolean;
-  platforms: Record<string, PlatformData>;  // e.g., { "rss": {...}, "telegram": {...} }
-  total_posts: number;
-  error?: string;
-}
+export type { Envelope };
 
 export interface SourceSettings {
   display_name?: string;
   fetch_delay_seconds?: number;
   priority?: number;
   max_posts_per_fetch?: number;
-  archive?: Record<string, any>;
+  archive?: Record<string, unknown>;
 }
 
 export interface SourceWithSettings {
@@ -62,142 +18,24 @@ export interface SourceWithSettings {
   platform: string;
   handle_or_url: string;
   enabled: boolean;
+  in_main_digest?: boolean;
   post_count: number;
   settings: SourceSettings;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface SourceSettingsResponse {
-  success: boolean;
+export interface SourceSettingsResponse extends Envelope {
   source_id: string;
   settings: SourceSettings;
   source?: SourceWithSettings;
-  error?: string;
 }
 
-export interface SourcesWithSettingsResponse {
-  success: boolean;
+/** GET /api/sources: every source with its settings and post count. */
+export interface SourcesResponse extends Envelope {
   sources: SourceWithSettings[];
   total: number;
-  error?: string;
-}
-
-
-export interface BriefingRequest {
-  date: string; // Format: "YYYY-MM-DD"
-}
-
-export interface BriefingHighlight {
-  id?: string;
-  post_id?: string;
-  highlight_text?: string;
-  highlight_kind?: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  language_code?: string | null;
-  importance_score?: number;
-  commentary?: string | null;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  created_at?: string | null;
-}
-
-export interface BriefingReference {
-  id?: string;
-  artifact_type?: string;
-  artifact_id?: string;
-  post_id?: string;
-  highlight_id?: string | null;
-  reference_role?: string;
-  display_label?: string | null;
-  order_index?: number;
-  created_at?: string | null;
-  post?: Post | null;
-  highlight?: BriefingHighlight | null;
-}
-
-export interface BriefingResponse {
-  success: boolean;
-  briefing?: string; // AI-generated briefing content
-  date?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  posts?: Post[]; // Array of individual source posts
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  references?: BriefingReference[];
-  error?: string;
-}
-
-export interface WeeklyBriefingResponse {
-  success: boolean;
-  briefing?: string;
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  date?: string;
-  week_start?: string | null;
-  week_end?: string | null;
-  subject_key?: string | null;
-  daily_briefings_used?: number;
-  days_covered?: string[];
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  topics?: Topic[];
-  posts?: Record<string, Post>;
-  references?: BriefingReference[];
-  variant?: string;
-  error?: string;
-}
-
-export interface WeeklyTopicTimelineEntry {
-  date?: string | null;
-  summary?: string | null;
-  source_topics?: string[];
-  post_ids?: string[];
-}
-
-export interface Topic {
-  id: string;
-  title: string;
-  summary: string | null;
-  post_ids?: string[]; // For AI-generated topics (legacy)
-  posts?: Post[]; // For database topics
-  timeline?: WeeklyTopicTimelineEntry[];
-  is_outlier?: boolean;
-  created_at?: string;
-  post_count?: number;
-}
-
-export interface BriefingTopicsResponse {
-  success: boolean;
-  briefing?: string;
-  date?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  enhanced?: boolean;
-  cached?: boolean;
-  topics?: Topic[];
-  // posts map keyed by database post UUID
-  posts?: Record<string, Post>;
-  // list of database post UUIDs not referenced by any named topic
-  unreferenced_posts?: string[];
-  one_sentence_takeaway?: string | null;
-  references?: BriefingReference[];
-  error?: string;
-}
-
-export interface TopicsResponse {
-  success: boolean;
-  topics: Topic[];
-  date: string;
-  total: number;
-  message?: string;
-  error?: string;
+  total_posts?: number;
 }
 
 export interface Post {
@@ -219,25 +57,9 @@ export interface Post {
   published_at?: string | null;
   fetched_at?: string | null;
   categories?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   handle_or_url?: string;
   source_display_name?: string;
-  topics?: Array<{ id: string; title: string; date?: string | null }>;
-}
-
-export interface PostHighlight {
-  id?: string;
-  post_id?: string;
-  highlight_text: string;
-  highlight_kind?: string;
-  start_char?: number | null;
-  end_char?: number | null;
-  language_code?: string | null;
-  importance_score?: number;
-  commentary?: string | null;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  created_at?: string | null;
 }
 
 export interface ReaderState {
@@ -252,7 +74,7 @@ export interface ReaderState {
   starred_at?: string | null;
 }
 
-// ---- Reader (Mark IX, B7: /api/feed*) ----
+// ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
 export type FeedFilter = 'all' | 'unread' | 'starred';
 export type FeedView = 'stream' | 'by_source';
@@ -270,7 +92,8 @@ export interface FeedGroup {
   newest_sort_at: string; count: number; items: FeedItem[];   // items <= 3
 }
 export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_cursor: string | null; }
-export interface MarkReadResult { success: true; updated: number; ids: string[]; }
+/** PUT /api/feed/read: `ids` are the posts whose read state changed. */
+export interface ReadStateResult { success: true; updated: number; ids: string[]; }
 export interface UnreadCounts { total: number; by_source: Record<string, number>; by_folder: Record<string, number>; }
 
 export interface FeedParams {
@@ -281,18 +104,6 @@ export interface FeedParams {
   limit?: number;
   days?: number;
   signal?: AbortSignal;
-}
-
-export interface SourceStats {
-  success: boolean;
-  data?: Record<string, any>;
-  error?: string;
-}
-
-export interface ArchiveResponse {
-  success?: boolean;
-  error?: string;
-  [key: string]: any;
 }
 
 /** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
@@ -347,9 +158,7 @@ export interface ArchiveState {
   oldest_published_at?: string | null;
 }
 
-export interface ArchiveStatusResponse {
-  success?: boolean;
-  error?: string;
+export interface ArchiveStatusResponse extends Envelope {
   archive?: ArchiveState;
   /** Missing from a backend older than the source sheet's archive section. */
   support?: ArchiveSupport | null;
@@ -391,20 +200,23 @@ export interface ArchiveCatalogEntry {
   source_type?: string | null;
   last_archived_at?: string | null;
   last_live_fetch_at?: string | null;
-  checkpoint?: Record<string, any> | null;
-  rate_limit?: Record<string, any>;
+  checkpoint?: Record<string, unknown> | null;
+  rate_limit?: Record<string, unknown>;
 }
 
-export interface ArchiveCatalogResponse {
-  success?: boolean;
-  error?: string;
+export interface ArchiveCatalogResponse extends Envelope {
   sources?: ArchiveCatalogEntry[];
   total?: number;
 }
 
-export interface LogTailResponse {
-  success?: boolean;
-  error?: string;
+/** An archive request's pacing overrides, in the names the backend's `ArchiveRequest` takes; a key left out keeps the saved or default value. */
+export interface ArchivePacing {
+  pageDelaySeconds?: number;
+  batchSize?: number;
+  batchCooldownSeconds?: number;
+}
+
+export interface LogTailResponse extends Envelope {
   log?: string;
   available_logs?: string[];
   path?: string;
@@ -422,11 +234,9 @@ export interface SchedulerState {
 }
 
 export interface SchedulerConfig {
-  /** Daily work (briefings) interval. */
-  interval_hours: number;
+  /** The daily upkeep interval (pruning, cadence, the sources.json sync). Not edited here; sent back as read. */
+  interval_hours?: number;
   sync_sources_each_cycle: boolean;
-  generate_daily_briefing: boolean;
-  generate_topic_briefing: boolean;
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
   updated_at?: string | null;
@@ -445,7 +255,7 @@ export interface JobRun {
   source_display_name?: string | null;
   source_platform?: string | null;
   message?: string | null;
-  payload?: Record<string, any>;
+  payload?: Record<string, unknown>;
   progress?: number;
   event_count?: number;
   started_at?: string | null;
@@ -487,13 +297,11 @@ export interface RunReport {
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
   post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
-  /** Per-step counts, or why enrichment did not run (`{ skipped: 'analysis off' }`, reading-finish R3). */
-  enrichment: Record<string, { posts: number; chunks: number; failed_chunks: number }> | { skipped: string } | null;
 }
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | 'gemini' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -525,8 +333,6 @@ export interface CredentialProviderView {
   needed: boolean;
   testable: boolean;
   sign_in: boolean;
-  /** Gemini: shown only while analysis is on. */
-  analysis_only: boolean;
   configured: boolean;
   fields: CredentialField[];
   test: CredentialTest | null;
@@ -608,12 +414,10 @@ export interface RunRequestOptions {
   onAccepted?: (job: JobAccepted) => void;
 }
 
-export interface OperationsOverviewResponse {
-  success?: boolean;
-  error?: string;
+export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
-  /** Summary plus the 8 worst rows (Mark IX); use lib/operationsOverview.normalizeSourceHealth. */
+  /** Summary plus the 8 worst rows. */
   source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[] };
   alerts?: Array<{
     id: string;
@@ -623,149 +427,23 @@ export interface OperationsOverviewResponse {
     started_at?: string | null;
     source_id?: string | null;
   }>;
-  stats?: Record<string, any>;
+  stats?: Record<string, unknown>;
 }
 
-export interface OperationJobResponse {
-  success?: boolean;
-  error?: string;
+export interface OperationJobResponse extends Envelope {
   job?: JobRun | null;
 }
 
-export interface SystemCorpusStatus {
-  total_posts: number;
-  total_topics: number;
-  total_briefings: number;
-  enabled_sources: number;
-  total_sources: number;
-  latest_post_at?: string | null;
-  oldest_post_at?: string | null;
-  latest_fetch_at?: string | null;
-  posts_last_24h: number;
-}
-
-export interface SystemFolderStatus {
-  id: string;
-  name: string;
-  source_count: number;
-  post_count: number;
-}
-
-export interface SystemExpertStatus {
-  id: string;
-  name: string;
-  folder_id: string;
-  schedule?: string | null;
-  lookback_days: number;
-  enabled: boolean;
-  last_briefing_at?: string | null;
-}
-
-export interface SystemJobStatus {
-  id: string;
-  job_type: string;
-  status: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-  message?: string | null;
-}
-
-export interface SystemStatusResponse {
-  success: boolean;
-  healthy?: boolean;
-  gemini_configured?: boolean;
-  generated_at?: string;
-  corpus?: SystemCorpusStatus;
-  scheduler?: Partial<SchedulerConfig>;
-  folders?: SystemFolderStatus[];
-  experts?: SystemExpertStatus[];
-  recent_jobs?: SystemJobStatus[];
-  source_health_summary?: { monitored?: number; errors?: number };
-  error?: string;
-}
-
-/** Polling knobs for a request that may come back as a job (202 + job_id). */
-export interface TrackedRequestOptions {
-  timeoutMs?: number;
-  intervalMs?: number;
-  signal?: AbortSignal;
-}
-
-interface AcceptedJobResponse {
-  success?: boolean;
-  accepted?: boolean;
-  job_id?: string;
-  job_type?: string;
-  status?: string;
-  message?: string;
-}
-
-export interface PostNotesPayload {
-  post_id: string;
-  notes_markdown: string;
-  updated_at?: string | null;
-}
-
-export interface PostDetailResponse {
-  success?: boolean;
-  error?: string;
+export interface PostDetailResponse extends Envelope {
   post?: Post | null;
-  notes?: PostNotesPayload;
-  summary?: PostSummaryResponse | null;
-  summary_references?: BriefingReference[];
-  highlights?: PostHighlight[];
   reader_state?: ReaderState | null;
 }
 
-export interface PostSummaryResponse {
-  success?: boolean;
-  error?: string;
+export interface PostInteractionResponse extends Envelope {
   post_id?: string;
-  summary_markdown?: string;
-  model?: string;
-  updated_at?: string | null;
-  cached?: boolean;
-  categories?: string[];
-  estimated_tokens?: number;
-  one_sentence_takeaway?: string | null;
-  highlights?: PostHighlight[];
-  references?: BriefingReference[];
-}
-
-export interface PostHighlightsResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  highlights?: PostHighlight[];
-  one_sentence_takeaway?: string | null;
-  cached?: boolean;
-  model?: string | null;
-}
-
-export interface PostReaderStateResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  reader_state?: ReaderState | null;
-}
-
-export interface PostInteractionResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  event?: Record<string, any> | null;
+  event?: ({ created_at?: string } & Record<string, unknown>) | null;
   reader_state?: ReaderState | null;
   favorited?: boolean;
-}
-
-export interface PostChatResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  answer?: string;
-  source?: string;
-  estimated_tokens?: number;
-  context?: Record<string, any>;
 }
 
 export interface RedditComment {
@@ -778,482 +456,12 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface RedditCommentsResponse {
-  success?: boolean;
-  error?: string;
+export interface RedditCommentsResponse extends Envelope {
   post_id?: string;
   comments?: RedditComment[];
   comment_count?: number;
   cached?: boolean;
   fetched_at?: string | null;
-}
-
-export interface RedditCommentsBriefingResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  summary_markdown?: string;
-  model?: string | null;
-  signals?: string[];
-  updated_at?: string | null;
-  comment_count?: number;
-  cached?: boolean;
-  estimated_tokens?: number;
-}
-
-export interface EvidenceArtifact {
-  id: string;
-  artifact_type: string;
-  canonical_url: string;
-  normalized_url: string;
-  url_host?: string | null;
-  display_title?: string | null;
-  status?: string;
-  metadata?: Record<string, any>;
-  relation_type?: string;
-  confidence?: number;
-  is_primary?: boolean;
-  link_metadata?: Record<string, any>;
-  created_at?: string | null;
-}
-
-export interface EvidenceRelation {
-  from_post_id?: string;
-  to_post_id?: string;
-  relation_type: string;
-  method?: string;
-  confidence?: number;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-}
-
-export interface EvidenceDebug {
-  post?: Record<string, any>;
-  artifacts?: EvidenceArtifact[];
-  relations?: {
-    outgoing?: EvidenceRelation[];
-    incoming?: EvidenceRelation[];
-  };
-}
-
-export interface MemoryMentionCandidate {
-  mention_id: string;
-  entity_id: string;
-  candidate_method: string;
-  score: number;
-  selected: boolean;
-  resolver_version: string;
-  created_at?: string | null;
-  mention_text?: string | null;
-  normalized_mention?: string | null;
-  entity_type?: string | null;
-  canonical_name?: string | null;
-  normalized_name?: string | null;
-}
-
-export interface MemoryMention {
-  id: string;
-  post_id: string;
-  mention_text: string;
-  normalized_mention: string;
-  language_code?: string | null;
-  entity_type_predicted: string;
-  role?: string | null;
-  char_start?: number | null;
-  char_end?: number | null;
-  extractor_confidence?: number;
-  extractor_name?: string | null;
-  extractor_version?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  candidates?: MemoryMentionCandidate[];
-}
-
-export interface MemoryEntity {
-  post_id: string;
-  entity_id: string;
-  mention_id: string;
-  resolution_status: string;
-  confidence: number;
-  role?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  entity: {
-    id: string;
-    entity_type: string;
-    canonical_name: string;
-    canonical_name_pivot?: string | null;
-    normalized_name: string;
-    description?: string | null;
-    status?: string;
-    review_state?: string;
-    first_seen_at?: string | null;
-    last_seen_at?: string | null;
-  };
-  mention: {
-    id: string;
-    mention_text: string;
-    normalized_mention: string;
-    entity_type_predicted: string;
-  };
-}
-
-export interface MemorySourceProfile {
-  source_id: string;
-  language_code?: string | null;
-  publisher_type?: string | null;
-  country_code?: string | null;
-  is_primary_reporter?: boolean;
-  reliability_notes?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface MemoryDebug {
-  post?: Record<string, any>;
-  source_profile?: MemorySourceProfile;
-  mentions?: MemoryMention[];
-  entities?: MemoryEntity[];
-  candidates?: MemoryMentionCandidate[];
-}
-
-export interface EventEvidence {
-  event_id: string;
-  event: {
-    id: string;
-    event_type: string;
-    title: string;
-    normalized_event_key?: string | null;
-    status?: string;
-    confidence?: number;
-    occurred_at?: string | null;
-    first_seen_at?: string | null;
-    last_seen_at?: string | null;
-  };
-  stance: string;
-  evidence_snippet?: string | null;
-  confidence?: number;
-  extractor_version?: string | null;
-  created_at?: string | null;
-}
-
-export interface EventEntityLink {
-  event_id: string;
-  entity_id: string;
-  role?: string | null;
-  created_at?: string | null;
-  event: {
-    id: string;
-    event_type: string;
-    title: string;
-    normalized_event_key?: string | null;
-  };
-  entity: {
-    id: string;
-    entity_type: string;
-    canonical_name: string;
-    normalized_name: string;
-    review_state?: string;
-  };
-}
-
-export interface EventDebug {
-  post?: Record<string, any>;
-  events?: Array<EventEvidence["event"] & { evidence?: EventEvidence[]; entities?: EventEntityLink[] }>;
-  evidence?: EventEvidence[];
-  entities?: EventEntityLink[];
-}
-
-export interface StoryAnchorPost {
-  id: string;
-  url?: string | null;
-  title?: string | null;
-  published_at?: string | null;
-  source_id?: string | null;
-  platform?: string | null;
-  handle_or_url?: string | null;
-  normalized_url?: string | null;
-  canonical_url?: string | null;
-  url_host?: string | null;
-  source_display_name?: string | null;
-}
-
-export interface StoryCard {
-  id: string;
-  canonical_title: string;
-  canonical_summary?: string | null;
-  story_kind?: string;
-  status?: string;
-  anchor_post_id?: string | null;
-  anchor_confidence?: number;
-  first_seen_at?: string | null;
-  last_seen_at?: string | null;
-  created_by_method?: string | null;
-  resolution_version?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  post_count?: number;
-  update_count?: number;
-  anchor_post?: StoryAnchorPost | null;
-  role?: string;
-  relevance_score?: number;
-  anchor_score?: number;
-  is_anchor_candidate?: boolean;
-  evidence_weight?: number;
-  added_by_method?: string | null;
-  added_at?: string | null;
-  story_post_metadata?: Record<string, any>;
-  /** present on the story detail response (repo_stories attaches the updates) */
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryPostEntry {
-  story_id: string;
-  post_id: string;
-  role?: string | null;
-  relevance_score?: number;
-  anchor_score?: number;
-  is_anchor_candidate?: boolean;
-  evidence_weight?: number;
-  added_by_method?: string | null;
-  added_at?: string | null;
-  metadata?: Record<string, any>;
-  post: Post;
-}
-
-export interface StoryUpdatePostEntry {
-  story_update_id: string;
-  post_id: string;
-  role?: string | null;
-  created_at?: string | null;
-  post: Post;
-}
-
-export interface StoryUpdateEntry {
-  id: string;
-  story_id: string;
-  update_date?: string | null;
-  title: string;
-  summary: string;
-  importance_score?: number;
-  created_by_method?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  post_count?: number;
-  posts?: StoryUpdatePostEntry[];
-}
-
-export interface StoryDetail extends StoryCard {
-  posts?: StoryPostEntry[];
-  posts_by_role?: Record<string, StoryPostEntry[]>;
-  updates?: StoryUpdateEntry[];
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryTimelineResponse {
-  story_id: string;
-  story?: StoryCard;
-  timeline?: StoryUpdateEntry[];
-}
-
-export interface StoryCandidateLink {
-  id: string;
-  source_post_id: string;
-  candidate_post_id: string;
-  candidate_story_id?: string | null;
-  retrieval_method: string;
-  retrieval_score: number;
-  decision_status: string;
-  decision_reason?: string | null;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  candidate_post?: Post | null;
-  candidate_story?: Pick<StoryCard, 'id' | 'canonical_title' | 'story_kind' | 'status'> | null;
-}
-
-export interface PostTimelineView {
-  grouped_dates?: string[];
-  current_update?: StoryUpdateEntry | null;
-  earlier_updates?: StoryUpdateEntry[];
-  later_updates?: StoryUpdateEntry[];
-  total_updates?: number;
-}
-
-export interface PostTimelineResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  post?: Post | null;
-  has_story?: boolean;
-  primary_story?: StoryCard | null;
-  story?: StoryDetail | null;
-  timeline?: PostTimelineView | null;
-  related_candidates?: StoryCandidateLink[];
-  refreshed?: boolean;
-}
-
-export interface InboxBatch {
-  id: string;
-  scope_type: string;
-  scope_value?: string | null;
-  generated_for_date?: string | null;
-  status?: string;
-  item_count?: number;
-  metadata?: Record<string, any>;
-  created_at?: string | null;
-  updated_at?: string | null;
-  pending_count?: number;
-  acted_count?: number;
-}
-
-export interface InboxItem {
-  id: string;
-  batch_id: string;
-  batch_scope_type?: string;
-  batch_scope_value?: string | null;
-  batch_generated_for_date?: string | null;
-  batch_status?: string;
-  batch_item_count?: number;
-  batch_metadata?: Record<string, any>;
-  batch_created_at?: string | null;
-  batch_updated_at?: string | null;
-  target_type: string;
-  target_id: string;
-  status: string;
-  priority_score?: number;
-  novelty_score?: number;
-  evidence_score?: number;
-  duplication_penalty?: number;
-  source_priority_score?: number;
-  reason_summary?: string | null;
-  reasons?: Array<Record<string, any>>;
-  surfaced_at?: string | null;
-  acted_at?: string | null;
-  metadata?: Record<string, any>;
-  item_created_at?: string | null;
-  item_updated_at?: string | null;
-  target_preview?: Record<string, any> | null;
-}
-
-export interface InboxAction {
-  id: string;
-  inbox_item_id?: string | null;
-  target_type: string;
-  target_id: string;
-  action_type: string;
-  actor_id?: string | null;
-  created_by?: string | null;
-  payload?: Record<string, any>;
-  created_at?: string | null;
-  item_status?: string | null;
-  batch_id?: string | null;
-  scope_type?: string | null;
-  scope_value?: string | null;
-  generated_for_date?: string | null;
-}
-
-export interface InboxItemDetail {
-  success?: boolean;
-  error?: string;
-  item?: InboxItem | null;
-  target?: Record<string, any> | null;
-  actions?: InboxAction[];
-}
-
-export interface InboxBatchResponse {
-  success?: boolean;
-  error?: string;
-  batch?: InboxBatch | null;
-  items?: InboxItem[];
-  total?: number;
-}
-
-export interface InboxBatchesResponse {
-  success?: boolean;
-  error?: string;
-  batches?: InboxBatch[];
-  total?: number;
-}
-
-export interface InboxItemsResponse {
-  success?: boolean;
-  error?: string;
-  items?: InboxItem[];
-  total?: number;
-}
-
-export interface InboxActionsResponse {
-  success?: boolean;
-  error?: string;
-  actions?: InboxAction[];
-  total?: number;
-}
-
-export interface InboxActionResponse {
-  success?: boolean;
-  error?: string;
-  action?: InboxAction | null;
-  item?: InboxItem | null;
-  side_effects?: Array<Record<string, any>>;
-}
-
-export interface VerticalBriefingTrack {
-  id: string;
-  title: string;
-  summary?: string;
-  track_kind?: string;
-  post_ids?: string[];
-  timeline?: Array<{
-    date?: string | null;
-    summary?: string | null;
-    post_ids?: string[];
-  }>;
-  story_titles?: string[];
-  entity_hints?: string[];
-  evidence_cluster_count?: number;
-  raw_post_count?: number;
-  unique_post_count?: number;
-}
-
-export interface VerticalBriefingResponse {
-  success?: boolean;
-  error?: string;
-  briefing?: string;
-  vertical_briefing?: string;
-  format?: string;
-  saved_briefing_id?: string | null;
-  cached?: boolean;
-  scope_type?: string;
-  scope_id?: string;
-  source_id?: string;
-  source_label?: string;
-  start_date?: string;
-  end_date?: string;
-  subject_key?: string;
-  posts_processed?: number;
-  total_posts_fetched?: number;
-  estimated_tokens?: number;
-  tracks?: VerticalBriefingTrack[];
-  posts?: Record<string, Post>;
-  variant?: string;
-}
-
-export interface RebuildResponse {
-  success?: boolean;
-  error?: string;
-  job_id?: string | null;
-  result?: Record<string, any>;
-  [key: string]: any;
-}
-
-export interface SyncSourcesResponse {
-  success: boolean;
-  error?: string;
-  message?: string;
-  [key: string]: any;
 }
 
 export interface YouTubeVideoPreview {
@@ -1267,29 +475,10 @@ export interface YouTubeVideoPreview {
   source_handle: string;
 }
 
-export interface YouTubeChannelVideosResponse {
-  success?: boolean;
-  error?: string;
-  channel?: Record<string, any>;
+export interface YouTubeChannelVideosResponse extends Envelope {
+  channel?: Record<string, unknown>;
   total_videos?: number;
   videos?: YouTubeVideoPreview[];
-}
-
-export interface YouTubeVideoChapter {
-  title: string;
-  start_seconds: number;
-  end_seconds?: number;
-}
-
-export interface YouTubeVideoEvaluationResponse {
-  success?: boolean;
-  error?: string;
-  summary_markdown?: string;
-  chapters?: YouTubeVideoChapter[];
-  depth?: string;
-  novelty?: string;
-  worth_watching?: string;
-  reasoning?: string;
 }
 
 export interface YouTubeWatchProgress {
@@ -1308,1542 +497,8 @@ export interface YouTubeWatchProgress {
   updated_at?: string | null;
 }
 
-export interface YouTubeWatchProgressResponse {
-  success?: boolean;
-  error?: string;
+export interface YouTubeWatchProgressResponse extends Envelope {
   progress?: YouTubeWatchProgress | null;
-}
-
-/** GET /api/config. */
-export interface AppConfig {
-  analysis_enabled: boolean;
-}
-
-class ApiService {
-  /** One HTTP call. Non-2xx throws `ApiError` (status + the server's clean `detail`);
-   *  a network failure throws `ApiError` with status 0. Mark VIII methods catch this
-   *  and wrap it in `{success: false, error}`; Mark IX methods let it propagate to
-   *  react-query and the `ErrorState` components (§4 error contract). */
-  private async makeRequest<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
-
-    const defaultOptions: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    };
-
-    let response: Response;
-    try {
-      response = await fetch(url, { ...defaultOptions, ...options });
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      throw toApiError(error);
-    }
-
-    if (!response.ok) {
-      throw await apiErrorFromResponse(response);
-    }
-
-    return response.json();
-  }
-
-  private isAcceptedJobResponse(value: unknown): value is AcceptedJobResponse {
-    return Boolean(
-      value
-      && typeof value === 'object'
-      && (value as AcceptedJobResponse).accepted
-      && typeof (value as AcceptedJobResponse).job_id === 'string',
-    );
-  }
-
-  /** Wait for an operation job and resolve with its payload. Throws: `JobFailedError`
-   *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError` when
-   *  `signal` aborts, or the `ApiError` that ended polling. Up to two consecutive
-   *  transient read errors (a backend restart, a 502 from nginx) are tolerated. */
-  async waitForJob<T>(jobId: string, opts?: TrackedRequestOptions): Promise<T> {
-    return pollJob<T>(
-      async (signal) => {
-        const response = await this.makeRequest<OperationJobResponse>(
-          `/api/operations/jobs/${encodeURIComponent(jobId)}`,
-          { signal },
-        );
-        const job = response.job;
-        if (!job) {
-          return { state: 'failed', error: response.error || `Operation job ${jobId} not found` };
-        }
-        if (job.status === 'success') {
-          return { state: 'done', value: (job.payload || {}) as T };
-        }
-        if (job.status === 'failed') {
-          const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
-          return {
-            state: 'failed',
-            error: payloadError || job.message || `Operation ${job.job_type} failed`,
-            value: (job.payload || {}) as T,
-          };
-        }
-        return { state: 'pending' };
-      },
-      {
-        signal: opts?.signal,
-        timeoutMs: Math.max(10_000, opts?.timeoutMs ?? 600_000),
-        intervalMs: Math.max(500, opts?.intervalMs ?? 1_500),
-      },
-    );
-  }
-
-  /** A request that may answer 202 with a job id; polls the job when it does.
-   *  Keeps the Mark VIII contract for its callers: failures, timeouts and polling
-   *  errors resolve as `{success: false, error}` (the failed job's payload is
-   *  spread in, as before). Only an abort rejects. */
-  private async makeTrackedRequest<T extends { success?: boolean; error?: string }>(
-    url: string,
-    options: RequestInit,
-    opts?: TrackedRequestOptions,
-  ): Promise<T> {
-    const requestOptions = opts?.signal ? { ...options, signal: opts.signal } : options;
-    const response = await this.makeRequest<T | AcceptedJobResponse>(url, requestOptions);
-    if (!this.isAcceptedJobResponse(response)) {
-      return response as T;
-    }
-    try {
-      const payload = await this.waitForJob<Record<string, unknown>>(response.job_id!, opts);
-      return { success: true, ...payload } as unknown as T;
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      const payload = error instanceof JobFailedError && error.value && typeof error.value === 'object'
-        ? error.value as Record<string, unknown>
-        : {};
-      return { ...payload, success: false, error: errorMessage(error) } as unknown as T;
-    }
-  }
-
-
-  async generateBriefing(date: string): Promise<BriefingResponse> {
-    try {
-      const response = await this.makeTrackedRequest<BriefingResponse>('/api/daily', {
-        method: 'POST',
-        body: JSON.stringify({ date, asyncMode: true }),
-      });
-      
-      return response;
-    } catch (error) {
-      console.error('Failed to generate briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async generateWeeklyBriefing(date: string, refresh = false, includeTopics = false): Promise<WeeklyBriefingResponse> {
-    try {
-      return await this.makeTrackedRequest<WeeklyBriefingResponse>('/api/weekly', {
-        method: 'POST',
-        body: JSON.stringify({ date, refresh, includeTopics, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to generate weekly briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async generateBriefingWithTopics(
-    date: string,
-    opts?: { includeUnreferenced?: boolean; refresh?: boolean }
-  ): Promise<BriefingTopicsResponse> {
-    try {
-      const endpoint = `/api/daily/topics`;
-      const response = await this.makeTrackedRequest<BriefingTopicsResponse>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-          date,
-          includeUnreferenced: opts?.includeUnreferenced ?? true,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        })
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to generate briefing with topics:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      } as BriefingTopicsResponse;
-    }
-  }
-
-  async getEnabledSources(): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/enabled-sources');
-      return response;
-    } catch (error) {
-      console.error('Failed to get enabled sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch sources'
-      };
-    }
-  }
-
-  async getSources(): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/sources');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch sources'
-      };
-    }
-  }
-
-  async updateSources(config: SourceConfig): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/sources', {
-        method: 'POST',
-        body: JSON.stringify(config),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update sources'
-      };
-    }
-  }
-
-  async syncSources(direction: 'json-to-db' | 'db-to-json'): Promise<SyncSourcesResponse> {
-    try {
-      return await this.makeRequest<SyncSourcesResponse>(`/api/sources/sync/${direction}`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to sync sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to sync sources',
-      };
-    }
-  }
-
-  async getDailyPosts(date: string): Promise<PostsResponse> {
-    try {
-      const response = await this.makeRequest<PostsResponse>(`/api/posts/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get daily posts:', error);
-      return {
-        success: false,
-        posts: [],
-        date: date,
-        total: 0,
-        source: 'database',
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getPostsBySource(
-    sourceId: string,
-    options?: { limit?: number; offset?: number },
-  ): Promise<PostsBySourceResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (options?.limit != null) params.set('limit', String(options.limit));
-      if (options?.offset != null) params.set('offset', String(options.offset));
-      const query = params.toString();
-      const response = await this.makeRequest<PostsBySourceResponse>(
-        `/api/posts/source/${sourceId}${query ? `?${query}` : ''}`,
-      );
-      return response;
-    } catch (error) {
-      console.error('Failed to get posts by source:', error);
-      return {
-        success: false,
-        posts: [],
-        source_id: sourceId,
-        total: 0,
-        returned: 0,
-        offset: options?.offset || 0,
-        limit: options?.limit ?? null,
-        has_more: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getPostDetail(postId: string): Promise<PostDetailResponse> {
-    try {
-      return await this.makeRequest<PostDetailResponse>(`/api/posts/item/${postId}`);
-    } catch (error) {
-      console.error('Failed to get post detail:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post: null,
-      };
-    }
-  }
-
-  async getPostHighlights(postId: string, refresh = false): Promise<PostHighlightsResponse> {
-    try {
-      return await this.makeRequest<PostHighlightsResponse>(`/api/posts/item/${postId}/highlights`, {
-        method: 'POST',
-        body: JSON.stringify({ refresh }),
-      });
-    } catch (error) {
-      console.error('Failed to get post highlights:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        highlights: [],
-      };
-    }
-  }
-
-  async getPostReaderState(postId: string): Promise<PostReaderStateResponse> {
-    try {
-      return await this.makeRequest<PostReaderStateResponse>(`/api/posts/item/${postId}/reader-state`);
-    } catch (error) {
-      console.error('Failed to get post reader state:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        reader_state: null,
-      };
-    }
-  }
-
-  async recordPostOpen(postId: string, metadata?: Record<string, any>): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, {
-        method: 'POST',
-        body: JSON.stringify({ metadata }),
-      });
-    } catch (error) {
-      console.error('Failed to record post open:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async recordPostReadingSession(
-    postId: string,
-    durationSeconds: number,
-    metadata?: Record<string, any>,
-  ): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, {
-        method: 'POST',
-        body: JSON.stringify({ durationSeconds, metadata }),
-      });
-    } catch (error) {
-      console.error('Failed to record post reading session:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async togglePostFavorite(postId: string, favorited: boolean): Promise<PostInteractionResponse> {
-    try {
-      return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, {
-        method: 'POST',
-        body: JSON.stringify({ favorited }),
-      });
-    } catch (error) {
-      console.error('Failed to toggle post favorite:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async getPostNotes(postId: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`);
-    } catch (error) {
-      console.error('Failed to get post notes:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        notes_markdown: '',
-      };
-    }
-  }
-
-  async savePostNotes(postId: string, notesMarkdown: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`, {
-        method: 'PUT',
-        body: JSON.stringify({ notesMarkdown }),
-      });
-    } catch (error) {
-      console.error('Failed to save post notes:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        notes_markdown: notesMarkdown,
-      };
-    }
-  }
-
-  async getPostSummary(postId: string, refresh = false): Promise<PostSummaryResponse> {
-    try {
-      return await this.makeTrackedRequest<PostSummaryResponse>(`/api/posts/item/${postId}/summary`, {
-        method: 'POST',
-        body: JSON.stringify({ refresh, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to get post summary:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async chatAboutPost(postId: string, question: string): Promise<PostChatResponse> {
-    try {
-      return await this.makeTrackedRequest<PostChatResponse>(`/api/posts/item/${postId}/chat`, {
-        method: 'POST',
-        body: JSON.stringify({ question, asyncMode: true }),
-      });
-    } catch (error) {
-      console.error('Failed to chat about post:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async fetchRedditComments(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsResponse> {
-    try {
-      return await this.makeTrackedRequest<RedditCommentsResponse>(`/api/posts/item/${postId}/reddit-comments`, {
-        method: 'POST',
-        body: JSON.stringify({
-          limit: opts?.limit ?? 80,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to fetch Reddit comments:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        comments: [],
-      };
-    }
-  }
-
-  async generateRedditCommentsBriefing(postId: string, opts?: { limit?: number; refresh?: boolean }): Promise<RedditCommentsBriefingResponse> {
-    try {
-      return await this.makeTrackedRequest<RedditCommentsBriefingResponse>(`/api/posts/item/${postId}/reddit-comments/briefing`, {
-        method: 'POST',
-        body: JSON.stringify({
-          limit: opts?.limit ?? 80,
-          refresh: opts?.refresh ?? false,
-          asyncMode: true,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to generate Reddit comments briefing:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-      };
-    }
-  }
-
-  async getSourcesWithCounts(): Promise<SourcesWithCountsResponse> {
-    try {
-      const response = await this.makeRequest<SourcesWithCountsResponse>('/api/sources/with-counts');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources with counts:', error);
-      return {
-        success: false,
-        platforms: {},
-        total_posts: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getSourceSettings(sourceId: string): Promise<SourceSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get source settings:', error);
-      return {
-        success: false,
-        source_id: sourceId,
-        settings: {},
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async updateSourceSettings(sourceId: string, settings: SourceSettings): Promise<SourceSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, {
-        method: 'PUT',
-        body: JSON.stringify(settings),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update source settings:', error);
-      return {
-        success: false,
-        source_id: sourceId,
-        settings: {},
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getSourcesWithSettings(): Promise<SourcesWithSettingsResponse> {
-    try {
-      const response = await this.makeRequest<SourcesWithSettingsResponse>('/api/sources/with-settings');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources with settings:', error);
-      return {
-        success: false,
-        sources: [],
-        total: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async getArchiveStatus(sourceId: string): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/status`);
-    } catch (error) {
-      console.error('Failed to get archive status:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getArchiveCatalog(): Promise<ArchiveCatalogResponse> {
-    try {
-      return await this.makeRequest<ArchiveCatalogResponse>('/api/archive/catalog');
-    } catch (error) {
-      console.error('Failed to get archive catalog:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        sources: [],
-        total: 0,
-      };
-    }
-  }
-
-  async planArchive(
-    sourceId: string,
-    desiredPosts?: number,
-    options?: {
-      resume?: boolean;
-      pageDelaySeconds?: number;
-      batchSize?: number;
-      batchCooldownSeconds?: number;
-    },
-  ): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/plan`, {
-        method: 'POST',
-        body: JSON.stringify({
-          desiredPosts,
-          resume: options?.resume ?? true,
-          pageDelaySeconds: options?.pageDelaySeconds,
-          batchSize: options?.batchSize,
-          batchCooldownSeconds: options?.batchCooldownSeconds,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to plan archive:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async runArchive(
-    sourceId: string,
-    desiredPosts?: number,
-    options?: {
-      resume?: boolean;
-      pageDelaySeconds?: number;
-      batchSize?: number;
-      batchCooldownSeconds?: number;
-    },
-  ): Promise<ArchiveResponse> {
-    try {
-      return await this.makeRequest<ArchiveResponse>(`/api/archive/${sourceId}/run`, {
-        method: 'POST',
-        body: JSON.stringify({
-          desiredPosts,
-          resume: options?.resume ?? true,
-          pageDelaySeconds: options?.pageDelaySeconds,
-          batchSize: options?.batchSize,
-          batchCooldownSeconds: options?.batchCooldownSeconds,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to run archive:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  // ---- The source sheet's archive section (Mark IX). These throw (ApiError) instead of
-  // resolving {success:false}; a backend without `support` still answers the status.
-
-  async getSourceArchive(sourceId: string): Promise<ArchiveStatusResponse> {
-    const response = await this.makeRequest<ArchiveStatusResponse>(`/api/archive/${encodeURIComponent(sourceId)}/status`);
-    if (response.success === false) throw new Error(response.error || 'Could not read the archive status');
-    return response;
-  }
-
-  /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts. */
-  async planSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<ArchivePlan> {
-    const response = await this.makeRequest<{ success?: boolean; error?: string; archive?: ArchivePlan }>(
-      `/api/archive/${encodeURIComponent(sourceId)}/plan`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume }) },
-    );
-    if (!response.success || !response.archive) throw new Error(response.error || 'Could not plan the archive');
-    return response.archive;
-  }
-
-  /** Start an archive_source job (202); poll it with getOperationJob. */
-  async startSourceArchive(sourceId: string, desiredPosts: number, resume: boolean): Promise<{ job_id: string }> {
-    const response = await this.makeRequest<{ success?: boolean; error?: string; job_id?: string }>(
-      `/api/archive/${encodeURIComponent(sourceId)}/run`,
-      { method: 'POST', body: JSON.stringify({ desiredPosts, resume, background: true }) },
-    );
-    if (!response.success || !response.job_id) throw new Error(response.error || 'Could not start the archive');
-    return { job_id: response.job_id };
-  }
-
-  // ---- Mark IX ingestion (spec §4). These throw (ApiError, JobTimeoutError, AbortError)
-  // instead of resolving {success:false}; a finished run resolves with its RunReport even
-  // when some sources failed (a `partial` run is a failed job but still a report).
-
-  /** Start an ingestion_run job, then wait for its run report. */
-  private async runIngestionJob(endpoint: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
-    const accepted = await this.makeRequest<JobAccepted>(endpoint, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      signal: opts?.signal,
-    });
-    if (!accepted || typeof accepted.job_id !== 'string') {
-      throw new Error('The backend did not start an ingestion run');
-    }
-    opts?.onAccepted?.(accepted);
-    try {
-      const payload = await this.waitForJob<unknown>(accepted.job_id, opts);
-      const report = asRunReport(payload);
-      if (!report) throw new Error('The ingestion run finished without a run report');
-      return { ...report, run_id: report.run_id ?? accepted.job_id };
-    } catch (error) {
-      if (error instanceof JobFailedError) {
-        const report = asRunReport(error.value);
-        if (report) return { ...report, run_id: report.run_id ?? accepted.job_id };
-      }
-      throw error;
-    }
-  }
-
-  /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
-  async runIngestionCycle(options: { force?: boolean } & RunRequestOptions = {}): Promise<RunReport> {
-    const { force = false, ...opts } = options;
-    return this.runIngestionJob('/api/ingestion/run', { force }, opts);
-  }
-
-  /** Fetch one source now (forced, even when disabled). */
-  async fetchSourceNow(sourceId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
-    const { limit, ...opts } = options;
-    return this.runIngestionJob(`/api/sources/${encodeURIComponent(sourceId)}/fetch-now`, limit ? { limit } : {}, opts);
-  }
-
-  /** Fetch every enabled source of a folder/track now (forced). */
-  async fetchFolderNow(folderId: string, options: { limit?: number } & RunRequestOptions = {}): Promise<RunReport> {
-    const { limit, ...opts } = options;
-    return this.runIngestionJob(`/api/folders/${encodeURIComponent(folderId)}/ingest`, limit ? { limit } : {}, opts);
-  }
-
-  /** Every source's schedule-aware health row, worst first, plus the summary. */
-  async getSourcesHealth(): Promise<SourcesHealthResponse> {
-    return this.makeRequest<SourcesHealthResponse>('/api/sources/health');
-  }
-
-  /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
-  async setCadenceOverride(sourceId: string, hours: number | null): Promise<{ success: true; row: SourceHealthRow }> {
-    return this.makeRequest<{ success: true; row: SourceHealthRow }>(`/api/sources/${encodeURIComponent(sourceId)}/cadence`, {
-      method: 'PUT',
-      body: JSON.stringify({ override_hours: hours }),
-    });
-  }
-
-  /** Include/exclude one source from the main digest and the main feed. Throws on failure. */
-  async setSourceMainDigest(sourceId: string, inMainDigest: boolean): Promise<{ success: true; source_id: string; in_main_digest: boolean }> {
-    const response = await this.makeRequest<{ success: boolean; error?: string; source_id: string; in_main_digest: boolean }>(
-      `/api/sources/${encodeURIComponent(sourceId)}/main-digest`,
-      { method: 'PUT', body: JSON.stringify({ in_main_digest: inMainDigest }) },
-    );
-    if (!response.success) throw new Error(response.error || 'Failed to update the main-digest setting');
-    return response as { success: true; source_id: string; in_main_digest: boolean };
-  }
-
-  // ---- Connections (Mark IX §10.1). Write-only; these throw ApiError on failure. ----
-
-  async getCredentials(): Promise<CredentialsResponse> {
-    return this.makeRequest<CredentialsResponse>('/api/credentials');
-  }
-
-  /** Save one secret. The response is the provider's view (set, last4), never the value. */
-  async putCredential(provider: string, key: string, value: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ value }),
-    });
-  }
-
-  async deleteCredential(provider: string, key: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(key)}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async testCredential(provider: string): Promise<CredentialProviderView> {
-    return this.makeRequest<CredentialProviderView>(`/api/credentials/${encodeURIComponent(provider)}/test`, { method: 'POST' });
-  }
-
-  async telegramLoginStart(phone: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/start', { method: 'POST', body: JSON.stringify({ phone }) });
-  }
-
-  async telegramLoginCode(code: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/code', { method: 'POST', body: JSON.stringify({ code }) });
-  }
-
-  async telegramLoginPassword(password: string): Promise<TelegramLoginStep> {
-    return this.makeRequest<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: JSON.stringify({ password }) });
-  }
-
-  async telegramLoginCancel(): Promise<{ stage: null }> {
-    return this.makeRequest<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' });
-  }
-
-  // ---- Reader (Mark IX). These throw ApiError on failure (§4 error contract). ----
-
-  private feedQuery(params: FeedParams, view: FeedView): string {
-    const qs = new URLSearchParams({ scope: params.scope, filter: params.filter, view });
-    if (params.cursor) qs.set('cursor', params.cursor);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.days) qs.set('days', String(params.days));
-    return `/api/feed?${qs.toString()}`;
-  }
-
-  /** One newest-first page of the stream view. */
-  async getFeed(params: FeedParams): Promise<FeedPage> {
-    return this.makeRequest<FeedPage>(this.feedQuery(params, 'stream'), { signal: params.signal });
-  }
-
-  /** One page of the by-source view: one group per source, at most 3 items each. */
-  async getFeedGroups(params: FeedParams): Promise<FeedGroupsPage> {
-    return this.makeRequest<FeedGroupsPage>(this.feedQuery(params, 'by_source'), { signal: params.signal });
-  }
-
-  /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
-  async getUnreadCounts(): Promise<UnreadCounts> {
-    return this.makeRequest<UnreadCounts>('/api/feed/unread-counts');
-  }
-
-  async setPostRead(postId: string, read: boolean): Promise<{ success: true; post_id: string; updated: number }> {
-    return this.makeRequest(`/api/posts/item/${encodeURIComponent(postId)}/read`, {
-      method: 'PUT',
-      body: JSON.stringify({ read }),
-    });
-  }
-
-  /** Batch read/unread (at most 500 ids); the mark-through Undo uses it. */
-  async setPostsRead(ids: string[], read: boolean): Promise<{ success: true; updated: number }> {
-    return this.makeRequest('/api/feed/read', { method: 'PUT', body: JSON.stringify({ ids, read }) });
-  }
-
-  /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
-  async markReadThrough(scope: string, through: string, newest: string): Promise<MarkReadResult> {
-    return this.makeRequest<MarkReadResult>('/api/feed/mark-read', {
-      method: 'POST',
-      body: JSON.stringify({ scope, through_cursor: through, newest_cursor: newest }),
-    });
-  }
-
-  /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
-  async setPostStarred(postId: string, starred: boolean): Promise<PostInteractionResponse> {
-    const response = await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${encodeURIComponent(postId)}/favorite`, {
-      method: 'POST',
-      body: JSON.stringify({ favorited: starred }),
-    });
-    if (response && response.success === false) throw new Error(response.error || 'Could not update the star');
-    return response;
-  }
-
-  async getIngestionLogs(log = 'application', lines = 200): Promise<LogTailResponse> {
-    try {
-      const params = new URLSearchParams({
-        log,
-        lines: String(lines),
-      });
-      return await this.makeRequest<LogTailResponse>(`/api/ingestion/logs?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to load ingestion logs:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        log,
-        lines: [],
-      };
-    }
-  }
-
-  async getOperationsOverview(): Promise<OperationsOverviewResponse> {
-    try {
-      return await this.makeRequest<OperationsOverviewResponse>('/api/operations/overview');
-    } catch (error) {
-      console.error('Failed to load operations overview:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        jobs: [],
-        source_health: { summary: { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 }, rows: [] },
-        alerts: [],
-      };
-    }
-  }
-
-  async getOperationJob(jobId: string): Promise<OperationJobResponse> {
-    try {
-      return await this.makeRequest<OperationJobResponse>(`/api/operations/jobs/${jobId}`);
-    } catch (error) {
-      console.error('Failed to load operation job detail:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        job: null,
-      };
-    }
-  }
-
-  /** What the backend runs (GET /api/config, reading-finish R3). Mark IX contract:
-   *  a failure throws, and `useAnalysis` falls back to the build flag. */
-  async getConfig(): Promise<AppConfig> {
-    return this.makeRequest<AppConfig>('/api/config');
-  }
-
-  async getStatus(): Promise<SystemStatusResponse> {
-    try {
-      return await this.makeRequest<SystemStatusResponse>('/api/status');
-    } catch (error) {
-      console.error('Failed to load system status:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getSchedulerConfig(): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler');
-    } catch (error) {
-      console.error('Failed to load scheduler config:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async updateSchedulerConfig(config: Partial<SchedulerConfig>): Promise<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; scheduler?: SchedulerConfig }>('/api/operations/scheduler', {
-        method: 'PUT',
-        body: JSON.stringify({
-          intervalHours: config.interval_hours,
-          syncSourcesEachCycle: config.sync_sources_each_cycle,
-          generateDailyBriefing: config.generate_daily_briefing,
-          generateTopicBriefing: config.generate_topic_briefing,
-          ingestTickMinutes: config.ingest_tick_minutes,
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to update scheduler config:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async listYouTubeChannelVideos(source: string, limit = 1): Promise<YouTubeChannelVideosResponse> {
-    try {
-      return await this.makeRequest<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', {
-        method: 'POST',
-        body: JSON.stringify({ source, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to preview YouTube channel:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async evaluateYouTubeVideo(source: string, video: string): Promise<YouTubeVideoEvaluationResponse> {
-    try {
-      return await this.makeRequest<YouTubeVideoEvaluationResponse>('/api/youtube/video/evaluate', {
-        method: 'POST',
-        body: JSON.stringify({ source, video }),
-      });
-    } catch (error) {
-      console.error('Failed to evaluate YouTube video:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
-  }
-
-  async getYouTubeWatchProgress(videoId: string): Promise<YouTubeWatchProgressResponse> {
-    try {
-      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`);
-    } catch (error) {
-      console.error('Failed to get YouTube watch progress:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        progress: null,
-      };
-    }
-  }
-
-  async saveYouTubeWatchProgress(
-    videoId: string,
-    payload: {
-      videoUrl: string;
-      title: string;
-      durationSeconds?: number | null;
-      progressSeconds: number;
-      sourceId?: string | null;
-      notesMarkdown?: string | null;
-      completed?: boolean;
-    },
-  ): Promise<YouTubeWatchProgressResponse> {
-    try {
-      return await this.makeRequest<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      console.error('Failed to save YouTube watch progress:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        progress: null,
-      };
-    }
-  }
-
-  async getPostEvidence(postId: string): Promise<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; evidence?: EvidenceDebug | null }>(`/api/posts/item/${postId}/evidence`);
-    } catch (error) {
-      console.error('Failed to get post evidence:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', evidence: null };
-    }
-  }
-
-  async getPostMemory(postId: string): Promise<{ success?: boolean; error?: string; memory?: MemoryDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; memory?: MemoryDebug | null }>(`/api/posts/item/${postId}/memory`);
-    } catch (error) {
-      console.error('Failed to get post memory:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', memory: null };
-    }
-  }
-
-  async getPostEvents(postId: string): Promise<{ success?: boolean; error?: string; events?: EventDebug | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; events?: EventDebug | null }>(`/api/posts/item/${postId}/events`);
-    } catch (error) {
-      console.error('Failed to get post events:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', events: null };
-    }
-  }
-
-  async getPostStory(postId: string): Promise<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; post_id?: string; stories?: StoryCard[]; primary_story?: StoryCard | null }>(`/api/posts/item/${postId}/story`);
-    } catch (error) {
-      console.error('Failed to get post story:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', post_id: postId, stories: [], primary_story: null };
-    }
-  }
-
-  async rebuildEvidenceForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild evidence for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildEvidenceForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild evidence for date:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildMemoryForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild memory for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildMemoryForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild memory for date:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildEventsForPost(postId: string): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-post', {
-        method: 'POST',
-        body: JSON.stringify({ postId }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild events for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildEventsForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild events for date:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async getStories(filters?: { status?: string; storyKind?: string; limit?: number; offset?: number }): Promise<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.status) params.set('status', filters.status);
-      if (filters?.storyKind) params.set('storyKind', filters.storyKind);
-      if (filters?.limit != null) params.set('limit', String(filters.limit));
-      if (filters?.offset != null) params.set('offset', String(filters.offset));
-      const endpoint = params.toString() ? `/api/stories?${params.toString()}` : '/api/stories';
-      return await this.makeRequest<{ success?: boolean; error?: string; stories?: StoryCard[]; total?: number }>(endpoint);
-    } catch (error) {
-      console.error('Failed to get stories:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', stories: [], total: 0 };
-    }
-  }
-
-  async getStory(storyId: string): Promise<{ success?: boolean; error?: string; story?: StoryDetail | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; story?: StoryDetail | null }>(`/api/stories/${storyId}`);
-    } catch (error) {
-      console.error('Failed to get story:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story: null };
-    }
-  }
-
-  async getStoryTimeline(storyId: string): Promise<StoryTimelineResponse & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<StoryTimelineResponse & { success?: boolean; error?: string }>(`/api/stories/${storyId}/timeline`);
-    } catch (error) {
-      console.error('Failed to get story timeline:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', story_id: storyId, timeline: [] };
-    }
-  }
-
-  async getPostTimeline(postId: string, refresh = false): Promise<PostTimelineResponse> {
-    try {
-      if (refresh) {
-        return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline/refresh`, {
-          method: 'POST',
-          body: JSON.stringify({ refresh: true }),
-        });
-      }
-      return await this.makeRequest<PostTimelineResponse>(`/api/posts/item/${postId}/timeline`);
-    } catch (error) {
-      console.error('Failed to get post timeline:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        timeline: null,
-        related_candidates: [],
-      };
-    }
-  }
-
-  async acceptStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/accept`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to accept story candidate:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
-    }
-  }
-
-  async rejectStoryCandidate(candidateId: string): Promise<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }> {
-    try {
-      return await this.makeRequest<{ success?: boolean; error?: string; candidate?: StoryCandidateLink | null; timeline?: PostTimelineResponse | null }>(`/api/story-candidates/${candidateId}/reject`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to reject story candidate:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', candidate: null, timeline: null };
-    }
-  }
-
-  async getInbox(batchId?: string, limit = 20): Promise<InboxBatchResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (batchId) params.set('batchId', batchId);
-      params.set('limit', String(limit));
-      const endpoint = `/api/inbox${params.toString() ? `?${params.toString()}` : ''}`;
-      return await this.makeRequest<InboxBatchResponse>(endpoint);
-    } catch (error) {
-      console.error('Failed to get inbox:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
-    }
-  }
-
-  async getInboxBatches(limit = 50, offset = 0): Promise<InboxBatchesResponse> {
-    try {
-      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-      return await this.makeRequest<InboxBatchesResponse>(`/api/inbox/batches?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox batches:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batches: [], total: 0 };
-    }
-  }
-
-  async getInboxItems(filters?: { batchId?: string; status?: string; targetType?: string; sourceId?: string; generatedForDate?: string; limit?: number; offset?: number }): Promise<InboxItemsResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.batchId) params.set('batchId', filters.batchId);
-      if (filters?.status) params.set('status', filters.status);
-      if (filters?.targetType) params.set('targetType', filters.targetType);
-      if (filters?.sourceId) params.set('sourceId', filters.sourceId);
-      if (filters?.generatedForDate) params.set('generatedForDate', filters.generatedForDate);
-      params.set('limit', String(filters?.limit ?? 100));
-      params.set('offset', String(filters?.offset ?? 0));
-      return await this.makeRequest<InboxItemsResponse>(`/api/inbox/items?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox items:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', items: [], total: 0 };
-    }
-  }
-
-  async getInboxItem(itemId: string): Promise<InboxItemDetail> {
-    try {
-      return await this.makeRequest<InboxItemDetail>(`/api/inbox/items/${itemId}`);
-    } catch (error) {
-      console.error('Failed to get inbox item:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', item: null, target: null, actions: [] };
-    }
-  }
-
-  async rebuildInbox(payload?: { generatedForDate?: string; scopeType?: string; scopeValue?: string; limit?: number; actorId?: string }): Promise<InboxBatchResponse> {
-    try {
-      return await this.makeRequest<InboxBatchResponse>('/api/inbox/rebuild', {
-        method: 'POST',
-        body: JSON.stringify(payload || {}),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild inbox:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', batch: null, items: [], total: 0 };
-    }
-  }
-
-  async recordInboxAction(itemId: string, payload: { actionType: string; actorId?: string; payload?: Record<string, any> }): Promise<InboxActionResponse> {
-    try {
-      return await this.makeRequest<InboxActionResponse>(`/api/inbox/items/${itemId}/actions`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      console.error('Failed to record inbox action:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', action: null, item: null, side_effects: [] };
-    }
-  }
-
-  async getInboxActions(filters?: { limit?: number; offset?: number; targetType?: string; targetId?: string; inboxItemId?: string }): Promise<InboxActionsResponse> {
-    try {
-      const params = new URLSearchParams();
-      params.set('limit', String(filters?.limit ?? 100));
-      params.set('offset', String(filters?.offset ?? 0));
-      if (filters?.targetType) params.set('targetType', filters.targetType);
-      if (filters?.targetId) params.set('targetId', filters.targetId);
-      if (filters?.inboxItemId) params.set('inboxItemId', filters.inboxItemId);
-      return await this.makeRequest<InboxActionsResponse>(`/api/inbox/actions?${params.toString()}`);
-    } catch (error) {
-      console.error('Failed to get inbox actions:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', actions: [], total: 0 };
-    }
-  }
-
-  async getVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
-    try {
-      const params = new URLSearchParams({ asyncMode: 'true' });
-      if (start) params.set('start', start);
-      if (end) params.set('end', end);
-      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}?${params.toString()}`, {
-        method: 'GET',
-      });
-    } catch (error) {
-      console.error('Failed to get vertical briefing:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
-    }
-  }
-
-  async refreshVerticalBriefing(sourceId: string, start?: string | null, end?: string | null): Promise<VerticalBriefingResponse> {
-    try {
-      const params = new URLSearchParams({ asyncMode: 'true' });
-      if (start) params.set('start', start);
-      if (end) params.set('end', end);
-      return await this.makeTrackedRequest<VerticalBriefingResponse>(`/api/briefings/vertical/source/${sourceId}/refresh?${params.toString()}`, {
-        method: 'POST',
-      });
-    } catch (error) {
-      console.error('Failed to refresh vertical briefing:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred', tracks: [], posts: {} };
-    }
-  }
-
-  // ============= TOPICS METHODS =============
-
-  async getTopicsByDate(date: string): Promise<TopicsResponse> {
-    try {
-      const response = await this.makeRequest<TopicsResponse>(`/api/topics/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to get topics:', error);
-      return {
-        success: false,
-        topics: [],
-        date,
-        total: 0,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async checkTopicsExist(date: string): Promise<{ success: boolean; exists: boolean; date: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; exists: boolean; date: string; error?: string }>(`/api/topics/check/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to check topics:', error);
-      return {
-        success: false,
-        exists: false,
-        date,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async updateTopicTitle(topicId: string, newTitle: string): Promise<{ success: boolean; topic_id?: string; title?: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; topic_id?: string; title?: string; error?: string }>(`/api/topics/${topicId}/title`, {
-        method: 'PUT',
-        body: JSON.stringify({ title: newTitle }),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update topic title:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  async movePostToOutlier(topicId: string, postId: string, date: string): Promise<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; post_id?: string; source_topic_id?: string; outlier_topic_id?: string; message?: string; error?: string }>(`/api/topics/${topicId}/posts/${postId}/move-to-outlier`, {
-        method: 'POST',
-        body: JSON.stringify({ date }),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to move post to outlier:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  // ===== Folders & Experts =====
-
-  /** Reading feed for one folder/track: newest posts from its sources. */
-  async getFolderPosts(
-    folderId: string,
-    opts?: { limit?: number; offset?: number; days?: number },
-  ): Promise<{
-    success: boolean;
-    folder?: Folder;
-    source_count?: number;
-    posts: Post[];
-    total?: number;
-    returned?: number;
-    has_more?: boolean;
-    error?: string;
-  }> {
-    try {
-      const params = new URLSearchParams();
-      if (opts?.limit != null) params.set('limit', String(opts.limit));
-      if (opts?.offset != null) params.set('offset', String(opts.offset));
-      if (opts?.days != null) params.set('days', String(opts.days));
-      const qs = params.toString();
-      return await this.makeRequest(`/api/folders/${folderId}/posts${qs ? `?${qs}` : ''}`);
-    } catch (error) {
-      return { success: false, posts: [], error: error instanceof Error ? error.message : 'Failed to load track feed' };
-    }
-  }
-
-  async getFolders(): Promise<{ success: boolean; folders: Folder[]; error?: string }> {
-    try { return await this.makeRequest('/api/folders'); }
-    catch (e) { return { success: false, folders: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createFolder(payload: { name: string; description?: string; sort_order?: number }): Promise<{ success: boolean; folder?: Folder; error?: string }> {
-    try { return await this.makeRequest('/api/folders', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteFolder(folderId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async getSourceFolders(sourceId: string): Promise<{ success: boolean; folder_ids: string[]; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}/folders`); }
-    catch (e) { return { success: false, folder_ids: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async addSourceToFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}/sources`, { method: 'POST', body: JSON.stringify({ source_id: sourceId }) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async removeSourceFromFolder(folderId: string, sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/folders/${folderId}/sources/${sourceId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async getExperts(): Promise<{ success: boolean; experts: Expert[]; error?: string }> {
-    try { return await this.makeRequest('/api/experts'); }
-    catch (e) { return { success: false, experts: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createExpert(payload: Partial<Expert>): Promise<{ success: boolean; expert?: Expert; error?: string }> {
-    try { return await this.makeRequest('/api/experts', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteExpert(expertId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/experts/${expertId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async runExpert(expertId: string, opts: { refresh?: boolean } = {}): Promise<ExpertRunResult> {
-    try { return await this.makeRequest(`/api/experts/${expertId}/run`, { method: 'POST', body: JSON.stringify(opts) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  /** Latest stored briefing, or a specific past one when `date` (its end date) is given. */
-  async getExpertBriefing(expertId: string, date?: string): Promise<ExpertRunResult> {
-    try {
-      const qs = date ? `?date=${encodeURIComponent(date)}` : '';
-      return await this.makeRequest(`/api/experts/${expertId}/briefing${qs}`);
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  /** Past runs of an expert, newest first. Metadata only - no briefing bodies. */
-  async getExpertBriefingHistory(
-    expertId: string,
-    limit = 60,
-  ): Promise<{
-    success: boolean;
-    briefings: ExpertBriefingHistoryEntry[];
-    error?: string;
-  }> {
-    try {
-      return await this.makeRequest(`/api/experts/${expertId}/briefings?limit=${limit}`);
-    } catch (e) {
-      return { success: false, briefings: [], error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  // ===== Milestones =====
-
-  /** Full milestone tree for a scope. Omit folderId for all non-arXiv sources. */
-  async getMilestones(opts?: { folderId?: string | null; includeHidden?: boolean }): Promise<MilestonesResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (opts?.folderId) params.set('folder_id', opts.folderId);
-      if (opts?.includeHidden) params.set('include_hidden', 'true');
-      const qs = params.toString();
-      return await this.makeRequest(`/api/milestones${qs ? `?${qs}` : ''}`);
-    } catch (e) {
-      // Deliberately partial: callers read scope/coverage/stats/diagnostics through
-      // optional chaining, so a failed fetch renders an error state, not a crash.
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', vendors: [], papers: [] } as unknown as MilestonesResponse;
-    }
-  }
-
-  /** Evidence + comparisons for one node. The tree no longer carries them, so this
-   *  backs the evidence drawer. Server-side it reads the node cache every tree build
-   *  warms (15-minute TTL, longer than the 60s tree memo), so a drawer click minutes
-   *  after the page load is a dict lookup; a miss rebuilds that scope's tree once.
-   *  Pass the same folderId the list call used, or it lands on a different scope key. */
-  async getMilestoneNode(nodeKey: string, folderId?: string | null): Promise<MilestoneNodeDetail> {
-    try {
-      const params = new URLSearchParams({ node_key: nodeKey });
-      if (folderId) params.set('folder_id', folderId);
-      return await this.makeRequest(`/api/milestones/node?${params.toString()}`);
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Unknown error', evidence: [], comparisons: [] };
-    }
-  }
-
-  async getMilestoneLanes(folderId?: string | null): Promise<{ success: boolean; lanes: MilestoneLane[]; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes${folderId ? `?folder_id=${folderId}` : ''}`); }
-    catch (e) { return { success: false, lanes: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createMilestoneLane(payload: { name: string; vendor?: string; match_pattern?: string; folder_id?: string | null; lane_order?: number }): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
-    try { return await this.makeRequest('/api/milestones/lanes', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async updateMilestoneLane(laneId: string, fields: Partial<Pick<MilestoneLane, 'name' | 'vendor' | 'match_pattern' | 'lane_order' | 'enabled'>>): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'PUT', body: JSON.stringify(fields) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteMilestoneLane(laneId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  /** Free dry-run of a lane pattern. No writes, no LLM, no tokens. */
-  async previewMilestonePattern(pattern: string, folderId?: string | null): Promise<MilestonePatternPreview> {
-    try {
-      const params = new URLSearchParams({ pattern });
-      if (folderId) params.set('folder_id', folderId);
-      return await this.makeRequest(`/api/milestones/preview?${params.toString()}`);
-    } catch (e) {
-      return { success: false, total_hits: 0, versions: [], samples: [], error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  async setMilestoneNodeState(payload: { node_key: string; state?: MilestoneState; custom_title?: string; note?: string }): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest('/api/milestones/node-state', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
-    try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async setSourceEnabled(sourceId: string, enabled: boolean): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteSource(sourceId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/sources/${sourceId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
 }
 
 export interface Folder {
@@ -2861,168 +516,249 @@ export interface Folder {
   post_count?: number;
 }
 
-export type MilestoneState = 'active' | 'hidden' | 'pinned';
+export interface FoldersResponse extends Envelope {
+  folders: Folder[];
+}
 
-export interface MilestoneEvidence {
-  post_id: string;
+export interface FolderResponse extends Envelope {
+  folder?: Folder;
+}
+
+export interface SourceFoldersResponse extends Envelope {
+  folder_ids: string[];
+}
+
+export interface SchedulerResponse extends Envelope {
+  scheduler?: SchedulerConfig;
+}
+
+export interface NewSource {
+  platform: string;
+  handle_or_url: string;
+  display_name?: string;
+  fetch_delay_seconds?: number;
+  priority?: number;
+  max_posts_per_fetch?: number;
+  state?: string;
+}
+
+export interface AddSourceResponse extends Envelope {
+  source_id?: string;
+}
+
+export interface YouTubeProgressInput {
+  videoUrl: string;
   title: string;
-  url: string;
-  published_at: string | null;
-  source_name: string;
-  /** announce = earliest post (sets occurred_on); corroborate = a different source; mention = later ref */
-  role: 'announce' | 'corroborate' | 'mention';
+  durationSeconds?: number | null;
+  progressSeconds: number;
+  sourceId?: string | null;
+  notesMarkdown?: string | null;
+  completed?: boolean;
 }
 
-export interface MilestoneComparison {
-  node_key: string;
-  title: string;
-  post_id: string;
-  post_title: string;
-  /** detail response only; the list projection strips it (nothing renders it) */
-  published_at?: string | null;
+const enc = encodeURIComponent;
+
+/** Wait for an operation job and resolve with its payload. Throws `JobFailedError`
+ *  (payload in `.value`) when the job fails, `JobTimeoutError`, an `AbortError`, or
+ *  the `ApiError` that ended polling (pollJob tolerates two transient read errors). */
+function waitForJob<T>(jobId: string, opts?: Pick<RunRequestOptions, 'signal' | 'timeoutMs' | 'intervalMs'>): Promise<T> {
+  return pollJob<T>(
+    async (signal) => {
+      const { job } = await request<OperationJobResponse>(`/api/operations/jobs/${enc(jobId)}`, { signal });
+      if (!job) return { state: 'failed', error: `Operation job ${jobId} not found` };
+      if (job.status === 'success') return { state: 'done', value: (job.payload || {}) as T };
+      if (job.status === 'failed') {
+        const payloadError = typeof job.payload?.error === 'string' ? job.payload.error : null;
+        return { state: 'failed', error: payloadError || job.message || `Operation ${job.job_type} failed`, value: (job.payload || {}) as T };
+      }
+      return { state: 'pending' };
+    },
+    {
+      signal: opts?.signal,
+      timeoutMs: Math.max(10_000, opts?.timeoutMs ?? 600_000),
+      intervalMs: Math.max(500, opts?.intervalMs ?? 1_500),
+    },
+  );
 }
 
-/** What GET /api/milestones/node returns: the per-node detail the tree stopped shipping. */
-export interface MilestoneNodeDetail {
-  success: boolean;
-  error?: string;
-  node_key?: string;
-  evidence: MilestoneEvidence[];
-  /** uncapped here, unlike the 3 the list projection keeps */
-  comparisons: MilestoneComparison[];
+/** Start an ingestion_run job, then wait for its run report. A finished run resolves
+ *  with its report even when some sources failed (a `partial` run is a failed job). */
+async function runIngestionJob(path: string, body: Record<string, unknown>, opts?: RunRequestOptions): Promise<RunReport> {
+  const accepted = await request<JobAccepted>(path, { method: 'POST', body, signal: opts?.signal });
+  if (!accepted || typeof accepted.job_id !== 'string') throw new Error('The backend did not start an ingestion run');
+  opts?.onAccepted?.(accepted);
+  try {
+    const report = asRunReport(await waitForJob<unknown>(accepted.job_id, opts));
+    if (!report) throw new Error('The ingestion run finished without a run report');
+    return { ...report, run_id: report.run_id ?? accepted.job_id };
+  } catch (error) {
+    const report = error instanceof JobFailedError ? asRunReport(error.value) : null;
+    if (report) return { ...report, run_id: report.run_id ?? accepted.job_id };
+    throw error;
+  }
 }
 
-/** A node as it arrives in the tree. Everything the rail paints without a click and
- *  nothing else — evidence and the comparison tail come from getMilestoneNode. */
-export interface MilestoneListNode {
-  node_key: string;
-  title: string;
-  custom_title: string | null;
-  occurred_on: string | null;
-  post_count: number;
-  source_count: number;
-  /** single_source | retrospective | chain_start_at_corpus_edge | named_by_briefing */
-  flags: string[];
-  /** capped at 3 server-side; comparison_count is the true total */
-  comparisons: MilestoneComparison[];
-  comparison_count: number;
+function feedPath(params: FeedParams, view: FeedView): string {
+  const qs = new URLSearchParams({ scope: params.scope, filter: params.filter, view });
+  if (params.cursor) qs.set('cursor', params.cursor);
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.days) qs.set('days', String(params.days));
+  return `/api/feed?${qs.toString()}`;
 }
 
-export interface MilestoneLaneGroup {
-  lane_id: string;
-  lane_name: string;
-  node_count: number;
-  nodes: MilestoneListNode[];
-}
+/**
+ * The client. Methods throw `ApiError` on any failure (lib/request), for react-query
+ * and the `ErrorState` components, except the ones wrapped in `settle`: those resolve
+ * `{success: false, error}` for the screens that read the envelope instead.
+ * Components reach it through `useApi()` (ApiContext), so a test can hand them a fake.
+ */
+export function createApi() {
+  return {
+    // ---- Reader ----
 
-export interface MilestoneVendorGroup {
-  vendor: string;
-  node_count: number;
-  lanes: MilestoneLaneGroup[];
-}
+    /** One newest-first page of the stream view. */
+    getFeed: (params: FeedParams) => request<FeedPage>(feedPath(params, 'stream'), { signal: params.signal }),
+    /** One page of the by-source view: one group per source, at most 3 items each. */
+    getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
+    /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
+    getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
+    /** Mark one post or many (at most 500) read or unread. */
+    setPostsRead: (ids: string[], read: boolean) =>
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { ids, read } }),
+    /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
+    markReadThrough: (scope: string, through: string, newest: string) =>
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { scope, through_cursor: through, newest_cursor: newest } }),
+    /** Star or unstar a post. Unlike `togglePostFavorite`, this throws on failure. */
+    setPostStarred: (postId: string, starred: boolean) =>
+      request<PostInteractionResponse>(`/api/posts/item/${enc(postId)}/favorite`, { method: 'POST', body: { favorited: starred } }),
 
-export interface MilestoneLane {
-  id: string;
-  folder_id: string | null;
-  name: string;
-  vendor: string | null;
-  match_pattern: string;
-  lane_order: number;
-  enabled: boolean;
-}
+    // ---- The post page ----
 
-export interface MilestonePatternPreview {
-  success: boolean;
-  total_hits: number;
-  versions: { version_label: string; post_count: number }[];
-  samples: { post_id: string; title: string; published_at: string | null; source_name: string; version_label: string }[];
-  error?: string;
-}
+    getPostDetail: (postId: string) => request<PostDetailResponse>(`/api/posts/item/${postId}`),
+    recordPostOpen: (postId: string, metadata?: Record<string, unknown>) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, { method: 'POST', body: { metadata } })),
+    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, unknown>) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
+    togglePostFavorite: (postId: string, favorited: boolean) =>
+      settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
+    /** Fetch a Reddit post's comments; the backend may answer 202 with a job, which is polled. */
+    fetchRedditComments: (postId: string, opts?: { limit?: number; refresh?: boolean }) => settle((async () => {
+      const response = await request<RedditCommentsResponse & Partial<JobAccepted>>(`/api/posts/item/${postId}/reddit-comments`, {
+        method: 'POST',
+        body: { limit: opts?.limit ?? 80, refresh: opts?.refresh ?? false, asyncMode: true },
+      });
+      if (!response.accepted || typeof response.job_id !== 'string') return response as RedditCommentsResponse;
+      return { success: true, ...(await waitForJob<RedditCommentsResponse>(response.job_id)) };
+    })()),
+    getYouTubeWatchProgress: (videoId: string) =>
+      settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`)),
+    saveYouTubeWatchProgress: (videoId: string, payload: YouTubeProgressInput) =>
+      settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`, { method: 'PUT', body: payload })),
 
-export interface MilestonesResponse {
-  success: boolean;
-  error?: string;
-  scope: { folder_id: string | null; name: string; kind: string | null; source_count: number | null };
-  coverage: {
-    posts_in_scope: number;
-    sources_in_scope: number;
-    first_post_at: string | null;
-    last_post_at: string | null;
-    weeks_covered: number;
+    // ---- Sources ----
+
+    getSources: () => request<SourcesResponse>('/api/sources'),
+    /** Every source's schedule-aware health row, worst first, plus the summary. */
+    getSourcesHealth: () => request<SourcesHealthResponse>('/api/sources/health'),
+    addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources', { method: 'POST', body: payload })),
+    updateSourceSettings: (sourceId: string, settings: SourceSettings) =>
+      settle(request<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, { method: 'PUT', body: settings })),
+    setSourceEnabled: (sourceId: string, enabled: boolean) =>
+      settle(request<Envelope>(`/api/sources/${sourceId}/enabled`, { method: 'PUT', body: { enabled } })),
+    deleteSource: (sourceId: string) => settle(request<Envelope>(`/api/sources/${sourceId}`, { method: 'DELETE' })),
+    /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
+    setCadenceOverride: (sourceId: string, hours: number | null) =>
+      request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
+    /** Include/exclude one source from the main digest and the main feed. */
+    setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
+      request<{ success: true; source_id: string; in_main_digest: boolean }>(
+        `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
+      ),
+    listYouTubeChannelVideos: (source: string, limit = 1) =>
+      settle(request<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', { method: 'POST', body: { source, limit } })),
+
+    // ---- Tracks (folders) ----
+
+    getFolders: () => settle(request<FoldersResponse>('/api/folders')),
+    createFolder: (payload: { name: string; description?: string; sort_order?: number }) =>
+      settle(request<FolderResponse>('/api/folders', { method: 'POST', body: payload })),
+    /** Rename a track. */
+    renameTrack: (folderId: string, name: string) => request<Envelope>(`/api/folders/${enc(folderId)}`, { method: 'PUT', body: { name } }),
+    deleteFolder: (folderId: string) => settle(request<Envelope>(`/api/folders/${folderId}`, { method: 'DELETE' })),
+    /** Every source in the track in (true) or out of (false) the main feed and digest. */
+    setTrackMainDigest: (folderId: string, inMainDigest: boolean) =>
+      request<Envelope>(`/api/folders/${enc(folderId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } }),
+    getSourceFolders: (sourceId: string) => settle(request<SourceFoldersResponse>(`/api/sources/${sourceId}/folders`)),
+    addSourceToFolder: (folderId: string, sourceId: string) =>
+      settle(request<Envelope>(`/api/folders/${folderId}/sources`, { method: 'POST', body: { source_id: sourceId } })),
+    removeSourceFromFolder: (folderId: string, sourceId: string) =>
+      settle(request<Envelope>(`/api/folders/${folderId}/sources/${sourceId}`, { method: 'DELETE' })),
+
+    // ---- Ingestion ----
+
+    /** The manual "Run cycle": every enabled source; due ones only unless `force`. */
+    runIngestionCycle: ({ force = false, ...opts }: { force?: boolean } & RunRequestOptions = {}) =>
+      runIngestionJob('/api/ingestion/run', { force }, opts),
+    /** Fetch one source now (forced, even when disabled). */
+    fetchSourceNow: (sourceId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
+      runIngestionJob(`/api/sources/${enc(sourceId)}/fetch-now`, limit ? { limit } : {}, opts),
+    /** Fetch every enabled source of a folder/track now (forced). */
+    fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
+      runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
+    getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
+    getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
+    getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
+    updateSchedulerConfig: (config: Partial<SchedulerConfig>) => settle(request<SchedulerResponse>('/api/operations/scheduler', {
+      method: 'PUT',
+      body: {
+        intervalHours: config.interval_hours,
+        syncSourcesEachCycle: config.sync_sources_each_cycle,
+        ingestTickMinutes: config.ingest_tick_minutes,
+      },
+    })),
+    getIngestionLogs: (log = 'application', lines = 200) =>
+      request<LogTailResponse>(`/api/ingestion/logs?${new URLSearchParams({ log, lines: String(lines) }).toString()}`),
+
+    // ---- Archive (the source sheet's section and the Ingestion tab) ----
+
+    getArchiveCatalog: () => request<ArchiveCatalogResponse>('/api/archive/catalog'),
+    getSourceArchive: (sourceId: string) => request<ArchiveStatusResponse>(`/api/archive/${enc(sourceId)}/status`),
+    /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
+     *  `pacing` overrides the source's own for this plan. */
+    planSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> => {
+      const response = await request<{ archive?: ArchivePlan }>(
+        `/api/archive/${enc(sourceId)}/plan`, { method: 'POST', body: { desiredPosts, resume, ...pacing } },
+      );
+      if (!response.archive) throw new Error('Could not plan the archive');
+      return response.archive;
+    },
+    /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
+    startSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> => {
+      const response = await request<{ job_id?: string }>(
+        `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { desiredPosts, resume, background: true, ...pacing } },
+      );
+      if (!response.job_id) throw new Error('Could not start the archive');
+      return { job_id: response.job_id };
+    },
+
+    // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
+
+    getCredentials: () => request<CredentialsResponse>('/api/credentials'),
+    /** Save one secret. The response is the provider's view (set, last4), never the value. */
+    putCredential: (provider: string, key: string, value: string) =>
+      request<CredentialProviderView>(`/api/credentials/${enc(provider)}/${enc(key)}`, { method: 'PUT', body: { value } }),
+    deleteCredential: (provider: string, key: string) =>
+      request<CredentialProviderView>(`/api/credentials/${enc(provider)}/${enc(key)}`, { method: 'DELETE' }),
+    testCredential: (provider: string) => request<CredentialProviderView>(`/api/credentials/${enc(provider)}/test`, { method: 'POST' }),
+    telegramLoginStart: (phone: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/start', { method: 'POST', body: { phone } }),
+    telegramLoginCode: (code: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/code', { method: 'POST', body: { code } }),
+    telegramLoginPassword: (password: string) =>
+      request<TelegramLoginStep>('/api/credentials/telegram/login/password', { method: 'POST', body: { password } }),
+    telegramLoginCancel: () => request<{ stage: null }>('/api/credentials/telegram/login/cancel', { method: 'POST' }),
   };
-  vendors: MilestoneVendorGroup[];
-  papers: MilestoneListNode[];
-  stats: { nodes: number; lanes: number; vendors: number; comparisons: number; papers: number };
-  diagnostics: {
-    lanes_configured: number;
-    lanes_matched: number;
-    hidden_nodes: number;
-    briefings_available: number;
-    hit_rows: number;
-    truncated: boolean;
-  };
-  elapsed_ms?: number;
-  cached?: boolean;
 }
 
-export interface ExpertBriefingHistoryEntry {
-  id: string;
-  subject_key: string;
-  title?: string | null;
-  /** ISO timestamp of the last write */
-  at?: string | null;
-  content_length?: number | null;
-  /** model name, or "fallback" for the deterministic stub */
-  generator?: string | null;
-  posts_processed?: number | null;
-  start_date?: string | null;
-  /** the date this briefing covers up to - use as the `date` arg to getExpertBriefing */
-  end_date?: string | null;
-}
-
-export interface Expert {
-  id: string;
-  name: string;
-  folder_id: string;
-  system_prompt: string;
-  focus_instructions?: string | null;
-  output_variant: string;
-  lookback_days: number;
-  schedule?: string | null;
-  enabled: boolean;
-}
-
-export interface ExpertTopic {
-  title: string;
-  summary: string;
-  post_ids: string[];
-}
-
-export interface ExpertRunResult {
-  success: boolean;
-  cached?: boolean;
-  expert?: Expert;
-  briefing?: string;
-  /** render_format of the stored briefing; "markdown" in practice */
-  format?: string;
-  saved_briefing_id?: string;
-  topics?: ExpertTopic[];
-  posts_processed?: number;
-  start_date?: string;
-  end_date?: string;
-  /**
-   * Which generator produced this briefing: a model name (e.g. "gemini-3.1-flash-lite-preview")
-   * or the literal "fallback", meaning the deterministic stub — NOT analysis.
-   * Absent on briefings stored before this key existed.
-   */
-  generator?: string | null;
-  error?: string;
-}
-
-// Export singleton instance
-export const apiService = new ApiService();
-export default apiService;
-
-/** The API client's shape. Components get it from `useApi()` (ApiContext), so
- *  tests can hand them a fake through `<ApiProvider value={fakeApi}>`. */
-export type Api = ApiService;
+/** The client's shape, shared by the real client and the test fake (test/fakeApi). */
+export type Api = ReturnType<typeof createApi>;

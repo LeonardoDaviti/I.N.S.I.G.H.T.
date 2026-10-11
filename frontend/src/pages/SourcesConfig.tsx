@@ -5,13 +5,12 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 
 import { useApi } from '../services/ApiContext';
-import type { SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
-import { renameTrack, setTrackMainDigest } from '../services/trackApi';
+import type { Envelope, SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
 import AddSourceModal from '../components/AddSourceModal';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
-import { HEALTH_FIXTURE_NAMES, healthFixture, isHealthFixtureName } from '../components/ops/fixtures';
+import { HEALTH_FIXTURE_NAMES, isHealthFixtureName } from '../components/ops/fixtureNames';
 import SourceList, { type TrackActions } from '../components/sources/SourceList';
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
@@ -39,6 +38,7 @@ import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth'
 import { FOLDERS_KEY, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { useIngestionRun } from '../hooks/useIngestionRun';
+import { useNow } from '../hooks/useNow';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
 import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
@@ -51,18 +51,6 @@ type PendingDelete =
   | { kind: 'sources'; ids: string[]; name: string }
   | { kind: 'folder'; id: string; name: string }
   | null;
-
-/** Re-render once a minute so "fetched 3h ago" stays true; paused while hidden. */
-function useMinuteClock(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') setNow(new Date());
-    }, 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-  return now;
-}
 
 /** A SourceWithSettings for the sheet when only the health row is known (fixtures, a slow list). */
 function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
@@ -77,6 +65,9 @@ function fromHealthRow(row: SourceHealthRow): SourceWithSettings {
 }
 
 /** History state on an entry the sheet pushed, so closing it goes Back instead of stacking entries. */
+/** The dev-only `?data=` health fixtures, imported on demand: a production build drops them. */
+const loadHealthFixtures = import.meta.env.DEV ? () => import('../components/ops/fixtures') : null;
+
 const SHEET_PUSHED = 'sourceSheetPushed';
 /** How long a deep-linked track group stays highlighted. */
 const TRACK_HIGHLIGHT_MS = 1600;
@@ -123,19 +114,22 @@ export default function SourcesConfig() {
 
   const dataParam = searchParams.get('data');
   const fixtureName = import.meta.env.DEV && isHealthFixtureName(dataParam) ? dataParam : null;
-  const health = useSourcesHealth(fixtureName ? () => healthFixture(fixtureName) : undefined, fixtureName ?? undefined);
+  const health = useSourcesHealth(
+    fixtureName && loadHealthFixtures ? () => loadHealthFixtures().then((module) => module.healthFixture(fixtureName)) : undefined,
+    fixtureName ?? undefined,
+  );
   const { folders: foldersQuery } = useReaderDirectory();
   const sourcesQuery = useQuery({
     queryKey: [...SOURCES_WITH_SETTINGS_KEY],
     queryFn: async () => {
-      const response = await api.getSourcesWithSettings();
-      if (!response.success) throw new Error(response.error || 'Could not load sources.');
+      const response = await api.getSources();
       return response.sources;
     },
     staleTime: 30_000,
   });
 
-  const now = useMinuteClock();
+  // Once a minute, so "fetched 3h ago" stays true.
+  const now = useNow(60_000);
   const [shortcutsOn] = useShortcutPreference();
   const searchRef = useRef<HTMLInputElement>(null);
   const { run: runFetch, isRunning } = useIngestionRun();
@@ -232,9 +226,9 @@ export default function SourcesConfig() {
   };
 
   /** Run one call per source; report the failures in one line. */
-  const each = async (ids: string[], call: (id: string) => Promise<{ success: boolean; error?: string }>, verb: string) => {
+  const each = async (ids: string[], call: (id: string) => Promise<Envelope>, verb: string) => {
     setBusy(true);
-    const results = await Promise.all(ids.map((id) => call(id).catch((err: unknown) => ({ success: false, error: errorMessage(err) }))));
+    const results = await Promise.all(ids.map(call));
     setBusy(false);
     const failed = results.filter((r) => !r.success);
     if (failed.length) setError(`Could not ${verb} ${plural(failed.length, 'source')}: ${failed[0].error || 'unknown error'}`);
@@ -291,7 +285,7 @@ export default function SourcesConfig() {
     setMainDigest: (id, name, on) => {
       void (async () => {
         try {
-          await setTrackMainDigest(id, on);
+          await api.setTrackMainDigest(id, on);
           toast(`${name}: ${on ? 'in' : 'out of'} the main feed and digest`);
         } catch (err) {
           setError(`Could not change ${name}: ${errorMessage(err)}`);
@@ -310,7 +304,7 @@ export default function SourcesConfig() {
     setRenaming(null);
     if (name === target.name) return;
     try {
-      await renameTrack(target.id, name);
+      await api.renameTrack(target.id, name);
     } catch (err) {
       setError(`Could not rename ${target.name}: ${errorMessage(err)}`);
     }
@@ -586,7 +580,7 @@ export default function SourcesConfig() {
         open={pendingDelete !== null}
         title={pendingDelete?.kind === 'folder' ? `Delete the track "${pendingDelete.name}"?` : `Delete ${pendingDelete?.kind === 'sources' && pendingDelete.ids.length === 1 ? `"${pendingDelete.name}"` : pendingDelete?.name ?? ''}?`}
         description={pendingDelete?.kind === 'folder'
-          ? 'The track, its experts and its milestones are deleted. Its sources and their posts stay (they move to "Not in a track" if they are in no other track).'
+          ? 'The track is deleted. Its sources and their posts stay (they move to "Not in a track" if they are in no other track).'
           : 'Every post collected from them is deleted too. This cannot be undone; disabling keeps the posts.'}
         confirmLabel={pendingDelete?.kind === 'folder' ? 'Delete track' : pendingDelete?.kind === 'sources' && pendingDelete.ids.length > 1 ? `Delete ${pendingDelete.ids.length} sources` : 'Delete source'}
         destructive

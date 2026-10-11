@@ -1,9 +1,8 @@
-import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 
-import { AppRoutes } from '../../App';
-import AppErrorBoundary from '../../components/AppErrorBoundary';
+import { AppRoutes, RouteErrorBoundary } from '../../App';
 import AppShell from '../../components/layout/AppShell';
 import { ThemeProvider } from '../../components/ThemeProvider';
 import { LoadingState } from '../../components/states';
@@ -14,11 +13,6 @@ import type { BootedFrame } from './boot';
 import { createFrameDriver } from './driver';
 import RequestBar from './RequestBar';
 import { WALK, WALK_MESSAGE } from '../wall/walk';
-
-function RouteErrorBoundary({ children }: { children: ReactNode }) {
-  const location = useLocation();
-  return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
-}
 
 /** The frame's address in its memory router, on `html[data-frame-path]`, for the walk to wait on. */
 function PathMark() {

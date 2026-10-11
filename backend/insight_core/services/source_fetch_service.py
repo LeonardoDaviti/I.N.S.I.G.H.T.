@@ -4,8 +4,8 @@ Archive planning and execution for DB-backed sources (Mark IX).
 Fetching lives behind the source-kind seam (insight_core/ingestion/kinds), and every live
 fetch goes through the ingestion runner (insight_core/ingestion). This service keeps:
 - plan_archive / archive_source: one loop over kind.archive_pages, paced by
-  kind.profile.rate_limit(persisted settings, request overrides); every page is a save
-  batch followed by enrichment. An unavailable kind (yt-dlp off, no Telegram session)
+  kind.profile.rate_limit(persisted settings, request overrides); every page is one save
+  batch. An unavailable kind (yt-dlp off, no Telegram session)
   raises KindUnavailable before any planning (the API answers 409). Both run inside the
   kind's session (B8: telegram_mtproto connects and checks authorisation; every other kind
   has a no-op session), so a session that cannot open is the same 409.
@@ -19,23 +19,20 @@ import asyncio
 import contextlib
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
-import psycopg
+from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
-from insight_core.ingestion.enrichment import enricher_for
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resume_counts
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
 from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
 from insight_core.logs.core.logger_config import get_component_logger
-from insight_core.services.entity_memory_service import EntityMemoryService
-from insight_core.services.event_memory_service import EventMemoryService
+from insight_core.services.operations_service import backlog_posts
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
-from insight_core.settings import Settings, get_settings
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
 
@@ -50,21 +47,16 @@ class SourceFetchService:
         http: Optional[KindHttp] = None,
         kinds: Optional[KindRegistry] = None,
         availability: Callable[[], Availability] = availability_from_env,
-        settings: Optional[Settings] = None,
     ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
         self.posts_service = PostsService(db_url)
         self.posts_repo = PostsRepository(db_url)
-        self.memory_service = EntityMemoryService(db_url)
-        self.event_service = EventMemoryService(db_url)
         self.youtube_service = YouTubeService(db_url)
         self.logger = get_component_logger("source_fetch_service")
         self.http = http or KindHttp()
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
-        # INSIGHT_ANALYSIS off: archived posts are saved but never enriched (reading-finish R3).
-        self.enricher = enricher_for(settings or get_settings(), self.memory_service, self.event_service)
         self.availability = availability
 
     # ------------------------------------------------------------------ kinds
@@ -81,6 +73,43 @@ class SourceFetchService:
 
     # ------------------------------------------------------------------ archive
 
+    def archive_catalog(self) -> List[Dict[str, Any]]:
+        """Every enabled source with its persisted archive status; unfinished archives first."""
+        catalog = []
+        for source in self.sources_service.get_all_sources_with_settings():
+            if not source.get("enabled"):
+                continue
+            settings = source.get("settings") or {}
+            archive = settings.get("archive", {})
+            stored = int(archive.get("stored_posts") or source.get("post_count") or 0)
+            catalog.append(
+                {
+                    "source_id": source["id"],
+                    "display_name": settings.get("display_name") or source["handle_or_url"],
+                    "platform": source["platform"],
+                    "kind": self.kinds.resolve(source).name,
+                    "enabled": bool(source.get("enabled")),
+                    "stored_posts": stored,
+                    "available_posts": archive.get("available_posts"),
+                    # E1: the backlog is available - stored, or None when unknown; the
+                    # plan's remaining_posts is a requested target, never aliased to it.
+                    "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
+                    "remaining_posts": archive.get("remaining_posts"),
+                    "estimated_seconds": archive.get("estimated_seconds"),
+                    "archive_status": archive.get("status") or "not_archived",
+                    "resume_ready": bool(archive.get("resume_ready")),
+                    "source_type": archive.get("source_type"),
+                    "last_archived_at": archive.get("last_archived_at"),
+                    "last_live_fetch_at": archive.get("last_live_fetch_at"),
+                    "checkpoint": archive.get("checkpoint"),
+                    "rate_limit": archive.get("rate_limit") or {},
+                }
+            )
+        catalog.sort(key=lambda item: (item["archive_status"] != "partial",
+                                       item["archive_status"] != "not_archived",
+                                       item["display_name"].lower()))
+        return catalog
+
     def archive_support(self, source_id: str) -> Dict[str, Any]:
         """Can this source archive, and what does its available count mean? No network.
 
@@ -91,7 +120,7 @@ class SourceFetchService:
         """
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
         kind = self.kinds.resolve(source)
         live_fetch_limit = int((source.get("settings") or {}).get("max_posts_per_fetch") or 50)
         support: Dict[str, Any] = {
@@ -125,7 +154,7 @@ class SourceFetchService:
         """Inspect a source and estimate archive effort."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)
@@ -204,7 +233,7 @@ class SourceFetchService:
         """Archive historical posts for a single source: one loop over kind.archive_pages."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
-            raise ValueError(f"Source {source_id} not found")
+            raise LookupError(f"Source {source_id} not found")
 
         kind = self.kinds.resolve(source)
         self._check_available(kind)
@@ -260,7 +289,7 @@ class SourceFetchService:
         checkpoint = start_checkpoint
         async for page in kind.archive_pages(source, target_posts, start_checkpoint, rate):
             if page.posts:
-                saved = await self._save_and_enrich(source_id, page.posts)
+                saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
                 total_posts_fetched += len(page.posts)
                 total_inserted += saved.inserted
                 total_updated += saved.updated
@@ -328,14 +357,8 @@ class SourceFetchService:
 
     def _save_posts(self, source_id: str, posts: List[Dict[str, Any]]) -> SaveBatchResult:
         """One save batch for one source's posts (blocking; run it in a thread)."""
-        with psycopg.connect(self.db_url) as conn:
+        with db.connection(self.db_url) as conn:
             return self.posts_repo.save_batch(conn, [PostDraft(source_id, post) for post in posts])
-
-    async def _save_and_enrich(self, source_id: str, posts: List[Dict[str, Any]]) -> SaveBatchResult:
-        """save_batch off the loop, then enrichment over the posts it inserted."""
-        saved = await asyncio.to_thread(self._save_posts, source_id, posts)
-        await self.enricher.run(saved.inserted_posts)
-        return saved
 
     async def _record_archive_metadata(
         self, source_id: str, data: Dict[str, Any], mode: str, *, kind: Optional[SourceKind] = None

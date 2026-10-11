@@ -9,7 +9,7 @@ import type { FixtureRoute } from '../frame/transport';
 import { pending, serverError } from '../frame/transport';
 import type { FrameDriver } from '../frame/driver';
 import type { CredentialsResponse } from '../../services/api';
-import { credentials, geminiView, publicView, substackView, telegramView } from '../../components/connections/fixtures';
+import { credentials, publicView, substackView, telegramView } from '../../components/connections/fixtures';
 import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
 import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
@@ -38,11 +38,10 @@ export const LONG_ERROR = 'Internal Server Error: psycopg.OperationalError: conn
   + 'The request was retried 3 times over 12.4 seconds before giving up; see the backend log for the full traceback.';
 
 const site = (build: (now: Date) => Site) => (now: Date) => siteRoutes(build(now));
-const config = { path: '/api/config', respond: () => ({ analysis_enabled: false }) } satisfies FixtureRoute;
-/** Every read waits forever (the config answers, so the shell knows its words). */
-const loading = () => [config, { path: /^\/api\//, respond: () => pending() }];
+/** Every read waits forever. */
+const loading = () => [{ path: /^\/api\//, respond: () => pending() }];
 /** Every read fails with the long message. */
-const failing = () => [config, { path: /^\/api\//, respond: () => serverError(LONG_ERROR) }];
+const failing = () => [{ path: /^\/api\//, respond: () => serverError(LONG_ERROR) }];
 
 function withSite(now: Date, change: (site: Site) => Site): FixtureRoute[] {
   return siteRoutes(change(normalSite(now)));
@@ -108,7 +107,7 @@ const SCENARIOS: FrameScenario[] = [
   },
   {
     page: 'sources', state: 'connections-unset', label: 'Nothing set', url: '/settings/sources?tab=connections', documented: true,
-    routes: connections(() => credentials(substackView(), telegramView(), publicView('reddit'), publicView('youtube'), geminiView())),
+    routes: connections(() => credentials(substackView(), telegramView(), publicView('reddit'), publicView('youtube'))),
   },
   {
     page: 'sources', state: 'connections-expired', label: 'A failing test and a lapsed session', url: '/settings/sources?tab=connections', documented: true,
@@ -131,6 +130,11 @@ const SCENARIOS: FrameScenario[] = [
     })),
   },
 
+  {
+    page: 'sources', state: 'ingestion-archive', label: 'Archive: the catalog, one channel picked for a backfill',
+    url: `/settings/sources?tab=ingestion&sub=archive&source=${sourceId('s-papers')}`, routes: site(normalSite), documented: true,
+  },
+  { page: 'sources', state: 'ingestion-logs', label: 'Logs: the application log tail', url: '/settings/sources?tab=ingestion&sub=logs', routes: site(normalSite), documented: true },
   { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
 
   // ---- shell ----

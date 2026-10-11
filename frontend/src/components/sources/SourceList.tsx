@@ -5,10 +5,11 @@ import { ArrowUpRight, ChevronRight, RefreshCw } from 'lucide-react';
 import type { SourceHealthRow } from '../../services/api';
 import { HEALTH_STATUS_LABELS, formatDue } from '../../lib/sourceSchedule';
 import { formatCount, plural } from '../../lib/format';
+import { compactAge, formatLocalDateTime } from '../../lib/dates';
 import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
-import { STATUS_GLYPH, compactAge, kindLabel, lastPostAt, rowFact, rowName, type SourceGroup } from './sourceList';
+import { STATUS_GLYPH, kindLabel, lastPostAt, rowFact, rowName, type SourceGroup } from './sourceList';
 import { folderReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
@@ -252,7 +253,7 @@ export default function SourceList({
                         </span>
                         <span
                           className={cn(COL.lastPost, 'text-[0.75rem] text-fg-3')}
-                          title={postedAt ? `Newest post ${new Date(postedAt).toLocaleString()}` : 'No posts yet'}
+                          title={postedAt ? `Newest post ${formatLocalDateTime(postedAt) ?? ''}` : 'No posts yet'}
                         >
                           <span className="sr-only">newest post </span>{compactAge(postedAt, now)}
                         </span>

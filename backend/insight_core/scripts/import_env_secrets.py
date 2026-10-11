@@ -3,9 +3,8 @@
     docker compose exec backend python -m insight_core.scripts.import_env_secrets
 
 Secrets are read only from the encrypted Connections store now. This copies, from the
-process environment, TELEGRAM_API_ID, TELEGRAM_API_HASH, SUBSTACK_SID and GEMINI_API_KEY (or
-GOOGLE_API_KEY) into the store, encrypted by
-the same service the UI uses. It skips empty values and template placeholders, never
+process environment, TELEGRAM_API_ID, TELEGRAM_API_HASH and SUBSTACK_SID into the store,
+encrypted by the same service the UI uses. It skips empty values and template placeholders, never
 overwrites a value that is already stored, and prints only the names it stored or
 skipped, never a value. Afterwards remove those lines from .env.
 """
@@ -20,7 +19,6 @@ SECRETS: Sequence[Tuple[str, str, Tuple[str, ...]]] = (
     ("telegram", "api_id", ("TELEGRAM_API_ID",)),
     ("telegram", "api_hash", ("TELEGRAM_API_HASH",)),
     ("substack", "sid", ("SUBSTACK_SID",)),
-    ("gemini", "api_key", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
 )
 PLACEHOLDER_MARKS = ("your_", "xxx", "changeme")
 

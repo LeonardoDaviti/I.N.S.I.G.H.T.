@@ -45,7 +45,7 @@ describe('a frame', () => {
   it('shows a visible bar naming a request the fixtures do not answer', async () => {
     const scenario: FrameScenario = {
       page: 'reader', state: 'gap', label: 'gap', url: '/', documented: false,
-      routes: () => [{ path: '/api/config', respond: () => ({ analysis_enabled: false }) }],
+      routes: () => [{ path: '/api/folders', respond: () => ({ success: true, folders: [] }) }],
     };
     booted = bootFrame(window, { page: 'reader', state: 'gap', theme: 'dark', data: 'fixtures' }, { scenario });
     render(<FrameRoot booted={booted} />);

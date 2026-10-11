@@ -4,16 +4,17 @@ import { CheckCheck, Circle, CircleCheck, PlayCircle, Star } from 'lucide-react'
 
 import type { FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
-import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/feedDates';
+import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
-import { feedItemDomId, formatDuration } from '../../lib/feedItem';
+import { feedItemDomId } from '../../lib/feedItem';
+import { formatClock } from '../../lib/duration';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 
 function lengthLabel(item: FeedItemData): string | null {
-  if (item.duration_seconds) return formatDuration(item.duration_seconds);
+  if (item.duration_seconds) return formatClock(item.duration_seconds);
   if (item.reading_minutes) return `${formatCount(item.reading_minutes)} min read`;
   return null;
 }
@@ -86,7 +87,7 @@ function FeedItem({
   };
 
   // Relative labels only move by the minute, so a re-render inside the same
-  // minute reuses the label (and the formatters are cached in feedDates).
+  // minute reuses the label (and the formatters are cached in lib/dates).
   const minute = Math.floor((now ? now.getTime() : Date.now()) / 60_000);
   const timeLabel = useMemo(
     () => (dateColumn === 'time' ? feedTimeLabel(time) : feedDateLabel(time, now ?? new Date())),

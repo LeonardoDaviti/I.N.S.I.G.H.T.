@@ -148,34 +148,34 @@ describe('FeedList', () => {
 
   it('o opens the selected post with ?ctx= and marks it read', async () => {
     const user = userEvent.setup();
-    const setPostRead = vi.fn().mockResolvedValue({ success: true });
-    setup({ setPostRead });
+    const setPostsRead = vi.fn().mockResolvedValue({ success: true });
+    setup({ setPostsRead });
     await screen.findAllByRole('article');
     await user.keyboard('jjo');
     const location = await screen.findByTestId('location');
     expect(location.textContent).toBe(`/posts/${ID(2)}?ctx=${encodeURIComponent('all:unread:')}`);
-    expect(setPostRead).toHaveBeenCalledWith(ID(2), true);
+    expect(setPostsRead).toHaveBeenCalledWith([ID(2)], true);
   });
 
   it('m marks read optimistically and announces it', async () => {
     const user = userEvent.setup();
     let resolve: (v: unknown) => void = () => {};
-    const setPostRead = vi.fn().mockReturnValue(new Promise((r) => { resolve = r; }));
-    setup({ setPostRead });
+    const setPostsRead = vi.fn().mockReturnValue(new Promise((r) => { resolve = r; }));
+    setup({ setPostsRead });
     await screen.findAllByRole('article');
     await user.keyboard('jm');
     // Optimistic: the row flips before the request settles.
     const first = screen.getAllByRole('article')[0];
     expect(within(first).getByRole('button', { name: 'Mark unread' })).toBeInTheDocument();
-    expect(setPostRead).toHaveBeenCalledWith(ID(1), true);
+    expect(setPostsRead).toHaveBeenCalledWith([ID(1)], true);
     await act(async () => { resolve({ success: true }); });
     await waitFor(() => expect(liveRegion()).toHaveTextContent('Marked as read'));
   });
 
   it('m rolls back when the request fails and announces the error', async () => {
     const user = userEvent.setup();
-    const setPostRead = vi.fn().mockRejectedValue(new ApiError(500, 'Could not update read state. Check the backend logs.'));
-    setup({ setPostRead });
+    const setPostsRead = vi.fn().mockRejectedValue(new ApiError(500, 'Could not update read state. Check the backend logs.'));
+    setup({ setPostsRead });
     await screen.findAllByRole('article');
     await user.keyboard('jm');
     await waitFor(() => expect(liveRegion()).toHaveTextContent('Could not update read state'));

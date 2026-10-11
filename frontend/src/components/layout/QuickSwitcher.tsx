@@ -6,7 +6,6 @@ import Kbd from '../ui/Kbd';
 import { useTheme } from '../ThemeProvider';
 import { cn } from '../../lib/utils';
 import { destinations, filterDestinations, insideDesignFrame, type Destination } from './navigation';
-import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 import { useFolders } from '../../hooks/useReaderDirectory';
 
 type Option = Destination | { id: 'toggle-theme'; label: string; group: string; to?: undefined };
@@ -23,10 +22,8 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
   const [active, setActive] = useState(0);
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
-  const analysisEnabled = useAnalysisEnabled();
-  // Per-track entries are reading-only (destinations() ignores them with analysis on).
-  const folders = useFolders({ enabled: !analysisEnabled });
-  const items = useMemo(() => destinations(analysisEnabled, folders.data ?? [], { studio: !insideDesignFrame() }), [analysisEnabled, folders.data]);
+  const folders = useFolders();
+  const items = useMemo(() => destinations(folders.data ?? [], { studio: !insideDesignFrame() }), [folders.data]);
 
   const options: Option[] = useMemo(() => {
     const themeOption: Option = {

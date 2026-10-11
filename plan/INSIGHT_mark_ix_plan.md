@@ -3,7 +3,7 @@
 Status: **accepted (2026-10-09)**; the product-owner decisions are recorded in §8. Mark IX is not deployed yet, so breaking internal changes and new migrations are allowed.
 Written: 2026-10-08
 Stack (unchanged): FastAPI + psycopg 3 + Postgres 15/pgvector, React 19/TS/Vite/Tailwind, Docker Compose.
-Supersedes: `plan/INSIGHT_adaptive_fetch_cadence_plan.md`. Section C implements that plan, and the deviations are recorded there.
+Supersedes: the adaptive fetch cadence plan (deleted in issue 0005; it is in git history). Section C implements it, and the deviations are recorded there.
 
 ---
 
@@ -569,7 +569,7 @@ The tier is a *label*. The interval comes from the formula. This is a documented
 - **Why 1h:**
   1. The scheduler now ticks every 60 minutes (§A.4), so any delay under 1h rounds up to the next tick anyway. A 15m base would make steps 1–3 (15m, 30m, 60m) all mean "next tick", which looks like three retries but behaves like one.
   2. With 1h, every step of the ladder is observable and distinct at the tick resolution.
-  3. It matches `INSIGHT_adaptive_fetch_cadence_plan.md`.
+  3. It matches the adaptive fetch cadence plan.
   4. The dormant cap is the Mark IX addition. It targets the case the plan names, where 32 dead YouTube channels each cost a yt-dlp timeout per cycle. At a 24h cap they still cost one timeout a day each.
 - **Env vars:** `INSIGHT_BACKOFF_BASE_MINUTES` (default 60), `INSIGHT_BACKOFF_MAX_HOURS` (24), `INSIGHT_BACKOFF_DORMANT_AFTER` (10), `INSIGHT_BACKOFF_DORMANT_MAX_HOURS` (168). The `SAFE_INGEST_*` names are removed, and `.env.example`/README are updated if they mention them.
 

@@ -76,7 +76,7 @@ describe('PostDetailPage header', () => {
 
 });
 
-describe('PostDetailPage reading-only (analysis off)', () => {
+describe('PostDetailPage reading view', () => {
   it('puts open original, star and copy as icon-only buttons in the title block, and no Inspect', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1 });
@@ -112,23 +112,17 @@ describe('PostDetailPage reading-only (analysis off)', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true'));
   });
 
-  it('renders no summary, inspector, notes, chat, story or tags, and fetches none of them', async () => {
-    const user = userEvent.setup();
-    const api = baseApi(rssPost({ topics: [{ id: 't1', title: 'A briefing topic', date: '2026-09-27' }] }), {
-      getPostSummary: vi.fn(),
-      getPostHighlights: vi.fn(),
-      getPostEvidence: vi.fn(),
-      chatAboutPost: vi.fn(),
-      savePostNotes: vi.fn(),
-    });
-    vi.mocked(api.getPostDetail).mockResolvedValue({
+  it('renders no summary, inspector, notes, chat, story or tags, even from an old response that still carries them', async () => {
+    const api = baseApi(rssPost());
+    const old = {
       success: true,
-      post: rssPost(),
+      post: { ...rssPost(), topics: [{ id: 't1', title: 'A briefing topic', date: '2026-09-27' }] },
       summary: { summary_markdown: 'Short version.', model: 'm', one_sentence_takeaway: 'Agents won the year.' },
       summary_references: [],
       highlights: [{ id: 'h1', highlight_text: 'closing keynote' }],
       reader_state: null,
-    });
+    };
+    vi.mocked(api.getPostDetail).mockResolvedValue(old);
     render(api);
     const article = await screen.findByRole('article', { name: 'Post content' });
     expect(screen.queryByText('Summary')).toBeNull();
@@ -141,10 +135,6 @@ describe('PostDetailPage reading-only (analysis off)', () => {
     expect(article.querySelector('mark')).toBeNull();
     // Nothing beside the text: the page is one column.
     expect(article.closest('.grid')?.children).toHaveLength(1);
-    await user.keyboard('j');
-    for (const call of [api.getPostSummary, api.getPostHighlights, api.getPostEvidence, api.getPostTimeline, api.chatAboutPost]) {
-      expect(call).not.toHaveBeenCalled();
-    }
   });
 });
 
@@ -328,7 +318,7 @@ const PREV_ID = '1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d';
 const CTX = 'all:unread:';
 
 function detailFor(post: Post) {
-  return { success: true, post, notes: null, summary: null, summary_references: [], highlights: [], reader_state: null };
+  return { success: true, post, reader_state: null };
 }
 
 function contextApi(methods: Partial<Record<keyof Api, unknown>> = {}) {
@@ -344,10 +334,9 @@ function contextApi(methods: Partial<Record<keyof Api, unknown>> = {}) {
       feedItem({ id: POST_ID, title: '2026 in LLMs (so far)', sort_at: '2026-09-27T23:54:15+00:00' }),
       feedItem({ id: NEXT_ID, title: 'The older post', sort_at: '2026-09-26T10:00:00+00:00' }),
     ])),
-    getPostTimeline: vi.fn().mockResolvedValue({ success: true, primary_story: null, story: null, timeline: null, related_candidates: [] }),
     recordPostOpen: vi.fn().mockResolvedValue({ success: true }),
     recordPostReadingSession: vi.fn().mockResolvedValue({ success: true }),
-    setPostRead: vi.fn().mockResolvedValue({ success: true }),
+    setPostsRead: vi.fn().mockResolvedValue({ success: true }),
     getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }),
     ...methods,
   });
@@ -417,9 +406,9 @@ describe('PostDetailPage feed context and keys', () => {
     // Opening marks the post read (server side, mirrored here), so m marks it unread.
     await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalled());
     await user.keyboard('m');
-    await waitFor(() => expect(api.setPostRead).toHaveBeenCalledWith(POST_ID, false));
+    await waitFor(() => expect(api.setPostsRead).toHaveBeenCalledWith([POST_ID], false));
     await user.keyboard('m');
-    await waitFor(() => expect(api.setPostRead).toHaveBeenLastCalledWith(POST_ID, true));
+    await waitFor(() => expect(api.setPostsRead).toHaveBeenLastCalledWith([POST_ID], true));
 
     await user.keyboard('?');
     const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });

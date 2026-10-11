@@ -2,22 +2,21 @@
 
 I.N.S.I.G.H.T. is a single place for all your sources and one calm reading flow. It collects posts from selected sources on a per-source cadence, stores them in PostgreSQL, and gives you one reader over all of them. It also supports one-time archive backfills.
 
-Mark IX ships **reading-only** by default. The app has three places:
+Mark IX is a **reading-only** app. It has three places:
 
 - **feed** (`/`): every source in one reading flow. The rail holds tracks (folders) and sources.
 - **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉).
 - **sources** (`/settings/sources`): the list, add, tracks, health and cadence, plus the `connections` and `ingestion` tabs.
 
-The analysis layer (entity/event memory, experts, briefings, stories, inbox) sits behind one switch, `INSIGHT_ANALYSIS`, default `off`. It is hidden, not deleted: no data is removed, and setting it `on` brings every analysis surface back unchanged. See [Analysis switch](#analysis-switch-insight_analysis).
+The analysis layer (entity/event memory, experts, briefings, stories, inbox, Gemini) was retired in issue 0005. The last commit that still holds it is tagged `mark-ix-analysis-archive`.
 
 ## What It Does
 
-- Stores sources, posts, archive status, and briefings in PostgreSQL.
+- Stores sources, posts and archive status in PostgreSQL.
 - Supports RSS/Atom feeds, Telegram RSS, Telegram channels over MTProto, Nitter RSS, Reddit, and YouTube channels.
 - Fetches every source through one ingestion entry point, on a per-source cadence with backoff for failing sources.
 - Gives you one reader over all sources (`/`): unread, starred and read state, tracks (folders) as filters.
 - Uses the same post storage path for archive and live ingestion.
-- With `INSIGHT_ANALYSIS=on` only: generates daily briefings from already-ingested posts and persists them in the database as markdown.
 - Keeps `backend/insight_core/config/sources.json` and the database source registry in sync.
 
 ## Data Model
@@ -30,16 +29,9 @@ Important tables:
 - `source_fetch_state`: per-source fetch schedule state (last attempt and outcome, failures, next retry).
 - `posts`: all archived and live-ingested posts.
 - `post_reader_state`: read and starred state per post.
-- `briefings`: saved markdown briefing outputs.
 - `youtube_watch_progress`: saved YouTube watch state.
 
-Briefings are not saved as `.md` files on disk. They are saved in PostgreSQL in the `briefings` table:
-
-- `render_format`: currently `markdown`
-- `content`: markdown body
-- `payload`: structured metadata for the briefing
-
-This means the frontend should treat briefing responses as markdown strings and render them accordingly.
+The full schema is in `backend/insight_core/docs/DB.md`.
 
 ## Source Sync
 
@@ -90,9 +82,9 @@ The recommended production layout is the included `docker-compose.yml`:
 The scheduler has two clocks:
 
 - the ingestion tick, every `ingest_tick_minutes` (default `60`, floor `15`, env `INSIGHT_INGEST_TICK_MINUTES`). Each tick is one ingestion run over all enabled sources, and each source's cadence decides whether it is due, so a tick fetches only the sources whose interval has passed or whose backoff has expired. A failing source retries on a backoff ladder (`INSIGHT_BACKOFF_*` in `.env.example`).
-- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs`, refresh source cadence and sync `sources.json -> DB`. With `INSIGHT_ANALYSIS=on` it also runs the scheduled experts and the daily briefing (topic briefing off by default). With it off, those steps are recorded as skipped on the `scheduler_cycle` job and no Gemini client is created.
+- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs`, refresh source cadence and sync `sources.json -> DB`.
 
-Archive is never run automatically; it is a manual action only. Backend and ingestion share a persistent `insight_logs` volume, so the `/ingestion` page (analysis on) can show recent runtime logs.
+Archive is never run automatically; it is a manual action only. Backend and ingestion share a persistent `insight_logs` volume, so the Ingestion tab can show recent runtime logs.
 
 ## Quick Start
 
@@ -102,7 +94,7 @@ Archive is never run automatically; it is a manual action only. Backend and inge
 cp .env.example .env
 ```
 
-2. Edit `.env` for your server. It holds infrastructure only (database, ports, CORS, intervals, model names, switches); API keys are added in the app under **Sources → Connections** and stored encrypted.
+2. Edit `.env` for your server. It holds infrastructure only (database, ports, CORS, intervals); API keys are added in the app under **Sources → Connections** and stored encrypted.
 
 Important values:
 
@@ -111,7 +103,6 @@ Important values:
 - `DB_NAME`
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
-- `INSIGHT_ANALYSIS` and `VITE_INSIGHT_ANALYSIS`: `off` (the default) for the reading-only app, `on` for the analysis layer
 - `INSIGHT_SOURCES_JSON_PATH`
 
 3. Optional: edit `backend/insight_core/config/sources.json` before first boot if you want some sources preloaded without using the frontend.
@@ -141,49 +132,22 @@ What happens automatically on startup:
 - PostgreSQL starts and persists data in `postgres_data`
 - backend runs migrations, syncs `sources.json -> DB`, and starts the API
 - ingestion runs migrations, syncs `sources.json -> DB`, runs its first tick immediately, then ticks every `ingest_tick_minutes`
-- daily work runs when `interval_hours` have passed since it last ran. With analysis on it includes the daily briefing, when enabled; the first tick after a deploy does not trigger an extra briefing
+- daily work runs when `interval_hours` have passed since it last ran; the first tick after a deploy does not run it again
 - source changes made in the API are exported back into `sources.json`
 
-Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. Reading-only (the default), the top bar reads `feed / sources`:
+Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources`:
 
 - `/`, `/read/:scopeKind/:scopeId`: the reader. Unread / starred / all, stream or by source, keyboard shortcuts (`?` lists them). The rail lists tracks and sources.
 - `/posts/:postId`: the reading view of one post, with prev/next in feed order. Content only, with ↗ ☆ ⧉.
 - `/tracks/:trackId`: one track's reading view. ⌘K has one "Tracks…" entry per track. Fetch, rename, main digest and delete are in the track group's ⋯ menu on the sources list.
 - `/settings/sources`: three tabs, `sources / connections / ingestion`.
   - `sources`: the list, add/edit, tracks, health and cadence. The old `?tab=health` URL still works and opens the list grouped by status.
-  - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram, Substack and, with analysis on, Gemini. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
+  - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram and Substack. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
   - `ingestion` (`?tab=ingestion`): the run report, `Run due sources`, the scheduler interval and status, and the job history (`&sub=jobs`; `&job=<id>` opens one job).
 
-With analysis off, `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
-
-With `INSIGHT_ANALYSIS=on` the top bar has its five words again (`feed / tracks / briefings / sources / ingestion`), and these come back:
-
-- `/tracks`: the tracks list with experts. A track page gets its briefing panel and milestones rail back.
-- `/ingestion`, `/ingestion/:tab`: the full ingestion page (single-source fetch, archive control, scheduler and briefing settings, run history and logs).
-- `/briefing*`, `/stories`, `/inbox`, `/experts`: the analysis pages.
-- On the post page: the summary, the intelligence inspector, notes and chat, and story/related posts.
+The old analysis paths `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
 
 The UI is monochrome, dark by default, with a theme toggle in the top bar. The design rules live in `frontend/src/design/docs` (shown at `/design`).
-
-## Analysis switch (`INSIGHT_ANALYSIS`)
-
-One switch decides whether the analysis layer runs and shows. It defaults to `off`.
-
-| | Off (default, reading-only) | On |
-| --- | --- | --- |
-| Top bar | `feed / sources` | `feed / tracks / briefings / sources / ingestion` |
-| Saving posts | No entity/event enrichment. The run report shows `{"skipped": "analysis off"}` | Enrichment runs, as before |
-| Daily work | Prune `job_runs`, refresh cadence, sync `sources.json`. Experts and briefings are recorded as skipped | Also experts, the daily briefing and the optional topic briefing |
-| Gemini | No `GeminiProcessor` is created, at startup or on any reading path | Created on first use |
-| Analysis endpoints | The ones that write analysis output or call Gemini answer `409 {"error": "analysis_disabled"}`. Reads of stored briefings keep working | Unchanged |
-
-How to set it:
-
-- **Backend:** `INSIGHT_ANALYSIS` in the environment of `backend` and `ingestion`. `on`, `true`, `1` and `yes` mean on; anything else means off. Each process reads it once at first use, so restart after changing it. `GET /api/config` returns `{"analysis_enabled": false}` by default.
-- **Frontend:** `VITE_INSIGHT_ANALYSIS=on|off` is a build arg, so rebuild the frontend image after changing it. At runtime the UI also asks `GET /api/config`, and that answer wins, so the backend and the UI can't disagree. The build flag decides only until the backend answers, or when an older backend has no `/api/config`.
-- **Docker Compose:** both default to `off` (`docker-compose.yml`, `.env.example`). To turn analysis on, set both to `on` in `.env` and run `docker compose up -d --build`.
-
-Nothing is deleted either way. Briefings, topics, entities and events stay in the database for the analysis version.
 
 ## Ports
 
@@ -223,7 +187,7 @@ python backend/insight_core/db/migrate.py
 3. Start the backend:
 
 ```bash
-python backend/start_api.py
+(cd backend && uvicorn main:app --reload --port 8000 --env-file ../.env)
 ```
 
 4. Start the ingestion scheduler in another shell:
@@ -240,7 +204,7 @@ npm install
 npm run dev
 ```
 
-If you inspect another database, you will not see your sources/posts/briefings. The runtime database is always the one from `DATABASE_URL`.
+If you inspect another database, you will not see your sources and posts. The runtime database is always the one from `DATABASE_URL`.
 
 Local logs are written under `./logs` when you run the project from the repo root.
 
@@ -250,15 +214,13 @@ A new source is due on the next tick (at most `ingest_tick_minutes` away). To fe
 
 1. Open `/settings/sources` and add the source.
 2. Use `Fetch now` on its row in the list, or in its detail sheet.
-3. If you want a backfill, use `Plan Archive` or `Run Archive` on `/ingestion` (analysis on), or call `POST /api/archive/{source_id}/plan` and `POST /api/archive/{source_id}/run` (either mode).
+3. If you want a backfill, use the archive view in the Ingestion tab, or call `POST /api/archive/{source_id}/plan` and `POST /api/archive/{source_id}/run`.
 
 The `ingestion` tab under sources (`/settings/sources?tab=ingestion`) has:
 
 - `Run due sources`: one ingestion run over all enabled sources that fetches only the due ones, exactly as the next tick would. Ticking `Force all` ignores cadence and backoff and fetches every source, after a confirmation.
-- the latest run report, and the scheduler status and settings: tick minutes and the daily-work interval, plus the briefing toggles with analysis on. When the scheduler is not running, the tab says so.
+- the latest run report, and the scheduler status and settings: tick minutes and the daily-work interval. When the scheduler is not running, the tab says so.
 - the job history, with a readable run report per job.
-
-With analysis on, the `/ingestion` page is there as well, with archive control and a live tail of the backend and scheduler logs.
 
 From the command line: `docker compose exec ingestion python -m insight_core.scripts.safe_ingest [--force] [--folder ID] [--source ID]` runs the same ingestion and prints the run report as JSON.
 
@@ -291,62 +253,31 @@ If only environment variables changed:
 docker compose up -d --force-recreate
 ```
 
-## Daily Briefing Behavior
-
-Only with `INSIGHT_ANALYSIS=on`. With it off, `POST /api/daily` answers `409 analysis_disabled`.
-
-Daily briefings run on already-ingested posts for a specific day.
-
-Current flow:
-
-1. Ingestion stores posts in `posts`
-2. `/api/daily` loads posts for the requested date from PostgreSQL
-3. Gemini is attempted using the configured primary model
-4. If a model is missing, rate-limited, quota-exhausted, or another configured failure occurs, the processor tries fallback Gemini models
-5. If generation still fails, or Gemini is not configured at all, a deterministic markdown fallback briefing is generated
-6. The final result is persisted to `briefings`
-
-Returned API fields include:
-
-- `briefing`
-- `format`
-- `saved_briefing_id`
-- `posts_processed`
-
 ## Useful API Endpoints
+
+Every route, with its body, is in the "HTTP API" table in `BACKEND.md`. The ones used most:
 
 Ingestion runs are background jobs: these return `202` with a `job_id`, and `GET /api/operations/jobs/{job_id}` carries the run report when the job finishes.
 
 - `POST /api/ingestion/run` (`{"force": false}`)
-- `POST /api/sources/{source_id}/fetch-now`
+- `POST /api/sources/{source_id}/fetch-now` (`{"limit": N}`)
 - `POST /api/folders/{folder_id}/ingest`
 
 Reader and sources:
 
-- `GET /api/config` (`{"analysis_enabled": false}` by default)
-- `GET /api/feed` (`scope`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days`)
+- `GET /api/feed` (`scope=all|source:<id>|folder:<id>`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days` or `date`)
 - `GET /api/feed/unread-counts`
-- `PUT /api/feed/read`, `POST /api/feed/mark-read`
+- `PUT /api/feed/read` (`{ids, read}`, or `{scope, through_cursor, newest_cursor}`)
+- `GET /api/sources`, `POST /api/sources`
 - `GET /api/sources/health`
 - `PUT /api/sources/{source_id}/cadence`
 - `GET /api/operations/scheduler`, `PUT /api/operations/scheduler`
 
-Briefings, archive and tools. With analysis off, `POST /api/daily`, `/api/daily/topics` and the YouTube `roadmap`, `video/evaluate` and `video/chat` routes answer `409 {"error": "analysis_disabled"}`, like every other analysis route:
+Archive:
 
-- `POST /api/daily`
-- `POST /api/daily/topics`
 - `GET /api/archive/{source_id}/status`
 - `POST /api/archive/{source_id}/plan`
 - `POST /api/archive/{source_id}/run`
-- `POST /api/sources/sync/json-to-db`
-- `POST /api/sources/sync/db-to-json`
-- `POST /api/youtube/channel/videos`
-- `POST /api/youtube/channel/roadmap`
-- `POST /api/youtube/channel/playlists`
-- `POST /api/youtube/video/evaluate`
-- `POST /api/youtube/video/chat`
-- `GET /api/youtube/progress/{video_id}`
-- `PUT /api/youtube/progress/{video_id}`
 
 ## External Source Infrastructure
 
@@ -368,5 +299,4 @@ Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh
 
 - Archive and live ingestion store posts in the same format.
 - Archive status is informational and does not block re-archiving.
-- YouTube roadmap and video tooling are backend-only right now.
 - The migration runner now uses a PostgreSQL advisory lock so backend and ingestion can start safely at the same time.

@@ -12,6 +12,11 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.sources_service import SourcesService
 
 
+def _handle(value: Any) -> str:
+    """A source id as SourcesService.add_source stores it."""
+    return str(value or "").strip()
+
+
 class SourceConfigSyncService:
     """Keep sources.json and the database source registry in sync."""
 
@@ -50,8 +55,10 @@ class SourceConfigSyncService:
         document = self.load_json()
         desired_sources = self._flatten_sources(document)
         current_sources = self.sources_service.get_all_sources()
+        # Both sides keyed as add_source stores a handle (stripped): a padded id in the file
+        # must match its row, or the next sync would mirror-delete it with its posts.
         current_lookup = {
-            (source["platform"], source["handle_or_url"]): source
+            (source["platform"], _handle(source["handle_or_url"])): source
             for source in current_sources
         }
 
@@ -180,7 +187,7 @@ class SourceConfigSyncService:
         flattened: List[Tuple[str, str, bool, bool]] = []
         for platform, platform_data in document.get("platforms", {}).items():
             for source in platform_data.get("sources", []):
-                handle_or_url = source.get("id")
+                handle_or_url = _handle(source.get("id"))
                 if not handle_or_url:
                     continue
                 enabled = source.get("state", "disabled") == "enabled"
@@ -193,7 +200,6 @@ class SourceConfigSyncService:
             "metadata": {
                 "name": "I.N.S.I.G.H.T.",
                 "description": "Intelligence Network for Systematic Gathering and Handling of Topics",
-                "version": "Mark VI",
             },
             "platforms": {},
         }

@@ -70,17 +70,6 @@ export function defaultDesired(ceiling: number | null): number {
   return clampDesired(Math.min(ceiling, 500), ceiling);
 }
 
-/** "under a minute", "~5m", "~2h 10m"; null when there is no estimate. */
-export function formatEstimate(seconds: number | null | undefined): string | null {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return null;
-  if (seconds < 60) return 'under a minute';
-  const minutes = Math.round(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (!hours) return `~${minutes}m`;
-  return rest ? `~${hours}h ${rest}m` : `~${hours}h`;
-}
-
 /** "5s between pages, 30s every 10 pages"; null when the plan carried no rate limit. */
 export function describeRate(rate: ArchiveRateLimit | null | undefined): string | null {
   if (!rate) return null;

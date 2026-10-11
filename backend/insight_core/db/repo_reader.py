@@ -1,4 +1,8 @@
-"""Reader repository: the feed keyset query, read state, bounded mark-through, unread counts.
+"""Reader repository: the one post listing, read state, bounded mark-through, unread counts.
+
+Every post list the reader shows (the feed, a source, a track, one day) is `list_posts` with a
+`FeedQuery`: scope, read-state filter, an optional time bound (the last N days or one day),
+a keyset cursor and a view (a stream, or one group per source).
 
 Read state lives in the `post_reader_state` projection (0020). `post_interactions` stays the
 audit log; a list query cannot aggregate it per row cheaply.
@@ -13,17 +17,16 @@ from __future__ import annotations
 
 import base64
 import binascii
-import html
 import math
-import os
-import re
 import uuid
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.utils.content_fingerprints import strip_html
+from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 
 FeedFilter = Literal["all", "unread", "starred"]
@@ -32,6 +35,8 @@ FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "starred")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
 SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
 
+MAX_FEED_LIMIT = 100
+MAX_FEED_GROUPS = 50
 DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-time
 EXCERPT_CHARS = 280
 TITLE_FALLBACK_CHARS = 80
@@ -44,16 +49,11 @@ SORT_KEY = "COALESCE(p.published_at, p.fetched_at)"
 UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
-_TAG_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"\s+")
 
 
 def unread_window_days_from_env() -> Optional[int]:
     """INSIGHT_UNREAD_WINDOW_DAYS as a positive int, or None (unset, 0 or garbage: no window)."""
-    try:
-        days = int(os.getenv("INSIGHT_UNREAD_WINDOW_DAYS") or 0)
-    except ValueError:
-        return DEFAULT_UNREAD_WINDOW_DAYS
+    days = env_int("INSIGHT_UNREAD_WINDOW_DAYS", 0)
     return days if days > 0 else DEFAULT_UNREAD_WINDOW_DAYS
 
 
@@ -123,9 +123,65 @@ class FeedCursor:
         return FeedCursor(sort_at, _require_uuid(post_id, "cursor id"))
 
 
+@dataclass(frozen=True)
+class FeedQuery:
+    """One page of posts: which posts, and how they are paged.
+
+    `days` keeps the last N days; `day` keeps one calendar day (UTC). `view="by_source"` pages
+    groups (one per source, `per_source` newest items each), at most MAX_FEED_GROUPS a page.
+    A bad value is a ValueError (the API's 400).
+    """
+
+    scope: FeedScope = field(default_factory=lambda: FeedScope("all"))
+    filter: FeedFilter = "all"
+    view: FeedView = "stream"
+    cursor: Optional[FeedCursor] = None
+    limit: int = 30
+    days: Optional[int] = None
+    day: Optional[date] = None
+    per_source: int = 3
+
+    def __post_init__(self) -> None:
+        if self.filter not in FEED_FILTERS:
+            raise ValueError(f"filter must be one of {', '.join(FEED_FILTERS)}")
+        if self.view not in FEED_VIEWS:
+            raise ValueError(f"view must be one of {', '.join(FEED_VIEWS)}")
+        if not 1 <= int(self.limit) <= MAX_FEED_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_FEED_LIMIT}")
+        if self.days is not None and int(self.days) < 1:
+            raise ValueError("days must be at least 1")
+        if self.days is not None and self.day is not None:
+            raise ValueError("send days or date, not both")
+
+    @staticmethod
+    def parse(*, scope: str | None = None, filter: str = "all", view: str = "stream",
+              cursor: str | None = None, limit: int = 30, days: int | None = None,
+              date: str | None = None) -> "FeedQuery":
+        """The API's query string: `scope=all|source:<uuid>|folder:<uuid>`, `date=YYYY-MM-DD`."""
+        day = None
+        if date:
+            try:
+                day = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                raise ValueError(f"date must be YYYY-MM-DD, not {date!r}") from None
+        return FeedQuery(
+            scope=FeedScope.parse(scope), filter=filter, view=view,  # type: ignore[arg-type]
+            cursor=FeedCursor.decode(cursor) if cursor else None,
+            limit=int(limit), days=int(days) if days is not None else None, day=day,
+        )
+
+    def bounds(self, now: datetime) -> Tuple[Optional[datetime], Optional[datetime]]:
+        """(since, until) on the sort key: since inclusive, until exclusive."""
+        if self.day is not None:
+            start = datetime.combine(self.day, time.min, tzinfo=timezone.utc)
+            return start, start + timedelta(days=1)
+        if self.days:
+            return now - timedelta(days=self.days), None
+        return None, None
+
+
 def _excerpt(content: str | None) -> str:
-    text = html.unescape(_TAG_RE.sub(" ", content or ""))
-    return _WS_RE.sub(" ", text).strip()[:EXCERPT_CHARS]
+    return strip_html(content, entities="decode")[:EXCERPT_CHARS]
 
 
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
@@ -203,20 +259,38 @@ class ReaderRepository:
             return "TRUE", []
         raise ValueError(f"invalid feed filter: {filter!r}")
 
-    # ---- feed ---------------------------------------------------------------------
+    # ---- the post listing ----------------------------------------------------------
 
-    def feed(self, cur: Cursor, scope: FeedScope, *, filter: FeedFilter, cursor: FeedCursor | None,
-             limit: int = 30, since: datetime | None = None) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
-        scope_sql, params = self._scope_sql(scope)
-        filter_sql, filter_params = self._filter_sql(filter)
-        where = [scope_sql, filter_sql]
-        params += filter_params
-        if cursor is not None:
-            where.append(f"({SORT_KEY}, p.id) < (%s, %s::uuid)")
-            params += [cursor.sort_at, cursor.post_id]
+    @staticmethod
+    def _bounds_sql(since: datetime | None, until: datetime | None) -> Tuple[str, List[Any]]:
+        where, params = ["TRUE"], []
         if since is not None:
             where.append(f"{SORT_KEY} >= %s")
             params.append(since)
+        if until is not None:
+            where.append(f"{SORT_KEY} < %s")
+            params.append(until)
+        return " AND ".join(where), params
+
+    def list_posts(self, cur: Cursor, query: FeedQuery, *, now: datetime
+                   ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
+        """One page of `query`: items (stream) or groups (by_source), and the next page's cursor."""
+        since, until = query.bounds(now)
+        if query.view == "by_source":
+            return self._by_source(cur, query, since=since, until=until)
+        return self._stream(cur, query, since=since, until=until)
+
+    def _stream(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
+                ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
+        scope_sql, params = self._scope_sql(query.scope)
+        filter_sql, filter_params = self._filter_sql(query.filter)
+        bounds_sql, bounds_params = self._bounds_sql(since, until)
+        where = [scope_sql, filter_sql, bounds_sql]
+        params += filter_params + bounds_params
+        if query.cursor is not None:
+            where.append(f"({SORT_KEY}, p.id) < (%s, %s::uuid)")
+            params += [query.cursor.sort_at, query.cursor.post_id]
+        limit = query.limit
         cur.execute(
             f"""
             SELECT {_ITEM_COLUMNS}
@@ -234,17 +308,17 @@ class ReaderRepository:
         next_cursor = FeedCursor(items[-1]["sort_at"], items[-1]["id"]) if len(rows) > limit else None
         return items, next_cursor
 
-    def feed_by_source(self, cur: Cursor, scope: FeedScope, *, filter: FeedFilter, per_source: int = 3,
-                       group_cursor: FeedCursor | None = None, groups: int = 20,
-                       since: datetime | None = None
-                       ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
+    def _by_source(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
+                   ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One group per source, newest group first; keyset on (newest_sort_at, source_id).
 
         `count` honours the filter and, when one is set, the unread window: it then bounds every
         filter except `starred` (an explicit star never ages out).
-        `since` (the `days=` window) bounds both the counts and the items. Two queries per
+        The time bound (`days` or `day`) bounds both the counts and the items. Two queries per
         page whatever its size: the groups, then every group's newest items in one LATERAL.
         """
+        scope, filter, group_cursor = query.scope, query.filter, query.cursor
+        groups, per_source = min(query.limit, MAX_FEED_GROUPS), query.per_source
         scope_sql, scope_params = self._scope_sql(scope)
         filter_sql, filter_params = self._filter_sql(filter)
         window = ["TRUE"]
@@ -253,9 +327,9 @@ class ReaderRepository:
             all_window_sql, all_window_params = self._window_sql()
             window.append(all_window_sql)
             window_params += all_window_params
-        if since is not None:
-            window.append(f"{SORT_KEY} >= %s")
-            window_params.append(since)
+        bounds_sql, bounds_params = self._bounds_sql(since, until)
+        window.append(bounds_sql)
+        window_params += bounds_params
         window_sql = " AND ".join(window)
         group_where, group_params = "TRUE", []
         if group_cursor is not None:
@@ -324,11 +398,11 @@ class ReaderRepository:
 
     # ---- read state ---------------------------------------------------------------
 
-    def set_read(self, cur: Cursor, post_ids: Sequence[str], read: bool) -> int:
-        """Mark posts read (keeping the first read time) or unread. Returns rows changed."""
+    def set_read(self, cur: Cursor, post_ids: Sequence[str], read: bool) -> List[str]:
+        """Mark posts read (keeping the first read time) or unread. Returns the ids changed."""
         ids = [_require_uuid(pid, "post id") for pid in post_ids]
         if not ids:
-            return 0
+            return []
         if read:
             cur.execute(
                 """
@@ -337,6 +411,7 @@ class ReaderRepository:
                 ON CONFLICT (post_id) DO UPDATE
                     SET read_at = now(), updated_at = now()
                     WHERE post_reader_state.read_at IS NULL
+                RETURNING post_id
                 """,
                 (ids,),
             )
@@ -345,10 +420,11 @@ class ReaderRepository:
                 """
                 UPDATE post_reader_state SET read_at = NULL, updated_at = now()
                 WHERE post_id = ANY(%s::uuid[]) AND read_at IS NOT NULL
+                RETURNING post_id
                 """,
                 (ids,),
             )
-        return cur.rowcount
+        return [str(r[0]) for r in cur.fetchall()]
 
     def set_starred(self, cur: Cursor, post_id: str, starred: bool) -> None:
         post_id = _require_uuid(post_id, "post id")

@@ -169,11 +169,10 @@ class StoredCredentials:
         db_url = self.db_url or os.getenv("DATABASE_URL")
         if not db_url:
             return {}
-        import psycopg
-
+        from insight_core.db import database as db
         from insight_core.db.repo_credentials import CredentialsRepository
 
-        with psycopg.connect(db_url, connect_timeout=5) as conn, conn.cursor() as cur:
+        with db.connection(db_url) as conn, conn.cursor() as cur:
             rows = CredentialsRepository().ciphertexts(cur)
         if not rows:
             return {}

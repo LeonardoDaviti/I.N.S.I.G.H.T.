@@ -17,7 +17,6 @@ FULL_ENV = {
     "TELEGRAM_API_ID": "123456",
     "TELEGRAM_API_HASH": HASH,
     "SUBSTACK_SID": "s%3AcookieValue.abcd",
-    "GEMINI_API_KEY": "AIzaGeminiKey9876",
 }
 
 
@@ -40,32 +39,22 @@ class ImportEnvSecretsTests(unittest.TestCase):
             ("telegram", "api_id"): "123456",
             ("telegram", "api_hash"): HASH,
             ("substack", "sid"): "s%3AcookieValue.abcd",
-            ("gemini", "api_key"): "AIzaGeminiKey9876",
         })
         self.assertEqual(sorted(stored), sorted(FULL_ENV))
         self.assertEqual(skipped, [])
-
-    def test_google_api_key_is_the_gemini_fallback(self):
-        store = FakeStore()
-        stored, _ = import_env_secrets({"GOOGLE_API_KEY": "AIzaGoogle"}, store)
-        self.assertEqual(store.values, {("gemini", "api_key"): "AIzaGoogle"})
-        self.assertEqual(stored, ["GOOGLE_API_KEY"])
 
     def test_empty_values_and_placeholders_are_skipped(self):
         env = {
             "TELEGRAM_API_ID": "your_api_id",
             "TELEGRAM_API_HASH": "your_api_hash",
             "SUBSTACK_SID": "  ",
-            "GEMINI_API_KEY": "your_gemini_api_key_here",
-            "GOOGLE_API_KEY": "AIza-xxx",
         }
         store = FakeStore()
         stored, skipped = import_env_secrets(env, store)
         self.assertEqual(store.values, {})
         self.assertEqual(stored, [])
         self.assertEqual({name for name, _reason in skipped},
-                         {"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "SUBSTACK_SID", "GEMINI_API_KEY",
-                          "GOOGLE_API_KEY"})
+                         {"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "SUBSTACK_SID"})
 
     def test_changeme_is_a_placeholder_in_any_case(self):
         store = FakeStore()
@@ -88,12 +77,12 @@ class ImportEnvSecretsTests(unittest.TestCase):
     def test_main_prints_names_and_never_values(self):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = main(env={**FULL_ENV, "GOOGLE_API_KEY": "changeme-later"}, store=FakeStore())
+            code = main(env=FULL_ENV, store=FakeStore())
         text = out.getvalue()
         self.assertEqual(code, 0)
         for name in FULL_ENV:
             self.assertIn(name, text)
-        for value in [*FULL_ENV.values(), "changeme-later"]:
+        for value in FULL_ENV.values():
             self.assertNotIn(value, text)
 
 

@@ -14,7 +14,7 @@ One easing: `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`. Exits are faster than 
 
 | Interaction | Duration | Property | Notes |
 | --- | --- | --- | --- |
-| press feedback | 120ms | transform `scale(0.97)` | every Button, Chip, Row link; not on a key press |
+| press feedback | 120ms | transform `scale(0.97)` | every Button and Chip; not on a key press |
 | hover / colour | 120ms | color, background-color, border-color | only under `(hover: hover) and (pointer: fine)` |
 | theme switch | 200ms | background-color, color on `body` | eases the dark↔light brightness jump |
 | popover / tooltip | 150ms | opacity + `scale(0.97→1)` from the trigger | `transform-origin` = trigger |

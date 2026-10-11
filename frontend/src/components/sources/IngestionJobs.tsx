@@ -5,7 +5,8 @@ import { useOperationJob } from '../../hooks/useOperations';
 import { asRunReport } from '../../lib/runReport';
 import { plural } from '../../lib/format';
 import { jobLabel } from '../../lib/operationsOverview';
-import { formatJobDuration, formatJobTimestamp, jobGlyph } from '../../lib/jobRuns';
+import { formatJobDuration, jobGlyph } from '../../lib/jobRuns';
+import { formatLocalDateTime } from '../../lib/dates';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
 import { ArchiveProgressBar } from './ArchiveSection';
@@ -24,7 +25,7 @@ function JobDetail({ job }: { job: JobRun }) {
   const facts: Array<[string, React.ReactNode]> = [
     ['Status', <StatusGlyph key="s" status={jobGlyph(job.status)} label={job.status} />],
     ['Source', job.source_display_name ? sourceLabel(job.source_display_name) : 'All sources'],
-    ['Started', formatJobTimestamp(job.started_at) || '—'],
+    ['Started', formatLocalDateTime(job.started_at) || '—'],
     ['Duration', formatJobDuration(job.started_at, job.finished_at) || (job.finished_at ? '—' : 'still running')],
   ];
   return (
@@ -46,7 +47,7 @@ function JobDetail({ job }: { job: JobRun }) {
         <ol aria-label="Events" className="max-h-[18rem] divide-y divide-line overflow-y-auto rounded-md border border-line font-mono text-[0.75rem] leading-5">
           {events.map((event, index) => (
             <li key={`${event.at ?? 'event'}-${index}`} className="flex min-w-0 gap-3 px-3 py-1.5">
-              <span className="shrink-0 tabular-nums text-fg-3">{formatJobTimestamp(event.at) || '—'}</span>
+              <span className="shrink-0 tabular-nums text-fg-3">{formatLocalDateTime(event.at) || '—'}</span>
               <span className={`shrink-0 ${event.level === 'error' ? 'font-semibold text-fg' : 'text-fg-3'}`}>
                 {event.level === 'error' ? '× error' : event.level || 'info'}
               </span>
@@ -83,7 +84,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
         <ul className="divide-y divide-line border-y border-line">
           {jobs.map((job) => {
             const selected = job.id === selectedId;
-            const when = [formatJobTimestamp(job.started_at), formatJobDuration(job.started_at, job.finished_at)].filter(Boolean).join(' · ');
+            const when = [formatLocalDateTime(job.started_at), formatJobDuration(job.started_at, job.finished_at)].filter(Boolean).join(' · ');
             return (
               <li key={job.id}>
                 <button

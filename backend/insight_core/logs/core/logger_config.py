@@ -39,9 +39,6 @@ class LoggerConfig:
         self._setup_connector_handlers()
         self._setup_operation_handlers()
         
-        # Configure specific loggers
-        self._configure_component_loggers()
-        
         logging.info("Logging system initialized successfully")
 
     def _setup_console_handler(self):
@@ -108,37 +105,11 @@ class LoggerConfig:
             # Add to root logger  
             logging.getLogger().addHandler(handler)
 
-    def _configure_component_loggers(self):
-        """Configure loggers for specific components."""
-        # Connector loggers
-        for connector in ['telegram', 'rss', 'youtube', 'reddit']:
-            logger = logging.getLogger(f'{connector}_connector')
-            logger.setLevel(self.log_level)
-        
-        # Operation loggers
-        for operation in ['automated', 'interactive', 'recovery']:
-            logger = logging.getLogger(f'{operation}_operation')
-            logger.setLevel(self.log_level)
-        
-        # Core loggers
-        core_components = ['config_manager', 'async_gatherer', 'insight_operator']
-        for component in core_components:
-            logger = logging.getLogger(component)
-            logger.setLevel(self.log_level)
-
 def setup_logging(debug_mode=False):
     """Convenience function to set up logging."""
     config = LoggerConfig(debug_mode=debug_mode)
     config._setup_logging()
     return config
-
-def get_connector_logger(connector_name):
-    """Get a logger for a specific connector."""
-    return logging.getLogger(f'{connector_name}_connector')
-
-def get_operation_logger(operation_type):
-    """Get a logger for a specific operation type."""
-    return logging.getLogger(f'{operation_type}_operation')
 
 def get_component_logger(component_name):
     """Get a logger for a specific component."""

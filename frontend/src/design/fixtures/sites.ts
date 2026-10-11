@@ -170,8 +170,6 @@ export function scheduler(now: Date, overrides: Partial<SchedulerConfig> = {}): 
   return {
     interval_hours: 24,
     sync_sources_each_cycle: true,
-    generate_daily_briefing: false,
-    generate_topic_briefing: false,
     ingest_tick_minutes: 60,
     state: { last_tick_at: at(now, -12 * MINUTE), next_tick_at: at(now, 48 * MINUTE) },
     ...overrides,
@@ -196,7 +194,6 @@ export function ingestionJob(now: Date, report = runReport(), overrides: Partial
 /** The realistic site: 13 sources with posts, 80 more in a dense list, four tracks, a healthy scheduler. */
 export function normalSite(now: Date = new Date()): Site {
   return {
-    config: { analysis_enabled: false },
     items: realisticItems(now),
     folders: Object.values(TRACKS),
     health: [...namedRows(now), ...denseRows(now)],
@@ -230,7 +227,6 @@ export function worstSite(now: Date = new Date()): Site {
   const worstFolders = health.flatMap((row) => row.folders);
   const unique = [...new Map(worstFolders.map((f) => [f.id, f])).values()];
   return {
-    config: { analysis_enabled: false },
     items: [...worstFeedItems(now), ...huge],
     folders: [...unique.map((f, i) => folder(f.id, f.name, i)), ...manyTracks()],
     health,
