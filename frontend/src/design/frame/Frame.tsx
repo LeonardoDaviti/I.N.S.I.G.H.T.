@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 
 import { frameUrl, prototypeFrameUrl, type FrameTheme } from './frameUrl';
 import type { FrameData } from './transport';
@@ -19,6 +19,10 @@ export interface FrameProps {
   data?: FrameData;
   /** Clicks, keys and scrolling reach the page (the Wall's walk); otherwise the frame is a picture. */
   interactive?: boolean;
+  /** The frame takes the walk's steps from the studio (`?walk=1`). */
+  walk?: boolean;
+  /** Receives the iframe, so the studio can post walk steps to it. */
+  iframeRef?: MutableRefObject<HTMLIFrameElement | null>;
   /** The iframe's accessible name; defaults to page · state · width · theme. */
   title?: string;
   className?: string;
@@ -31,7 +35,7 @@ export interface FrameProps {
  * what is on screen. Its box takes the scaled height, so frames stack cleanly.
  */
 export default function Frame({
-  page, prototype, state, width = 1400, height, theme = 'dark', data = 'fixtures', interactive = false, title, className,
+  page, prototype, state, width = 1400, height, theme = 'dark', data = 'fixtures', interactive = false, walk = false, iframeRef, title, className,
 }: FrameProps) {
   const box = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState<number | null>(null);
@@ -56,7 +60,8 @@ export default function Frame({
       style={{ position: 'relative', width: '100%', maxWidth: width, height: viewportHeight * scale, overflow: 'hidden' }}
     >
       <iframe
-        src={prototype ? prototypeFrameUrl(prototype, state, { theme, data }) : frameUrl(page, state, { theme, data })}
+        ref={iframeRef}
+        src={prototype ? prototypeFrameUrl(prototype, state, { theme, data, walk }) : frameUrl(page, state, { theme, data, walk })}
         title={title ?? `${prototype ?? page} · ${state} · ${width}px · ${theme}`}
         loading="lazy"
         tabIndex={interactive ? undefined : -1}

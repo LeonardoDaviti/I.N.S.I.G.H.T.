@@ -13,10 +13,20 @@ import type { PrototypeComponent } from '../prototypeRegistry';
 import type { BootedFrame } from './boot';
 import { createFrameDriver } from './driver';
 import RequestBar from './RequestBar';
+import { WALK, WALK_MESSAGE } from '../wall/walk';
 
 function RouteErrorBoundary({ children }: { children: ReactNode }) {
   const location = useLocation();
   return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
+}
+
+/** The frame's address in its memory router, on `html[data-frame-path]`, for the walk to wait on. */
+function PathMark() {
+  const { pathname, search } = useLocation();
+  useEffect(() => {
+    document.documentElement.dataset.framePath = `${pathname}${search}`;
+  }, [pathname, search]);
+  return null;
 }
 
 /** Runs the scenario's steps once the page is up, then marks the frame ready (`html[data-frame-ready]`). */
@@ -39,6 +49,33 @@ function useScenarioSetup(scenario: FrameScenario | null, onError: (message: str
 }
 
 /**
+ * A walk frame (the Wall's walk) listens to the studio, its parent on the same
+ * origin: `run` a step of the walk in this document, answer `done`. One step
+ * at a time; a step sent while one runs waits behind it.
+ */
+function useWalkCommands(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const studio = window.parent;
+    const origin = window.location.origin;
+    const driver = createFrameDriver(document);
+    let queue = Promise.resolve();
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== origin || event.source !== studio) return;
+      const { type, step } = (event.data ?? {}) as { type?: string; step?: number };
+      if (type !== WALK_MESSAGE.run || typeof step !== 'number' || !WALK[step]) return;
+      queue = queue.then(() => WALK[step].run(driver)).then(
+        () => studio.postMessage({ type: WALK_MESSAGE.done, step, ok: true, path: document.documentElement.dataset.framePath }, origin),
+        (error: unknown) => studio.postMessage({ type: WALK_MESSAGE.done, step, ok: false, error: error instanceof Error ? error.message : String(error) }, origin),
+      );
+    };
+    window.addEventListener('message', onMessage);
+    studio.postMessage({ type: WALK_MESSAGE.ready }, origin);
+    return () => window.removeEventListener('message', onMessage);
+  }, [enabled]);
+}
+
+/**
  * A frame's page (Design Studio D4): the real routes inside the app's own
  * providers and shell, at the scenario's URL, on a fresh query cache that does
  * not retry (an error state shows at once). The top bar shows, so the Wall
@@ -46,11 +83,16 @@ function useScenarioSetup(scenario: FrameScenario | null, onError: (message: str
  * A prototype frame (D6) wraps the routes in the prototype's component, which
  * may restyle the page (an override) or render something else instead.
  */
-export default function FrameRoot({ booted, prototype: Prototype }: { booted: BootedFrame; prototype?: PrototypeComponent }) {
+export default function FrameRoot({ booted, prototype: Prototype, walk = false }: {
+  booted: BootedFrame;
+  prototype?: PrototypeComponent;
+  walk?: boolean;
+}) {
   const { scenario, location, report } = booted;
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const [setupError, setSetupError] = useState<string | null>(null);
   useScenarioSetup(scenario, setSetupError);
+  useWalkCommands(walk && scenario !== null);
 
   if (location.prototype && !Prototype) {
     return (
@@ -73,6 +115,7 @@ export default function FrameRoot({ booted, prototype: Prototype }: { booted: Bo
       <ApiProvider>
         <ThemeProvider>
           <MemoryRouter initialEntries={[scenario.url]}>
+            <PathMark />
             <AppShell>
               <RouteErrorBoundary>
                 <Suspense fallback={<div className="mx-auto w-full max-w-3xl px-4 pt-10 sm:px-6"><LoadingState label="Loading page" rows={4} /></div>}>

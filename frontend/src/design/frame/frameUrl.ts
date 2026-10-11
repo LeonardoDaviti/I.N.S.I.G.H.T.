@@ -23,16 +23,19 @@ export interface FrameLocation {
   state: string;
   theme: FrameTheme;
   data: FrameData;
+  /** `?walk=1`: the frame takes walk steps from the studio (the Wall's walk). */
+  walk?: boolean;
 }
 
 export function isFramePath(pathname: string): boolean {
   return pathname.startsWith(FRAME_PREFIX);
 }
 
-type FrameOptions = Partial<Pick<FrameLocation, 'theme' | 'data'>>;
+type FrameOptions = Partial<Pick<FrameLocation, 'theme' | 'data' | 'walk'>>;
 
-function address(segments: readonly string[], { theme = 'dark', data = 'fixtures' }: FrameOptions): string {
+function address(segments: readonly string[], { theme = 'dark', data = 'fixtures', walk = false }: FrameOptions): string {
   const query = new URLSearchParams({ theme, data });
+  if (walk) query.set('walk', '1');
   return `${FRAME_PREFIX}${segments.map(encodeURIComponent).join('/')}?${query.toString()}`;
 }
 
@@ -53,6 +56,7 @@ export function parseFrameLocation(pathname: string, search: string): FrameLocat
   const look = {
     theme: query.get('theme') === 'light' ? 'light' : 'dark',
     data: query.get('data') === 'live' ? 'live' : 'fixtures',
+    ...(query.get('walk') === '1' ? { walk: true } : {}),
   } as const;
   if (segments[0] === PROTOTYPE_SEGMENT) {
     const [, prototype = '', state = 'normal'] = segments;

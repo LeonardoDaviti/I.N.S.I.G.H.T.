@@ -15,6 +15,20 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/**
+ * A fixture id the app accepts as a real one: the reader only scopes to UUIDs
+ * (`isValidScope`), so `/read/source/s-simon` would bounce to the feed. The
+ * slug's bytes in hex, padded to a UUID's 32 digits, so it stays readable in a
+ * URL (`732d73696d6f6e…` is `s-simon`). Slugs are at most 16 characters.
+ */
+export function fixtureId(slug: string): string {
+  const hex = [...slug].map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('').padEnd(32, '0').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** A named source's id, by its slug (`s-simon`). */
+export const sourceId = (slug: string) => fixtureId(slug);
+
 function at(now: Date, offsetMs: number): string {
   return new Date(now.getTime() + offsetMs).toISOString();
 }
@@ -25,14 +39,14 @@ export function folder(id: string, name: string, sort_order: number): Folder {
 
 /** The tracks of the realistic site; `f-robotics` has sources but no posts yet (the empty scope). */
 export const TRACKS = {
-  ai: folder('f-ai', 'AI engineering', 0),
-  research: folder('f-research', 'Research papers', 1),
-  ar: folder('f-ar', 'AR glasses', 2),
-  robotics: folder('f-robotics', 'Robotics', 3),
+  ai: folder(fixtureId('f-ai'), 'AI engineering', 0),
+  research: folder(fixtureId('f-research'), 'Research papers', 1),
+  ar: folder(fixtureId('f-ar'), 'AR glasses', 2),
+  robotics: folder(fixtureId('f-robotics'), 'Robotics', 3),
 } as const;
 
 interface NamedSource {
-  id: string;
+  slug: string;
   name: string;
   platform: string;
   kind: string;
@@ -41,19 +55,19 @@ interface NamedSource {
 
 /** The sources posts come from, in the realistic site. */
 const NAMED: NamedSource[] = [
-  { id: 's-simon', name: 'Simon Willison’s Weblog', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ai] },
-  { id: 's-anthropic', name: 'Anthropic News', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ai] },
-  { id: 's-latent', name: 'Latent Space', platform: 'substack', kind: 'substack', tracks: [TRACKS.ai] },
-  { id: 's-hn', name: 'Hacker News: Front Page', platform: 'rss', kind: 'generic_rss', tracks: [] },
-  { id: 's-llama', name: 'r/LocalLLaMA', platform: 'reddit', kind: 'generic_rss', tracks: [TRACKS.ai] },
-  { id: 's-newz', name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', tracks: [TRACKS.ai] },
-  { id: 's-arxiv-cl', name: 'arXiv cs.CL', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
-  { id: 's-arxiv-lg', name: 'arXiv cs.LG', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
-  { id: 's-papers', name: 'Two Minute Papers', platform: 'youtube', kind: 'youtube_channel', tracks: [TRACKS.research] },
-  { id: 's-roadtovr', name: 'Road to VR', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
-  { id: 's-uploadvr', name: 'UploadVR', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
-  { id: 's-verge', name: 'The Verge', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
-  { id: 's-ieee-robots', name: 'IEEE Spectrum Robotics', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.robotics] },
+  { slug: 's-simon', name: 'Simon Willison’s Weblog', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ai] },
+  { slug: 's-anthropic', name: 'Anthropic News', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ai] },
+  { slug: 's-latent', name: 'Latent Space', platform: 'substack', kind: 'substack', tracks: [TRACKS.ai] },
+  { slug: 's-hn', name: 'Hacker News: Front Page', platform: 'rss', kind: 'generic_rss', tracks: [] },
+  { slug: 's-llama', name: 'r/LocalLLaMA', platform: 'reddit', kind: 'generic_rss', tracks: [TRACKS.ai] },
+  { slug: 's-newz', name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', tracks: [TRACKS.ai] },
+  { slug: 's-arxiv-cl', name: 'arXiv cs.CL', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
+  { slug: 's-arxiv-lg', name: 'arXiv cs.LG', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.research] },
+  { slug: 's-papers', name: 'Two Minute Papers', platform: 'youtube', kind: 'youtube_channel', tracks: [TRACKS.research] },
+  { slug: 's-roadtovr', name: 'Road to VR', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
+  { slug: 's-uploadvr', name: 'UploadVR', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
+  { slug: 's-verge', name: 'The Verge', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.ar] },
+  { slug: 's-ieee-robots', name: 'IEEE Spectrum Robotics', platform: 'rss', kind: 'generic_rss', tracks: [TRACKS.robotics] },
 ];
 
 /** What each source posts about, newest first: realistic titles of ordinary length. */
@@ -77,16 +91,16 @@ function realisticItems(now: Date): FeedItem[] {
   let n = 0;
   for (let round = 0; round < 3; round += 1) {
     for (const source of NAMED) {
-      const title = TITLES[source.id]?.[round];
+      const title = TITLES[source.slug]?.[round];
       if (!title) continue;
       n += 1;
       const ageMs = (n * 2.3 + round * 9) * HOUR;
       items.push(feedItem({
-        id: `p-${source.id.slice(2)}-${round + 1}`,
+        id: `p-${source.slug.slice(2)}-${round + 1}`,
         title,
         excerpt: `${title}. A short excerpt of the opening paragraph, as the feed row shows it in comfortable density.`,
-        url: `https://example.org/${source.id.slice(2)}/${round + 1}`,
-        source_id: source.id,
+        url: `https://example.org/${source.slug.slice(2)}/${round + 1}`,
+        source_id: sourceId(source.slug),
         source_display_name: source.name,
         platform: source.platform,
         sort_at: at(now, -ageMs),
@@ -138,14 +152,14 @@ function denseRows(now: Date): SourceHealthRow[] {
 
 function namedRows(now: Date): SourceHealthRow[] {
   return NAMED.map((source, i) => healthRow({
-    source_id: source.id,
+    source_id: sourceId(source.slug),
     display_name: source.name,
     platform: source.platform,
     kind: source.kind,
     folders: source.tracks.map(({ id, name }) => ({ id, name })),
     stored_posts: 120 + i * 53,
     last_success_at: at(now, -(i + 1) * HOUR),
-    ...(source.id === 's-newz' ? {
+    ...(source.slug === 's-newz' ? {
       status: 'backoff', decision: 'skip_backoff' as const, last_outcome: 'error', consecutive_failures: 2,
       last_error: 'FloodWaitError: A wait of 1260 seconds is required', next_retry_at: at(now, 2 * HOUR),
     } : {}),
@@ -203,7 +217,7 @@ export function manyTracks(): Folder[] {
     'Q',
   ];
   return Array.from({ length: 44 }, (_, i) => folder(
-    `f-many-${i + 1}`,
+    fixtureId(`f-many-${i + 1}`),
     i < names.length ? names[i] : `Track ${i + 1}: ${['Robotics', 'Chips', 'Energy', 'Biotech'][i % 4]} and adjacent reading`,
     i,
   ));

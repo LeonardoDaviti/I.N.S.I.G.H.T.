@@ -20,4 +20,12 @@ describe('the frame route', () => {
     expect(parseFrameLocation(path, `?${search}`)?.prototype).toBe('2026-10-10-title-wrap');
     expect(frameUrl('post', 'article')).toBe('/design/frame/post/article?theme=dark&data=fixtures');
   });
+
+  it('carries the walk flag on either kind of address', () => {
+    const page = frameUrl('reader', 'normal', { walk: true });
+    expect(page).toBe('/design/frame/reader/normal?theme=dark&data=fixtures&walk=1');
+    const [path, search] = page.split('?');
+    expect(parseFrameLocation(path, `?${search}`)?.walk).toBe(true);
+    expect(prototypeFrameUrl('2026-10-10-title-wrap', 'long-title', { walk: true })).toMatch(/&walk=1$/);
+  });
 });
