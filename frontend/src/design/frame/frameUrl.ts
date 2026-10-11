@@ -10,6 +10,11 @@ import type { FrameData } from './transport';
 
 export const FRAME_PREFIX = '/design/frame/';
 
+/** A frame's viewport height for its width: a desktop window, a phone, the narrowest phone. */
+export function frameHeight(width: number): number {
+  return width >= 768 ? 860 : width > 360 ? 844 : 640;
+}
+
 /** The first segment that marks a prototype frame; no page doc is named so. */
 const PROTOTYPE_SEGMENT = 'prototype';
 

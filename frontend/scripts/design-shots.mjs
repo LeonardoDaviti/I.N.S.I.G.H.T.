@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 
+import { frameHeight } from '../src/design/frame/frameUrl.ts';
 import { parseShotArgs, shotList } from '../src/lib/designShots.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -95,7 +96,7 @@ function frameDocuments(shot) {
 
 /** One shot: open it, wait for its frames to be ready, check their request bars, save the PNG. Returns what went wrong. */
 async function take(browser, base, shot) {
-  const page = await browser.newPage({ viewport: { width: shot.width, height: shot.width >= 768 ? 900 : 844 } });
+  const page = await browser.newPage({ viewport: { width: shot.width, height: shot.studio ? 900 : frameHeight(shot.width) } });
   const problems = [];
   // The studio page itself follows the app's stored theme; its frames take theirs from the URL.
   if (shot.studio) await page.addInitScript((theme) => localStorage.setItem('insight.theme', theme), `theme-${shot.theme}`);

@@ -21,7 +21,6 @@ const CATALOG = { prototypes: PROTOTYPES, pages: PAGES, widthOf: (page: string, 
 const SUBJECTS = benchSubjects(PROTOTYPES, PAGES);
 
 /** A desktop window, a phone, the narrowest phone. */
-const frameHeight = (width: number) => (width >= 768 ? 860 : width > 360 ? 844 : 640);
 
 /**
  * Bench mode (verdict C), the checkout for every new design feature: two
@@ -90,10 +89,10 @@ export default function BenchMode() {
         {prototype ? (
           <>
             <Pane name="current" heading="current" detail={`${view.page} / ${view.left}`} view={view}>
-              <Frame page={view.page} state={view.left} width={view.width} height={frameHeight(view.width)} theme={view.theme} />
+              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} />
             </Pane>
             <Pane name="prototype" heading={`prototype · ${prototype.slug}`} detail={`${view.page} / ${view.left}`} view={view}>
-              <Frame page={view.page} prototype={prototype.id} state={view.left} width={view.width} height={frameHeight(view.width)} theme={view.theme} />
+              <Frame page={view.page} prototype={prototype.id} state={view.left} width={view.width} theme={view.theme} />
             </Pane>
           </>
         ) : (
@@ -101,12 +100,12 @@ export default function BenchMode() {
             <Pane name="left" heading={view.page} view={view} control={
               <Segmented size="sm" label="Left state" value={view.left} options={view.states} onChange={(value) => set('left', value, view.states[0])} />
             }>
-              <Frame page={view.page} state={view.left} width={view.width} height={frameHeight(view.width)} theme={view.theme} />
+              <Frame page={view.page} state={view.left} width={view.width} theme={view.theme} />
             </Pane>
             <Pane name="right" heading={view.page} view={view} control={
               <Segmented size="sm" label="Right state" value={view.right} options={view.states} onChange={(value) => set('right', value, view.states[1] ?? view.states[0])} />
             }>
-              <Frame page={view.page} state={view.right} width={view.width} height={frameHeight(view.width)} theme={view.theme} />
+              <Frame page={view.page} state={view.right} width={view.width} theme={view.theme} />
             </Pane>
           </>
         )}

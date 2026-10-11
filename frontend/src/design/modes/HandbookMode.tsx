@@ -6,6 +6,7 @@ import { railGroups } from '../studio';
 import { parseDoc } from '../coverage';
 import { prototypeAge } from '../prototypes';
 import { benchHref } from '../bench';
+import { frameScenario } from '../fixtures/scenarios';
 import { Rail, RailPicker } from '../handbook/Rail';
 import DocView from '../handbook/DocView';
 import NotFound from '../handbook/NotFound';
@@ -42,18 +43,18 @@ function PrototypeDoc() {
 }
 
 /**
- * A page or parked doc, then its specimen at full width. A page specimen
- * offers the doc's `states:`; a parked page has one, its normal state.
+ * A page or parked doc, then its specimen at full width, offering the doc's
+ * `states:` that have a frame scenario. A parked page has none, so no specimen.
  */
 function PageDoc({ section }: { section: 'pages' | 'parked' }) {
   const { slug = '' } = useParams();
   const doc = docAt(`/design/${section}/${slug}`);
   if (!doc) return <NotFound what="page doc" />;
-  const states = doc.meta.states?.length ? doc.meta.states : ['normal'];
+  const states = (doc.meta.states?.length ? doc.meta.states : ['normal']).filter((state) => frameScenario(slug, state));
   return (
     <>
       <DocView doc={doc} />
-      <PageSpecimen key={slug} page={slug} states={states} />
+      {states.length ? <PageSpecimen key={slug} page={slug} states={states} /> : null}
     </>
   );
 }

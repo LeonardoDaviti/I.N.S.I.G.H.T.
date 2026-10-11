@@ -98,10 +98,24 @@ describe('the Handbook', () => {
     expect(screen.getByRole('figure', { name: 'reader · loading · 390 · light' })).toBeInTheDocument();
   });
 
-  it('gives a parked doc its slot at the normal state', () => {
+  it('gives a parked doc no specimen: it has no frame scenario', () => {
     renderStudio('/design/parked/inbox');
     expect(screen.getByRole('heading', { level: 1, name: 'Analyst inbox' })).toBeInTheDocument();
-    expect(screen.getByRole('figure', { name: 'inbox · normal · 1400 · dark' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Specimen' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No fixture scenario/)).not.toBeInTheDocument();
+  });
+
+  it('offers a state\'s own width and opens that state at it (the 320px top bar)', async () => {
+    const user = userEvent.setup();
+    renderStudio('/design/pages/shell');
+    const widths = screen.getByRole('radiogroup', { name: 'Width' });
+    expect(within(widths).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['1400', '390', '320']);
+    await user.click(within(screen.getByRole('radiogroup', { name: 'State' })).getByRole('radio', { name: 'narrow-topbar' }));
+    expect(where()).toBe('/design/pages/shell?state=narrow-topbar');
+    expect(screen.getByRole('figure', { name: 'shell · narrow-topbar · 320 · dark' })).toBeInTheDocument();
+    await user.click(within(widths).getByRole('radio', { name: '1400' }));
+    expect(where()).toBe('/design/pages/shell?state=narrow-topbar&width=1400');
+    expect(screen.getByRole('figure', { name: 'shell · narrow-topbar · 1400 · dark' })).toBeInTheDocument();
   });
 
   it('renders the decisions log', () => {

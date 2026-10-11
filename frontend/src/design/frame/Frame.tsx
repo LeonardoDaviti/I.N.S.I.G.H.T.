@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 
-import { frameUrl, prototypeFrameUrl, type FrameTheme } from './frameUrl';
+import { frameHeight, frameUrl, prototypeFrameUrl, type FrameTheme } from './frameUrl';
 import type { FrameData } from './transport';
 
 export interface FrameProps {
@@ -12,7 +12,7 @@ export interface FrameProps {
   state: string;
   /** The viewport width the page renders at, in CSS px (1400 desktop, 390 phone). */
   width?: number;
-  /** The viewport height; 900 from 768px wide, 844 below. */
+  /** The viewport height; `frameHeight(width)` by default. */
   height?: number;
   theme?: FrameTheme;
   /** Fixtures (default) or the real API, read-only. */
@@ -39,7 +39,7 @@ export default function Frame({
 }: FrameProps) {
   const box = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState<number | null>(null);
-  const viewportHeight = height ?? (width >= 768 ? 900 : 844);
+  const viewportHeight = height ?? frameHeight(width);
 
   useLayoutEffect(() => {
     const element = box.current;
