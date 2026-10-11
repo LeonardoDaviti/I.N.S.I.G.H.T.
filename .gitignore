@@ -28,3 +28,4 @@ venv
 .venv/
 # Local DB dumps taken before destructive regeneration
 backups/
+briefings_export/
