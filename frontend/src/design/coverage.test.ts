@@ -4,6 +4,7 @@ import {
   PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, pageDocProblems, parseDoc, unknownCitations, unclaimedRoutes,
 } from './coverage';
 import appSource from '../App.tsx?raw';
+import { frameScenario } from './fixtures/scenarios';
 
 describe('appRoutes', () => {
   it('lists every <Route path> in the router source, in order', () => {
@@ -123,9 +124,13 @@ describe('the design docs', () => {
     expect(pageDocs.flatMap(pageDocProblems)).toEqual([]);
   });
 
-  // TODO(S3): a page doc's every `states:` entry needs a specimen (D4, D7.6).
-  // When the frame route and the fixture transport land, load the specimen
-  // registry here and assert each `${page}/${state}` pair from
-  // `pageDocs.flatMap((doc) => doc.meta.states.map(...))` has one.
-  it.todo('render a specimen for every state a page doc lists (S3)');
+  it('have a fixture scenario for every state a page doc lists (D4, D7.6)', () => {
+    const missing = pageDocs.flatMap((doc) => {
+      const page = doc.path.replace(/^pages\//, '').replace(/\.md$/, '');
+      return (doc.meta.states ?? [])
+        .filter((state) => !frameScenario(page, state))
+        .map((state) => `${page}/${state} has no frame scenario in design/fixtures/scenarios.ts`);
+    });
+    expect(missing).toEqual([]);
+  });
 });
