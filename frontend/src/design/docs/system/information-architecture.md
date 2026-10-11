@@ -43,7 +43,7 @@ With analysis on, the bar is `feed / tracks / briefings / sources / ingestion / 
 | `/inbox` | `parked/inbox.md` |
 | `/tracks`, `/experts` | `parked/experts-tracks.md` |
 | `/ingestion`, `/ingestion/:tab` | `parked/ingestion.md` |
-| `/design/*` (the Design Studio: `?mode=handbook\|wall\|bench`, `/design/system`, `/design/components/:name`, `/design/pages/:page`, `/design/parked/:page`, `/design/decisions`, `/design/prototypes/:id`) | `pages/shell.md` |
+| `/design/*` (the Design Studio, described in `system/studio.md`) | `pages/shell.md` |
 
 **Redirects** (claimed in this doc's meta block):
 - `/hub` → `/` (the Mark VIII hub is deleted, P1).
@@ -60,4 +60,4 @@ Parked routes redirect to `/` while analysis is off (P10), after `GET /api/confi
 
 ## ⌘K quick switcher
 
-Navigation only, it never searches posts. Reading-only it lists Unread, Starred, All posts, By source, one entry per track (to `/read/folder/:id`), Sources, Source health, Ingestion (the sources tab), Design studio and the theme toggle. With analysis on it lists the analysis destinations instead of the per-track entries, and Design studio still. The studio is in no nav word. Below `sm` (640px) the nav words collapse into a `menu` button that opens the same switcher. Details: `pages/shell.md`.
+Navigation only, it never searches posts; the studio is in no nav word, only here. Its entries, keys and the narrow `menu` button: `pages/shell.md`.
