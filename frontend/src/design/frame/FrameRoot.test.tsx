@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { frameScenarios, type FrameScenario } from '../fixtures/scenarios';
 import { bootFrame, type BootedFrame } from './boot';
 import FrameRoot from './FrameRoot';
+import { prototypeComponent } from '../prototypeRegistry';
 
 let booted: BootedFrame | null = null;
 
@@ -53,6 +54,26 @@ describe('a frame', () => {
     const frame = boot('reader', 'no-such-state');
     render(<FrameRoot booted={frame} />);
     expect(screen.getByText(/no frame scenario for reader\/no-such-state/)).toBeInTheDocument();
+  });
+});
+
+describe('a prototype frame', () => {
+  it('renders the prototype around the real page, on that page\'s fixtures for the state', async () => {
+    booted = bootFrame(window, { page: 'post', prototype: '2026-10-10-title-wrap', state: 'long-title', theme: 'dark', data: 'fixtures' });
+    render(<FrameRoot booted={booted} prototype={prototypeComponent('2026-10-10-title-wrap')} />);
+
+    const title = await screen.findByRole('heading', { level: 1 }, { timeout: 5_000 });
+    // The seed's one rule hits the post title and nothing else.
+    expect([...document.querySelectorAll('main#main header > h1')]).toEqual([title]);
+    expect([...document.querySelectorAll('style')].some((style) => style.textContent?.includes('text-wrap: wrap'))).toBe(true);
+    const events = await settle(booted);
+    expect(events.filter((event) => event.kind === 'unmocked')).toEqual([]);
+  });
+
+  it('says so when the URL names a prototype the registry lacks', () => {
+    booted = bootFrame(window, { page: '', prototype: '2026-01-01-nothing', state: 'normal', theme: 'dark', data: 'fixtures' });
+    render(<FrameRoot booted={booted} />);
+    expect(screen.getByText(/no prototype 2026-01-01-nothing/)).toBeInTheDocument();
   });
 });
 

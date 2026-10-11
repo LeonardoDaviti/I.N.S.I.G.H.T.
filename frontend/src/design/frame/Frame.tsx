@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
-import { frameUrl, type FrameTheme } from './frameUrl';
+import { frameUrl, prototypeFrameUrl, type FrameTheme } from './frameUrl';
 import type { FrameData } from './transport';
 
 export interface FrameProps {
   /** A page doc's name: `reader`, `post`, `sources`, `shell`. */
   page: string;
+  /** A prototype's folder name (D6): the frame shows it, on the page's fixtures for `state`. */
+  prototype?: string;
   /** One of the page's states (design/fixtures/scenarios.ts). */
   state: string;
   /** The viewport width the page renders at, in CSS px (1400 desktop, 390 phone). */
@@ -29,7 +31,7 @@ export interface FrameProps {
  * what is on screen. Its box takes the scaled height, so frames stack cleanly.
  */
 export default function Frame({
-  page, state, width = 1400, height, theme = 'dark', data = 'fixtures', interactive = false, title, className,
+  page, prototype, state, width = 1400, height, theme = 'dark', data = 'fixtures', interactive = false, title, className,
 }: FrameProps) {
   const box = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState<number | null>(null);
@@ -54,8 +56,8 @@ export default function Frame({
       style={{ position: 'relative', width: '100%', maxWidth: width, height: viewportHeight * scale, overflow: 'hidden' }}
     >
       <iframe
-        src={frameUrl(page, state, { theme, data })}
-        title={title ?? `${page} · ${state} · ${width}px · ${theme}`}
+        src={prototype ? prototypeFrameUrl(prototype, state, { theme, data }) : frameUrl(page, state, { theme, data })}
+        title={title ?? `${prototype ?? page} · ${state} · ${width}px · ${theme}`}
         loading="lazy"
         tabIndex={interactive ? undefined : -1}
         style={{
