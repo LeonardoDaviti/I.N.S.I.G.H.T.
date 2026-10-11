@@ -73,19 +73,8 @@ const TIER_LABELS: Record<CadenceTier, string> = {
   unknown: 'Probation',
 };
 
-const TIER_HINTS: Record<CadenceTier, string> = {
-  fast: 'Posts more often than every 12 hours',
-  medium: 'Posts every 12 hours to 7 days',
-  slow: 'Posts less often than weekly',
-  unknown: 'Fewer than 3 dated posts: checked daily until its cadence is known',
-};
-
 export function tierLabel(tier: CadenceTier): string {
   return TIER_LABELS[tier] ?? tier;
-}
-
-export function tierHint(tier: CadenceTier): string {
-  return TIER_HINTS[tier] ?? '';
 }
 
 function trim(value: number): string {
@@ -166,8 +155,6 @@ export function summarizeHealthRows(rows: readonly SourceHealthRow[]): SourceHea
   }
   return summary;
 }
-
-export type HealthFilter = HealthStatus;
 
 /** `?status=` filter. `error` means failing (error or backoff), the same sources the
  *  "N source errors" chip counts; every other value is one status. Unknown -> all. */

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Plus } from 'lucide-react';
-import type { SourceState } from '../types';
 import { apiService } from '../services/api';
 import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
+
+type SourceState = 'enabled' | 'disabled' | 'error';
 
 interface Template {
   id: string;

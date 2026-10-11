@@ -29,9 +29,6 @@ export function Chip({
   );
 }
 
-/** Alias: a tag is a chip. */
-export const Tag = Chip;
-
 /**
  * A toggle chip for filters ("failing 3"). Selected = inverted block, with
  * `aria-pressed`; the count is tabular and formatted (`Intl.NumberFormat`).

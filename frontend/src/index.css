@@ -220,8 +220,7 @@
 
   /* A translucent layer content scrolls under: the top bar and sticky sub-toolbars. */
   .material,
-  .reader-material,
-  .ops-sticky-material {
+  .reader-material {
     background: rgb(var(--bg) / 0.78);
     backdrop-filter: blur(16px) saturate(140%);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
@@ -229,8 +228,7 @@
 
   @media (prefers-reduced-transparency: reduce) {
     .material,
-    .reader-material,
-    .ops-sticky-material {
+    .reader-material {
       background: rgb(var(--bg));
       backdrop-filter: none;
       -webkit-backdrop-filter: none;
@@ -271,115 +269,6 @@
   [class*='bg-[rgba('],
   [class*='bg-[#'] {
     background-color: rgb(var(--text) / 0.07) !important;
-  }
-
-  .app-shell {
-    background: rgb(var(--bg));
-    color: rgb(var(--text));
-  }
-
-  /* Pages that sized themselves to the viewport now sit below the top bar. */
-  .app-shell.h-screen {
-    height: calc(100dvh - var(--topbar-h));
-  }
-
-  .app-panel {
-    background: rgb(var(--bg));
-    border: 1px solid rgb(var(--border));
-    border-radius: 0.5rem;
-    color: rgb(var(--text));
-  }
-
-  .app-inline-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-height: 2.25rem;
-    border-radius: 0.375rem;
-    border: 1px solid rgb(var(--border-strong));
-    background: transparent;
-    padding: 0.4rem 0.8rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: rgb(var(--text));
-    transition: background-color 120ms ease, border-color 120ms ease, transform 120ms var(--ease-out);
-  }
-
-  .app-inline-button:active {
-    transform: scale(0.97);
-  }
-
-  .app-inline-button--primary {
-    background: rgb(var(--inverse));
-    border-color: rgb(var(--inverse));
-    color: rgb(var(--inverse-text));
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .app-inline-button:hover {
-      background: rgb(var(--raised));
-    }
-    .app-inline-button--primary:hover {
-      background: rgb(var(--inverse) / 0.86);
-    }
-  }
-
-  .workspace-tab {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    border-bottom: 2px solid transparent;
-    padding: 0.7rem 1rem;
-    color: rgb(var(--text-2));
-    text-transform: lowercase;
-  }
-
-  .workspace-tab.is-active {
-    color: rgb(var(--text));
-    font-weight: 600;
-    border-bottom-color: rgb(var(--text));
-  }
-
-  .workspace-editor {
-    width: 100%;
-    border-radius: 0.375rem;
-    border: 1px solid rgb(var(--border));
-    background: rgb(var(--surface));
-    color: rgb(var(--text));
-    padding: 1rem;
-    font-family: theme('fontFamily.mono');
-    line-height: 1.7;
-    outline: none;
-  }
-
-  .workspace-editor:focus {
-    border-color: rgb(var(--border-strong));
-  }
-
-  .workspace-chat-feed {
-    display: flex;
-    max-height: 24rem;
-    min-height: 12rem;
-    flex-direction: column;
-    gap: 0.75rem;
-    overflow-y: auto;
-    border-radius: 0.375rem;
-    border: 1px solid rgb(var(--border));
-    background: rgb(var(--surface));
-    padding: 1rem;
-  }
-
-  .workspace-chat-bubble {
-    border-radius: 0.375rem;
-    border: 1px solid rgb(var(--border));
-    background: rgb(var(--bg));
-    padding: 0.9rem 1rem;
-  }
-
-  .workspace-chat-bubble.is-user {
-    border-color: rgb(var(--border-strong));
   }
 
   /* ---- Typography helpers ---------------------------------------------- */
@@ -473,11 +362,6 @@
   animation: sheet-out 200ms var(--ease-out);
 }
 
-.ui-popover[data-state='open'] {
-  transform-origin: var(--radix-popover-content-transform-origin, var(--radix-dropdown-menu-content-transform-origin, center));
-  animation: pop-in var(--dur-popover) var(--ease-out);
-}
-
 /* The quick switcher is used many times a day: it never animates. */
 .ui-instant[data-state] {
   animation: none !important;
@@ -486,8 +370,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ui-dialog[data-state='open'],
   .ops-dialog-panel[data-state='open'],
-  .ui-sheet[data-state='open'],
-  .ui-popover[data-state='open'] {
+  .ui-sheet[data-state='open'] {
     animation: fade-in 150ms ease-out;
   }
   .ui-dialog[data-state='closed'],

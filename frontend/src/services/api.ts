@@ -1,5 +1,4 @@
 // API service for INSIGHT backend communication
-import type { SourceConfig } from '../types';
 import { apiErrorFromResponse, errorMessage, isAbortError, toApiError } from '../lib/apiError';
 import { JobFailedError, pollJob } from '../lib/jobPolling';
 import { asRunReport } from '../lib/runReport';
@@ -83,10 +82,6 @@ export interface SourcesWithSettingsResponse {
   error?: string;
 }
 
-
-export interface BriefingRequest {
-  date: string; // Format: "YYYY-MM-DD"
-}
 
 export interface BriefingHighlight {
   id?: string;
@@ -281,12 +276,6 @@ export interface FeedParams {
   limit?: number;
   days?: number;
   signal?: AbortSignal;
-}
-
-export interface SourceStats {
-  success: boolean;
-  data?: Record<string, any>;
-  error?: string;
 }
 
 export interface ArchiveResponse {
@@ -740,13 +729,6 @@ export interface PostHighlightsResponse {
   one_sentence_takeaway?: string | null;
   cached?: boolean;
   model?: string | null;
-}
-
-export interface PostReaderStateResponse {
-  success?: boolean;
-  error?: string;
-  post_id?: string;
-  reader_state?: ReaderState | null;
 }
 
 export interface PostInteractionResponse {
@@ -1481,48 +1463,6 @@ class ApiService {
     }
   }
 
-  async getEnabledSources(): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/enabled-sources');
-      return response;
-    } catch (error) {
-      console.error('Failed to get enabled sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch sources'
-      };
-    }
-  }
-
-  async getSources(): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/sources');
-      return response;
-    } catch (error) {
-      console.error('Failed to get sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch sources'
-      };
-    }
-  }
-
-  async updateSources(config: SourceConfig): Promise<SourceStats> {
-    try {
-      const response = await this.makeRequest<SourceStats>('/api/sources', {
-        method: 'POST',
-        body: JSON.stringify(config),
-      });
-      return response;
-    } catch (error) {
-      console.error('Failed to update sources:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update sources'
-      };
-    }
-  }
-
   async syncSources(direction: 'json-to-db' | 'db-to-json'): Promise<SyncSourcesResponse> {
     try {
       return await this.makeRequest<SyncSourcesResponse>(`/api/sources/sync/${direction}`, {
@@ -1613,20 +1553,6 @@ class ApiService {
     }
   }
 
-  async getPostReaderState(postId: string): Promise<PostReaderStateResponse> {
-    try {
-      return await this.makeRequest<PostReaderStateResponse>(`/api/posts/item/${postId}/reader-state`);
-    } catch (error) {
-      console.error('Failed to get post reader state:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        reader_state: null,
-      };
-    }
-  }
-
   async recordPostOpen(postId: string, metadata?: Record<string, any>): Promise<PostInteractionResponse> {
     try {
       return await this.makeRequest<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, {
@@ -1675,20 +1601,6 @@ class ApiService {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         post_id: postId,
-      };
-    }
-  }
-
-  async getPostNotes(postId: string): Promise<PostNotesPayload & { success?: boolean; error?: string }> {
-    try {
-      return await this.makeRequest<PostNotesPayload & { success?: boolean; error?: string }>(`/api/posts/item/${postId}/notes`);
-    } catch (error) {
-      console.error('Failed to get post notes:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        post_id: postId,
-        notes_markdown: '',
       };
     }
   }
@@ -2341,18 +2253,6 @@ class ApiService {
     }
   }
 
-  async rebuildEvidenceForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/evidence/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild evidence for date:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
   async rebuildMemoryForPost(postId: string): Promise<RebuildResponse> {
     try {
       return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-post', {
@@ -2365,18 +2265,6 @@ class ApiService {
     }
   }
 
-  async rebuildMemoryForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/memory/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild memory for date:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
   async rebuildEventsForPost(postId: string): Promise<RebuildResponse> {
     try {
       return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-post', {
@@ -2385,18 +2273,6 @@ class ApiService {
       });
     } catch (error) {
       console.error('Failed to rebuild events for post:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  async rebuildEventsForDate(date: string, limit?: number): Promise<RebuildResponse> {
-    try {
-      return await this.makeRequest<RebuildResponse>('/api/events/rebuild-for-date', {
-        method: 'POST',
-        body: JSON.stringify({ date, limit }),
-      });
-    } catch (error) {
-      console.error('Failed to rebuild events for date:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
     }
   }
@@ -2611,21 +2487,6 @@ class ApiService {
     }
   }
 
-  async checkTopicsExist(date: string): Promise<{ success: boolean; exists: boolean; date: string; error?: string }> {
-    try {
-      const response = await this.makeRequest<{ success: boolean; exists: boolean; date: string; error?: string }>(`/api/topics/check/${date}`);
-      return response;
-    } catch (error) {
-      console.error('Failed to check topics:', error);
-      return {
-        success: false,
-        exists: false,
-        date,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
   async updateTopicTitle(topicId: string, newTitle: string): Promise<{ success: boolean; topic_id?: string; title?: string; error?: string }> {
     try {
       const response = await this.makeRequest<{ success: boolean; topic_id?: string; title?: string; error?: string }>(`/api/topics/${topicId}/title`, {
@@ -2794,42 +2655,6 @@ class ApiService {
     }
   }
 
-  async getMilestoneLanes(folderId?: string | null): Promise<{ success: boolean; lanes: MilestoneLane[]; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes${folderId ? `?folder_id=${folderId}` : ''}`); }
-    catch (e) { return { success: false, lanes: [], error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async createMilestoneLane(payload: { name: string; vendor?: string; match_pattern?: string; folder_id?: string | null; lane_order?: number }): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
-    try { return await this.makeRequest('/api/milestones/lanes', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async updateMilestoneLane(laneId: string, fields: Partial<Pick<MilestoneLane, 'name' | 'vendor' | 'match_pattern' | 'lane_order' | 'enabled'>>): Promise<{ success: boolean; lane?: MilestoneLane; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'PUT', body: JSON.stringify(fields) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  async deleteMilestoneLane(laneId: string): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest(`/api/milestones/lanes/${laneId}`, { method: 'DELETE' }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
-  /** Free dry-run of a lane pattern. No writes, no LLM, no tokens. */
-  async previewMilestonePattern(pattern: string, folderId?: string | null): Promise<MilestonePatternPreview> {
-    try {
-      const params = new URLSearchParams({ pattern });
-      if (folderId) params.set('folder_id', folderId);
-      return await this.makeRequest(`/api/milestones/preview?${params.toString()}`);
-    } catch (e) {
-      return { success: false, total_hits: 0, versions: [], samples: [], error: e instanceof Error ? e.message : 'Unknown error' };
-    }
-  }
-
-  async setMilestoneNodeState(payload: { node_key: string; state?: MilestoneState; custom_title?: string; note?: string }): Promise<{ success: boolean; error?: string }> {
-    try { return await this.makeRequest('/api/milestones/node-state', { method: 'POST', body: JSON.stringify(payload) }); }
-    catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
-  }
-
   async addSource(payload: { platform: string; handle_or_url: string; display_name?: string; fetch_delay_seconds?: number; priority?: number; max_posts_per_fetch?: number; state?: string }): Promise<{ success: boolean; source_id?: string; error?: string }> {
     try { return await this.makeRequest('/api/sources/add', { method: 'POST', body: JSON.stringify(payload) }); }
     catch (e) { return { success: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
@@ -2860,8 +2685,6 @@ export interface Folder {
   source_count?: number;
   post_count?: number;
 }
-
-export type MilestoneState = 'active' | 'hidden' | 'pinned';
 
 export interface MilestoneEvidence {
   post_id: string;
@@ -2919,24 +2742,6 @@ export interface MilestoneVendorGroup {
   vendor: string;
   node_count: number;
   lanes: MilestoneLaneGroup[];
-}
-
-export interface MilestoneLane {
-  id: string;
-  folder_id: string | null;
-  name: string;
-  vendor: string | null;
-  match_pattern: string;
-  lane_order: number;
-  enabled: boolean;
-}
-
-export interface MilestonePatternPreview {
-  success: boolean;
-  total_hits: number;
-  versions: { version_label: string; post_count: number }[];
-  samples: { post_id: string; title: string; published_at: string | null; source_name: string; version_label: string }[];
-  error?: string;
 }
 
 export interface MilestonesResponse {

@@ -4,7 +4,7 @@ export { buttonVariants, iconButtonClass, fieldClass, tabTriggerClass, STATUS_LA
 export type { Status } from './styles';
 export type { ButtonProps } from './Button';
 export { default as TextLink, ExternalLink } from './TextLink';
-export { Chip, Tag, FilterChip } from './Chip';
+export { Chip, FilterChip } from './Chip';
 export { default as StatusGlyph, StatusIcon } from './StatusGlyph';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './Tabs';
 export { Table, TableFrame, THead, TBody, Tr, Th, Td } from './Table';

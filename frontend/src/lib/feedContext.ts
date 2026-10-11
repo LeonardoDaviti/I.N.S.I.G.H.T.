@@ -11,7 +11,6 @@
  */
 
 export type FeedFilter = 'all' | 'unread' | 'starred';
-export const FEED_FILTERS: readonly FeedFilter[] = ['unread', 'starred', 'all'];
 
 export interface FeedContext {
   scope: string;
