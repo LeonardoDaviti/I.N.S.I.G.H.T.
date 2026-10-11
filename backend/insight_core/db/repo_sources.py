@@ -5,8 +5,9 @@ Handles all SQL queries for source management.
 import json
 import psycopg
 from psycopg import Cursor
-from datetime import date, datetime
 from typing import List, Dict, Any, Optional
+
+from insight_core.utils.json_safe import json_safe
 from insight_core.logs.core.logger_config import get_component_logger
 
 class SourcesRepository:
@@ -280,7 +281,7 @@ class SourcesRepository:
             WHERE id = %s
             RETURNING id
         """
-        json_safe_settings = self._make_json_safe(merged_settings)
+        json_safe_settings = json_safe(merged_settings)
         cur.execute(query, (json.dumps(json_safe_settings), source_id))
         row = cur.fetchone()
 
@@ -341,16 +342,6 @@ class SourcesRepository:
                 merged[key] = value
 
         return merged
-
-    def _make_json_safe(self, value: Any) -> Any:
-        """Convert nested datetime values into JSON-safe ISO strings."""
-        if isinstance(value, dict):
-            return {key: self._make_json_safe(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._make_json_safe(item) for item in value]
-        if isinstance(value, (datetime, date)):
-            return value.isoformat()
-        return value
 
     def _platform_defaults(self, platform: str) -> Dict[str, Any]:
         defaults_by_platform = {

@@ -605,8 +605,4 @@ class PostsRepository:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest() if payload else ""
 
     def _json_dumps(self, value: Any) -> str:
-        return json.dumps(value, default=self._json_default)
-
-    def _json_default(self, value: Any) -> Any:
-        """Delegates to the shared encoder so all repos stay in step."""
-        return json_default(value)
+        return json.dumps(value, default=json_default)

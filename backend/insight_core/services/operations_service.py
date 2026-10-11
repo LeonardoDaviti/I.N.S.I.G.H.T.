@@ -26,10 +26,7 @@ from insight_core.ingestion.schedule import (
     unavailable_reason,
 )
 from insight_core.logs.core.logger_config import get_component_logger
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
+from insight_core.utils.json_safe import iso, json_safe
 
 
 # Human labels per job type. Any other type (old rows, reddit_comments_fetch) reads as its
@@ -158,14 +155,14 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "folders": list(source.get("folders") or []),
         "stored_posts": stored,
         # When its newest post was published (fetched, if undated): the list's "last new post".
-        "last_post_at": _iso(source.get("last_post_at")),
+        "last_post_at": iso(source.get("last_post_at")),
         "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
         "tier": stats.tier.value,
         "mean_gap_hours": stats.mean_gap.total_seconds() / 3600 if stats.mean_gap is not None else None,
         "interval_hours": decision.interval.total_seconds() / 3600,
         "interval_basis": decision.interval_basis,
         "override_hours": stats.override_hours,
-        "next_due_at": _iso(decision.next_due_at),
+        "next_due_at": iso(decision.next_due_at),
         "would_fetch_now": decision.fetch,
         "decision": decision.kind.value,
         "decision_detail": decision.detail,
@@ -174,14 +171,14 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # without a session: teasers only) says so here; None otherwise.
         "credential_notice": _credential_notice(kind),
         "status": health_status(enabled, decision, failures, state),
-        "last_attempt_at": _iso(state.last_attempt_at if state else None),
-        "last_success_at": _iso(state.last_success_at if state else None),
+        "last_attempt_at": iso(state.last_attempt_at if state else None),
+        "last_success_at": iso(state.last_success_at if state else None),
         "last_outcome": state.last_outcome if state else None,
         "last_fetched_posts": state.last_fetched_posts if state else None,
         "last_error": state.last_error if state else None,
-        "last_error_at": _iso(state.last_error_at if state else None),
+        "last_error_at": iso(state.last_error_at if state else None),
         "consecutive_failures": failures,
-        "next_retry_at": _iso(stats.next_retry_at),
+        "next_retry_at": iso(stats.next_retry_at),
         "dormant": failures >= BACKOFF_DORMANT_AFTER,
     }
 
@@ -278,7 +275,7 @@ class OperationsService:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 SystemSettingsRepository.upsert(cur, self.SETTINGS_KEY_SCHEDULER_STATE,
-                                                self._json_safe(state or {}))
+                                                json_safe(state or {}))
             conn.commit()
 
     def latest_successful_job_finished_at(self, job_type: str) -> Optional[datetime]:
@@ -636,9 +633,6 @@ class OperationsService:
                 )
                 row = cur.fetchone()
 
-        def iso(value: Any) -> Optional[str]:
-            return value.isoformat() if value else None
-
         return {
             "latest_post_at": iso(row[0]),
             "oldest_post_at": iso(row[1]),
@@ -736,22 +730,8 @@ class OperationsService:
             "updated_at": config.get("updated_at"),
         }
 
-    def _json_safe(self, value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: self._json_safe(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._json_safe(item) for item in value]
-        if isinstance(value, tuple):
-            return [self._json_safe(item) for item in value]
-        if hasattr(value, "isoformat"):
-            try:
-                return value.isoformat()
-            except Exception:
-                return str(value)
-        return value
-
     def _prepare_payload(self, payload: Dict[str, Any], *, compact: bool = False) -> Dict[str, Any]:
-        prepared = self._json_safe(payload)
+        prepared = json_safe(payload)
         if compact:
             return self._compact_payload(prepared)
         return prepared

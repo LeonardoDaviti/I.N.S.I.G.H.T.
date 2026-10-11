@@ -23,7 +23,6 @@ Environment (read when a pool is built):
 """
 from __future__ import annotations
 
-import os
 import threading
 from contextlib import contextmanager
 from typing import Dict, Iterator, Optional
@@ -31,14 +30,9 @@ from typing import Dict, Iterator, Optional
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from insight_core.utils.env import env_int
+
 CONNECT_TIMEOUT_SECONDS = 10
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name) or default)
-    except ValueError:
-        return default
 
 
 class Database:
@@ -53,14 +47,14 @@ class Database:
     ) -> None:
         self.url = url
         self.statement_timeout_ms = (statement_timeout_ms if statement_timeout_ms is not None
-                                     else _env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS", 60_000))
-        max_size = max_size or _env_int("INSIGHT_DB_POOL_MAX", 5)
-        min_size = min(min_size if min_size is not None else _env_int("INSIGHT_DB_POOL_MIN", 1), max_size)
+                                     else env_int("INSIGHT_DB_STATEMENT_TIMEOUT_MS", 60_000))
+        max_size = max_size or env_int("INSIGHT_DB_POOL_MAX", 5)
+        min_size = min(min_size if min_size is not None else env_int("INSIGHT_DB_POOL_MIN", 1), max_size)
         self._pool = ConnectionPool(
             url,
             min_size=min_size,
             max_size=max_size,
-            timeout=timeout if timeout is not None else _env_int("INSIGHT_DB_POOL_TIMEOUT_SECONDS", 10),
+            timeout=timeout if timeout is not None else env_int("INSIGHT_DB_POOL_TIMEOUT_SECONDS", 10),
             kwargs=self._connect_kwargs(),
             check=ConnectionPool.check_connection,   # a connection the server dropped is replaced
             name="insight",

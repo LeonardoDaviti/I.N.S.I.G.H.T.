@@ -33,6 +33,7 @@ from insight_core.ingestion.credentials import (
     StoredCredentials,
     default_credentials,
 )
+from insight_core.utils.json_safe import iso
 
 LOGIN_TTL_S = 10 * 60
 
@@ -99,10 +100,6 @@ class LoginFailed(Exception):
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
 
 
 def _last4(value: str) -> str:
@@ -199,7 +196,7 @@ class CredentialsService:
                 "set": False, "last4": None, "updated_at": None, "source": "none", "error": None,
             }
             if row is not None:
-                view.update(set=True, source="db", updated_at=_iso(row.updated_at),
+                view.update(set=True, source="db", updated_at=iso(row.updated_at),
                             last4=row.last4 if field_spec.show_last4 else None)
                 if ident not in readable:
                     view["error"] = "The saved value cannot be read (the secret key changed); save it again"
@@ -221,9 +218,9 @@ class CredentialsService:
             row = max(tested, key=lambda r: r.last_tested_at)
             if memory is None or memory.tested_at <= row.last_tested_at:
                 return {"ok": row.last_test_ok, "message": row.last_test_message,
-                        "tested_at": _iso(row.last_tested_at)}
+                        "tested_at": iso(row.last_tested_at)}
         if memory is not None:
-            return {"ok": memory.ok, "message": memory.message, "tested_at": _iso(memory.tested_at)}
+            return {"ok": memory.ok, "message": memory.message, "tested_at": iso(memory.tested_at)}
         return None
 
     def _login_view(self) -> Optional[Dict[str, Any]]:

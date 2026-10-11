@@ -24,6 +24,7 @@ from insight_core.ingestion.kinds.base import (
     Source,
     resume_counts,
 )
+from insight_core.utils.json_safe import iso
 
 # Hosts that serve the bridge's /rss/<channel> feeds. gates.HOST_FLOORS gives each a 5s floor.
 TELEGRAM_RSS_HOSTS = frozenset({"telegram.local", "tg.i-c-a.su", "127.0.0.1"})
@@ -84,7 +85,7 @@ class TelegramRssKind(BaseKind):
         last_page_number = await self._find_last_page(source_url, highest_post_id, page_size)
         last_page = await self.fetch_page(source_url, last_page_number)
         oldest = last_page[-1]["date"] if last_page else None
-        return Inspection(highest_post_id, page_size, parsing.isoformat(oldest))
+        return Inspection(highest_post_id, page_size, iso(oldest))
 
     async def _pages(self, source_url: str, target: int, *, start_page: int, initial_collected: int,
                      initial_pages: int, rate: RateLimit):

@@ -1,18 +1,21 @@
-"""Shared JSON encoding fallback for values psycopg returns.
+"""Turning values psycopg returns into JSON: ISO time strings, a json.dumps fallback, and a
+JSON-safe copy of a nested payload. One copy each, so a fix lands everywhere at once.
 
-Nine repositories each carried their own private `_json_default` that handled
-`datetime`/`date` and raised on everything else. Rows come back from psycopg with
-`id` columns as `uuid.UUID`, so any payload built from a fetched row - a job
-payload referencing a post_id, a source settings blob - raised
-`TypeError: Object of type <class 'uuid.UUID'> is not JSON serializable` at write
-time. Fixing it in one place keeps the nine from drifting apart again.
+Rows come back from psycopg with `id` columns as `uuid.UUID` and times as `datetime`, so a
+payload built from a fetched row (a job payload naming a post, a source settings blob) needs
+one of these before json.dumps.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
+
+
+def iso(value: Any) -> Optional[str]:
+    """value.isoformat(), or None for a missing value."""
+    return value.isoformat() if value else None
 
 
 def json_default(value: Any) -> Any:
@@ -36,3 +39,21 @@ def json_default(value: Any) -> Any:
     if isinstance(value, memoryview):
         return value.tobytes().decode("utf-8", errors="replace")
     raise TypeError(f"Object of type {type(value)} is not JSON serializable")
+
+
+def json_safe(value: Any) -> Any:
+    """A copy of a nested payload with every time as its ISO string.
+
+    Dicts and lists are walked (a tuple becomes a list); anything with isoformat() becomes
+    its ISO string (str() if that fails); every other value is kept as it is.
+    """
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    return value

@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import time
 import weakref
 from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
@@ -25,6 +24,7 @@ from insight_core.ingestion.kinds.nitter_rss import NITTER_HOSTS
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY
 from insight_core.ingestion.kinds.telegram_mtproto import TELEGRAM_HOST_KEY
 from insight_core.ingestion.kinds.telegram_rss import TELEGRAM_RSS_HOSTS
+from insight_core.utils.env import env_float, env_int
 
 logger = logging.getLogger("insight.ingestion.gates")
 
@@ -44,20 +44,6 @@ HOST_FLOORS: Mapping[str, float] = {
 
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return max(1, int(os.getenv(name, str(default))))
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return max(0.0, float(os.getenv(name, str(default))))
-    except ValueError:
-        return default
 
 
 class HostLimiter:
@@ -183,11 +169,11 @@ class FetchGates:
         # The default executor is min(32, cpu + 4) threads and every kind's I/O runs through
         # asyncio.to_thread, so a global budget far above that only queues invisibly.
         return cls(
-            max_concurrency=_env_int("INSIGHT_FETCH_MAX_CONCURRENCY", 8),
+            max_concurrency=env_int("INSIGHT_FETCH_MAX_CONCURRENCY", 8, minimum=1),
             # yt-dlp's budget is per IP, not per channel: 2026-07-23 one video spent 7.5 min
             # retrying "Sign in to confirm you're not a bot" with 22 channels in flight.
-            ytdlp_concurrency=_env_int("INSIGHT_YTDLP_CONCURRENCY", 2),
-            ytdlp_min_start_interval_s=_env_float("INSIGHT_YTDLP_MIN_INTERVAL", 3.0),
+            ytdlp_concurrency=env_int("INSIGHT_YTDLP_CONCURRENCY", 2, minimum=1),
+            ytdlp_min_start_interval_s=env_float("INSIGHT_YTDLP_MIN_INTERVAL", 3.0, minimum=0.0),
         )
 
     @classmethod

@@ -20,19 +20,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from insight_core.ingestion.kinds.base import SourceKind
+from insight_core.utils.env import env_float
 
 logger = logging.getLogger("insight.ingestion.inspection")
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-
-
 # 0 restores the Mark VIII every-run behaviour.
-ARCHIVE_INSPECT_INTERVAL_HOURS = _env_float("INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS", 168)
+ARCHIVE_INSPECT_INTERVAL_HOURS = env_float("INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS", 168)
 
 
 def _refresh_enabled() -> bool:

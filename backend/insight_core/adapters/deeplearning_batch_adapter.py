@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit
+from insight_core.utils.json_safe import iso
 
 
 class DeepLearningBatchAdapter(BaseSourceAdapter):
@@ -34,7 +35,7 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
     async def inspect(self, source: Dict[str, Any]) -> Inspection:
         entries = await self._discover_entries()
         first_post_date = entries[-1]["published_at"] if entries else None
-        return Inspection(len(entries), self.PAGE_SIZE, parsing.isoformat(first_post_date))
+        return Inspection(len(entries), self.PAGE_SIZE, iso(first_post_date))
 
     async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         entries = await self._discover_entries()

@@ -15,6 +15,7 @@ from insight_core.ingestion.kinds.base import (
     SingleShotArchive,
     Source,
 )
+from insight_core.utils.json_safe import iso
 
 logger = logging.getLogger("insight.ingestion.generic_rss")
 
@@ -54,7 +55,7 @@ class GenericRssKind(SingleShotArchive, BaseKind):
         return Inspection(
             available_posts=len(posts),
             page_size=max(1, len(posts)),
-            first_post_date=parsing.isoformat(oldest),
+            first_post_date=iso(oldest),
         )
 
     async def _maybe_expand(self, source: Source, posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

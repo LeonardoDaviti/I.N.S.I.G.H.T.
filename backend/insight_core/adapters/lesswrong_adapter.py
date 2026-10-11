@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import ArchivePage, Inspection, RateLimit, resume_counts
+from insight_core.utils.json_safe import iso
 
 
 class LessWrongAdapter(BaseSourceAdapter):
@@ -64,7 +65,7 @@ class LessWrongAdapter(BaseSourceAdapter):
             page = await self._fetch_posts_meta_page(limit=1, offset=available_posts - 1)
             oldest_post = page[0] if page else None
 
-        return Inspection(available_posts, self.PAGE_SIZE, parsing.isoformat((oldest_post or {}).get("date")))
+        return Inspection(available_posts, self.PAGE_SIZE, iso((oldest_post or {}).get("date")))
 
     async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         return await self._fetch_posts_page(limit=max(1, min(limit, 50)), offset=0, source_url=str(source.get("handle_or_url") or ""))

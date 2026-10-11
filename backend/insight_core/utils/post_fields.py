@@ -22,7 +22,7 @@ def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
     url_host = extract_url_host(url)
     language_input = "\n".join(
         part
-        for part in [title or "", content or "", strip_html(content_html)]
+        for part in [title or "", content or "", strip_html(content_html, entities="decode_first")]
         if part
     )
     detected = detect_language(language_input)

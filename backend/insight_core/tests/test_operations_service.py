@@ -8,21 +8,6 @@ class OperationsServiceTests(unittest.TestCase):
     def setUp(self):
         self.service = OperationsService("postgresql:///unused")
 
-    def test_json_safe_converts_nested_datetime_payloads(self):
-        payload = {
-            "started_at": datetime(2026, 3, 19, 12, 30, tzinfo=timezone.utc),
-            "nested": {
-                "history": [
-                    {"at": datetime(2026, 3, 19, 13, 45, tzinfo=timezone.utc)},
-                ],
-            },
-        }
-
-        result = self.service._json_safe(payload)
-
-        self.assertEqual(result["started_at"], "2026-03-19T12:30:00+00:00")
-        self.assertEqual(result["nested"]["history"][0]["at"], "2026-03-19T13:45:00+00:00")
-
     def test_operations_overview_builds_alerts_and_stats(self):
         self.service.get_scheduler_config = lambda: {  # type: ignore[method-assign]
             "interval_hours": 20.0,

@@ -17,10 +17,8 @@ from __future__ import annotations
 
 import base64
 import binascii
-import html
 import math
 import os
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -28,6 +26,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import feed_thumb
 
 FeedFilter = Literal["all", "unread", "starred"]
@@ -50,8 +49,6 @@ SORT_KEY = "COALESCE(p.published_at, p.fetched_at)"
 UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
-_TAG_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"\s+")
 
 
 def unread_window_days_from_env() -> Optional[int]:
@@ -187,8 +184,7 @@ class FeedQuery:
 
 
 def _excerpt(content: str | None) -> str:
-    text = html.unescape(_TAG_RE.sub(" ", content or ""))
-    return _WS_RE.sub(" ", text).strip()[:EXCERPT_CHARS]
+    return strip_html(content, entities="decode")[:EXCERPT_CHARS]
 
 
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.

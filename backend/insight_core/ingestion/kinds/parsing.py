@@ -12,21 +12,23 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
+from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
 
 TELEGRAM_BASE_URL = "https://telegram.local"
 IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
+META_CONTENT_RE = re.compile(
+    r'(?is)<meta\b[^>]+(?:name|property)="(?P<name>[^"]+)"[^>]+content="(?P<content>[^"]*)"[^>]*>'
+)
 
 
-def strip_html(html_text: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", html_text or "")
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def isoformat(value: Optional[datetime]) -> Optional[str]:
-    if not value:
-        return None
-    return value.isoformat()
+def meta_content(html: str | None, meta_name: str) -> str:
+    """The content of the first <meta name|property="meta_name">, or "" (the name in any case)."""
+    meta_name = meta_name.lower()
+    for match in META_CONTENT_RE.finditer(html or ""):
+        if (match.group("name") or "").lower() == meta_name:
+            return match.group("content") or ""
+    return ""
 
 
 def parse_datetime_value(value: Optional[str]) -> Optional[datetime]:
