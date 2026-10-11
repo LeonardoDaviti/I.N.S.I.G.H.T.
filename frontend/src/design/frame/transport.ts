@@ -9,8 +9,11 @@
  * - A GET with no route is reported (`unmocked`) and answered 501, or, with
  *   `data: 'live'`, passed through to the real API.
  * - A write (POST, PUT, PATCH, DELETE) never reaches the network, in either
- *   mode: it is reported (`write`) and answered by its route or a fake OK.
- * - Anything outside `/api/` passes through untouched.
+ *   mode and to any origin: it is reported (`write`) and answered by its route
+ *   or a fake OK.
+ * - An API call is `/api/…` on the frame's origin or under `VITE_API_URL`
+ *   (`apiBase`), where services/api.ts sends it when that is set.
+ * - A read outside the API passes through untouched.
  */
 
 export type FrameData = 'fixtures' | 'live';
@@ -53,7 +56,12 @@ export interface TransportOptions {
   onEvent: (event: TransportEvent) => void;
   /** Resolves relative URLs; defaults to the window's origin. */
   origin?: string;
+  /** The API's base when it lives elsewhere (`VITE_API_URL`); its `/api/…` calls are API calls too. */
+  apiBase?: string;
 }
+
+/** The app's `VITE_API_URL`, the base services/api.ts puts before `/api/…`. */
+export const APP_API_BASE: string = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || '';
 
 const READS = new Set(['GET', 'HEAD']);
 
@@ -103,21 +111,37 @@ function parseBody(body: BodyInit | null | undefined): unknown {
   }
 }
 
+/** The API path of a URL (`/api/feed`), or null when the URL is not an API call. */
+function apiPath(url: URL, bases: readonly URL[]): string | null {
+  for (const base of bases) {
+    if (url.origin !== base.origin) continue;
+    const prefix = base.pathname.replace(/\/+$/, '');
+    if (url.pathname.startsWith(`${prefix}/api/`)) return url.pathname.slice(prefix.length);
+  }
+  return null;
+}
+
 export function createFixtureTransport(options: TransportOptions): typeof fetch {
   const { routes, data, realFetch, onEvent } = options;
   const origin = options.origin ?? (typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
+  const bases = [new URL(origin), ...(options.apiBase ? [new URL(options.apiBase, origin)] : [])];
 
   return async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const request = input instanceof Request ? input : null;
     const url = new URL(request ? request.url : String(input), origin);
     const method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
-    if (url.origin !== new URL(origin).origin || !url.pathname.startsWith('/api/')) {
-      return realFetch(input, init);
+    const isRead = READS.has(method);
+    const path = apiPath(url, bases);
+
+    if (path === null) {
+      if (isRead) return realFetch(input, init);
+      // Not the API, but a write all the same: it never leaves the frame.
+      const shown = url.origin === bases[0].origin ? `${url.pathname}${url.search}` : url.href;
+      onEvent({ kind: 'write', method, path: shown });
+      return json({ success: true });
     }
 
-    const path = url.pathname;
     const shown = `${path}${url.search}`;
-    const isRead = READS.has(method);
     for (const route of routes) {
       const params = match(route, method, path);
       if (!params) continue;

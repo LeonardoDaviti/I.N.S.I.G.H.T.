@@ -87,12 +87,47 @@ describe('the fixture transport', () => {
     expect(events).toEqual([]);
   });
 
-  it('leaves requests outside the API alone', async () => {
+  it('leaves reads outside the API alone', async () => {
     const { transport, realFetch, events } = setup();
     await transport('/assets/logo.svg');
     await transport('https://elsewhere.example/api/feed');
     expect(realFetch).toHaveBeenCalledTimes(2);
     expect(events).toEqual([]);
+  });
+
+  it('treats the API at VITE_API_URL like the API on the frame origin: fixtures, no network', async () => {
+    const { transport, realFetch, events } = setup({
+      apiBase: 'https://api.example.test/insight',
+      routes: [{ path: '/api/feed', respond: () => ({ from: 'fixture' }) }],
+    });
+
+    const feed = await transport('https://api.example.test/insight/api/feed?scope=all');
+    const missing = await transport('https://api.example.test/insight/api/sources');
+    const write = await transport('https://api.example.test/insight/api/feed/read', { method: 'PUT', body: '{}' });
+
+    expect(await feed.json()).toEqual({ from: 'fixture' });
+    expect(missing.status).toBe(501);
+    expect(await write.json()).toEqual({ success: true });
+    expect(events).toEqual([
+      { kind: 'unmocked', method: 'GET', path: '/api/sources' },
+      { kind: 'write', method: 'PUT', path: '/api/feed/read' },
+    ]);
+    expect(realFetch).not.toHaveBeenCalled();
+  });
+
+  it('never sends a write anywhere, even outside the API or to another origin', async () => {
+    const { transport, realFetch, events } = setup({ data: 'live' });
+
+    await transport('https://elsewhere.example/api/feed', { method: 'POST', body: '{}' });
+    await transport(new Request('https://elsewhere.example/hook', { method: 'DELETE' }));
+    await transport('/not-api/thing', { method: 'PATCH' });
+
+    expect(realFetch).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { kind: 'write', method: 'POST', path: 'https://elsewhere.example/api/feed' },
+      { kind: 'write', method: 'DELETE', path: 'https://elsewhere.example/hook' },
+      { kind: 'write', method: 'PATCH', path: '/not-api/thing' },
+    ]);
   });
 
   it('answers the loading state with a promise that never settles and the error state with a 500', async () => {

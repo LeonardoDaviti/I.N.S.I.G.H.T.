@@ -10,7 +10,7 @@
 import { THEME_STORAGE_KEY } from '../../components/ThemeProvider';
 import { frameScenario, type FrameScenario } from '../fixtures/scenarios';
 import type { FrameLocation } from './frameUrl';
-import { createFixtureTransport, type TransportEvent } from './transport';
+import { APP_API_BASE, createFixtureTransport, type TransportEvent } from './transport';
 
 export interface FrameReport {
   events(): readonly TransportEvent[];
@@ -75,6 +75,7 @@ export function bootFrame(
     realFetch,
     onEvent: report.add,
     origin: win.location.origin,
+    apiBase: APP_API_BASE,
   });
   const theme = location.theme === 'light' ? 'theme-light' : 'theme-dark';
   Object.defineProperty(win, 'localStorage', { configurable: true, value: memoryStorage({ [THEME_STORAGE_KEY]: theme }) });
