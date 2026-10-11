@@ -89,6 +89,11 @@ export const DESIGN_STUDIO: Destination = {
   keywords: 'principles system tokens components specimens prototypes decisions',
 };
 
+/** True inside a Design Studio frame (`/design/frame/…`), whose page runs in a memory router. */
+export function insideDesignFrame(): boolean {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/design/frame/');
+}
+
 /** Switcher ids that belong to analysis (briefings, stories, inbox) or to the
  *  tracks list page, which reading-only drops (Decision 2). */
 const ANALYSIS_DESTINATION_IDS: ReadonlySet<string> = new Set([
@@ -104,10 +109,15 @@ export interface TrackRef {
  * What ⌘K can jump to. With analysis on, the list above unchanged. Reading-only:
  * the feed and sources entries, then one entry per track (to `/read/folder/:id`,
  * the reader scoped to it) in the order given. Either way the design studio
- * comes last.
+ * comes last, unless `studio` is false (⌘K inside one of the studio's own frames).
  */
-export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef[] = []): Destination[] {
-  if (analysisEnabled) return [...DESTINATIONS, DESIGN_STUDIO];
+export function destinations(
+  analysisEnabled: boolean,
+  tracks: readonly TrackRef[] = [],
+  { studio = true }: { studio?: boolean } = {},
+): Destination[] {
+  const last = studio ? [DESIGN_STUDIO] : [];
+  if (analysisEnabled) return [...DESTINATIONS, ...last];
   // Reading-only, ingestion is a tab under sources (reading-finish R3).
   const reading = DESTINATIONS
     .filter((item) => !ANALYSIS_DESTINATION_IDS.has(item.id))
@@ -122,7 +132,7 @@ export function destinations(analysisEnabled: boolean, tracks: readonly TrackRef
   // Tracks go after the feed entries; with none after the feed, at the end.
   const afterFeed = reading.findIndex((item) => item.group !== 'feed');
   const at = afterFeed === -1 ? reading.length : afterFeed;
-  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at), DESIGN_STUDIO];
+  return [...reading.slice(0, at), ...trackItems, ...reading.slice(at), ...last];
 }
 
 /** Case-insensitive, every word must match label, group or keywords. Order is kept. */

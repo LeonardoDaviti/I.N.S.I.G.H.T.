@@ -5,7 +5,7 @@ import { Dialog, DialogContent } from '../ui/Dialog';
 import Kbd from '../ui/Kbd';
 import { useTheme } from '../ThemeProvider';
 import { cn } from '../../lib/utils';
-import { destinations, filterDestinations, type Destination } from './navigation';
+import { destinations, filterDestinations, insideDesignFrame, type Destination } from './navigation';
 import { useAnalysisEnabled } from '../../hooks/useAnalysis';
 import { useFolders } from '../../hooks/useReaderDirectory';
 
@@ -26,7 +26,7 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
   const analysisEnabled = useAnalysisEnabled();
   // Per-track entries are reading-only (destinations() ignores them with analysis on).
   const folders = useFolders({ enabled: !analysisEnabled });
-  const items = useMemo(() => destinations(analysisEnabled, folders.data ?? []), [analysisEnabled, folders.data]);
+  const items = useMemo(() => destinations(analysisEnabled, folders.data ?? [], { studio: !insideDesignFrame() }), [analysisEnabled, folders.data]);
 
   const options: Option[] = useMemo(() => {
     const themeOption: Option = {

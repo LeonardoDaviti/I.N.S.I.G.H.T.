@@ -8,7 +8,7 @@ import type { Api } from '../../services/api';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import AppShell from './AppShell';
-import { activeNavKey, destinations, filterDestinations, NAV_ITEMS, navItems } from './navigation';
+import { activeNavKey, destinations, filterDestinations, insideDesignFrame, NAV_ITEMS, navItems } from './navigation';
 
 function Where() {
   const location = useLocation();
@@ -97,6 +97,16 @@ describe('navigation model', () => {
       expect(navItems(analysis).map((item) => item.to)).not.toContain('/design');
     }
     expect(filterDestinations('principles tokens', destinations(false)).map((d) => d.id)).toEqual(['design-studio']);
+  });
+
+  it('inside a design studio frame, ⌘K leaves the design studio out', () => {
+    for (const analysis of [true, false]) {
+      expect(destinations(analysis, [], { studio: false }).map((d) => d.id)).not.toContain('design-studio');
+    }
+    window.history.pushState({}, '', '/design/frame/reader/normal?theme=dark');
+    expect(insideDesignFrame()).toBe(true);
+    window.history.pushState({}, '', '/');
+    expect(insideDesignFrame()).toBe(false);
   });
 
   it('reading-only, Ingestion in the switcher opens the ingestion tab under sources', () => {
