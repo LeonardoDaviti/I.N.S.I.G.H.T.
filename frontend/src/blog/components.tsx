@@ -16,6 +16,10 @@ export function H2({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
+export function H3({ children }: { children: ReactNode }) {
+  return <h3 className="mt-8 text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg">{children}</h3>;
+}
+
 /** Body text at the reading step (1.125rem / 1.7). */
 export function P({ children, className }: { children: ReactNode; className?: string }) {
   return <p className={cn('mt-5 text-[1.125rem] leading-[1.7] text-fg', className)}>{children}</p>;

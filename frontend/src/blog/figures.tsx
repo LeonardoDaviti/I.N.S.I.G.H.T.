@@ -77,7 +77,7 @@ export function GrowthFigure() {
 /** Where the 99k lines go (audit, 2026-10-10; rounded). */
 const WEIGHT: readonly { label: string; lines: number; note: string; kind: 'keep' | 'cut' }[] = [
   { label: 'The reading product', lines: 54_000, note: 'feed, posts, sources, ingestion, tests', kind: 'keep' },
-  { label: 'Analysis, switched off', lines: 28_700, note: 'briefings, Gemini, stories, inbox, memory…', kind: 'cut' },
+  { label: 'Analysis, being retired', lines: 28_700, note: 'briefings, Gemini, stories, inbox, memory…', kind: 'cut' },
   { label: 'Stale docs and plans', lines: 7_000, note: 'describe Mark II–VI code that is gone', kind: 'cut' },
   { label: 'Dead code', lines: 5_500, note: 'no importers, unloadable tests, stub libraries', kind: 'cut' },
   { label: 'Pass-through and copies', lines: 3_500, note: 'the bridge, nine _json_default, 72 catch blocks', kind: 'cut' },
@@ -203,5 +203,79 @@ export function DepthFigure() {
         </g>
       ))}
     </svg>
+  );
+}
+
+/** A labelled horizontal bar list: the shared shape of figures 5 and 6. */
+function BarList({
+  rows,
+  unit,
+  label,
+}: {
+  rows: readonly { label: string; note: string; value: number; loud?: boolean; dashed?: boolean }[];
+  unit: string;
+  label: string;
+}) {
+  const W = 640;
+  const row = 44;
+  const labelW = 212;
+  const barMax = W - labelW - 80;
+  const max = Math.max(...rows.map((r) => r.value));
+  return (
+    <svg viewBox={`0 0 ${W} ${row * rows.length + 8}`} role="img" aria-label={label} className="h-auto w-full" fontFamily={FONT}>
+      {rows.map((r, i) => {
+        const y = i * row + 6;
+        const width = Math.max(4, (barMax * r.value) / max);
+        return (
+          <g key={r.label}>
+            <text x={0} y={y + 14} fontSize={12.5} fontWeight={r.loud ? 650 : 550} fill={FG}>{r.label}</text>
+            <text x={0} y={y + 30} fontSize={10} fill={FG3}>{r.note}</text>
+            <rect
+              x={labelW}
+              y={y + 4}
+              width={width}
+              height={22}
+              rx={3}
+              fill={r.loud ? INV : r.dashed ? 'none' : RAISED}
+              stroke={r.loud ? INV : r.dashed ? FG2 : LINE_STRONG}
+              strokeDasharray={r.dashed ? '4 3' : undefined}
+            />
+            <text x={labelW + width + 8} y={y + 20} fontSize={11.5} fontWeight={600} fill={FG} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {`${r.value} ${unit}`}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/** The backend image through the optimization pass (docker images, 2026-10-10). */
+export function ImageFigure() {
+  return (
+    <BarList
+      unit="MB"
+      label="Backend image size: 949 MB before, 490 MB after removing unused packages and gcc, 464 MB after removing Langfuse. Python packages went from 332 MB to 133 MB."
+      rows={[
+        { label: 'Before', note: 'Python packages: 332 MB', value: 949 },
+        { label: 'Unused packages and gcc out', note: '8 packages nobody imported', value: 490 },
+        { label: 'Langfuse out', note: 'Python packages: 133 MB', value: 464, loud: true },
+      ]}
+    />
+  );
+}
+
+/** Table sizes on a local copy of the database (7,102 posts, 2026-10-11). */
+export function DatabaseFigure() {
+  return (
+    <BarList
+      unit="MB"
+      label="Database by table group on a local copy: entity tables 195 MB, reading tables 74 MB, other analysis tables 13 MB. Analysis holds 74 percent of the 282 MB."
+      rows={[
+        { label: 'Entity memory tables', note: 'mentions, post entities, candidates, aliases', value: 195, dashed: true },
+        { label: 'Reading tables', note: 'posts (69 MB), sources, read state, jobs…', value: 74, loud: true },
+        { label: 'Other analysis tables', note: 'briefings, events, topics, stories, inbox…', value: 13, dashed: true },
+      ]}
+    />
   );
 }

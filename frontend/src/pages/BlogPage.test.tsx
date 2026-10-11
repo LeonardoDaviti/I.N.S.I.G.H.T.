@@ -45,7 +45,7 @@ describe('/blog/junior-to-senior', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('From junior to senior');
     expect(await screen.findByRole('heading', { name: /A layer “to be safe”/ })).toBeInTheDocument();
     const figures = screen.getAllByRole('img');
-    expect(figures).toHaveLength(4);
+    expect(figures).toHaveLength(6);
     for (const figure of figures) expect(figure).toHaveAccessibleName();
   });
 

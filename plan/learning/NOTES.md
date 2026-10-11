@@ -9,9 +9,9 @@
 
 ## Lessons
 
-1. `/blog/junior-to-senior`: five junior habits (pass-through layers, copies, hidden-not-deleted flags, dead code, rebuilds) and their senior replacements.
+1. `/blog/junior-to-senior`: five junior habits (pass-through layers, copies, hidden-not-deleted flags, dead code, rebuilds), the image diet (949 → 464 MB) and its five lessons, and the analysis retirement weighed both ways (owner decision 2026-10-11).
 
 ## Next lesson candidates
 
-- Do the deletion test hands-on on one real INSIGHT module, before slice 1 of issue 0003.
+- Do the deletion test hands-on on one real INSIGHT module, before slice 1 of issue 0005.
 - Read a slice diff: did it deepen a module or only move code?

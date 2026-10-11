@@ -1,5 +1,5 @@
-import { C, Cite, Code, Compare, Figure, H2, List, P, Quiz, Takeaway, type QuizQuestion } from '../components';
-import { DepthFigure, GrowthFigure, RequestPathFigure, WeightFigure } from '../figures';
+import { C, Cite, Code, Compare, Figure, H2, H3, List, P, Quiz, Takeaway, type QuizQuestion } from '../components';
+import { DatabaseFigure, DepthFigure, GrowthFigure, ImageFigure, RequestPathFigure, WeightFigure } from '../figures';
 
 const SRC = {
   ousterhoutTalk: 'https://www.youtube.com/watch?v=bmSAYlu0NcY',
@@ -10,6 +10,8 @@ const SRC = {
   strangler: 'https://martinfowler.com/bliki/StranglerFigApplication.html',
   fastapiErrors: 'https://fastapi.tiangolo.com/tutorial/handling-errors/',
   psycopgPool: 'https://www.psycopg.org/psycopg3/docs/advanced/pool.html',
+  multiStage: 'https://docs.docker.com/build/building/multi-stage/',
+  legacyGenai: 'https://pypi.org/project/google-generativeai/',
 };
 
 const QUESTIONS: QuizQuestion[] = [
@@ -49,6 +51,18 @@ const QUESTIONS: QuizQuestion[] = [
     answer: 1,
     why: <>Fowler’s strangler fig: move behaviour piece by piece behind a stable interface instead of restarting. Mark IX gave ingestion that interface: <C>run_ingestion()</C> and <C>SourceKind</C>.</>,
   },
+  {
+    prompt: <>Every package installs from a prebuilt wheel, yet the image ships <C>gcc</C>. What is the compiler doing there?</>,
+    options: ['Compiling the Postgres database driver', 'Speeding up the Python runtime', 'Nothing; it is unused weight', 'Building the React frontend assets'],
+    answer: 2,
+    why: <>Nothing compiles at install time, which is why the image built and every test passed without it. A compiler in a runtime image is only weight and attack surface; if a build really needs one, use a multi-stage build.</>,
+  },
+  {
+    prompt: 'The retirement migration drops 31 tables. What makes that step safe to take?',
+    options: ['Leaving the feature flag on', 'Commenting the code out first', 'Copying the tables into JSON', 'A git tag and a backup'],
+    answer: 3,
+    why: <>The tag keeps the code readable and the backup keeps the data restorable. A flag or commented-out code is the dormant weight we are removing; neither one brings back a dropped table.</>,
+  },
 ];
 
 export default function JuniorToSenior() {
@@ -56,10 +70,11 @@ export default function JuniorToSenior() {
     <>
       <P className="mt-0 text-[1.1875rem] text-fg-2">
         In sixteen months INSIGHT grew from 964 lines to 99,059. About half of that is weight we carry and never use. This is the story of how
-        that happened, the junior habits that caused it, and the senior practices we are switching to — with real code from this repository.
+        that happened, the junior habits that caused it, and the senior practices we are switching to — with real code from this repository, the
+        image diet that already shipped, and the decision to retire analysis.
       </P>
 
-      <Figure n={1} caption="Tracked lines at the last commit of each Mark (lockfiles and images excluded). The dashed bar is where the cleanup in issue 0003 should land.">
+      <Figure n={1} caption="Tracked lines at the last commit of each Mark (lockfiles and images excluded). The dashed bar is where the cleanup in issue 0005 should land.">
         <GrowthFigure />
       </Figure>
 
@@ -245,7 +260,8 @@ memory_fields = build_post_memory_fields(post)
       </P>
       <P>
         The senior practice: <strong>git is the archive.</strong> Tag the last commit that has the analysis code, then delete it from <C>main</C>. When analysis
-        comes back in Mark X, it is rebuilt on today’s reading core, one feature at a time, each one earning its place. It is not restored wholesale.
+        comes back in Mark X, it is rebuilt on today’s reading core, one feature at a time, each one earning its place. It is not restored wholesale. On
+        11 October the owner made that call; <a href="#retire" className="text-link">section 7</a> weighs what it gains and what it costs.
       </P>
       <Takeaway>A flag that never turns back on is not a feature switch. It is dead code with a light switch on the wall.</Takeaway>
 
@@ -298,6 +314,117 @@ async def run_ingestion(
       </P>
       <Takeaway>Do not restart. Put a deep interface where the change keeps happening, and move behaviour behind it one piece at a time.</Takeaway>
 
+      <H2 id="optimization">6. The image diet: 949 MB to 464 MB</H2>
+      <P>
+        Before touching the structure, we made the cheapest cut first: the backend Docker image. One commit removed 336 lines and changed 9, and
+        the image lost half its weight. Every finding in it is a habit worth unlearning.
+      </P>
+      <Figure n={5} caption="The backend image through the optimization pass, measured with docker images. Python packages alone went from 332 MB to 133 MB. All 460 backend tests passed inside the new image.">
+        <ImageFigure />
+      </Figure>
+
+      <H3>Lesson 1: measure before you cut, and after</H3>
+      <P>
+        “The image feels big” is not a finding. <C>docker images</C> said 949 MB; <C>du</C> on the installed packages said 332 MB of them was Python
+        libraries. After each cut we measured again, and then ran the whole test suite <em>inside the new image</em>, because the image is what ships,
+        not your laptop. A cut you have not measured is a guess; a cut you have not tested in the real artifact is a risk.
+      </P>
+
+      <H3>Lesson 2: a dependency stays only if something imports it</H3>
+      <Code caption="backend/requirements.txt — the eight lines nothing imported">{`
+-feedparser
+-youtube-transcript-api
+-praw
+-asyncpraw
+-markdown
+-pymdown-extensions
+-google-generativeai
+-langfuse>=4,<5
+`}</Code>
+      <P>
+        Each line was added for a reason once, and never removed when the reason left. Two are telling. <C>praw</C> and <C>asyncpraw</C> are the
+        sync and async versions of the same Reddit library, and neither was used. <C>google-generativeai</C> is Google’s old SDK, installed next to
+        its replacement <C>google-genai</C>; its own page says “All support for this repository ended permanently on November 30, 2025” (
+        <Cite href={SRC.legacyGenai}>PyPI, google-generativeai</Cite>). Every dependency costs install size, upgrade work and attack surface, so
+        the check is mechanical: grep for the import. No import, no line.
+      </P>
+
+      <H3>Lesson 3: build tools do not belong in the runtime image</H3>
+      <P>
+        The image installed <C>gcc</C>, a C compiler. Nothing needed it: every package installs from a prebuilt wheel, and the proof is that the
+        image built and all tests passed without it. A compiler in a production image is weight the app never uses, and one more tool for
+        anyone who breaks in. Docker’s own docs describe the pattern for when you <em>do</em> need one: build in one stage and copy only the result out, so
+        “none of the build tools required to build the application are included in the resulting image” (
+        <Cite href={SRC.multiStage}>Docker docs, Multi-stage builds</Cite>).
+      </P>
+
+      <H3>Lesson 4: a tool that can never fail can also never help</H3>
+      <P>The Langfuse tracer was 217 lines wrapped around every Gemini call. Its own header explains the problem:</P>
+      <Code caption="backend/insight_core/observability/langfuse_tracer.py (deleted)">{`
+Everything here is wrapped so tracing can NEVER break a briefing: if Langfuse is
+disabled, misconfigured, the SDK is missing, or the host is unreachable, every
+function degrades to a no-op.
+
+... for self-hosted hosts (.local / localhost / private IPs) we force
+\`verify=False\` at the requests layer
+`}</Code>
+      <P>
+        Read that twice. When anything is wrong, the tracer silently does nothing, so nobody learns it is broken. To reach a self-hosted server it
+        switched off TLS certificate checks. And it needed an extra host entry in Docker Compose. Observability earns its place only if someone
+        reads it and it fails loudly when it stops working; this one did neither, so it went.
+      </P>
+
+      <H3>Lesson 5: one way to build</H3>
+      <P>
+        The repository root had a second <C>Dockerfile</C> that installed Node into a Python image and ran the API next to the Vite
+        <em> development</em> server, plus a root <C>requirements.txt</C> that still listed LangChain. The docs told readers to install from it. Two
+        entry points, and the wrong one looked official. Deleting both made the real build, <C>docker compose up</C>, the only build.
+      </P>
+      <Takeaway>Weight hides where nobody re-checks: requirement files, base images, wrappers, old entry points. Measure, grep, delete, then verify inside the artifact you ship.</Takeaway>
+
+      <H2 id="retire">7. Retiring analysis: the good and the bad</H2>
+      <P>
+        On 11 October 2026 the owner decided: analysis is retired <strong>completely</strong>, and better analysis will be built later. Briefings,
+        stories, the inbox, topics, entity and event memory, evidence, experts, milestones and track briefings all leave <C>main</C>. Deleting is a
+        decision with costs, so a senior writes both columns down before cutting.
+      </P>
+      <Figure n={6} caption="Table sizes on a local copy of the database (7,102 posts). Analysis tables hold 208 of 282 MB, 74%. The entity tables alone are almost three times the posts table.">
+        <DatabaseFigure />
+      </Figure>
+      <div className="mt-8 grid gap-4 lg:-mx-24 lg:grid-cols-2">
+        <section className="rounded-md border border-fg p-4">
+          <h3 className="text-[1rem] font-semibold text-fg">What it gains</h3>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-[0.9375rem] leading-[1.55] text-fg marker:text-fg-3">
+            <li><strong>About 28,700 lines</strong> and their tests leave every build, test run and refactor.</li>
+            <li><strong>The database shrinks by about three quarters</strong>: 31 tables, 208 of 282 MB on the local copy.</li>
+            <li><strong>Ingestion does less per post</strong>: no more “memory pivot” columns computed on every save.</li>
+            <li><strong>No stale answers</strong>: about 37 analysis routes that were never gated stop serving data nobody updates.</li>
+            <li><strong>A lighter image</strong>: the Gemini SDK leaves, and so does the Gemini key in Connections.</li>
+            <li><strong>One app, one mode</strong>: every screen has one behaviour to test, not two.</li>
+            <li><strong>A clean start for Mark X</strong>: new analysis is designed on the reading core, not around the old one.</li>
+          </ul>
+        </section>
+        <section className="rounded-md border border-dashed border-line-strong p-4">
+          <h3 className="text-[1rem] font-semibold text-fg">What it costs</h3>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-[0.9375rem] leading-[1.55] text-fg marker:text-fg-3">
+            <li><strong>Working features disappear</strong>, including some the owner likes: milestones (issue 0001) and track briefings (issue 0002).</li>
+            <li><strong>Data is dropped</strong>: the entity graph and the archive of past briefings. Rebuilding them costs compute and model tokens.</li>
+            <li><strong>The tag is not an undo button.</strong> Once the bridge and the connection code change, the old code will not drop back in. The tag is reading material.</li>
+            <li><strong>Some work will be redone.</strong> That cost was paid when it was built; keeping dead code does not get it back.</li>
+            <li><strong>Hidden couplings can break reading</strong>: ingestion still imports the memory services, and posts still carry analysis columns.</li>
+          </ul>
+        </section>
+      </div>
+      <H3>How the costs are contained</H3>
+      <List>
+        <li><strong>Reversible where it can be:</strong> a git tag for the code and a database backup before the migration that drops the tables.</li>
+        <li><strong>Port before cut:</strong> archive backfill and the ingestion log viewer move into the Ingestion tab first, because they are reading tools that only lived on an analysis page.</li>
+        <li><strong>One fixed test surface:</strong> the <C>run_ingestion()</C> tests stay unchanged through every slice. If they stay green, reading did not move.</li>
+        <li><strong>Small slices:</strong> backend, frontend and schema are cut separately, and the owner reviews each one.</li>
+        <li><strong>A rule for coming back:</strong> a new analysis feature ships only with a reading test it passes, so Mark X earns what Mark VII assumed.</li>
+      </List>
+      <Takeaway>Deleting is a decision, not a cleanup. Write down what it gains and what it costs, make it reversible where you can, and say plainly where you can’t.</Takeaway>
+
       <H2 id="switch">What we are switching to</H2>
       <P>The habits, the practices that replace them, and where each one lands in INSIGHT.</P>
       <div className="mt-6 overflow-x-auto lg:-mx-24">
@@ -318,7 +445,11 @@ async def run_ingestion(
               ['Keep files just in case', 'Git is the archive; the deletion test', 'Remove dead code, stubs, stale docs'],
               ['Rebuild from scratch', 'Converge behind one seam', 'run_ingestion() and SourceKind'],
               ['Ship and move on', 'Lightweight is a budget; measure', 'Image 949 MB → 464 MB, then lines'],
-              ['One big change', 'One slice, one commit, owner reviews', 'Issue 0003, eleven slices'],
+              ['Install it in case we need it', 'A dependency stays only if imported', 'Eight unused packages removed'],
+              ['Ship the compiler with the app', 'The runtime image holds only what runs', 'gcc removed from the image'],
+              ['Wrap a tool so it never fails', 'Fail loudly, or remove the tool', 'The Langfuse tracer deleted'],
+              ['Keep a feature because it was built', 'Weigh gains and costs, then cut', 'Analysis retired, tag and backup'],
+              ['One big change', 'One slice, one commit, owner reviews', 'Issue 0005, eleven slices'],
             ].map(([habit, practice, here]) => (
               <tr key={habit} className="border-b border-line align-top">
                 <td className="py-2.5 pr-4 text-fg-2">{habit}</td>
@@ -330,9 +461,8 @@ async def run_ingestion(
         </table>
       </div>
       <P>
-        Some of this has already shipped. The backend image went from 949 MB to 464 MB by dropping unused packages, the build compiler and the
-        Langfuse tracer. The rest is planned as eleven small slices in <C>plan/issues/0003-minimal-codebase.md</C>. Each one keeps reading working,
-        runs every test, and is reviewed on its own.
+        The image diet has shipped. The rest, including the analysis retirement, is planned as eleven small slices in
+        <C>plan/issues/0005-minimal-codebase.md</C>. Each one keeps reading working, runs every test, and is reviewed on its own.
       </P>
 
       <H2 id="practice">Check yourself</H2>
@@ -355,6 +485,8 @@ async def run_ingestion(
           ['Locality', 'A change, a bug fix, a test lives in one place, not many.'],
           ['Carrying cost', 'What unused code and old flags cost every future change (Fowler, Hodgson).'],
           ['Strangler fig', 'Replace a system gradually behind a stable interface, never by restart.'],
+          ['Runtime image', 'What ships and runs. Build tools (compilers, dev servers) stay in a build stage.'],
+          ['Reversible step', 'A cut you can undo: a git tag for code, a backup for data. Say so when a cut is not reversible.'],
         ].map(([term, def]) => (
           <div key={term} className="contents">
             <dt className="font-semibold text-fg">{term}</dt>
@@ -374,6 +506,7 @@ async def run_ingestion(
         <li><Cite href={SRC.toggles}>Pete Hodgson, Feature Toggles</Cite>: why flags must be removed, and how teams keep them few.</li>
         <li><Cite href={SRC.yagni}>Martin Fowler, Yagni</Cite>: the cost of build and the cost of carry.</li>
         <li><Cite href={SRC.strangler}>Martin Fowler, Strangler Fig</Cite>: modernising without a rewrite.</li>
+        <li><Cite href={SRC.multiStage}>Docker docs, Multi-stage builds</Cite>: keeping build tools out of the image you ship.</li>
       </List>
       <P className="text-fg-2">
         Something unclear, or want to try the deletion test on a file yourself? Ask your agent: it can walk you through any example here against the

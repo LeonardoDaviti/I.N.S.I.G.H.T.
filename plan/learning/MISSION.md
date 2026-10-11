@@ -6,7 +6,7 @@ The owner steers INSIGHT, a single-user reader built fast by one person and a se
 ## Success looks like
 - Apply the deletion test to any INSIGHT module, and say whether it earns its keep.
 - Spot a pass-through layer or a hidden-not-deleted flag in a diff before approving it.
-- Review a slice of `plan/issues/0003-minimal-codebase.md` and say whether it deepened or only moved code.
+- Review a slice of `plan/issues/0005-minimal-codebase.md` and say whether it deepened or only moved code.
 - Name a seam and its adapters, and say whether it's real (two adapters or more) or hypothetical (one).
 
 ## Constraints

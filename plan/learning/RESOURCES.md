@@ -17,7 +17,7 @@
 - [Docs: FastAPI, Handling Errors](https://fastapi.tiangolo.com/tutorial/handling-errors/)
   `HTTPException` and `@app.exception_handler`. Use for: replacing the bridge's `{"success": false}` envelopes.
 - [Docs: psycopg 3, Connection pools](https://www.psycopg.org/psycopg3/docs/advanced/pool.html)
-  `ConnectionPool` and `with pool.connection()`: commit on success, rollback on error. Use for: the connection seam (issue 0003, slice 8).
+  `ConnectionPool` and `with pool.connection()`: commit on success, rollback on error. Use for: the connection seam (issue 0005, slice 8).
 
 ## Wisdom (communities)
 
