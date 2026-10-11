@@ -76,7 +76,7 @@ function setup({
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
     getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [job()], alerts: [] }),
     getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: scheduler() }),
-    getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: runReport() }) }),
+    getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: { ...runReport() } }) }),
     runIngestionCycle: vi.fn().mockResolvedValue(runReport({ summary: '3 due, 75 deferred, 0 failed; 7 new posts', posts_inserted: 7 })),
     ...overrides,
   };
@@ -104,7 +104,7 @@ describe('Sources → ingestion tab', () => {
           alerts: [],
           jobs: [
             job({ id: 'b1', job_type: 'daily_briefing', job_label: 'Daily briefing', message: 'Briefing written' }),
-            job({ id: 'r1', payload: runReport({ summary: '5 due, 70 deferred, 1 failed; 21 new posts', posts_inserted: 21 }) }),
+            job({ id: 'r1', payload: { ...runReport({ summary: '5 due, 70 deferred, 1 failed; 21 new posts', posts_inserted: 21 }) } }),
           ],
         }),
       },

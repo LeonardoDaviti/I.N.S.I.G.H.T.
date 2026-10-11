@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  contextNeighbors,
   decodeFeedContext,
   decodeFeedCursor,
   encodeFeedContext,
@@ -46,43 +45,6 @@ test('a missing or malformed ctx is "no context"', () => {
   assert.equal(decodeFeedContext('planet:abc:unread:'), null);
   assert.equal(decodeFeedContext('source:not-a-uuid:unread:'), null);
   assert.equal(decodeFeedContext('all:unread:%%%'), null);
-});
-
-const entries = [
-  { id: 'a', pageCursor: null },
-  { id: 'b', pageCursor: null },
-  { id: 'c', pageCursor: 'P2' },
-];
-
-test('neighbors in the middle of the loaded list', () => {
-  const n = contextNeighbors(entries, 'b', 'P3');
-  assert.deepEqual(n.prev, entries[0]);
-  assert.deepEqual(n.next, entries[2]);
-  assert.equal(n.loadNext, null);
-  assert.equal(n.found, true);
-});
-
-test('prev at the first item is null', () => {
-  const n = contextNeighbors(entries, 'a', null);
-  assert.equal(n.prev, null);
-  assert.deepEqual(n.next, entries[1]);
-});
-
-test('at the last loaded id with a next cursor: "load the next page with cursor X"', () => {
-  const n = contextNeighbors(entries, 'c', 'P3');
-  assert.equal(n.next, null);
-  assert.equal(n.loadNext, 'P3');
-});
-
-test('at the very end with no next cursor there is nothing to load', () => {
-  const n = contextNeighbors(entries, 'c', null);
-  assert.equal(n.next, null);
-  assert.equal(n.loadNext, null);
-});
-
-test('a post that is not in the context list has no neighbors', () => {
-  const n = contextNeighbors(entries, 'zzz', 'P3');
-  assert.deepEqual(n, { prev: null, next: null, loadNext: null, found: false });
 });
 
 test('scope paths and post links', () => {

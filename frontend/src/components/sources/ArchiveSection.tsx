@@ -78,6 +78,8 @@ interface RunView {
   pages?: number;
 }
 
+const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
+
 function fromJob(job: JobRun): RunView {
   const events = Array.isArray(job.payload?.events) ? job.payload.events as Array<{ message?: string }> : [];
   const payload = job.payload ?? {};
@@ -88,9 +90,9 @@ function fromJob(job: JobRun): RunView {
     lastEvent: events.length ? events[events.length - 1]?.message ?? null : null,
     startedAt: job.started_at ?? null,
     finishedAt: job.finished_at ?? null,
-    fetched: payload.posts_fetched,
-    inserted: payload.posts_inserted,
-    pages: payload.pages_fetched,
+    fetched: count(payload.posts_fetched),
+    inserted: count(payload.posts_inserted),
+    pages: count(payload.pages_fetched),
   };
 }
 

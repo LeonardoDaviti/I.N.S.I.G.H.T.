@@ -97,23 +97,6 @@ export interface ContextNeighbors {
   found: boolean;
 }
 
-/** Prev/next for `currentId` within the loaded feed order. */
-export function contextNeighbors(
-  entries: readonly ContextEntry[],
-  currentId: string,
-  nextCursor: string | null,
-): ContextNeighbors {
-  const index = entries.findIndex((entry) => entry.id === currentId);
-  if (index < 0) return { prev: null, next: null, loadNext: null, found: false };
-  const isLast = index === entries.length - 1;
-  return {
-    prev: index > 0 ? entries[index - 1] : null,
-    next: isLast ? null : entries[index + 1],
-    loadNext: isLast ? nextCursor : null,
-    found: true,
-  };
-}
-
 export interface SortedEntry extends ContextEntry {
   /** The feed's sort key: published, else fetched (the backend's COALESCE). */
   sortAt: string;

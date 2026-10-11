@@ -1,20 +1,7 @@
 /**
- * The operations overview as Sources → ingestion reads it: the source health
- * block and the job labels. Pure.
+ * The job labels as Sources → ingestion shows them. Pure.
  */
-import type { JobRun, SourceHealthRow, SourceHealthSummary } from '../services/api';
-import { isRecord } from './utils.ts';
-
-const EMPTY_SUMMARY: SourceHealthSummary = { due_now: 0, deferred: 0, backoff: 0, unavailable: 0, errors: 0 };
-
-/** `overview.source_health` as `{summary, rows}`. The Mark VIII array shape (an old
- *  backend during a rolling deploy) or a missing value degrade to an empty summary. */
-export function normalizeSourceHealth(value: unknown): { summary: SourceHealthSummary; rows: SourceHealthRow[] } {
-  if (!isRecord(value)) return { summary: { ...EMPTY_SUMMARY }, rows: [] };
-  const summary = isRecord(value.summary) ? { ...EMPTY_SUMMARY, ...(value.summary as Partial<SourceHealthSummary>) } : { ...EMPTY_SUMMARY };
-  const rows = Array.isArray(value.rows) ? (value.rows as SourceHealthRow[]) : [];
-  return { summary, rows };
-}
+import type { JobRun } from '../services/api';
 
 const JOB_LABELS: Record<string, string> = {
   ingestion_run: 'Ingestion run',

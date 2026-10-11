@@ -10,7 +10,7 @@ export interface SourceSettings {
   fetch_delay_seconds?: number;
   priority?: number;
   max_posts_per_fetch?: number;
-  archive?: Record<string, any>;
+  archive?: Record<string, unknown>;
 }
 
 export interface SourceWithSettings {
@@ -57,7 +57,7 @@ export interface Post {
   published_at?: string | null;
   fetched_at?: string | null;
   categories?: string[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   handle_or_url?: string;
   source_display_name?: string;
 }
@@ -200,8 +200,8 @@ export interface ArchiveCatalogEntry {
   source_type?: string | null;
   last_archived_at?: string | null;
   last_live_fetch_at?: string | null;
-  checkpoint?: Record<string, any> | null;
-  rate_limit?: Record<string, any>;
+  checkpoint?: Record<string, unknown> | null;
+  rate_limit?: Record<string, unknown>;
 }
 
 export interface ArchiveCatalogResponse extends Envelope {
@@ -255,7 +255,7 @@ export interface JobRun {
   source_display_name?: string | null;
   source_platform?: string | null;
   message?: string | null;
-  payload?: Record<string, any>;
+  payload?: Record<string, unknown>;
   progress?: number;
   event_count?: number;
   started_at?: string | null;
@@ -417,7 +417,7 @@ export interface RunRequestOptions {
 export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
-  /** Summary plus the 8 worst rows (Mark IX); use lib/operationsOverview.normalizeSourceHealth. */
+  /** Summary plus the 8 worst rows. */
   source_health?: { summary: SourceHealthSummary; rows: SourceHealthRow[] };
   alerts?: Array<{
     id: string;
@@ -427,7 +427,7 @@ export interface OperationsOverviewResponse extends Envelope {
     started_at?: string | null;
     source_id?: string | null;
   }>;
-  stats?: Record<string, any>;
+  stats?: Record<string, unknown>;
 }
 
 export interface OperationJobResponse extends Envelope {
@@ -441,7 +441,7 @@ export interface PostDetailResponse extends Envelope {
 
 export interface PostInteractionResponse extends Envelope {
   post_id?: string;
-  event?: Record<string, any> | null;
+  event?: ({ created_at?: string } & Record<string, unknown>) | null;
   reader_state?: ReaderState | null;
   favorited?: boolean;
 }
@@ -476,7 +476,7 @@ export interface YouTubeVideoPreview {
 }
 
 export interface YouTubeChannelVideosResponse extends Envelope {
-  channel?: Record<string, any>;
+  channel?: Record<string, unknown>;
   total_videos?: number;
   videos?: YouTubeVideoPreview[];
 }
@@ -635,9 +635,9 @@ export function createApi() {
     // ---- The post page ----
 
     getPostDetail: (postId: string) => request<PostDetailResponse>(`/api/posts/item/${postId}`),
-    recordPostOpen: (postId: string, metadata?: Record<string, any>) =>
+    recordPostOpen: (postId: string, metadata?: Record<string, unknown>) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/opened`, { method: 'POST', body: { metadata } })),
-    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, any>) =>
+    recordPostReadingSession: (postId: string, durationSeconds: number, metadata?: Record<string, unknown>) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
