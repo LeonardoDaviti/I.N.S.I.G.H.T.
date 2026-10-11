@@ -330,6 +330,18 @@ def _accept_ingestion_run(
     )
 
 
+# Sources with an archive running in this process. One uvicorn worker runs every background
+# job, so a set is the whole truth; a restart empties it, as it ends the runs it tracked.
+_archiving_sources: set[str] = set()
+
+
+async def _run_archive_once(source_id: str, *args, **kwargs):
+    try:
+        await _run_async_job_background("archive_source", api_bridge.run_archive, source_id, *args, **kwargs)
+    finally:
+        _archiving_sources.discard(source_id)
+
+
 def _accept_archive_run(
     background_tasks: BackgroundTasks,
     source_id: str,
@@ -349,6 +361,9 @@ def _accept_archive_run(
         reason = support.get("reason") or "This source cannot archive"
         return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason,
                                                       "unavailable": bool(support.get("unavailable"))})
+    if source_id in _archiving_sources:
+        reason = "An archive of this source is already running"
+        return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
     resume = bool(request.resume)
     job_id = api_bridge._start_job_safe(
         "archive_source",
@@ -359,8 +374,9 @@ def _accept_archive_run(
     )
     if not job_id:
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
+    _archiving_sources.add(source_id)
     background_tasks.add_task(
-        _run_async_job_background, "archive_source", api_bridge.run_archive, source_id, request.desiredPosts,
+        _run_archive_once, source_id, request.desiredPosts,
         resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
     )
     return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source", message="Archive started"))

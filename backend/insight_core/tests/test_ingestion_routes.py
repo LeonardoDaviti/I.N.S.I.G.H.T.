@@ -63,6 +63,7 @@ class IngestionRouteTests(unittest.TestCase):
         self.original_bridge = main.api_bridge
         self.bridge = FakeBridge()
         main.api_bridge = self.bridge
+        main._archiving_sources.clear()
 
     def tearDown(self):
         main.api_bridge = self.original_bridge
@@ -166,6 +167,31 @@ class IngestionRouteTests(unittest.TestCase):
         self.assertEqual(body(response)["error"], "yt-dlp disabled")
         self.assertEqual(self.bridge.jobs, [])
         self.assertEqual(len(tasks.tasks), 0)
+
+    def test_a_second_archive_of_the_same_source_is_409_while_the_first_runs(self):
+        first, second = BackgroundTasks(), BackgroundTasks()
+        self.assertEqual(run(main.run_archive("s1", main.ArchiveRequest(background=True), first)).status_code, 202)
+        response = run(main.run_archive("s1", main.ArchiveRequest(background=True), second))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(body(response)["error"], "An archive of this source is already running")
+        self.assertEqual(len(self.bridge.jobs), 1)
+        self.assertEqual(len(second.tasks), 0)
+        other = BackgroundTasks()
+        self.assertEqual(run(main.run_archive("s2", main.ArchiveRequest(background=True), other)).status_code, 202)
+        self._drain(first)
+        self._drain(other)
+        again = BackgroundTasks()
+        self.assertEqual(run(main.run_archive("s1", main.ArchiveRequest(background=True), again)).status_code, 202,
+                         "the source is free once its archive finishes")
+
+    def test_a_failed_archive_frees_its_source(self):
+        async def boom(*args, **kwargs):
+            raise RuntimeError("network down")
+        self.bridge.run_archive = boom
+        tasks = BackgroundTasks()
+        run(main.run_archive("s1", main.ArchiveRequest(background=True), tasks))
+        self._drain(tasks)
+        self.assertEqual(run(main.run_archive("s1", main.ArchiveRequest(background=True), BackgroundTasks())).status_code, 202)
 
     def test_a_background_archive_without_job_tracking_is_503(self):
         self.bridge.job_id = None
