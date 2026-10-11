@@ -31,7 +31,7 @@ function detail(id: string, post: Partial<Post>, now: Date): PostDetailResponse 
 /** A grey picture as a data URI, so a frame never loads an image from the network. */
 function picture(width: number, height: number, label: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-    + `<rect width="100%" height="100%" fill="#8a8a8a"/><text x="50%" y="50%" fill="#f2f2f2" font-family="sans-serif" `
+    + `<rect width="100%" height="100%" fill="rgb(138,138,138)"/><text x="50%" y="50%" fill="rgb(242,242,242)" font-family="sans-serif" `
     + `font-size="${Math.round(height / 10)}" text-anchor="middle" dominant-baseline="middle">${label}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
