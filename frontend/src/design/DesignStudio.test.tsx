@@ -111,6 +111,13 @@ describe('the Handbook', () => {
     expect(where()).toBe('/design');
   });
 
+  it('lists no open prototype yet, and names an unknown one', () => {
+    renderStudio('/design/prototypes/2026-01-01-nothing');
+    expect(within(rail()).getByText('none open')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();
+    expect(screen.getByText(/No prototype lives at this address/)).toBeInTheDocument();
+  });
+
   it('says so when nothing lives at an address', () => {
     renderStudio('/design/pages/nowhere');
     expect(screen.getByRole('heading', { name: 'Not in the studio' })).toBeInTheDocument();

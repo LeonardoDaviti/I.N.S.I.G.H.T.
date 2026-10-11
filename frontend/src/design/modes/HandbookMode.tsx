@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { COMPONENT_SPECIMENS, DOCS, PROTOTYPES, docAt } from '../library';
 import { railGroups } from '../studio';
+import { parseDoc } from '../coverage';
 import { Rail, RailPicker } from '../handbook/Rail';
 import DocView from '../handbook/DocView';
 import NotFound from '../handbook/NotFound';
@@ -14,6 +15,14 @@ const GROUPS = railGroups(DOCS, [...COMPONENT_SPECIMENS.keys()], PROTOTYPES);
 function DocAt({ href }: { href: string }) {
   const doc = docAt(href);
   return doc ? <DocView doc={doc} /> : <NotFound what="doc" />;
+}
+
+/** A prototype's README (D6); the compare view is Bench's (S5b). */
+function PrototypeDoc() {
+  const { id = '' } = useParams();
+  const prototype = PROTOTYPES.find((candidate) => candidate.id === id);
+  if (!prototype) return <NotFound what="prototype" />;
+  return <DocView doc={parseDoc(`prototypes/${id}/README.md`, prototype.readme)} />;
 }
 
 /**
@@ -57,6 +66,7 @@ export default function HandbookMode() {
           <Route path="components/:name" element={<ComponentPage />} />
           <Route path="pages/:slug" element={<PageDoc section="pages" />} />
           <Route path="parked/:slug" element={<PageDoc section="parked" />} />
+          <Route path="prototypes/:id" element={<PrototypeDoc />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
