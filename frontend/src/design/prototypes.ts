@@ -12,7 +12,7 @@
  *   created: yyyy-mm-dd, the folder's date
  * and an index.tsx whose default export wraps the real page in its frame.
  */
-import { parseDoc, type DesignDoc } from './coverage';
+import { parseDoc } from './coverage';
 
 export const PROTOTYPE_STATUSES = ['draft', 'review', 'accepted', 'rejected'] as const;
 export type PrototypeStatus = (typeof PROTOTYPE_STATUSES)[number];
@@ -114,11 +114,4 @@ export function acceptInstruction(id: string): string {
 
 export function rejectInstruction(id: string, reason: string): string {
   return `reject prototype ${id}: ${reason.trim() || '<reason>'}`;
-}
-
-/** Each principle's short title, from its bold label: `**P4 Posts in one centred column.**`. */
-export function principleTitles(principles: DesignDoc): Map<number, string> {
-  return new Map(
-    [...principles.text.matchAll(/^\s*[-*]?\s*\*\*P(\d+)\s+(.+?)\.?\*\*/gm)].map((match) => [Number(match[1]), match[2]] as const),
-  );
 }

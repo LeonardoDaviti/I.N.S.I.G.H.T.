@@ -3,9 +3,7 @@
  * and how the rail groups them. Pure functions over the parsed docs, so the
  * rail is built from whatever files sit in docs/ (D1) and is tested here.
  */
-import type { DesignDoc } from './coverage';
-
-const META_BLOCK = /^\s*```meta\n[\s\S]*?\n```\s*/;
+import { META_BLOCK, docSlug, type DesignDoc } from './coverage';
 
 /** The doc as it reads: the `meta` block is for the coverage test, not the reader. */
 export function docBody(doc: DesignDoc): string {
@@ -14,12 +12,7 @@ export function docBody(doc: DesignDoc): string {
 
 /** The first `# ` heading, else the file name. */
 export function docTitle(doc: DesignDoc): string {
-  return /^# (.+?)\s*$/m.exec(doc.text)?.[1] ?? doc.path.replace(/^.*\//, '').replace(/\.md$/, '');
-}
-
-/** The file name without folder and extension: `pages/reader.md` → `reader`. */
-export function docSlug(doc: DesignDoc): string {
-  return doc.path.replace(/^.*\//, '').replace(/\.md$/, '');
+  return /^# (.+?)\s*$/m.exec(doc.text)?.[1] ?? docSlug(doc);
 }
 
 /** The studio URL of a doc, by its place under docs/. */

@@ -10,13 +10,13 @@ import { cn } from '../../lib/utils';
 import Segmented from '../Segmented';
 import Frame from '../frame/Frame';
 import { frameScenario } from '../fixtures/scenarios';
-import { DOCS, PROTOTYPES, prototypeById } from '../library';
+import { DOCS, PRINCIPLES, PROTOTYPES, prototypeById } from '../library';
 import { benchSubjects, parseBench, type BenchPage, type BenchView } from '../bench';
-import { acceptInstruction, isOpen, principleTitles, prototypeAge, rejectInstruction, type Prototype } from '../prototypes';
-import { docSlug, docTitle, pageDocsInOrder } from '../studio';
+import { acceptInstruction, isOpen, prototypeAge, rejectInstruction, type Prototype } from '../prototypes';
+import { docSlug } from '../coverage';
+import { docTitle, pageDocsInOrder } from '../studio';
 
 const PAGES: BenchPage[] = pageDocsInOrder(DOCS).map((doc) => ({ name: docSlug(doc), title: docTitle(doc), states: doc.meta.states ?? [] }));
-const PRINCIPLES = principleTitles(DOCS.find((doc) => doc.path === 'principles.md')!);
 const CATALOG = { prototypes: PROTOTYPES, pages: PAGES, widthOf: (page: string, state: string) => frameScenario(page, state)?.width };
 const SUBJECTS = benchSubjects(PROTOTYPES, PAGES);
 
@@ -171,7 +171,7 @@ function PrototypeNotes({ prototype }: { prototype: Prototype }) {
             {prototype.principles.map((number) => (
               <li key={number}>
                 <Link to="/design" className="text-link text-[0.9375rem] text-fg">
-                  <span className="font-mono text-[0.8125rem] text-fg-3">P{number}</span> {PRINCIPLES.get(number) ?? 'unknown principle'}
+                  <span className="font-mono text-[0.8125rem] text-fg-3">P{number}</span> {PRINCIPLES.find((principle) => principle.n === number)?.title ?? 'unknown principle'}
                 </Link>
               </li>
             ))}

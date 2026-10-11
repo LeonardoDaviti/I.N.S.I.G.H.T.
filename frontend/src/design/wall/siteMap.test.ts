@@ -6,7 +6,8 @@ import { appRoutes } from '../coverage';
 import { frameScenario } from '../fixtures/scenarios';
 import { scopeFromRoute } from '../../lib/feedContext';
 import { sourceId } from '../fixtures/sites';
-import { PRINCIPLES, SITE_EDGES, SITE_NODES, siteNode } from './siteMap';
+import { PRINCIPLES } from '../library';
+import { SITE_EDGES, SITE_NODES, siteNode } from './siteMap';
 
 const ROUTES = appRoutes(appSource);
 const routeOf = (href: string) => ROUTES.find((route) => route !== '*' && matchPath(route, new URL(href, 'http://x').pathname));

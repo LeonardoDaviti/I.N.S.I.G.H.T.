@@ -16,7 +16,21 @@ export interface DesignDoc {
   meta: Record<string, string[]>;
 }
 
-const META_BLOCK = /```meta\n([\s\S]*?)\n```/;
+/** The `meta` block a doc (or a prototype README) opens with, and the space after it. */
+export const META_BLOCK = /^\s*```meta\n([\s\S]*?)\n```\s*/;
+
+/** A principle citation, `P7`. */
+const CITATION = /\bP(\d+)\b/g;
+
+/** A file's name without its folder and extension: `pages/reader.md` → `reader`, `ui/Button.tsx` → `Button`. */
+export function fileStem(path: string): string {
+  return path.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
+}
+
+/** A doc's name: `pages/reader.md` → `reader`. */
+export function docSlug(doc: Pick<DesignDoc, 'path'>): string {
+  return fileStem(doc.path);
+}
 
 /** The `meta` block's keys, each a list of comma-separated values. */
 export function parseDoc(path: string, text: string): DesignDoc {
@@ -64,23 +78,50 @@ export function claimProblems(routes: readonly string[], docs: readonly DesignDo
   return problems;
 }
 
-/** The principle numbers principles.md defines: each rule opens with a bold `**P<n> …`. */
+export interface Principle {
+  n: number;
+  /** "Fetching lives in Sources" */
+  title: string;
+  /** The one-line rule after the bold label. */
+  rule: string;
+}
+
+/** P1–P12 as principles.md states them: one line each, `- **P<n> <title>.** <rule>`. */
+export function parsePrinciples(text: string): Principle[] {
+  return [...text.matchAll(/^\s*[-*]\s*\*\*P(\d+)\s+(.+?)\.?\*\*\s*(.*)$/gm)]
+    .map(([, n, title, rule]) => ({ n: Number(n), title, rule: rule.trim() }));
+}
+
+/** The principle numbers principles.md defines, from their bold labels (not from citations). */
 export function definedPrinciples(principles: DesignDoc): Set<number> {
-  return new Set([...principles.text.matchAll(/^\s*[-*]?\s*\*\*P(\d+)\b/gm)].map((match) => Number(match[1])));
+  return new Set(parsePrinciples(principles.text).map((principle) => principle.n));
+}
+
+/** Every P-number a text cites, ascending, once each. */
+export function citedPrinciples(text: string): number[] {
+  return [...new Set([...text.matchAll(CITATION)].map((match) => Number(match[1])))].sort((a, b) => a - b);
 }
 
 /** Citations of a principle (`P7`) that principles.md does not define. */
 export function unknownCitations(docs: readonly DesignDoc[]): string[] {
   const principles = docs.find((doc) => doc.path === 'principles.md');
   const defined = principles ? definedPrinciples(principles) : new Set<number>();
-  const problems: string[] = [];
-  for (const doc of docs) {
-    const cited = new Set([...doc.text.matchAll(/\bP(\d+)\b/g)].map((match) => Number(match[1])));
-    for (const number of [...cited].sort((a, b) => a - b)) {
-      if (!defined.has(number)) problems.push(`${doc.path} cites P${number}, which principles.md does not define`);
-    }
-  }
-  return problems;
+  return docs.flatMap((doc) => citedPrinciples(doc.text)
+    .filter((number) => !defined.has(number))
+    .map((number) => `${doc.path} cites P${number}, which principles.md does not define`));
+}
+
+/** principles.md fits one screen (D7.5): its lines and its words outside the meta block. */
+export const PRINCIPLES_MAX_LINES = 40;
+export const PRINCIPLES_MAX_WORDS = 450;
+
+export function principlesSizeProblems(principles: DesignDoc): string[] {
+  const lines = principles.text.trimEnd().split('\n').length;
+  const words = principles.text.replace(META_BLOCK, '').split(/\s+/).filter(Boolean).length;
+  return [
+    ...(lines > PRINCIPLES_MAX_LINES ? [`${principles.path} is ${lines} lines; the limit is ${PRINCIPLES_MAX_LINES}`] : []),
+    ...(words > PRINCIPLES_MAX_WORDS ? [`${principles.path} is ${words} words; the limit is ${PRINCIPLES_MAX_WORDS}`] : []),
+  ];
 }
 
 /** The fixed page-doc template (spec D7.4), as `## ` headings, in order. */
@@ -110,16 +151,14 @@ export function pageDocProblems(doc: DesignDoc): string[] {
   return problems;
 }
 
-const fileName = (path: string) => path.replace(/^.*\//, '').replace(/\.tsx$/, '');
-
 /**
  * Every `components/ui` primitive has a specimen in `specimens/components/`
  * under the same file name, and no specimen outlives its primitive (S2).
  * Takes the two globs' paths; test files are not primitives.
  */
 export function specimenProblems(primitivePaths: readonly string[], specimenPaths: readonly string[]): string[] {
-  const primitives = primitivePaths.filter((path) => !/\.test\.tsx$/.test(path)).map(fileName);
-  const specimens = specimenPaths.map(fileName);
+  const primitives = primitivePaths.filter((path) => !/\.test\.tsx$/.test(path)).map(fileStem);
+  const specimens = specimenPaths.map(fileStem);
   return [
     ...primitives
       .filter((name) => !specimens.includes(name))

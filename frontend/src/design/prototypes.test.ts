@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseDoc } from './coverage';
 import {
-  acceptInstruction, isOpen, parsePrototype, principleTitles, prototypeAge, prototypeProblems, rejectInstruction,
+  acceptInstruction, isOpen, parsePrototype, prototypeAge, prototypeProblems, rejectInstruction,
 } from './prototypes';
 
 const README = [
@@ -91,12 +91,5 @@ describe('the lifecycle (D6)', () => {
     expect(acceptInstruction('2026-10-10-title-wrap')).toBe('accept prototype 2026-10-10-title-wrap');
     expect(rejectInstruction('2026-10-10-title-wrap', '  pretty reads calmer ')).toBe('reject prototype 2026-10-10-title-wrap: pretty reads calmer');
     expect(rejectInstruction('2026-10-10-title-wrap', ' ')).toBe('reject prototype 2026-10-10-title-wrap: <reason>');
-  });
-});
-
-describe('principleTitles', () => {
-  it('reads each principle\'s short title from its bold label', () => {
-    const doc = parseDoc('principles.md', '- **P1 Reading first.** One.\n- **P4 Posts in one centred column.** Two.\n');
-    expect([...principleTitles(doc)]).toEqual([[1, 'Reading first'], [4, 'Posts in one centred column']]);
   });
 });

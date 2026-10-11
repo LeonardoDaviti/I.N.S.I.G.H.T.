@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, pageDocProblems, parseDoc, specimenProblems, unknownCitations, unclaimedRoutes,
+  PAGE_SECTIONS, appRoutes, claimProblems, definedPrinciples, docSlug, pageDocProblems, parseDoc, parsePrinciples,
+  principlesSizeProblems, specimenProblems, unknownCitations, unclaimedRoutes,
 } from './coverage';
 import appSource from '../App.tsx?raw';
 import { frameScenario } from './fixtures/scenarios';
@@ -48,6 +49,20 @@ describe('principle citations', () => {
 
   it('reads the defined principles from their bold labels, not from citations', () => {
     expect([...definedPrinciples(principles)]).toEqual([1, 2]);
+  });
+
+  it('reads each principle\'s number, title and one-line rule', () => {
+    expect(parsePrinciples(principles.text)).toEqual([
+      { n: 1, title: 'Reading first', rule: 'One sentence.' },
+      { n: 2, title: 'Monochrome', rule: 'Another. See P1.' },
+    ]);
+  });
+
+  it('flags a principles page longer than one screen', () => {
+    const long = parseDoc('principles.md', `${'line\n'.repeat(41)}`);
+    const wordy = parseDoc('principles.md', '```meta\nkind: principles\n```\n' + 'word '.repeat(451));
+    expect(principlesSizeProblems(long)).toEqual(['principles.md is 41 lines; the limit is 40']);
+    expect(principlesSizeProblems(wordy)).toEqual(['principles.md is 451 words; the limit is 450']);
   });
 
   it('flags a doc that cites a principle that does not exist', () => {
@@ -126,6 +141,12 @@ describe('the design docs', () => {
     expect(unknownCitations(docs)).toEqual([]);
   });
 
+  it('keep principles.md to one screen: one line per principle (D7.5)', () => {
+    const principles = docs.find((doc) => doc.path === 'principles.md')!;
+    expect(principlesSizeProblems(principles)).toEqual([]);
+    expect(principles.text.split('\n').filter((line) => /^- \*\*P\d+/.test(line))).toHaveLength(definedPrinciples(principles).size);
+  });
+
   it('keep at most 12 principles, numbered P1 up without gaps', () => {
     const numbers = [...definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!)];
     expect(numbers.length).toBeLessThanOrEqual(12);
@@ -146,7 +167,7 @@ describe('the design docs', () => {
 
   it('have a fixture scenario for every state a page doc lists (D4, D7.6)', () => {
     const missing = pageDocs.flatMap((doc) => {
-      const page = doc.path.replace(/^pages\//, '').replace(/\.md$/, '');
+      const page = docSlug(doc);
       return (doc.meta.states ?? [])
         .filter((state) => !frameScenario(page, state))
         .map((state) => `${page}/${state} has no frame scenario in design/fixtures/scenarios.ts`);
@@ -158,7 +179,7 @@ describe('the design docs', () => {
 /** The prototype registry (D6): what Bench and the Handbook list, found by glob. */
 describe('the prototypes', () => {
   const principles = definedPrinciples(docs.find((doc) => doc.path === 'principles.md')!);
-  const pages = new Set(pageDocs.map((doc) => doc.path.replace(/^pages\//, '').replace(/\.md$/, '')));
+  const pages = new Set(pageDocs.map(docSlug));
   const known = { principles, hasState: (page: string, state: string) => pages.has(page) && Boolean(frameScenario(page, state)) };
 
   it('include the seed, the post-title wrap', () => {

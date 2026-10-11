@@ -4,7 +4,7 @@
  * there is no list to edit.
  */
 import type { ComponentType } from 'react';
-import { parseDoc, type DesignDoc } from './coverage';
+import { fileStem, parseDoc, parsePrinciples, type DesignDoc, type Principle } from './coverage';
 import { docHref, type PrototypeRef } from './studio';
 import { PROTOTYPES } from './prototypeRegistry';
 import { isOpen, prototypeAge } from './prototypes';
@@ -16,6 +16,9 @@ const docFiles = import.meta.glob<string>('./docs/**/*.md', { query: '?raw', imp
 /** Every design doc, by its path under docs/. */
 export const DOCS: readonly DesignDoc[] = Object.entries(docFiles).map(([path, text]) => parseDoc(path.replace('./docs/', ''), text));
 
+/** P1–P12, read from principles.md: the Wall's chips and Bench's drawer. */
+export const PRINCIPLES: readonly Principle[] = parsePrinciples(DOCS.find((doc) => doc.path === 'principles.md')?.text ?? '');
+
 /** The doc that lives at a studio URL. */
 export function docAt(href: string): DesignDoc | undefined {
   return DOCS.find((doc) => docHref(doc) === href);
@@ -26,7 +29,7 @@ const specimenFiles = import.meta.glob<{ default: ComponentType }>('./specimens/
 /** One hand-written specimen per `components/ui` primitive, named like its file. */
 export const COMPONENT_SPECIMENS: ReadonlyMap<string, ComponentType> = new Map(
   Object.entries(specimenFiles)
-    .map(([path, module]) => [path.replace(/^.*\//, '').replace(/\.tsx$/, ''), module.default] as const)
+    .map(([path, module]) => [fileStem(path), module.default] as const)
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 
