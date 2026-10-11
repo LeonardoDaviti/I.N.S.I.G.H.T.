@@ -93,6 +93,8 @@ async function take(browser, base, shot) {
     await page.waitForSelector('html[data-frame-ready]', { timeout: READY_MS });
     if ((await page.getAttribute('html', 'data-frame-ready')) !== 'true') problems.push('the scenario setup failed');
     await page.evaluate(() => document.fonts.ready);
+    // The bar renders from the report a frame after the last request; let it paint before reading it.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const bar = page.locator('[aria-label="Frame requests"]');
     if (await bar.count()) {
       const lines = (await bar.innerText()).split('\n').filter((line) => /^(unmocked request|frame setup failed)/.test(line));

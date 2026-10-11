@@ -2,6 +2,9 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 
 import { frameScenarios, type FrameScenario } from '../fixtures/scenarios';
+import { siteRoutes } from '../fixtures/site';
+import { normalSite } from '../fixtures/sites';
+import type { FixtureRoute } from './transport';
 import { bootFrame, type BootedFrame } from './boot';
 import FrameRoot from './FrameRoot';
 import { prototypeComponent } from '../prototypeRegistry';
@@ -49,6 +52,28 @@ describe('a frame', () => {
 
     const bar = await screen.findByRole('status', { name: 'Frame requests' });
     await waitFor(() => expect(bar).toHaveTextContent(/unmocked request: GET \/api\/feed\?scope=all/));
+  });
+
+  it('marks itself ready only once the page rendered and its queries settled', async () => {
+    const slow = (respond: FixtureRoute['respond']): FixtureRoute['respond'] => async (request) => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return respond(request);
+    };
+    const scenario: FrameScenario = {
+      page: 'reader', state: 'slow', label: 'slow', url: '/', documented: false,
+      routes: (now) => siteRoutes(normalSite(now)).map((route) => (route.path === '/api/feed' ? { ...route, respond: slow(route.respond) } : route)),
+    };
+    booted = bootFrame(window, { page: 'reader', state: 'slow', theme: 'dark', data: 'fixtures' }, { scenario });
+    render(<FrameRoot booted={booted} />);
+
+    await waitFor(() => expect(document.documentElement.dataset.frameReady).toBe('true'), { timeout: 5_000 });
+    expect(screen.getByRole('link', { name: /Prompt caching is now generally available/ })).toBeInTheDocument();
+  });
+
+  it('marks a loading state ready too: requests that never answer do not hold it back', async () => {
+    const frame = boot('reader', 'loading');
+    render(<FrameRoot booted={frame} />);
+    await waitFor(() => expect(document.documentElement.dataset.frameReady).toBe('true'), { timeout: 5_000 });
   });
 
   it('says so when the URL names a state with no scenario', () => {

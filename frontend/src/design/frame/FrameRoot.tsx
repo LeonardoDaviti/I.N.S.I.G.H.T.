@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
@@ -29,23 +29,68 @@ function PathMark() {
   return null;
 }
 
-/** Runs the scenario's steps once the page is up, then marks the frame ready (`html[data-frame-ready]`). */
-function useScenarioSetup(scenario: FrameScenario | null, onError: (message: string) => void) {
+/** Renders once the routes' lazy page resolved (it sits inside their Suspense boundary). */
+function Resolved({ onResolved }: { onResolved: () => void }) {
+  useEffect(onResolved, [onResolved]);
+  return null;
+}
+
+const IDLE_CHECK_MS = 40;
+
+/**
+ * Waits until the page is settled: the route resolved and every query answered,
+ * except the requests a loading state holds forever (`pending()`), checked twice
+ * in a row so a query that starts after another finishes is not missed.
+ */
+function settled(
+  resolved: Promise<void>,
+  queryClient: QueryClient,
+  report: BootedFrame['report'],
+  alive: () => boolean,
+): Promise<void> {
+  return resolved.then(() => new Promise<void>((done) => {
+    let idleOnce = false;
+    const check = () => {
+      if (!alive()) return;
+      const idle = queryClient.isFetching() <= report.stalled();
+      if (idle && idleOnce) return done();
+      idleOnce = idle;
+      setTimeout(check, IDLE_CHECK_MS);
+    };
+    setTimeout(check, IDLE_CHECK_MS);
+  }));
+}
+
+/**
+ * Runs the scenario's steps once the page is up, then marks the frame ready
+ * (`html[data-frame-ready]`) once the page settled, for screenshots and the walk.
+ */
+function useScenarioSetup(
+  scenario: FrameScenario | null,
+  ready: (alive: () => boolean) => Promise<void>,
+  onError: (message: string) => void,
+) {
   const ran = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   useEffect(() => {
     // Once per frame: StrictMode runs effects twice, and ⌘K pressed twice is closed again.
     if (ran.current || !scenario) return;
     ran.current = true;
     const root = document.documentElement;
     const steps = scenario.setup ? scenario.setup(createFrameDriver(document)) : Promise.resolve();
-    steps.then(
-      () => { root.dataset.frameReady = 'true'; },
+    steps.then(() => ready(() => alive.current)).then(
+      () => { if (alive.current) root.dataset.frameReady = 'true'; },
       (error: unknown) => {
+        if (!alive.current) return;
         root.dataset.frameReady = 'failed';
         onError(error instanceof Error ? error.message : String(error));
       },
     );
-  }, [scenario, onError]);
+  }, [scenario, ready, onError]);
 }
 
 /**
@@ -91,7 +136,13 @@ export default function FrameRoot({ booted, prototype: Prototype, walk = false }
   const { scenario, location, report } = booted;
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const [setupError, setSetupError] = useState<string | null>(null);
-  useScenarioSetup(scenario, setSetupError);
+  const [route] = useState(() => {
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+  });
+  const ready = useCallback((alive: () => boolean) => settled(route.promise, queryClient, report, alive), [route, queryClient, report]);
+  useScenarioSetup(scenario, ready, setSetupError);
   useWalkCommands(walk && scenario !== null);
 
   if (location.prototype && !Prototype) {
@@ -120,6 +171,7 @@ export default function FrameRoot({ booted, prototype: Prototype, walk = false }
               <RouteErrorBoundary>
                 <Suspense fallback={<div className="mx-auto w-full max-w-3xl px-4 pt-10 sm:px-6"><LoadingState label="Loading page" rows={4} /></div>}>
                   {Prototype ? <Prototype><AppRoutes /></Prototype> : <AppRoutes />}
+                  <Resolved onResolved={route.resolve} />
                 </Suspense>
               </RouteErrorBoundary>
             </AppShell>

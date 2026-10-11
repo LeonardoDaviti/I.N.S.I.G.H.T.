@@ -54,6 +54,8 @@ export interface TransportOptions {
   /** The window's own fetch, for live reads and anything outside the API. */
   realFetch: typeof fetch;
   onEvent: (event: TransportEvent) => void;
+  /** Called when a route answers with `pending()`: a request that will never settle (the loading state). */
+  onStall?: () => void;
   /** Resolves relative URLs; defaults to the window's origin. */
   origin?: string;
   /** The API's base when it lives elsewhere (`VITE_API_URL`); its `/api/…` calls are API calls too. */
@@ -70,9 +72,13 @@ export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** The loading state: a response that never arrives. */
+const NEVER = new WeakSet<Promise<Response>>();
+
+/** The loading state: a response that never arrives. The transport knows it, so a frame need not wait for it. */
 export function pending(): Promise<Response> {
-  return new Promise<Response>(() => {});
+  const never = new Promise<Response>(() => {});
+  NEVER.add(never);
+  return never;
 }
 
 /** The error state: a server error with the backend's `detail` message. */
@@ -146,7 +152,9 @@ export function createFixtureTransport(options: TransportOptions): typeof fetch 
       const params = match(route, method, path);
       if (!params) continue;
       if (!isRead) onEvent({ kind: 'write', method, path: shown });
-      const answer = await route.respond({ method, path, query: url.searchParams, params, body: parseBody(init?.body) });
+      const result = route.respond({ method, path, query: url.searchParams, params, body: parseBody(init?.body) });
+      if (result instanceof Promise && NEVER.has(result)) options.onStall?.();
+      const answer = await result;
       return answer instanceof Response ? answer : json(answer);
     }
 

@@ -16,13 +16,19 @@ export interface FrameReport {
   events(): readonly TransportEvent[];
   subscribe(listener: () => void): () => void;
   add(event: TransportEvent): void;
+  /** Requests answered with `pending()`, which never settle: a ready frame does not wait for them. */
+  stalled(): number;
+  stall(): void;
 }
 
 export function createFrameReport(): FrameReport {
   let events: readonly TransportEvent[] = [];
+  let stalled = 0;
   const listeners = new Set<() => void>();
   return {
     events: () => events,
+    stalled: () => stalled,
+    stall: () => { stalled += 1; },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -74,6 +80,7 @@ export function bootFrame(
     data: location.data,
     realFetch,
     onEvent: report.add,
+    onStall: report.stall,
     origin: win.location.origin,
     apiBase: APP_API_BASE,
   });
