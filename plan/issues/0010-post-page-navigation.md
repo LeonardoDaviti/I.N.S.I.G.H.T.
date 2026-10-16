@@ -1,6 +1,6 @@
 # 0010 — Post page: back always in reach, and the source name reads the source
 
-Status: **ready-for-agent** (owner observations on the server, 2026-10-16). UX. Changes one decision of issue 0003.
+Status: **built** 2026-10-16 (owner observations on the server, 2026-10-16). UX. Changes one decision of issue 0003.
 
 ## Problem Statement
 - **Getting back means scrolling up.** The "Back / Previous / Next" row is at the top of the post and scrolls away. With a mouse there is nothing to click at the end of a long post.

@@ -5,7 +5,7 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.utils.post_fields import build_post_fields
+from insight_core.utils.post_fields import build_post_fields, display_title
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
 
@@ -49,6 +49,38 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertEqual(fields["canonical_url"], "https://example.com/path")
         self.assertTrue(fields["content_hash"])
         self.assertEqual(fields["language_code"], "en")
+
+
+class DisplayTitleTests(unittest.TestCase):
+    def test_a_tweet_with_a_bullet_list_is_its_first_line(self):
+        tweet = "Three things we shipped today:\n\n- faster search\n- dark mode\n- " + "more " * 60
+        self.assertEqual(display_title(tweet, tweet), "Three things we shipped today:")
+
+    def test_a_long_sentence_is_cut_at_a_word_with_an_ellipsis(self):
+        line = "word " * 40
+        title = display_title(line, "")
+        self.assertTrue(title.endswith("word…"), title)
+        self.assertLessEqual(len(title), 120)
+
+    def test_a_first_sentence_within_the_limit_is_the_title(self):
+        line = "OpenAI ships a new model today. " + "It is faster and cheaper than the last one, and more. " * 3
+        self.assertEqual(display_title(line, line), "OpenAI ships a new model today.")
+
+    def test_a_normal_blog_title_is_unchanged(self):
+        self.assertEqual(display_title("2026 in LLMs (so far)", "On Friday I gave the closing keynote."),
+                         "2026 in LLMs (so far)")
+
+    def test_an_empty_title_is_the_start_of_the_body(self):
+        self.assertEqual(display_title("", "<p>Release notes</p>\nMore text"), "Release notes")
+        self.assertEqual(display_title(None, None), "")
+
+    def test_a_title_cut_by_its_source_is_the_body_first_line(self):
+        body = "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)\n\n* details"
+        self.assertEqual(display_title("Update the claude-api skill: a new default model, …", body),
+                         "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)")
+
+    def test_a_long_cjk_line_is_cut_hard_at_117(self):
+        self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")
 
 
 if __name__ == "__main__":

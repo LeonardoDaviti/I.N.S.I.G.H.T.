@@ -17,6 +17,7 @@ from insight_core.db.repo_reader import ReaderRepository
 from insight_core.services.posts_service import PostsService
 from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.utils.media import post_media
+from insight_core.utils.post_fields import display_title
 
 
 class PostDetailService:
@@ -80,7 +81,7 @@ class PostDetailService:
             "external_id": row[3],
             "published_at": row[4].isoformat() if row[4] else None,
             "fetched_at": row[5].isoformat() if row[5] else None,
-            "title": row[6],
+            "title": display_title(row[6], row[7]),
             "content": row[7],
             "content_html": row[8],
             "media_urls": row[9] or [],

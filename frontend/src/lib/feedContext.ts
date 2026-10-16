@@ -144,7 +144,7 @@ export function folderReadPath(folderId: string): string {
   return `/read/folder/${encodeURIComponent(folderId)}`;
 }
 
-/** The reader scoped to one source: where every "read this source" link goes. */
+/** The reader scoped to one source: where every "read this source" link goes (issues 0010, 0011). */
 export function sourceReadPath(sourceId: string): string { return `/read/source/${encodeURIComponent(sourceId)}`; }
 
 /** Where a source is managed: Sources with its detail sheet open (issue 0003). */

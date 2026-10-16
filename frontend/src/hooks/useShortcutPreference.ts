@@ -71,6 +71,13 @@ export function useDensityPreference(): [FeedDensity, (density: FeedDensity) => 
   return useStoredChoice('insight.reader.density', ['comfortable', 'compact'] as const, 'comfortable');
 }
 
+export type ReadingFlow = 'continuous' | 'single';
+
+/** How the post page goes on after a post: the next one follows below, or one at a time (issue 0014). */
+export function useFlowPreference(): [ReadingFlow, (flow: ReadingFlow) => void] {
+  return useStoredChoice('insight.reader.flow', ['continuous', 'single'] as const, 'continuous');
+}
+
 /** Test helper: forget in-memory values between tests. */
 export function resetStoredChoices() {
   memory.clear();

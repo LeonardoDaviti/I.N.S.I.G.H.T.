@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 import type { FeedFilter, FeedView } from '../../services/api';
-import type { FeedDensity } from '../../hooks/useShortcutPreference';
+import { useFlowPreference, type FeedDensity, type ReadingFlow } from '../../hooks/useShortcutPreference';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
@@ -19,6 +19,10 @@ const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
 const DENSITIES: ReadonlyArray<{ value: FeedDensity; label: string }> = [
   { value: 'comfortable', label: 'Comfortable' },
   { value: 'compact', label: 'Compact' },
+];
+const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
+  { value: 'continuous', label: 'Continuous' },
+  { value: 'single', label: 'One at a time' },
 ];
 
 /** A quiet text action in the slash-nav language: a lowercase word, underlined on hover. */
@@ -46,8 +50,9 @@ export interface FeedToolbarProps {
 /**
  * The reader's sticky toolbar, under the app's one top bar: the scope title and
  * its unread count and the shortcut help as a labelled text action (fetching is
- * an ingestion job and lives in Sources), then the filter, view and density as slash-separated words. The theme toggle, the
- * wordmark and the app menu live in the top bar only. Below md the title opens
+ * an ingestion job and lives in Sources), then the filter, view, density and how
+ * the post page flows (stored here, read there) as slash-separated words. The
+ * theme toggle, the wordmark and the app menu live in the top bar only. Below md the title opens
  * the feeds drawer (a chevron says so), so there is no second hamburger. From md
  * up, a source or track title links to where it is managed in Sources.
  */
@@ -55,6 +60,7 @@ export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange, density, onDensityChange,
   onOpenNav, onOpenHelp, pill,
 }: FeedToolbarProps) {
+  const [flow, setFlow] = useFlowPreference();
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
   return (
     <div className="reader-material reader-edge sticky top-topbar z-30">
@@ -91,6 +97,7 @@ export default function FeedToolbar({
           <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
           <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />
           <div className="hidden md:block"><SlashChoice label="Density" value={density} options={DENSITIES} onChange={onDensityChange} /></div>
+          <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />
           {pill ? <div className="ml-auto">{pill}</div> : null}
         </div>
       </div>

@@ -47,6 +47,16 @@ beforeEach(() => {
 });
 
 describe('ReaderPage', () => {
+  it('stores how the post page flows: continuous by default, or one at a time (issue 0014)', async () => {
+    const user = userEvent.setup();
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])) }));
+    const posts = await screen.findByRole('radiogroup', { name: 'Posts' });
+    expect(within(posts).getByRole('radio', { name: 'Continuous' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(within(posts).getByRole('radio', { name: 'One at a time' }));
+    expect(within(posts).getByRole('radio', { name: 'One at a time' })).toHaveAttribute('aria-checked', 'true');
+    expect(window.localStorage.getItem('insight.reader.flow')).toBe('single');
+  });
+
   it('opens on the unread main feed', async () => {
     const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })]));
     render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }) }));

@@ -28,6 +28,7 @@ from psycopg import Cursor
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
+from insight_core.utils.post_fields import display_title
 
 FeedFilter = Literal["all", "unread", "starred"]
 FeedView = Literal["stream", "by_source"]
@@ -39,7 +40,6 @@ MAX_FEED_LIMIT = 100
 MAX_FEED_GROUPS = 50
 DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-time
 EXCERPT_CHARS = 280
-TITLE_FALLBACK_CHARS = 80
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
 SORT_KEY = "COALESCE(p.published_at, p.fetched_at)"
@@ -195,7 +195,6 @@ _ITEM_COLUMNS = f"""
 
 def _item(row: Sequence[Any]) -> Dict[str, Any]:
     excerpt = _excerpt(row[2])
-    title = (row[1] or "").strip() or excerpt[:TITLE_FALLBACK_CHARS]
     platform = row[6]
     duration = row[12]
     try:
@@ -206,7 +205,7 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
     is_video = platform == "youtube"
     return {
         "id": str(row[0]),
-        "title": title,
+        "title": display_title(row[1], row[2]),
         "excerpt": excerpt,
         "url": row[3],
         "source_id": str(row[4]),
