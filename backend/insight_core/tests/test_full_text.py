@@ -87,6 +87,13 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("enu", text)
         self.assertTrue(text.endswith("The last word."))
 
+    def test_a_themes_tag_list_goes_but_wordpress_article_classes_stay(self):
+        # The NVIDIA blog's shape: WordPress classes on <article>, a plugin wrapper, a tag list.
+        page = ('<article class="post category-ai tag-agents"><div class="has-highlight-and-share">'
+                f'{PARAGRAPHS}</div><div class="nvidia-tags"><ul><li>Tags:</li><li>Agentic AI</li></ul></div>'
+                '<div class="nvidia-categories"><p>Categories: AI</p></div></article>')
+        self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
+
     def test_the_miessler_page_is_only_its_article(self):
         text = _text(MIESSLER_PAGE)
         self.assertTrue(text.startswith("Custom Content for Everyone People are starting"), text[:80])

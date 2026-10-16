@@ -116,9 +116,13 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 
 # Page chrome, dropped with everything inside it before the article is chosen: these
 # elements, and any element (but <html> and <body>) whose class or id token starts with
-# one of the prefixes.
+# one of the prefixes, or ends in "-tags" / "-categories" after a theme prefix
+# ("nvidia-tags"). Only that ending is matched inside a token: a plugin wraps whole
+# articles in "has-highlight-and-share", and WordPress gives <article> itself
+# "category-ai tag-agents".
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
 CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar")
+CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories")
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
 TEXT_BLOCKS = "h1|h2|h3|p|blockquote"
@@ -130,7 +134,7 @@ def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
     if tag in ("html", "body"):
         return False
     tokens = " ".join(value or "" for name, value in attrs if name in ("class", "id")).lower().split()
-    return any(token.startswith(CHROME_PREFIXES) for token in tokens)
+    return any(token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) for token in tokens)
 
 
 class _ChromeStripper(HTMLParser):
