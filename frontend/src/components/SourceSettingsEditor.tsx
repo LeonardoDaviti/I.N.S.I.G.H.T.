@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { SourceHealthRow, SourceWithSettings, Folder } from '../services/api';
+import type { SchedulerConfig, SourceHealthRow, SourceWithSettings, Folder } from '../services/api';
 import { useApi } from '../services/ApiContext';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
 import { errorMessage } from '../lib/apiError';
 import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { HEALTH_STATUS_LABELS, backoffLabel, formatDue } from '../lib/sourceSchedule';
+import { dueLabel } from '../lib/schedulerStatus';
+import { useSchedulerConfig } from '../hooks/useOperations';
 import { formatRelativeTime } from '../lib/dates';
 import { formatCount, plural } from '../lib/format';
 import { STATUS_GLYPH } from './sources/sourceList';
@@ -67,12 +69,14 @@ function parseWhole(text: string, min: number, max: number, label: string): { va
   return { value };
 }
 
-/** The source's state in words: status, what happens next, the last success and error. */
-function HealthSummary({ row, now }: { row: SourceHealthRow; now: Date }) {
+/** The source's state in words: status, what happens next, the last success and error.
+ *  A due source says when the scheduler next checks (`scheduler`, once it is read). */
+function HealthSummary({ row, now, scheduler }: { row: SourceHealthRow; now: Date; scheduler?: SchedulerConfig }) {
   const status = row.enabled ? row.status : 'disabled';
+  const due = status === 'due';
   const backoff = backoffLabel(row, now);
   const facts = [
-    row.enabled && !backoff && row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : null,
+    row.enabled && !due && !backoff && row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : null,
     backoff ? `${backoff} · ${plural(row.consecutive_failures, 'failure')}` : null,
     row.last_success_at ? `fetched ${formatRelativeTime(row.last_success_at, now)}` : 'never fetched',
     plural(row.stored_posts, 'post'),
@@ -81,7 +85,10 @@ function HealthSummary({ row, now }: { row: SourceHealthRow; now: Date }) {
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem]">
-        <StatusGlyph status={STATUS_GLYPH[status] ?? 'scheduled'} label={HEALTH_STATUS_LABELS[status] ?? status} />
+        <StatusGlyph
+          status={STATUS_GLYPH[status] ?? 'scheduled'}
+          label={due && scheduler ? dueLabel(scheduler.state, now.getTime()) : HEALTH_STATUS_LABELS[status] ?? status}
+        />
         <span className="tabular-nums text-fg-3">{facts.join(' · ')}</span>
       </div>
       {row.status === 'unavailable' && row.decision_detail ? (
@@ -114,6 +121,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const health = useSourcesHealth();
   const healthRow = givenRow ?? health.data?.rows.find((row) => row.source_id === source.id) ?? null;
   const { run, isRunning } = useIngestionRun();
+  const scheduler = useSchedulerConfig();
   const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
   const fetching = isRunning(fetchTarget);
   const enabled = healthRow?.enabled ?? source.enabled;
@@ -224,7 +232,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
         <div className="space-y-6">
           <div className="space-y-3">
             <SourceAddress value={source.handle_or_url} />
-            {healthRow ? <HealthSummary row={healthRow} now={new Date()} /> : null}
+            {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="secondary"
@@ -232,7 +240,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
                 onClick={() => void run(fetchTarget)}
                 disabled={fetching || !enabled}
                 aria-busy={fetching}
-                title="Fetch now (ignores cadence and backoff)"
+                title="Optional: the scheduler fetches due sources by itself. Fetch now ignores cadence and backoff."
               >
                 {fetching ? 'Fetching…' : 'Fetch now'}
               </Button>

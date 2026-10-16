@@ -1,7 +1,7 @@
 /**
- * The scheduler's clock as the Ingestion tab shows it: whether it looks
- * stalled, and when it next ticks. The one place for that math. Pure; `nowMs`
- * is injected.
+ * The scheduler's clock as the Ingestion tab and a due source show it: whether
+ * it looks stalled, and when it next ticks. The one place for that math. Pure;
+ * `nowMs` is injected.
  */
 import type { SchedulerState } from '../services/api';
 import { toDate } from './dates.ts';
@@ -27,4 +27,12 @@ export function nextTickLabel(state: SchedulerState | null | undefined, nowMs: n
   if (!next) return null;
   const remaining = next.getTime() - nowMs;
   return remaining <= 0 ? 'next tick due now' : `next tick in ${formatTimeRemaining(remaining, { seconds: false })}`;
+}
+
+/** A due source in words: "due · next check in 37m" (the scheduler's next tick), or
+ *  "due · scheduler not running" when no tick is coming. */
+export function dueLabel(state: SchedulerState | null | undefined, nowMs: number): string {
+  const next = toDate(state?.next_tick_at);
+  if (!next || next.getTime() <= nowMs) return 'due · scheduler not running';
+  return `due · next check in ${formatTimeRemaining(next.getTime() - nowMs, { seconds: false })}`;
 }

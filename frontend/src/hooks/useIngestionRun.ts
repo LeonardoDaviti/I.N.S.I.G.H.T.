@@ -7,6 +7,7 @@ import { useApi } from '../services/ApiContext';
 import type { JobAccepted, RunReport } from '../services/api';
 import { errorMessage, isAbortError } from '../lib/apiError';
 import { summarizeRunReport } from '../lib/runReport';
+import { sourcesIngestionHref } from '../lib/ingestionNavigation';
 import { UNREAD_COUNTS_KEY } from './useFeed';
 import { SOURCES_HEALTH_KEY } from './useSourcesHealth';
 
@@ -39,7 +40,8 @@ export const INGESTION_INVALIDATES = [UNREAD_COUNTS_KEY, SOURCES_HEALTH_KEY] as 
 /**
  * Start a fetch run, poll its job, toast the run report and refresh the counts
  * (spec §F.3). Each run shows one sonner toast that goes from "Fetching…" to the
- * report's headline, with a link to the job. `run` never throws: it resolves the
+ * report's headline, with a link to the job; `startText` replaces the "Fetching…"
+ * line. `run` never throws: it resolves the
  * RunReport, or null when the request failed (the error is toasted and kept in
  * `lastError`). Several targets may run at once (one per health-table row).
  */
@@ -71,7 +73,7 @@ export function useIngestionRun(options: { onReport?: (report: RunReport, target
     });
   }, []);
 
-  const run = useCallback(async (target: IngestionTarget): Promise<RunReport | null> => {
+  const run = useCallback(async (target: IngestionTarget, { startText }: { startText?: string } = {}): Promise<RunReport | null> => {
     const key = targetKey(target);
     const toastId = `ingestion:${key}:${Date.now()}`;
     let jobId: string | null = null;
@@ -79,11 +81,11 @@ export function useIngestionRun(options: { onReport?: (report: RunReport, target
       jobId = job.job_id;
     };
     const viewJob = () => {
-      if (jobId) navigate(`/ingestion/missions?job=${encodeURIComponent(jobId)}`);
+      if (jobId) navigate(sourcesIngestionHref('jobs', `?job=${encodeURIComponent(jobId)}`));
     };
 
     setKey(key, true);
-    toast.loading(startMessage(target), { id: toastId });
+    toast.loading(startText ?? startMessage(target), { id: toastId });
     try {
       let report: RunReport;
       if (target.kind === 'all') {

@@ -204,6 +204,37 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.deleteSource).toHaveBeenCalledWith('simon'));
   });
 
+  it.each([
+    ['the next check', { next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
+    ['that the scheduler is not running', { next_tick_at: null }, 'due · scheduler not running'],
+  ])('a due source says %s, and Fetch now reads as optional', async (_, state, label) => {
+    const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', status: 'due', decision: 'fetch_due', folders: [ai] }),
+    ]));
+    const getSchedulerConfig = vi.fn().mockResolvedValue({ success: true, scheduler: { sync_sources_each_cycle: false, state } });
+    setup('/settings/sources', { getSourcesHealth, getSchedulerConfig });
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByText(label)).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Fetch now' })).toHaveAttribute('title', expect.stringMatching(/^Optional/));
+  });
+
+  it('adding a source fetches it straight away, and the toast says so', async () => {
+    let finish: (value: unknown) => void = () => {};
+    const fetchSourceNow = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
+    setup('/settings/sources', { addSource, fetchSourceNow });
+    await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Feed URL or handle'), 'https://new.example/feed.xml');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+
+    await waitFor(() => expect(fetchSourceNow).toHaveBeenCalledWith('new-1', expect.any(Object)));
+    expect(await screen.findByText('Added — fetching now')).toBeInTheDocument();
+    await act(async () => { finish(runReport({ posts_inserted: 4, selector: { kind: 'source', id: 'new-1' } })); });
+    expect(await screen.findByText('4 new posts')).toBeInTheDocument();
+  });
+
   it('the row switch toggles one source', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');
