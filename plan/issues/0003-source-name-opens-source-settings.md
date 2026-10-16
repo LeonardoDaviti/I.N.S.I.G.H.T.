@@ -9,7 +9,7 @@ Status: **done** (built in 0fa3545, on the server) · Opened by the owner 2026-1
 ## Wanted
 - **Source header:** the source name in the reader header is a quiet link to `/settings/sources?source=<id>`. Sources opens with that source's **detail sheet open**, where you can change settings, disable or delete it.
 - **Track header:** the track name links to `/settings/sources?track=<id>`. The list scrolls to that track's group and briefly highlights it; the group's ⋯ menu holds rename, main digest and delete.
-- **Post page:** the source name in the byline links to the same place.
+- **Post page:** the source name in the byline links to the same place. (Changed by issue 0010: the byline's source name now opens the reader on that source, and a ` / settings` word beside it opens the sheet.)
 - **The URL owns the sheet:** opening the sheet sets `?source=`, closing it removes the parameter, and the back button closes the sheet.
 - **Unknown or deleted id:** show the sources list with a quiet note, "That source no longer exists". No error page. (The id from the report, `a984b1ff-…`, is no longer in the preview database, so this case is real.)
 

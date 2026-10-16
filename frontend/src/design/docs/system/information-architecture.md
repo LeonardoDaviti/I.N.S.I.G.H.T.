@@ -40,7 +40,7 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 
 ## Cross-links (P8)
 
-- A source name in a reading view links to `/settings/sources?source=<id>` (the source sheet opens).
+- A source name in a reading view links to `/settings/sources?source=<id>` (the source sheet opens). In a post's byline the source name reads the source (`/read/source/<id>`) and ` / settings` beside it opens the sheet (decision 020).
 - A track name links to `/settings/sources?track=<id>` (the list scrolls to the group and highlights it).
 - Secrets have one home: `/settings/sources?tab=connections[&provider=<id>]` (P7).
 

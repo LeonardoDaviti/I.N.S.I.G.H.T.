@@ -26,11 +26,12 @@ describe('PostDetailPage header', () => {
     expect(original).toHaveAttribute('target', '_blank');
   });
 
-  it('links the source name to that source in Sources (issue 0003)', async () => {
+  it('the source name reads the source; settings beside it opens it in Sources (issue 0010)', async () => {
     render(baseApi(rssPost({ source_id: 'src-1' })));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
     const header = heading.closest('header')!;
-    expect(within(header).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/settings/sources?source=src-1');
+    expect(within(header).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
+    expect(within(header).getByRole('link', { name: 'settings' })).toHaveAttribute('href', '/settings/sources?source=src-1');
   });
 
   it('a post with no source id keeps its source name as plain text', async () => {
@@ -389,7 +390,8 @@ describe('PostDetailPage feed context and keys', () => {
     const api = contextApi();
     renderAt(api, `/posts/${POST_ID}?ctx=${encodeURIComponent(CTX)}`);
     await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+    const top = screen.getByRole('navigation', { name: 'Post navigation' });
+    await waitFor(() => expect(within(top).getByRole('button', { name: 'Next' })).toBeEnabled());
 
     await user.keyboard('j');
     expect(await screen.findByRole('heading', { level: 1, name: 'The older post' })).toBeInTheDocument();
@@ -437,7 +439,31 @@ describe('PostDetailPage feed context and keys', () => {
     await user.keyboard('j');
     expect(api.getFeed).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Back to feed' }));
+    await user.click(within(screen.getByRole('navigation', { name: 'Post navigation' })).getByRole('button', { name: 'Back to feed' }));
+    expect(await screen.findByTestId('feed')).toHaveTextContent('/');
+  });
+
+  it('repeats Back / Previous / Next after the post, and they move like the top row (issue 0010)', async () => {
+    const user = userEvent.setup();
+    const api = contextApi();
+    renderAt(api, `/posts/${POST_ID}?ctx=${encodeURIComponent(CTX)}`);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    const end = screen.getByRole('navigation', { name: 'After the post' });
+    await waitFor(() => expect(within(end).getByRole('button', { name: 'Next' })).toBeEnabled());
+
+    await user.click(within(end).getByRole('button', { name: 'Next' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'The older post' })).toBeInTheDocument();
+    const endAgain = screen.getByRole('navigation', { name: 'After the post' });
+    await waitFor(() => expect(within(endAgain).getByRole('button', { name: 'Previous' })).toBeEnabled());
+    await user.click(within(endAgain).getByRole('button', { name: 'Previous' }));
+    expect(await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).toBeInTheDocument();
+  });
+
+  it('Esc leaves the post like u', async () => {
+    const user = userEvent.setup();
+    renderAt(contextApi(), `/posts/${POST_ID}?ctx=${encodeURIComponent(CTX)}`);
+    await screen.findByRole('heading', { level: 1 });
+    await user.keyboard('{Escape}');
     expect(await screen.findByTestId('feed')).toHaveTextContent('/');
   });
 });

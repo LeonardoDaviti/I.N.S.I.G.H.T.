@@ -6,7 +6,7 @@ states: article, media, long-title, headings, missing-title, loading, error
 
 # Post
 
-Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`), `components/ui/MarkdownRenderer.tsx`. The title comes from the backend's `display_title`.
+Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`, `PostNav`), `components/ui/MarkdownRenderer.tsx`. The title comes from the backend's `display_title`.
 
 ## Purpose
 
@@ -21,8 +21,9 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Anatomy
 
-- **Post navigation** (ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next.
-- **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to `/settings/sources?source=<id>`, P8), ` / platform`, ` / date` (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
+- **Post navigation** (`PostNav`, ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next. It is a sticky band under the top bar (`reader-material`, `top-topbar`, like the reader toolbar), on one line at every width, so leaving or moving on never needs a scroll up. It sticks without animation.
+- **After the post:** the same three actions once more at `lg` (a tap target), below a hairline at the end of the column.
+- **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to its feed, `/read/source/<id>`), ` / settings` in `text-3` (a quiet link to `/settings/sources?source=<id>`, P8), ` / platform`, ` / date` (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
 - **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. It is the API's short title, as given: the first line of the title (or of the body, when the title is empty or the body's start cut with "…"), cut over 120 characters at the first sentence end, else at a word with "…". The feed rows show the same title. The tab reads `<title> · INSIGHT`.
 - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
 - **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own.

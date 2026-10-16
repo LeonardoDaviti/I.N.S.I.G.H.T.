@@ -13,7 +13,7 @@ The constitution of INSIGHT's design: every doc, prototype and decision cites th
 - **P5 Icons for actions, words for places.** Actions on a post are icon-only (↗ ☆ ⧉) with a tooltip and a label; navigation is lowercase words.
 - **P6 No metadata noise.** Show what helps you choose what to read: source, date, title.
 - **P7 Fetching lives in Sources.** Reading views never fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections.
-- **P8 One click to where it's managed.** Every source or track name in a reading view links to its place in Sources.
+- **P8 One click to where it's managed.** A source or track name in a reading view links to its place in Sources; in a post's byline it reads the source, with `settings` beside it.
 - **P9 One place per job.** Each job has exactly one page; a second view of the same thing is retired into the first.
 - **P10 Retire it, keep the idea.** A surface that doesn't serve reading leaves `main`: its code goes to a git tag and its idea stays as an issue in `plan/issues`.
 - **P11 Honest states.** Every state is a glyph plus a word, a stopped system says so out loud, and worst-case data is an acceptance gate.

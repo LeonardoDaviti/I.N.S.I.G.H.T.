@@ -8,7 +8,7 @@
  */
 import { NAV_ITEMS } from '../../components/layout/navigation';
 import { CONNECTIONS_PATH } from '../../components/connections/connectionStatus';
-import { folderReadPath, scopePath, sourceSettingsHref, trackSettingsHref } from '../../lib/feedContext';
+import { folderReadPath, scopePath, sourceReadPath, sourceSettingsHref, trackSettingsHref } from '../../lib/feedContext';
 import { sourcesIngestionHref } from '../../lib/ingestionNavigation';
 import { citedPrinciples } from '../coverage';
 import { DOCS } from '../library';
@@ -74,7 +74,8 @@ export const SITE_EDGES: readonly SiteEdge[] = [
   { id: 'feed-track', from: 'feed', to: 'track-feed', label: 'track in the rail', href: folderReadPath(TRACK) },
   { id: 'feed-switcher', from: 'feed', to: 'switcher', label: '⌘K' },
   { id: 'switcher-track', from: 'switcher', to: 'track-feed', label: 'a track', href: folderReadPath(TRACK) },
-  { id: 'post-sheet', from: 'post', to: 'source-sheet', label: 'source name', href: sourceSettingsHref(SOURCE) },
+  { id: 'post-source', from: 'post', to: 'source-feed', label: 'source name', href: sourceReadPath(SOURCE) },
+  { id: 'post-sheet', from: 'post', to: 'source-sheet', label: '/ settings', href: sourceSettingsHref(SOURCE) },
   { id: 'source-sheet', from: 'source-feed', to: 'source-sheet', label: 'source name', href: sourceSettingsHref(SOURCE) },
   { id: 'track-sources', from: 'track-feed', to: 'sources', label: 'track name', href: trackSettingsHref(TRACK) },
   { id: 'feed-sources', from: 'feed', to: 'sources', label: 'sources (top bar)', href: nav('sources') },

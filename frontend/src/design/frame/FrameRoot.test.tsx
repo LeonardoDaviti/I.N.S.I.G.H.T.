@@ -155,7 +155,7 @@ describe('a walk frame', () => {
     await waitFor(() => expect(messages.some((message) => message.type === WALK_MESSAGE.ready)).toBe(true));
 
     const seen: Record<string, () => void> = {
-      'open-post': () => expect(screen.getByRole('button', { name: /^Back/ })).toBeInTheDocument(),
+      'open-post': () => expect(within(screen.getByRole('navigation', { name: 'Post navigation' })).getByRole('button', { name: /^Back/ })).toBeInTheDocument(),
       'source-name': () => expect(within(screen.getByRole('dialog')).getAllByText(/Simon Willison/).length).toBeGreaterThan(0),
       'close-sheet': () => expect(screen.queryByRole('dialog')).toBeNull(),
       track: () => expect(screen.getAllByText('AI engineering').length).toBeGreaterThan(0),
