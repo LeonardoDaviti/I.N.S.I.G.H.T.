@@ -371,20 +371,19 @@ class SourceFetchService:
                 # The page is asked again from the last recorded checkpoint.
 
         post_stats = self.posts_service.get_source_post_stats(source_id)
+        result = {
+            **plan,
+            "success": True,
+            "posts_fetched": total_posts_fetched,
+            "pages_fetched": total_pages_fetched,
+            "posts_inserted": total_inserted,
+            "posts_updated": total_updated,
+            "stored_posts": post_stats["post_count"],
+            "checkpoint": checkpoint,
+        }
         if paused_reason is not None:
-            result = {
-                **plan,
-                "success": True,
-                "paused": True,
-                "paused_reason": paused_reason,
-                "message": f"Paused: {paused_reason}; resume later",
-                "posts_fetched": total_posts_fetched,
-                "pages_fetched": total_pages_fetched,
-                "posts_inserted": total_inserted,
-                "posts_updated": total_updated,
-                "stored_posts": post_stats["post_count"],
-                "checkpoint": checkpoint,
-            }
+            # Not recorded as a finished archive: the checkpoint gets no completed_at.
+            result.update(paused=True, paused_reason=paused_reason, message=f"Paused: {paused_reason}; resume later")
             await self._emit_progress(progress_callback, {
                 "stage": "paused",
                 "level": "warning",
@@ -394,17 +393,7 @@ class SourceFetchService:
                 "message": result["message"],
             })
             return result
-        result = {
-            **plan,
-            "success": True,
-            "posts_fetched": total_posts_fetched,
-            "pages_fetched": total_pages_fetched,
-            "posts_inserted": total_inserted,
-            "posts_updated": total_updated,
-            "stored_posts": post_stats["post_count"],
-            "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
-            "checkpoint": checkpoint,
-        }
+        result["archive_status"] = derive_archive_status(post_stats["post_count"], plan["available_posts"])
 
         await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
         await self._emit_progress(progress_callback, {

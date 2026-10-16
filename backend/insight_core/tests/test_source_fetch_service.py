@@ -364,8 +364,8 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kind.started_from, [None, _page(1).checkpoint])
         self.assertEqual(self.clock.sleeps, [4, 1, 5], "the Retry-After, then the new 5 s gap from the last ask")
         self.assertEqual((result["posts_fetched"], result.get("paused")), (2, None))
-        self.assertIn("tg.i-c-a.su: too many requests, slowing to 5 s",
-                      [e["message"] for e in events if e["stage"] == "slowed"])
+        self.assertEqual([(e["message"], e["level"]) for e in events if e["stage"] == "slowed"],
+                         [("tg.i-c-a.su: too many requests, slowing to 5 s", "warning")], "a warning, as in a run")
 
     async def test_failing_twice_pauses_with_the_checkpoint_and_resume_starts_there(self):
         kind = _ScriptedPagesKind([_page(1), LIMITED], [LIMITED], [_page(2)])
