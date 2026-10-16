@@ -365,7 +365,8 @@ class SourceFetchService:
                 wait = gates.host_limiter.limited(host, exc.retry_after)
                 slowed = {"host": host, "timed_out": exc.timed_out, "gap_s": gates.host_limiter.gap(host)}
                 await self._emit_progress(progress_callback,
-                                          {"stage": "slowed", **slowed, "message": slowed_line(slowed)})
+                                          {"stage": "slowed", "level": "warning", **slowed,
+                                           "message": slowed_line(slowed)})
                 await gates.sleep(wait)
                 # The page is asked again from the last recorded checkpoint.
 
@@ -386,6 +387,7 @@ class SourceFetchService:
             }
             await self._emit_progress(progress_callback, {
                 "stage": "paused",
+                "level": "warning",
                 "source_type": kind.name,
                 "pages_fetched": total_pages_fetched,
                 "posts_fetched": total_posts_fetched,

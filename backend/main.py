@@ -403,7 +403,7 @@ async def _run_archive(
             progress_callback=lambda event: ops.try_append_job_event(
                 job_id,
                 message=str(event.get("message") or event.get("stage") or "Archive progress"),
-                level="info",
+                level=event.get("level") or "info",
                 progress=event.get("progress"),
                 payload=event,
             ),
