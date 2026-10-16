@@ -192,6 +192,15 @@ describe('Sources → ingestion tab', () => {
     expect(within(detail).getByText('Fetched Simon')).toBeInTheDocument();
   });
 
+  it('a running run says how many sources are left and how many posts are new', async () => {
+    const running = job({ id: 'r2', status: 'running', finished_at: null, message: 'Forced ingestion cycle',
+      payload: { sources: { done: 52, total: 81 }, new_posts: 334, events: [{ level: 'info', message: 'r/viture: 3 new of 25 · 52 of 81 sources' }] } });
+    setup({ route: '/settings/sources?tab=ingestion&sub=jobs&job=r2', overrides: { getOperationJob: vi.fn().mockResolvedValue({ success: true, job: running }) } });
+    const detail = await screen.findByRole('region', { name: 'Ingestion run' });
+    expect(await within(detail).findByText('52 of 81 sources · 334 new posts')).toBeInTheDocument();
+    expect(within(detail).getByText('r/viture: 3 new of 25 · 52 of 81 sources')).toBeInTheDocument();
+  });
+
   it('archive jobs show their progress in the history and their result in the detail', async () => {
     const getOperationJob = vi.fn().mockResolvedValue({
       success: true,

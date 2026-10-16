@@ -37,11 +37,27 @@ export function runningFetchJob(jobs: readonly JobRun[] | undefined): JobRun | n
   return jobs?.find((job) => isActive(job.status) && FETCH_JOB_TYPES.has(job.job_type)) ?? null;
 }
 
-/** "fetching · 3 of 41" from the run's live `sources` counter, or "fetching" without one. */
-export function fetchingLabel(job: JobRun): string {
+/** A run's live counters (payload `sources` and `new_posts`), or null before the first source. */
+export function runCounters(job: JobRun): { done: number; total: number; newPosts: number } | null {
   const sources = job.payload?.sources as { done?: unknown; total?: unknown } | undefined;
   const { done, total } = sources ?? {};
-  return typeof done === 'number' && typeof total === 'number' && total > 0 ? `fetching · ${done} of ${total}` : 'fetching';
+  if (typeof done !== 'number' || typeof total !== 'number' || total <= 0) return null;
+  const newPosts = job.payload?.new_posts;
+  return { done, total, newPosts: typeof newPosts === 'number' ? newPosts : 0 };
+}
+
+/** "fetching · 3 of 41" from the run's live counters, or "fetching" without them. */
+export function fetchingLabel(job: JobRun): string {
+  const counters = runCounters(job);
+  return counters ? `fetching · ${counters.done} of ${counters.total}` : 'fetching';
+}
+
+/** "52 of 81 sources · 334 new posts" (one source: "1 of 1 source"), or null without counters. */
+export function runProgressLine(job: JobRun): string | null {
+  const counters = runCounters(job);
+  if (!counters) return null;
+  const { done, total, newPosts } = counters;
+  return `${done} of ${total} source${total === 1 ? '' : 's'} · ${newPosts} new post${newPosts === 1 ? '' : 's'}`;
 }
 
 /** The newest ingestion run, when it failed and finished under an hour ago; else null. */

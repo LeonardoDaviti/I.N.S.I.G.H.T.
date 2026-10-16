@@ -5,7 +5,7 @@ import { useOperationJob } from '../../hooks/useOperations';
 import { asRunReport } from '../../lib/runReport';
 import { plural } from '../../lib/format';
 import { jobLabel } from '../../lib/operationsOverview';
-import { formatJobDuration, jobGlyph } from '../../lib/jobRuns';
+import { formatJobDuration, jobGlyph, runProgressLine } from '../../lib/jobRuns';
 import { formatLocalDateTime } from '../../lib/dates';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
@@ -28,6 +28,8 @@ function JobDetail({ job }: { job: JobRun }) {
     ['Started', formatLocalDateTime(job.started_at) || '—'],
     ['Duration', formatJobDuration(job.started_at, job.finished_at) || (job.finished_at ? '—' : 'still running')],
   ];
+  const progress = runProgressLine(job);
+  if (progress) facts.push(['Progress', progress]);
   return (
     <div className="space-y-4">
       <dl className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4">

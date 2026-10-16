@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { JobRun } from '../services/api';
-import { formatJobDuration, jobGlyph, runningFetchJob } from './jobRuns.ts';
+import { formatJobDuration, jobGlyph, runningFetchJob, runProgressLine } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -31,4 +31,12 @@ test('runningFetchJob: the newest fetch job not yet finished, queued ones too', 
   assert.equal(runningFetchJob([job('p', 'pending', 'archive_source')])?.id, 'p');
   assert.equal(runningFetchJob([job('d', 'running', 'scheduler_cycle'), job('s', 'success')]), null);
   assert.equal(runningFetchJob(undefined), null);
+});
+
+test('runProgressLine: sources done of total and new posts, or null before the first source', () => {
+  const running = { id: 'r', job_type: 'ingestion_run', status: 'running', payload: { sources: { done: 52, total: 81 }, new_posts: 334 } } as JobRun;
+  assert.equal(runProgressLine(running), '52 of 81 sources · 334 new posts');
+  const one = { ...running, payload: { sources: { done: 1, total: 1 }, new_posts: 1 } } as JobRun;
+  assert.equal(runProgressLine(one), '1 of 1 source · 1 new post');
+  assert.equal(runProgressLine({ ...running, payload: {} } as JobRun), null);
 });

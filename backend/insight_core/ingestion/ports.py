@@ -112,18 +112,30 @@ class JobProgressSink:
             sources = data["sources"]
             progress = 10.0 + 70.0 * sources["done"] / max(1, sources["total"])
             fields = {"sources": sources, "new_posts": data["new_posts"]}
-            message = f"Saved {data['display_name']}"
+            message = _source_line(data)
         try:
             self.ops.append_job_event(
                 self.job_id,
                 message=message,
-                level="info",
+                level="error" if phase == "source" and data.get("status") == "error" else "info",
                 progress=progress,
                 payload={"phase": phase, **data},
                 fields=fields,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not record ingestion progress (%s): %s", phase, exc)
+
+
+def _source_line(data: dict) -> str:
+    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", or why it failed."""
+    name, sources = data["display_name"], data["sources"]
+    of_run = f"{sources['done']} of {sources['total']} source{'' if sources['total'] == 1 else 's'}"
+    status = data.get("status")
+    if status == "error":
+        return f"{name}: failed, {(data.get('error') or 'error')[:160]} · {of_run}"
+    if status == "unavailable":
+        return f"{name}: unavailable, {(data.get('error') or 'not available')[:160]} · {of_run}"
+    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)} · {of_run}"
 
 
 # --------------------------------------------------------------------------- catalog

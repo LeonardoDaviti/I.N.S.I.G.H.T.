@@ -21,6 +21,7 @@ from insight_core.ingestion.inspection import DbInspectionRefresher, inspection_
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import Inspection
 from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
+from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.runner import IngestionRunner
 from insight_core.ingestion.schedule import Availability, backoff_delay
 from insight_core.ingestion.types import (
@@ -315,8 +316,8 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         report, _ = await asyncio.wait_for(asyncio.gather(h.run(force=True), release_once_first_is_saved()), 5)
         self.assertEqual(saved_before_second, [{"https://first.test/rss/p0", "https://first.test/rss/p1"}])
         self.assertEqual(
-            [(d["sources"], d["new_posts"]) for phase, d in h.progress.events if phase == "source"],
-            [({"done": 1, "total": 2}, 2), ({"done": 2, "total": 2}, 4)],
+            [(d["sources"], d["new_posts"], d["new"], d["fetched"]) for phase, d in h.progress.events if phase == "source"],
+            [({"done": 1, "total": 2}, 2, 2, 2), ({"done": 2, "total": 2}, 4, 2, 2)],
         )
         self.assertEqual(report.posts_inserted, 4)
 
@@ -325,6 +326,29 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
                      [_rss_kind(), _yt_kind()])
         await h.run(force=True)
         self.assertEqual(sorted(h.gates.slots), [("host-lock", "a.test"), ("ytdlp", "youtube.com")])
+
+
+class JobProgressLineTests(unittest.TestCase):
+    """What the Jobs view lists for each source: its counts, or why it failed."""
+
+    def _line(self, **data) -> tuple:
+        recorded = []
+
+        class _Ops:
+            def append_job_event(self, job_id, **kwargs):
+                recorded.append(kwargs)
+
+        base = {"source_id": "s", "display_name": "r/viture", "sources": {"done": 52, "total": 81}, "new_posts": 334}
+        JobProgressSink(_Ops(), "job").event("source", {**base, **data})
+        return recorded[0]["message"], recorded[0]["level"]
+
+    def test_a_saved_source_says_how_many_posts_were_new(self):
+        self.assertEqual(self._line(status="healthy", fetched=25, new=3),
+                         ("r/viture: 3 new of 25 · 52 of 81 sources", "info"))
+
+    def test_a_failed_source_says_why(self):
+        message, level = self._line(status="error", error="HTTP 403", fetched=0, new=0)
+        self.assertEqual((message, level), ("r/viture: failed, HTTP 403 · 52 of 81 sources", "error"))
 
 
 class IngestionRunnerLockTests(unittest.IsolatedAsyncioTestCase):

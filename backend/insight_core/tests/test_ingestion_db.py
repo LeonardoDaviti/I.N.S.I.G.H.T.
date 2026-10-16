@@ -100,6 +100,8 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
             job = next(j for j in ops.list_recent_jobs(200) if j["id"] == job_id)
             self.assertEqual(job["payload"]["sources"], {"done": 1, "total": 1})
             self.assertEqual(job["payload"]["new_posts"], 2)
+            messages = [e["message"] for e in ops.get_job(job_id)["payload"]["events"]]
+            self.assertTrue(any(m.endswith(": 2 new of 2 · 1 of 1 source") for m in messages), messages)
         finally:
             with psycopg.connect(self.url) as conn, conn.cursor() as cur:
                 cur.execute("DELETE FROM job_runs WHERE id = %s", (job_id,))

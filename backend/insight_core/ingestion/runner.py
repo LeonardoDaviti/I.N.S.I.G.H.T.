@@ -223,6 +223,7 @@ class IngestionRunner:
             f = await self._fetch(*by_id[source["id"]], sessions)
             async with save_lock:
                 outcome = f.outcome
+                fetched_count, inserted_before = len(f.posts), saved.inserted
                 if outcome.status == OutcomeStatus.ERROR:
                     failures.append(SourceFailure(source["id"], _display_name(source), "fetch", outcome.error or "error"))
                 elif f.posts:
@@ -242,6 +243,8 @@ class IngestionRunner:
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
+                    "status": outcome.status.value, "error": outcome.error,
+                    "fetched": fetched_count, "new": saved.inserted - inserted_before,
                     "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
                 })
             return f
