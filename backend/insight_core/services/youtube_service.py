@@ -81,10 +81,8 @@ class YouTubeService:
                 channel_ref["channel_url"], timeout=self.ytdlp_channel_scan_timeout_seconds
             )
         except Exception as exc:
-            # Every caller of inspect_channel swallows this into a warning about the fetch
-            # (DbInspectionRefresher does), so the only symptom of a channel scan failing is
-            # available_posts / first_post_date frozen at their old values with nothing said.
-            # Name the consequence here, at the only place that knows what was lost.
+            # Planning an archive is the only caller; the plan fails with this error. Name the
+            # consequence here, at the only place that knows what was lost.
             self.logger.error(
                 "Channel scan failed for %s - archive metadata (available_posts, "
                 "first_post_date) will stay stale: %s",
@@ -111,9 +109,10 @@ class YouTubeService:
         entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
         return self._hydrate_entries_to_posts(entries, source_handle)
 
-    def archive_channel_posts(self, source_handle: str, limit: int) -> Dict[str, Any]:
+    def archive_channel_posts(self, source_handle: str, limit: Optional[int], start: int = 1) -> Dict[str, Any]:
+        """Up to `limit` videos (all without one) from video number `start`, newest first."""
         channel_ref = self._normalize_channel_ref(source_handle)
-        entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
+        entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit, start=start)
         posts = self._hydrate_entries_to_posts(entries, source_handle)
         return {
             "posts": posts,
@@ -278,6 +277,7 @@ class YouTubeService:
         channel_url: str,
         limit: Optional[int] = None,
         timeout: Optional[int] = None,
+        start: int = 1,
     ) -> List[Dict[str, Any]]:
         args = [
             "--dump-single-json",
@@ -285,8 +285,11 @@ class YouTubeService:
             "--skip-download",
             "--no-warnings",
         ]
+        if start > 1:
+            args.extend(["--playlist-start", str(start)])
         if limit:
-            args.extend(["--playlist-end", str(limit)])
+            # --playlist-end is a video number, not a count.
+            args.extend(["--playlist-end", str(start + limit - 1)])
 
         if timeout is None:
             # No --playlist-end means a full channel scan, not a page fetch, whoever asked for

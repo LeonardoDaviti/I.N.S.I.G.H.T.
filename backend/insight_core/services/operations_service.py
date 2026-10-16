@@ -84,10 +84,7 @@ CADENCE_OVERRIDE_MAX_HOURS = 2160.0   # 90 days
 
 
 def backlog_posts(available_posts: Any, stored_posts: Any) -> Optional[int]:
-    """E1: max(available - stored, 0) when the available count is a known int, else None.
-
-    Never falls back to the archive plan's remaining_posts, which is a requested target.
-    """
+    """E1: max(available - stored, 0) when the available count is a known int, else None."""
     if isinstance(available_posts, bool) or not isinstance(available_posts, int):
         return None
     return max(available_posts - int(stored_posts or 0), 0)

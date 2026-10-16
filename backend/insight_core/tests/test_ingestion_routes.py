@@ -47,16 +47,16 @@ class FakeArchive:
     def archive_support(self, source_id):
         return self.support
 
-    async def archive_source(self, source_id, desired_posts=None, **kwargs):
-        self.awaited.append(("archive_source", (source_id, desired_posts), kwargs))
+    async def archive_source(self, source_id, **kwargs):
+        self.awaited.append(("archive_source", (source_id,), kwargs))
         if self.error:
             raise self.error
         return self.archive_result
 
-    async def plan_archive(self, source_id, desired_posts=None, **kwargs):
+    async def plan_archive(self, source_id, **kwargs):
         if self.error:
             raise self.error
-        return {"desired_posts": desired_posts}
+        return {"older_posts": None}
 
 
 class BrokenOperations(OperationsService):
@@ -194,7 +194,7 @@ class IngestionRouteTests(unittest.TestCase):
 
     def test_a_background_archive_starts_a_job_and_returns_202(self):
         tasks = BackgroundTasks()
-        request = main.ArchiveRequest(desiredPosts=500, resume=False, background=True)
+        request = main.ArchiveRequest(resume=False, background=True)
         response = run(main.run_archive(self.s1, request, tasks))
         self.assertEqual(response.status_code, 202)
         job_id = body(response)["job_id"]
@@ -202,12 +202,12 @@ class IngestionRouteTests(unittest.TestCase):
         job = self.job(job_id)
         self.assertEqual(job["job_type"], "archive_source")
         self.assertEqual(job["source_id"], self.s1)
-        self.assertEqual(job["payload"]["desired_posts"], 500)
+        self.assertFalse(job["payload"]["resume"])
         self.assertEqual(self.archive.awaited, [], "the archive runs in the background, not in the request")
         self._drain(tasks)
         self.assertEqual(len(self.archive.awaited), 1)
         name, args, kwargs = self.archive.awaited[0]
-        self.assertEqual((name, args), ("archive_source", (self.s1, 500)))
+        self.assertEqual((name, args), ("archive_source", (self.s1,)))
         self.assertFalse(kwargs["resume"])
         job = self.job(job_id)
         self.assertEqual((job["status"], job["message"]), ("success", "Archived 3 posts"))

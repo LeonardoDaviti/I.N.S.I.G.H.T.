@@ -19,7 +19,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0012](0012-reddit-comments-and-bursts.md) | Reddit: comments that load, posts that don't flood the top | bursts half built; comments half waits for the owner |
 | [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future) |
 | [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | built |
-| [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | ready-for-agent |
+| [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | built, not deployed |
 | [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, not deployed |
 
 ## Analysis archive

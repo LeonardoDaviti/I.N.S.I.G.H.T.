@@ -253,6 +253,21 @@ The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged setti
 - Each source's posts are saved as soon as its fetch finishes, so they reach the reader during
   the run; while it runs, the `ingestion_run` job's payload carries `sources: {done, total}`
   and `new_posts`.
+- A run's phases are `decided`, one `source` per fetched source (with a `slowed` before it
+  when a host limited us), then `saved`, which is 100 %: nothing runs after the last save.
+  Each fetched source records the cheap half of `settings.archive` (kind, stored count, last
+  live fetch); a run never measures a source's size. Only planning an archive does
+  (`last_inspected_at`).
+
+### Archives continue below the stored posts
+
+`SourceFetchService.plan_archive` measures the source (`kind.inspect`) and picks the start:
+a resumable checkpoint (one without `completed_at`) when resuming, else
+`kind.start_checkpoint(source, stored)`, which jumps below the oldest stored post (by
+position, or by date for Nitter's search RSS) one page early, else the newest post. The plan
+reports `continues_from`, `older_posts` (available - stored, or null when the source reports
+no size) and the estimate for them. An archive runs until the source ends, and reuses its
+plan's measurement.
 
 ### Pacing: a gap per host that learns
 
@@ -411,7 +426,7 @@ the result when the job finishes.
 | POST | `/api/folders/{folder_id}/ingest` | Fetch a folder's enabled sources now (202 job) | `{limit?}` |
 | GET | `/api/archive/catalog` | Enabled sources with their archive state | |
 | GET | `/api/archive/{source_id}/status` | One source's archive state and newest archive job | |
-| POST | `/api/archive/{source_id}/plan` | Estimate an archive run | `{desiredPosts, resume?, pageDelaySeconds?, batchSize?, batchCooldownSeconds?}` |
+| POST | `/api/archive/{source_id}/plan` | Measure the source; where the archive continues from and how much is older | `{resume?, pageDelaySeconds?, batchSize?, batchCooldownSeconds?}` |
 | POST | `/api/archive/{source_id}/run` | Run an archive (202 job with `background: true`) | as plan, plus `{background?}` |
 | POST | `/api/ingestion/run` | Run the ingestion cycle now (202 job) | `{force?}` |
 | GET | `/api/ingestion/logs` | Tail of a log file | `log`, `lines` (1-1000) |

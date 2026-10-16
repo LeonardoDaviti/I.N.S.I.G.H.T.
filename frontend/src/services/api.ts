@@ -134,7 +134,6 @@ export interface ArchiveJobSummary {
     posts_updated?: number;
     pages_fetched?: number;
     stored_posts?: number;
-    desired_posts?: number;
     error?: string;
     /** Issue 0016: the archive paused (a site limiting us); Resume continues from its checkpoint. */
     paused?: boolean;
@@ -168,17 +167,22 @@ export interface ArchiveStatusResponse extends Envelope {
   latest_job?: ArchiveJobSummary | null;
 }
 
-/** POST /api/archive/{id}/plan `archive`: one inspection of the source plus the estimate. */
+/** POST /api/archive/{id}/plan `archive`: one measurement of the source, where the archive starts, and the estimate. */
 export interface ArchivePlan {
   available_posts: number | null;
   available_basis?: AvailableBasis;
-  desired_posts: number;
-  remaining_posts: number;
-  estimated_pages: number;
-  estimated_seconds: number;
+  /** available - stored, or null when the source reports no size (the archive still runs to its end). */
+  older_posts: number | null;
+  /** The estimate for `older_posts`; null when that is unknown. */
+  estimated_pages: number | null;
+  estimated_seconds: number | null;
   current_stored_posts?: number;
+  oldest_published_at?: string | null;
+  /** The oldest stored post's date when the archive jumps below the stored posts, else null. */
+  continues_from?: string | null;
   resume: boolean;
   resume_available: boolean;
+  checkpoint?: { collected_posts?: number } | null;
   rate_limit?: ArchiveRateLimit;
   first_post_date?: string | null;
 }
@@ -194,10 +198,10 @@ export interface ArchiveCatalogEntry {
   available_posts?: number | null;
   /** max(available - stored, 0), or null when the available count is unknown (E1). */
   backlog_posts?: number | null;
-  /** The archive plan's requested target still to fetch (not the backlog). */
-  remaining_posts?: number | null;
-  /** The archive plan's time estimate for `remaining_posts`, in seconds. */
+  /** The time estimate for `backlog_posts`, in seconds. */
   estimated_seconds?: number | null;
+  /** When planning last measured the source; null when it never was. */
+  last_inspected_at?: string | null;
   archive_status?: string | null;
   resume_ready?: boolean;
   source_type?: string | null;
@@ -732,17 +736,17 @@ export function createApi() {
     getSourceArchive: (sourceId: string) => request<ArchiveStatusResponse>(`/api/archive/${enc(sourceId)}/status`),
     /** Ask the source how many posts it has and estimate the run. Touches the source, never the posts.
      *  `pacing` overrides the source's own for this plan. */
-    planSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> => {
+    planSourceArchive: async (sourceId: string, resume: boolean, pacing?: ArchivePacing): Promise<ArchivePlan> => {
       const response = await request<{ archive?: ArchivePlan }>(
-        `/api/archive/${enc(sourceId)}/plan`, { method: 'POST', body: { desiredPosts, resume, ...pacing } },
+        `/api/archive/${enc(sourceId)}/plan`, { method: 'POST', body: { resume, ...pacing } },
       );
       if (!response.archive) throw new Error('Could not plan the archive');
       return response.archive;
     },
     /** Start an archive_source job (202); poll it with getOperationJob. `pacing` as for the plan. */
-    startSourceArchive: async (sourceId: string, desiredPosts: number, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> => {
+    startSourceArchive: async (sourceId: string, resume: boolean, pacing?: ArchivePacing): Promise<{ job_id: string }> => {
       const response = await request<{ job_id?: string }>(
-        `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { desiredPosts, resume, background: true, ...pacing } },
+        `/api/archive/${enc(sourceId)}/run`, { method: 'POST', body: { resume, background: true, ...pacing } },
       );
       if (!response.job_id) throw new Error('Could not start the archive');
       return { job_id: response.job_id };

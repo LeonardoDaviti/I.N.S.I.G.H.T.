@@ -64,6 +64,8 @@ class PostSaver(Protocol):
 
 
 class InspectionRefresher(Protocol):
+    """Records a fetched source's archive metadata. Never raises."""
+
     async def refresh(self, source: Source, kind: Any, fetched_posts: int) -> None: ...
 
 
@@ -89,7 +91,7 @@ NULL_PROGRESS: ProgressSink = _NullProgress()
 
 # Rough job progress per phase, so the Operations panel's bar moves. Each "source" event
 # moves it from 10 towards 80 by sources done out of due.
-_PHASE_PROGRESS = {"decided": 10.0, "saved": 80.0, "inspected": 100.0}
+_PHASE_PROGRESS = {"decided": 10.0, "saved": 100.0}
 
 
 class JobProgressSink:

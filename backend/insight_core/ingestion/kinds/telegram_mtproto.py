@@ -34,6 +34,7 @@ from insight_core.ingestion.kinds.base import (
     RateLimit,
     Source,
     resume_counts,
+    start_at,
 )
 from insight_core.ingestion.kinds.telegram_session import (
     LOGIN_HINT,
@@ -195,6 +196,14 @@ class TelegramKind(BaseKind):
             return False
         offset = checkpoint.get("offset_id")
         return isinstance(offset, int) and not isinstance(offset, bool) and offset > 0
+
+    async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
+        # offset_id returns the messages older than it: exact, no overlap needed.
+        try:
+            offset_id = int(stored.get("oldest_external_id"))
+        except (TypeError, ValueError):
+            return None
+        return start_at(offset_id=offset_id) if offset_id > 0 else None
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         session = self._open_session()

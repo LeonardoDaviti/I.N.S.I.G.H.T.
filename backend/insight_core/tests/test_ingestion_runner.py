@@ -18,9 +18,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_fetch_state import FetchStateRow
 from insight_core.ingestion.http import HttpError
-from insight_core.ingestion.inspection import DbInspectionRefresher, inspection_due
+from insight_core.ingestion.inspection import DbInspectionRefresher
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import Inspection
 from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.runner import IngestionRunner
@@ -293,7 +292,7 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
     async def test_progress_phases_arrive_in_order(self):
         h = _Harness([_source("https://a.test/rss")], [_rss_kind()])
         await h.run(force=True)
-        self.assertEqual(h.progress.phases, ["decided", "source", "saved", "inspected"])
+        self.assertEqual(h.progress.phases, ["decided", "source", "saved"])
 
     async def test_each_source_is_saved_before_the_next_fetch_finishes(self):
         first, second = _source("https://first.test/rss", priority=1), _source("https://second.test/rss", priority=2)
@@ -493,93 +492,25 @@ class _FakeWriter:
         self.records.append((source_id, kind.name, dict(data), mode))
 
 
-class DbInspectionRefresherTests(unittest.IsolatedAsyncioTestCase):
-    def _source(self, last_inspected_at=None):
-        source = _source("https://a.test/rss")
-        source["settings"]["archive"] = {"last_inspected_at": last_inspected_at}
-        return source
+class ArchiveMetadataRecordTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0015: a run records the cheap archive metadata and never measures a source."""
 
-    def _refresher(self):
-        self.writer, self.gates = _FakeWriter(), SpyFetchGates()
-        return DbInspectionRefresher(writer=self.writer, gates=self.gates, clock=FixedClock(NOW),
-                                     interval_hours=168, enabled=True)
+    async def test_a_run_records_the_cheap_metadata_and_never_inspects(self):
+        writer, kind = _FakeWriter(), _rss_kind(_posts_for(4))
+        h = _Harness([_source("https://a.test/rss")], [kind])
+        h.runner.inspections = DbInspectionRefresher(writer=writer)
+        await h.run(force=True)
+        self.assertEqual(writer.records, [("id-https://a.test/rss", "fake_rss",
+                                           {"source_type": "fake_rss", "posts_fetched": 4}, "live")])
+        self.assertNotIn("inspect", kind.events)
+        self.assertEqual(h.progress.phases, ["decided", "source", "saved"])
 
-    def _kind(self):
-        gates_seen = []
+    async def test_a_failing_write_never_raises(self):
+        class _Broken:
+            def record(self, *_args):
+                raise RuntimeError("db down")
 
-        class _InspectingKind(FakeKind):
-            async def inspect(kind_self, source):
-                gates_seen.append(self.gates.inside)
-                return Inspection(120, 20, "2020-01-01")
-
-        kind = _InspectingKind("fake_rss")
-        return kind, gates_seen
-
-    async def test_recently_inspected_source_records_only_the_cheap_half(self):
-        refresher = self._refresher()
-        kind, gates_seen = self._kind()
-        await refresher.refresh(self._source((NOW - timedelta(hours=2)).isoformat()), kind, 4)
-        self.assertEqual(gates_seen, [])
-        (_, _, data, mode), = self.writer.records
-        self.assertEqual(mode, "live")
-        self.assertEqual(data, {"source_type": "fake_rss", "posts_fetched": 4})
-
-    async def test_never_inspected_source_is_inspected_inside_the_gates(self):
-        refresher = self._refresher()
-        kind, gates_seen = self._kind()
-        await refresher.refresh(self._source(), kind, 4)
-        self.assertEqual(gates_seen, [1])
-        self.assertEqual(self.gates.slots, [("host-lock", "a.test")])
-        (_, _, data, _), = self.writer.records
-        self.assertTrue(data["inspected"])
-        self.assertEqual(data["available_posts"], 120)
-
-    async def test_a_failing_inspection_still_records_and_never_raises(self):
-        refresher = self._refresher()
-
-        class _Broken(FakeKind):
-            async def inspect(self, source):
-                raise RuntimeError("timeout")
-
-        await refresher.refresh(self._source(), _Broken("fake_rss"), 2)
-        (_, _, data, _), = self.writer.records
-        self.assertNotIn("inspected", data)
-
-    async def test_unreadable_timestamp_measures_rather_than_skipping_forever(self):
-        refresher = self._refresher()
-        kind, gates_seen = self._kind()
-        await refresher.refresh(self._source("not-a-date"), kind, 1)
-        self.assertEqual(gates_seen, [1])
-
-
-class InspectionDueTests(unittest.TestCase):
-    """The inspection is a SECOND full fetch of a source (a feed re-download, an unbounded
-    yt-dlp channel dump). It produces available_posts and first_post_date, which barely
-    move, so it runs on one global interval."""
-
-    @staticmethod
-    def _source(**archive):
-        return {"settings": {"archive": archive}}
-
-    def due(self, source, interval=168):
-        return inspection_due(source, NOW, interval)
-
-    def test_never_inspected_is_due(self):
-        self.assertTrue(self.due(self._source()))
-
-    def test_inside_and_past_the_interval(self):
-        self.assertFalse(self.due(self._source(last_inspected_at=(NOW - timedelta(hours=24)).isoformat())))
-        self.assertTrue(self.due(self._source(last_inspected_at=(NOW - timedelta(hours=169)).isoformat())))
-
-    def test_naive_timestamp_is_read_as_utc(self):
-        naive = (NOW - timedelta(hours=1)).replace(tzinfo=None).isoformat()
-        self.assertFalse(self.due(self._source(last_inspected_at=naive)))
-
-    def test_last_live_fetch_at_does_not_gate_it(self):
-        self.assertTrue(self.due(self._source(last_live_fetch_at=NOW.isoformat())))
-
-    def test_zero_interval_inspects_every_run(self):
-        self.assertTrue(self.due(self._source(last_inspected_at=NOW.isoformat()), interval=0))
+        await DbInspectionRefresher(writer=_Broken()).refresh(_source("https://a.test/rss"), _rss_kind(), 2)
 
 
 if __name__ == "__main__":

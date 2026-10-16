@@ -17,9 +17,9 @@ from __future__ import annotations
 import asyncio
 import urllib.parse
 from datetime import timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from insight_core.ingestion.kinds.base import ArchivePage, BaseKind, Inspection, PolitenessProfile, Source
+from insight_core.ingestion.kinds.base import ArchivePage, BaseKind, Inspection, PolitenessProfile, Source, start_at
 
 YOUTUBE_HOSTS = frozenset({"www.youtube.com", "youtube.com", "m.youtube.com"})
 
@@ -60,7 +60,15 @@ class YouTubeKind(BaseKind):
             raw=data,
         )
 
+    async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
+        # The channel lists newest first: the stored videos are numbers 1..stored.
+        start = max(1, int(stored["post_count"]) + 1 - self.youtube.DEFAULT_PAGE_SIZE)
+        return start_at(mode="youtube_channel", playlist_start=start)
+
     async def archive_pages(self, source, target, checkpoint, rate):
-        # Single shot: one yt-dlp listing of `target` videos, so checkpoint None (finished).
-        result = await asyncio.to_thread(self.youtube.archive_channel_posts, str(source["handle_or_url"]), target)
+        # Single shot: one yt-dlp listing of `target` videos from the checkpoint's video number
+        # (one long call that cannot pause), so checkpoint None (finished).
+        start = int((checkpoint or {}).get("playlist_start") or 1)
+        result = await asyncio.to_thread(self.youtube.archive_channel_posts, str(source["handle_or_url"]),
+                                         target, start)
         yield ArchivePage(list(result.get("posts") or []), None)

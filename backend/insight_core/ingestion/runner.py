@@ -4,14 +4,15 @@ Orchestration only. Every collaborator is a port injected through the keyword
 constructor, so the scheduler tick, the manual "Run cycle", track fetch, fetch-now and the
 CLI all apply the same policy: the yt-dlp switch, backoff (read and write), politeness
 gates (and the learned pace: a limiting host is waited out and retried once), status
-recording, save isolation and the inspection refresh.
+recording, save isolation and the archive-metadata record.
 
 Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
-record decisions -> per source: fetch under the gates, save, record its outcome ->
-refresh inspections -> report. Kind sessions (B8, telegram_mtproto) are opened lazily
-inside the gate slot of a kind's first due source and closed in a finally after the
-inspection refresh; a session that cannot open makes that kind's sources unavailable. A fetch never raises out of the runner; a failing store
-write is logged and the run carries on.
+record decisions -> per source: fetch under the gates, save, record its outcome and its
+archive metadata -> report. Nothing runs after the last save: a run never measures its
+sources (issue 0015). Kind sessions (B8, telegram_mtproto) are opened lazily inside the
+gate slot of a kind's first due source and closed in a finally at the end of the run; a
+session that cannot open makes that kind's sources unavailable. A fetch never raises out of
+the runner; a failing store write is logged and the run carries on.
 """
 from __future__ import annotations
 
@@ -235,13 +236,15 @@ class IngestionRunner:
                         # Outcomes are recorded after the save: a source none of whose posts
                         # reached the database is failing (its failure count grows, it retries
                         # on backoff), not healthy with its next fetch a whole cadence away.
-                        # The rest of the run (counts, inspection refresh) sees the same outcome.
+                        # The rest of the run (counts, archive metadata) sees the same outcome.
                         f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
                                                                   error=f"save: {error}")
                 await self._safely(
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
                     now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
                 )
+                if outcome.status == OutcomeStatus.HEALTHY:
+                    await self.inspections.refresh(source, f.kind, outcome.fetched)
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
@@ -259,19 +262,6 @@ class IngestionRunner:
             "outcomes": self._outcome_counts([f.outcome for f in fetched]),
             "inserted": saved.inserted, "updated": saved.updated, "failed": saved.failed,
         })
-
-        # Refresh inspections for every source that fetched at least one post.
-        refreshable = [f for f in fetched if f.outcome.status == OutcomeStatus.HEALTHY]
-        results = await asyncio.gather(
-            *(self.inspections.refresh(f.source, f.kind, f.outcome.fetched) for f in refreshable),
-            return_exceptions=True,
-        )
-        inspection_failures = sum(1 for r in results if isinstance(r, BaseException))
-        for f, r in zip(refreshable, results):
-            if isinstance(r, BaseException):
-                logger.warning("Inspection refresh failed for %s: %s", _display_name(f.source), r)
-        await self._safely("record progress", progress.event, "inspected",
-                           {"refreshed": len(refreshable) - inspection_failures, "failed": inspection_failures})
 
         failed_sources = {f.source_id for f in failures}
         if failed_sources and len(failed_sources) >= len(fetched):

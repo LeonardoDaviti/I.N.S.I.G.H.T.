@@ -180,6 +180,8 @@ class SourceKind(Protocol):
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool: ...
 
+    async def start_checkpoint(self, source: Source, stored: Mapping[str, Any]) -> Optional[dict]: ...
+
     def estimate_pages(self, remaining: int, page_size: Optional[int]) -> int: ...
 
     def session(self) -> KindSession: ...
@@ -201,6 +203,11 @@ def source_host_key(source: Source) -> str:
         if hostname:
             return hostname
     return f"platform:{source.get('platform')}"
+
+
+def start_at(**position: Any) -> dict:
+    """A start checkpoint (kind.start_checkpoint): a position, nothing collected yet."""
+    return {**position, "collected_posts": 0, "pages_fetched": 0}
 
 
 def resume_counts(checkpoint: Optional[Mapping[str, Any]]) -> tuple[int, int]:
@@ -236,6 +243,16 @@ class BaseKind:
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         return False
+
+    async def start_checkpoint(self, source: Source, stored: Mapping[str, Any]) -> Optional[dict]:
+        """Where an archive starts so it continues below the stored posts: this kind's own
+        checkpoint shape with collected_posts 0, or None (it starts at the newest post).
+
+        `stored` is PostsService.get_source_post_stats: post_count, oldest_published_at,
+        oldest_external_id. Called only when the source has stored posts. A position jump
+        starts one page early; the URL upsert absorbs the overlap (issue 0015).
+        """
+        return None
 
     def session(self) -> KindSession:
         return NullKindSession()

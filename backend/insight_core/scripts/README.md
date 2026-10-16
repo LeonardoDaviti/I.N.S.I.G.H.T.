@@ -9,7 +9,7 @@ Scripts for data ingestion and its scheduler.
 Every fetch - the scheduler tick, the UI's "Run cycle", track fetch, fetch-now and the CLI -
 is one call to `insight_core.ingestion.run_ingestion(FetchRequest) -> RunReport`, so each
 applies the same policy: the yt-dlp switch, backoff, politeness gates, fetch-state
-recording, the per-source save and the archive-metadata (inspection) refresh.
+recording, the per-source save and its archive-metadata record (never a re-measure).
 `scripts/ingest.py` and the `/api/ingest-posts` and `/api/safe-ingest-posts` routes are gone.
 
 ### CLI: safe_ingest.py
@@ -179,6 +179,4 @@ gap times the posts it exposes) is a quarter full, but not more than hourly.
   `INSIGHT_BACKOFF_DORMANT_AFTER` (10), `INSIGHT_BACKOFF_DORMANT_MAX_HOURS` (168)
 - `INSIGHT_FETCH_MAX_CONCURRENCY` (8), `INSIGHT_YTDLP_CONCURRENCY` (2), `INSIGHT_YTDLP_MIN_INTERVAL` (3s)
 - `INSIGHT_SAVE_COMMIT_BATCH` (20)
-- `INSIGHT_ARCHIVE_INSPECT_INTERVAL_HOURS` (168), `INSIGHT_REFRESH_ARCHIVE_METADATA` (1; 0 skips
-  the inspection refresh)
 

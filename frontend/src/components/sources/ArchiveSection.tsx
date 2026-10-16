@@ -6,19 +6,11 @@ import { useApi } from '../../services/ApiContext';
 import { useOperationJob } from '../../hooks/useOperations';
 import { SOURCES_HEALTH_KEY } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
-import {
-  archiveCeiling,
-  archivePresets,
-  archiveResultLine,
-  clampDesired,
-  defaultDesired,
-  describeAvailable,
-  describeRate,
-} from '../../lib/archive';
+import { archiveResultLine, describeAvailable, describePlan, describeRate } from '../../lib/archive';
 import { formatRelativeTime } from '../../lib/dates';
 import { formatEstimate } from '../../lib/duration';
 import { formatCount, plural } from '../../lib/format';
-import { Button, FilterChip, Input, StatusGlyph } from '../ui';
+import { Button, Input, StatusGlyph } from '../ui';
 import { Notice } from '../states';
 
 const archiveStatusKey = (sourceId: string) => ['archive-status', sourceId] as const;
@@ -155,8 +147,10 @@ function Progress({ run, now }: { run: RunView; now: Date }) {
 
 /**
  * The source sheet's archive: what is stored, what the source has (worded by what
- * the source can tell), how many to fetch, the plan, then run or resume with
- * progress and the last result. A source that cannot archive is one quiet line.
+ * the source can tell, and when it was measured), the plan (where the archive
+ * continues from and how much is older), then run or resume with progress and the
+ * last result. An archive fetches everything older than what is stored. A source
+ * that cannot archive is one quiet line.
  * With `pacing` (the ingestion tab's backfill) it also sets the page delay, batch
  * size and batch cooldown the plan and the run use.
  */
@@ -206,11 +200,8 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
   // The plan's own count wins once there is one: it is a fresh measurement.
   const available = plan ? plan.available_posts : archive.available_posts ?? null;
   const basis = plan?.available_basis ?? support.available_basis;
-  const ceiling = archiveCeiling(available, basis);
   const availableText = describeAvailable({ available, basis, stored });
 
-  const [desiredText, setDesiredText] = useState(() => String(defaultDesired(ceiling)));
-  const desired = clampDesired(Number(desiredText), ceiling);
   const resumeReady = Boolean(archive.resume_ready);
   const [resume, setResume] = useState(resumeReady);
   const [pace, setPace] = useState<PacingText>(() => pacingText(archive.rate_limit));
@@ -234,16 +225,14 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
     if (finished) onChanged();
   }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once per finish
 
-  const planKey = `${desired}:${resume}:${pacing ? JSON.stringify(pacingOverrides(pace)) : ''}`;
+  const planKey = `${resume}:${pacing ? JSON.stringify(pacingOverrides(pace)) : ''}`;
   const planCurrent = plan !== null && plannedFor === planKey;
-
-  const choose = (value: number) => setDesiredText(String(clampDesired(value, ceiling)));
 
   const requestPlan = async () => {
     setPlanning(true);
     setError(null);
     try {
-      const next = await api.planSourceArchive(sourceId, desired, resume, ...rateArgs);
+      const next = await api.planSourceArchive(sourceId, resume, ...rateArgs);
       setPlan(next);
       setPlannedFor(planKey);
     } catch (err) {
@@ -258,7 +247,7 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
     setStarting(true);
     setError(null);
     try {
-      const { job_id: started } = await api.startSourceArchive(sourceId, desired, fromCheckpoint, ...rateArgs);
+      const { job_id: started } = await api.startSourceArchive(sourceId, fromCheckpoint, ...rateArgs);
       setJobId(started);
       setPlan(null);
       setPlannedFor(null);
@@ -285,8 +274,10 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
         <div className="min-w-0 border-l border-line pl-3">
           <dt className={label}>At the source</dt>
           <dd className="text-[0.9375rem] font-semibold tabular-nums text-fg">{availableText.figure}</dd>
-          {!plan && archive.last_inspected_at && available !== null ? (
-            <dd className="text-[0.75rem] text-fg-3">checked {formatRelativeTime(archive.last_inspected_at, now)}</dd>
+          {!plan ? (
+            <dd className="text-[0.75rem] text-fg-3">
+              {archive.last_inspected_at ? `measured ${formatRelativeTime(archive.last_inspected_at, now)}` : 'not measured yet'}
+            </dd>
           ) : null}
         </div>
       </dl>
@@ -294,29 +285,6 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
 
       {running && run ? <Progress run={run} now={now} /> : (
         <>
-          <div>
-            <label htmlFor={`${ids}-desired`} className="mb-1.5 block text-[0.8125rem] font-medium text-fg">Posts to fetch</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id={`${ids}-desired`}
-                inputMode="numeric"
-                value={desiredText}
-                onChange={(e) => setDesiredText(e.target.value.replace(/[^\d]/g, ''))}
-                onBlur={() => setDesiredText(String(desired))}
-                aria-describedby={`${ids}-desired-help`}
-                className="w-28 tabular-nums"
-              />
-              {archivePresets(ceiling).map((preset) => (
-                <FilterChip key={preset.label} selected={desired === preset.value} onClick={() => choose(preset.value)}>
-                  {preset.label}
-                </FilterChip>
-              ))}
-            </div>
-            <p id={`${ids}-desired-help`} className="mt-1 text-[0.75rem] text-fg-3">
-              Newest first. Posts already stored are updated, not duplicated.
-            </p>
-          </div>
-
           {resumeReady ? (
             <label className="flex items-start gap-2 text-[0.8125rem] text-fg-2">
               <input
@@ -359,14 +327,7 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
 
           {planCurrent && plan ? (
             <div className="space-y-0.5 border-l border-line-strong pl-3 text-[0.8125rem]" aria-label="Archive plan">
-              <p className="tabular-nums text-fg">
-                {plan.remaining_posts > 0
-                  ? `${plural(plan.remaining_posts, 'post')} to fetch · ${plural(plan.estimated_pages, 'page')}${estimate ? ` · ${estimate}` : ''}`
-                  : 'Nothing left to fetch for this count.'}
-              </p>
-              {plan.resume ? (
-                <p className="text-fg-3">Resumes from the checkpoint; {plural(plan.desired_posts - plan.remaining_posts, 'post')} already collected.</p>
-              ) : null}
+              <p className="tabular-nums text-fg">{describePlan(plan, estimate)}</p>
               {rate ? <p className="text-fg-3">{rate}</p> : null}
             </div>
           ) : null}
@@ -375,7 +336,7 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
             <Button variant="secondary" size="sm" onClick={() => void requestPlan()} disabled={planning || starting} aria-busy={planning}>
               {planning ? 'Planning…' : 'Plan'}
             </Button>
-            {planCurrent && plan && plan.remaining_posts > 0 ? (
+            {planCurrent && plan && plan.older_posts !== 0 ? (
               <Button variant="primary" size="sm" onClick={() => void start()} disabled={starting} aria-busy={starting}>
                 {starting ? 'Starting…' : plan.resume ? 'Resume archive' : 'Run archive'}
               </Button>

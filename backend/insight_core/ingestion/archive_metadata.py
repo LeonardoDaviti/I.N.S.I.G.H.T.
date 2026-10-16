@@ -1,7 +1,7 @@
 """ArchiveMetadataWriter: persists settings.archive for a source (moved from SourceFetchService).
 
-Every number it derives - backlog, remaining posts, estimated pages and seconds, whether a
-checkpoint can be resumed - depends on the source's kind, so the kind is an explicit
+Every number it derives - backlog, estimated pages and seconds, whether a checkpoint can be
+resumed - depends on the source's kind, so the kind is an explicit
 argument rather than a strategy string looked up in a ladder.
 
 The writer takes its stores by duck type (posts: get_source_post_stats; sources:
@@ -17,6 +17,14 @@ from insight_core.ingestion.kinds.base import SourceKind
 
 Mode = Literal["plan", "archive", "archive_progress", "live"]
 HISTORY_LIMIT = 40
+
+
+def resumable(kind: SourceKind, checkpoint: Any) -> Optional[Dict[str, Any]]:
+    """The checkpoint an archive can resume from, or None. A finished archive's checkpoint
+    (completed_at) never resumes: the next archive continues below the stored posts instead."""
+    if isinstance(checkpoint, dict) and not checkpoint.get("completed_at") and kind.checkpoint_resumable(checkpoint):
+        return checkpoint
+    return None
 
 
 def derive_archive_status(stored_posts: int, available_posts: Optional[int]) -> str:
@@ -43,25 +51,18 @@ class ArchiveMetadataWriter:
         stored = int(stats["post_count"])
 
         # What is left to archive, and how long it would take: derived on every path rather
-        # than remembered from the last plan, so the figure falls as posts come in.
+        # than remembered from the last plan, so the figure falls as posts come in. E1: the
+        # backlog is known only when the source reports its size; unknown stays None (the UI
+        # says "unknown").
         available_posts = data.get("available_posts", current.get("available_posts"))
         page_size = data.get("page_size", current.get("page_size")) or 1
         rate = kind.profile.rate_limit(data.get("rate_limit", current.get("rate_limit")))
-        remaining_posts = data.get("remaining_posts")
-        estimated_pages = data.get("estimated_pages")
-        estimated_seconds = data.get("estimated_seconds")
-
-        # E1: the backlog is known only when the source reports its size. It used to fall back
-        # to the plan's remaining_posts, which describes a requested archive target, not the
-        # backlog. Unknown stays None (the UI says "unknown").
         backlog_posts: Optional[int] = None
+        estimated_pages = estimated_seconds = None
         if isinstance(available_posts, int) and available_posts >= 0:
             backlog_posts = max(0, available_posts - stored)
-            # An explicit plan wins: it encodes a desired_posts the operator chose.
-            if mode == "live" or remaining_posts is None:
-                remaining_posts = backlog_posts
-                estimated_pages = kind.estimate_pages(backlog_posts, page_size)
-                estimated_seconds = kind.profile.estimate_seconds(estimated_pages, rate)
+            estimated_pages = kind.estimate_pages(backlog_posts, page_size)
+            estimated_seconds = kind.profile.estimate_seconds(estimated_pages, rate)
 
         status = current.get("status", "not_archived")
         if mode in {"archive", "archive_progress"}:
@@ -81,23 +82,17 @@ class ArchiveMetadataWriter:
             "first_post_date": data.get("first_post_date", current.get("first_post_date")),
             "last_archived_at": now if mode == "archive" else current.get("last_archived_at"),
             "last_live_fetch_at": now if mode == "live" else current.get("last_live_fetch_at"),
-            # Set only when the source was actually re-measured: last_live_fetch_at updates
-            # every cycle, so it cannot gate the inspection cadence.
-            "last_inspected_at": (
-                now if data.get("inspected") or mode in {"plan", "archive"} else current.get("last_inspected_at")
-            ),
+            # When the source was last measured: planning an archive is the only measurement.
+            "last_inspected_at": now if mode == "plan" else current.get("last_inspected_at"),
             "source_type": kind.name,
             "page_size": data.get("page_size", current.get("page_size")),
             "estimated_pages": estimated_pages if estimated_pages is not None else current.get("estimated_pages"),
             "estimated_seconds": estimated_seconds if estimated_seconds is not None else current.get("estimated_seconds"),
-            "last_requested_posts": data.get("desired_posts", current.get("last_requested_posts")),
             "last_pages_fetched": data.get("pages_fetched", current.get("last_pages_fetched")),
-            "remaining_posts": remaining_posts if remaining_posts is not None else current.get("remaining_posts"),
-            # The full backlog regardless of any plan's desired_posts.
             "backlog_posts": backlog_posts,
             "rate_limit": data.get("rate_limit", current.get("rate_limit")),
             "checkpoint": checkpoint,
-            "resume_ready": kind.checkpoint_resumable(checkpoint),
+            "resume_ready": resumable(kind, checkpoint) is not None,
             "history": history[-HISTORY_LIMIT:],
         }
         self.sources.merge_source_settings(source_id, {"archive": archive})
@@ -126,7 +121,6 @@ class ArchiveMetadataWriter:
             "status": data.get("archive_status") or data.get("status"),
             "stored_posts": stats.get("post_count", 0),
             "available_posts": data.get("available_posts"),
-            "desired_posts": data.get("desired_posts"),
             "pages_fetched": data.get("pages_fetched"),
             "source_type": data.get("source_type"),
         }

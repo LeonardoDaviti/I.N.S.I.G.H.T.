@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { ArchiveCatalogEntry } from '../../services/api';
 import { useApi } from '../../services/ApiContext';
+import { formatRelativeTime } from '../../lib/dates';
 import { formatCount, plural } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { Input, StatusGlyph, type Status } from '../ui';
@@ -18,8 +19,8 @@ function archiveGlyph(status?: string | null): { status: Status; label: string }
   return { status: 'scheduled', label: 'not archived' };
 }
 
-/** "youtube · 120 of 1,722 stored · 1,602 in backlog · checkpoint saved". */
-function entryLine(entry: ArchiveCatalogEntry): string {
+/** "youtube · 120 of 1,722 stored · 1,602 in backlog · measured 3d ago · checkpoint saved". */
+function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
   const stored = formatCount(entry.stored_posts ?? 0);
   const parts = [
     entry.platform,
@@ -28,6 +29,7 @@ function entryLine(entry: ArchiveCatalogEntry): string {
   if (typeof entry.backlog_posts === 'number') {
     parts.push(entry.backlog_posts === 0 ? 'no backlog' : `${formatCount(entry.backlog_posts)} in backlog`);
   }
+  parts.push(entry.last_inspected_at ? `measured ${formatRelativeTime(entry.last_inspected_at, now)}` : 'not measured yet');
   if (entry.resume_ready) parts.push('checkpoint saved');
   return parts.join(' · ');
 }
@@ -66,6 +68,7 @@ export default function IngestionArchive() {
     setSearchParams(params, { replace: true });
   };
 
+  const now = new Date();
   const meta = catalog.isPending
     ? 'Loading…'
     : [plural(entries.length, 'source'), backlog ? `${formatCount(backlog)} in backlog` : null].filter(Boolean).join(' · ');
@@ -106,7 +109,7 @@ export default function IngestionArchive() {
                       <span className="min-w-0 truncate font-medium text-fg" title={entry.display_name || undefined}>{name}</span>
                       <StatusGlyph status={glyph.status} label={glyph.label} className="shrink-0" />
                     </div>
-                    <p className="mt-0.5 truncate text-[0.75rem] tabular-nums text-fg-3">{entryLine(entry)}</p>
+                    <p className="mt-0.5 truncate text-[0.75rem] tabular-nums text-fg-3">{entryLine(entry, now)}</p>
                   </button>
                 </li>
               );
@@ -123,7 +126,7 @@ export default function IngestionArchive() {
         <h2 id="archive-backfill" className={sectionTitle}>{selected ? sourceLabel(selected.display_name, selected.source_id) : 'Backfill'}</h2>
         {selected ? <ArchiveSection key={selected.source_id} sourceId={selected.source_id} pacing /> : (
           <p className="text-[0.8125rem] text-fg-3">
-            {catalog.isPending ? 'Loading…' : 'Choose a source to plan its backfill: how many posts, how fast, and whether to continue from the last run.'}
+            {catalog.isPending ? 'Loading…' : 'Choose a source to plan its backfill: where it continues from, how fast, and whether to resume the last run.'}
           </p>
         )}
       </section>

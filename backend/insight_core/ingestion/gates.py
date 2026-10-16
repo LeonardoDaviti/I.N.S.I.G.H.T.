@@ -228,7 +228,7 @@ class FetchGates:
     async def slot(
         self, profile: PolitenessProfile, host_key: str, *, per_source_delay_s: float = 0.0
     ) -> AsyncIterator[None]:
-        """Hold every gate the profile needs for one fetch (or inspection) of one source."""
+        """Hold every gate the profile needs for one fetch of one source, or one archive page."""
         async with contextlib.AsyncExitStack() as stack:
             if profile.concurrency_pool == "ytdlp":
                 # No host lock: youtube.com is one host key, and the lock would serialise every

@@ -70,7 +70,6 @@ class JobRunsRepository:
                      'posts_updated',  payload->'posts_updated',
                      'pages_fetched',  payload->'pages_fetched',
                      'stored_posts',   payload->'stored_posts',
-                     'desired_posts',  payload->'desired_posts',
                      'error',          payload->'error',
                      'paused',         payload->'paused',
                      'paused_reason',  payload->'paused_reason'

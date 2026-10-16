@@ -27,10 +27,12 @@ const status = (over: Partial<ArchiveStatusResponse> = {}): ArchiveStatusRespons
 const plan = (over: Partial<ArchivePlan> = {}): ArchivePlan => ({
   available_posts: 1722,
   available_basis: 'exact',
-  desired_posts: 500,
-  remaining_posts: 500,
+  older_posts: 1697,
   estimated_pages: 25,
   estimated_seconds: 7800,
+  current_stored_posts: 25,
+  oldest_published_at: '2025-03-03T12:00:00Z',
+  continues_from: '2025-03-03T12:00:00Z',
   resume: false,
   resume_available: false,
   rate_limit: { page_delay_seconds: 5, batch_size: 10, batch_cooldown_seconds: 30 },
@@ -53,15 +55,23 @@ function setup(api: Record<string, unknown>) {
 }
 
 describe('ArchiveSection', () => {
-  it('shows what is stored, what the source has, and presets up to all of it', async () => {
+  it('shows what is stored, what the source has and when it was measured, and asks for no count', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-11T10:00:00Z') });
     setup({ getSourceArchive: vi.fn().mockResolvedValue(status()) });
     const facts = await screen.findByRole('group', { name: 'Archive counts' });
     expect(within(facts).getByText('Stored')).toBeInTheDocument();
     expect(within(facts).getByText('25')).toBeInTheDocument();
     expect(within(facts).getByText('1,722')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All 1,722' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Posts to fetch')).toHaveValue('500');
+    expect(within(facts).getByText('measured 3d ago')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Posts to fetch')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^All/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /run archive/i })).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('a source never measured says so', async () => {
+    setup({ getSourceArchive: vi.fn().mockResolvedValue(status({ archive: { stored_posts: 25, available_posts: null } })) });
+    expect(await screen.findByText('not measured yet')).toBeInTheDocument();
   });
 
   it('a source that cannot archive is one quiet line saying why', async () => {
@@ -86,15 +96,25 @@ describe('ArchiveSection', () => {
     });
     expect(await screen.findByText('at least 40')).toBeInTheDocument();
     expect(screen.getByText(/does not report a total/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^All/ })).not.toBeInTheDocument();
   });
 
-  it('clamps the wanted count to what is available', async () => {
-    setup({ getSourceArchive: vi.fn().mockResolvedValue(status()) });
-    const field = await screen.findByLabelText('Posts to fetch');
-    fireEvent.change(field, { target: { value: '90000' } });
-    fireEvent.blur(field);
-    expect(field).toHaveValue('1722');
+  it('a plan without a size says where it continues from, size unknown, and can run', async () => {
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status({ support: support({ kind: 'substack', available_basis: 'unknown' }) })),
+      planSourceArchive: vi.fn().mockResolvedValue(plan({ available_posts: null, available_basis: 'unknown', older_posts: null,
+        estimated_pages: null, estimated_seconds: null })),
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    expect(await screen.findByText('You have 25 posts, back to 3 Mar 2025. The archive continues from there · size unknown'))
+      .toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run archive' })).toBeInTheDocument();
+  });
+
+  it('nothing older to fetch offers no run', async () => {
+    setup({ getSourceArchive: vi.fn().mockResolvedValue(status()), planSourceArchive: vi.fn().mockResolvedValue(plan({ older_posts: 0 })) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    expect(await screen.findByText(/Nothing older to fetch/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run archive' })).not.toBeInTheDocument();
   });
 
   it('plans before it runs, then follows the job to its result', async () => {
@@ -108,27 +128,20 @@ describe('ArchiveSection', () => {
     setup({ getSourceArchive, planSourceArchive, startSourceArchive, getOperationJob });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
-    expect(planSourceArchive).toHaveBeenCalledWith('s1', 500, false);
-    expect(await screen.findByText(/25 pages/)).toBeInTheDocument();
+    expect(planSourceArchive).toHaveBeenCalledWith('s1', false);
+    expect(await screen.findByText(/You have 25 posts, back to 3 Mar 2025\. The archive continues from there: about 1,697 older posts/))
+      .toBeInTheDocument();
     expect(screen.getByText(/~2h 10m/)).toBeInTheDocument();
     expect(screen.getByText(/5s between pages, 30s every 10 pages/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Run archive' }));
-    expect(startSourceArchive).toHaveBeenCalledWith('s1', 500, false);
+    expect(startSourceArchive).toHaveBeenCalledWith('s1', false);
     expect(await screen.findByText('40%')).toBeInTheDocument();
     expect(screen.getByText('Fetched youtube_channel page 10')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Run archive' })).not.toBeInTheDocument();
 
     expect(await screen.findByText(/500 posts fetched, 475 new/, {}, { timeout: 8000 })).toBeInTheDocument();
   }, 12_000);
-
-  it('changing the count after a plan asks for a new plan', async () => {
-    setup({ getSourceArchive: vi.fn().mockResolvedValue(status()), planSourceArchive: vi.fn().mockResolvedValue(plan()) });
-    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
-    await screen.findByRole('button', { name: 'Run archive' });
-    fireEvent.click(screen.getByRole('button', { name: '100' }));
-    expect(screen.queryByRole('button', { name: 'Run archive' })).not.toBeInTheDocument();
-  });
 
   it('a paused archive says why and resumes from its checkpoint', async () => {
     const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'job-3' });
@@ -145,11 +158,12 @@ describe('ArchiveSection', () => {
     const notice = await screen.findByRole('alert');
     expect(within(notice).getByText('Paused: reddit.com is limiting us')).toBeInTheDocument();
     fireEvent.click(within(notice).getByRole('button', { name: 'Resume' }));
-    expect(startSourceArchive).toHaveBeenCalledWith('s1', 500, true);
+    expect(startSourceArchive).toHaveBeenCalledWith('s1', true);
   });
 
   it('offers to resume a checkpointed run', async () => {
-    const planSourceArchive = vi.fn().mockResolvedValue(plan({ resume: true, resume_available: true, remaining_posts: 380 }));
+    const planSourceArchive = vi.fn().mockResolvedValue(plan({ resume: true, resume_available: true, continues_from: null,
+      checkpoint: { collected_posts: 120 } }));
     const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'job-2' });
     setup({
       getSourceArchive: vi.fn().mockResolvedValue(status({
@@ -161,9 +175,10 @@ describe('ArchiveSection', () => {
     });
     expect(await screen.findByLabelText(/Continue from the last run/)).toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
-    expect(planSourceArchive).toHaveBeenCalledWith('s1', 500, true);
-    fireEvent.click(await screen.findByRole('button', { name: 'Resume archive' }));
-    expect(startSourceArchive).toHaveBeenCalledWith('s1', 500, true);
+    expect(planSourceArchive).toHaveBeenCalledWith('s1', true);
+    expect(await screen.findByText(/resumes from its checkpoint \(120 posts collected so far\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume archive' }));
+    expect(startSourceArchive).toHaveBeenCalledWith('s1', true);
   });
 
   it('a failed plan is an error and nothing can run', async () => {

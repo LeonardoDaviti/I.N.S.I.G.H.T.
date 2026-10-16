@@ -1,8 +1,15 @@
-"""nitter_rss: X/Twitter accounts through a Nitter instance's /<user>/rss feed (cursor paging)."""
+"""nitter_rss: X/Twitter accounts through a Nitter instance's /<user>/rss feed (cursor paging).
+
+An archive that continues below the stored tweets jumps by date: its first page is the
+bridge's search RSS, /<user>/search/rss?f=tweets&q=&until=<day> (until is exclusive), and
+later pages add the same min-id cursor as the feed's pager. Every page's checkpoint keeps
+search_until, so a resume stays on the search (checked on the owner's bridge, 2026-10-16).
+"""
 from __future__ import annotations
 
 import re
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from insight_core.ingestion.http import KindHttp
@@ -15,6 +22,7 @@ from insight_core.ingestion.kinds.base import (
     RateLimit,
     Source,
     resume_counts,
+    start_at,
 )
 
 # gates.HOST_FLOORS gives each a 10s floor.
@@ -76,16 +84,29 @@ class NitterRssKind(BaseKind):
             "cursor"
         ) is not None
 
+    async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
+        oldest = stored.get("oldest_published_at")
+        if not isinstance(oldest, datetime):
+            return None
+        if oldest.tzinfo is not None:
+            oldest = oldest.astimezone(timezone.utc)
+        # until is exclusive: the day after the oldest stored tweet re-reads that whole day.
+        return start_at(mode="nitter_cursor", cursor=None,
+                        search_until=(oldest.date() + timedelta(days=1)).isoformat())
+
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         posts: List[Dict[str, Any]] = []
-        async for page in self._pages(str(source["handle_or_url"]), limit, None, 0, 0, self.profile.rate_limit()):
+        async for page in self._pages(str(source["handle_or_url"]), limit, None, None, 0, 0,
+                                      self.profile.rate_limit()):
             posts.extend(page.posts)
         return posts[:limit]
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
         collected, pages = resume_counts(checkpoint)
         cursor = (checkpoint or {}).get("cursor")
-        async for page in self._pages(str(source["handle_or_url"]), target, cursor, collected, pages, rate):
+        search_until = (checkpoint or {}).get("search_until")
+        async for page in self._pages(str(source["handle_or_url"]), target, cursor, search_until, collected, pages,
+                                      rate):
             yield page
 
     async def inspect(self, source: Source) -> Inspection:
@@ -97,15 +118,15 @@ class NitterRssKind(BaseKind):
         page_size = max(1, len(parsing.parse_feed_posts(rss_text, source_url)))
         return Inspection(extract_nitter_tweet_count(profile_html), page_size, None)
 
-    async def _pages(self, source_url: str, target: int, cursor: Optional[str], initial_collected: int,
-                     initial_pages: int, rate: RateLimit):
+    async def _pages(self, source_url: str, target: int, cursor: Optional[str], search_until: Optional[str],
+                     initial_collected: int, initial_pages: int, rate: RateLimit):
         seen_urls: set[str] = set()
         collected = initial_collected
         pages_fetched = initial_pages
         current_cursor = cursor
 
         while collected < target:
-            page_posts, next_cursor = await self._fetch_page(source_url, current_cursor)
+            page_posts, next_cursor = await self._fetch_page(source_url, current_cursor, search_until)
             if not page_posts:
                 break
 
@@ -120,25 +141,31 @@ class NitterRssKind(BaseKind):
                 if collected >= target:
                     break
 
-            yield ArchivePage(unique, {
+            checkpoint = {
                 "mode": "nitter_cursor",
                 "cursor": next_cursor,
                 "last_cursor": current_cursor,
                 "pages_fetched": pages_fetched,
                 "collected_posts": collected,
-            })
+            }
+            if search_until:
+                checkpoint["search_until"] = search_until
+            yield ArchivePage(unique, checkpoint)
 
             if collected >= target or not next_cursor or next_cursor == current_cursor:
                 break
             current_cursor = next_cursor
             await self.http.sleep(rate.delay_after(pages_fetched))
 
-    async def _fetch_page(self, source_url: str, cursor: Optional[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    async def _fetch_page(self, source_url: str, cursor: Optional[str],
+                          search_until: Optional[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         origin = parsing.origin_from_source(source_url, NITTER_BASE_URL)
         username = _username(source_url)
-        url = f"{origin}/{username}/rss"
+        params = {"f": "tweets", "q": "", "until": search_until} if search_until else {}
         if cursor:
-            url = f"{url}?cursor={urllib.parse.quote(cursor, safe='')}"
+            params["cursor"] = cursor
+        path = f"{origin}/{username}/search/rss" if search_until else f"{origin}/{username}/rss"
+        url = f"{path}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}" if params else path
 
         body, headers = await self.http.get_text(url)
         posts = parsing.parse_feed_posts(body, f"{origin}/{username}/rss")

@@ -47,15 +47,17 @@ def _src(platform: str, handle: str, **settings) -> dict:
 class _StubYouTube:
     """Stands in for YouTubeService; records the blocking calls made through to_thread."""
 
+    DEFAULT_PAGE_SIZE = 15
+
     def __init__(self):
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple] = []
 
     def fetch_live_posts(self, handle, limit):
         self.calls.append(("live", handle, limit))
         return [{"url": f"https://youtube.com/watch?v={i}"} for i in range(min(limit, 3))]
 
-    def archive_channel_posts(self, handle, limit):
-        self.calls.append(("archive", handle, limit))
+    def archive_channel_posts(self, handle, limit, start=1):
+        self.calls.append(("archive", handle, limit, start))
         return {"posts": [{"url": f"https://youtube.com/watch?v={i}"} for i in range(limit)],
                 "pages_fetched": 1}
 
@@ -373,6 +375,109 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(kind.checkpoint_resumable(None))
 
 
+def _nitter_page(first_id: int, count: int = 20) -> str:
+    items = "".join(
+        f"<item><title>Tweet {i}</title><description>Tweet {i}</description>"
+        f"<pubDate>Mon, 03 Mar 2025 10:00:00 +0000</pubDate>"
+        f"<link>https://nitter.local/karpathy/status/{i}#m</link></item>"
+        for i in range(first_id, first_id - count, -1))
+    return f'<?xml version="1.0"?><rss version="2.0"><channel>{items}</channel></rss>'
+
+
+STORED = {"post_count": 120, "oldest_published_at": datetime(2025, 3, 3, 23, 30, tzinfo=timezone.utc),
+          "oldest_external_id": "4410"}
+
+
+class StartCheckpointTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0015: where each kind's archive continues below the stored posts."""
+
+    async def test_substack_starts_one_page_before_the_stored_count(self):
+        from insight_core.ingestion.kinds.substack import SubstackKind
+        kind = SubstackKind(FakeHttp(), sid="")
+        self.assertEqual(await kind.start_checkpoint(_src("rss", "https://a.substack.com"), STORED),
+                         {"mode": "substack_offset", "offset": 108, "collected_posts": 0, "pages_fetched": 0})
+
+    async def test_the_telegram_account_starts_exactly_below_the_oldest_message(self):
+        kind = TelegramKind(http=FakeHttp())
+        self.assertEqual(await kind.start_checkpoint(_src("telegram", "chan"), STORED),
+                         {"offset_id": 4410, "collected_posts": 0, "pages_fetched": 0})
+        self.assertIsNone(await kind.start_checkpoint(_src("telegram", "chan"), {**STORED, "oldest_external_id": "x"}))
+        self.assertIsNone(await kind.start_checkpoint(_src("telegram", "chan"), {**STORED, "oldest_external_id": None}))
+
+    async def test_the_telegram_bridge_pages_by_the_urls_limit(self):
+        http = FakeHttp()
+        source = _src("rss", "https://tg.i-c-a.su/rss/chan?limit=50")
+        checkpoint = await TelegramRssKind(http).start_checkpoint(source, STORED)
+        self.assertEqual(checkpoint, {"mode": "telegram_page", "next_page": 2, "collected_posts": 0, "pages_fetched": 0})
+        self.assertEqual(http.requests, [], "the URL says the page size")
+
+    async def test_the_telegram_bridge_counts_the_raw_page_not_the_filtered_one(self):
+        """Page 1 lists 21 items, one sponsored: 120 // 20 would skip posts, 120 // 21 does not."""
+        http = FakeHttp({"https://tg.i-c-a.su/rss/chan/1": _telegram_page("chan", 500, 20, sponsored=True)})
+        checkpoint = await TelegramRssKind(http).start_checkpoint(_src("rss", "https://tg.i-c-a.su/rss/chan"), STORED)
+        self.assertEqual(checkpoint["next_page"], 5)
+
+    async def test_youtube_starts_one_page_before_the_stored_videos_and_passes_it_to_the_listing(self):
+        youtube = _StubYouTube()
+        kind = YouTubeKind(youtube)
+        checkpoint = await kind.start_checkpoint(_src("youtube", "UCx"), STORED)
+        self.assertEqual(checkpoint, {"mode": "youtube_channel", "playlist_start": 106,
+                                      "collected_posts": 0, "pages_fetched": 0})
+        [page async for page in kind.archive_pages(_src("youtube", "UCx"), 40, checkpoint, kind.profile.rate_limit())]
+        self.assertEqual(youtube.calls, [("archive", "UCx", 40, 106)])
+
+    async def test_nitter_jumps_by_date_to_the_day_after_the_oldest_tweet(self):
+        checkpoint = await NitterRssKind(FakeHttp()).start_checkpoint(_src("rss", "https://nitter.local/karpathy/rss"),
+                                                                      STORED)
+        self.assertEqual(checkpoint["search_until"], "2025-03-04", "until is exclusive: 3 Mar is read again")
+        self.assertIsNone(checkpoint["cursor"])
+
+    async def test_kinds_that_cannot_jump_start_at_the_newest(self):
+        for kind, source in ((RedditKind(FakeHttp()), _src("reddit", "r/x")),
+                             (GenericRssKind(FakeHttp()), _src("rss", "https://a.example.com/feed"))):
+            with self.subTest(kind=kind.name):
+                self.assertIsNone(await kind.start_checkpoint(source, STORED))
+
+
+class NitterSearchPagerTests(unittest.IsolatedAsyncioTestCase):
+    SOURCE = _src("rss", "https://nitter.local/karpathy/rss")
+    SEARCH = "https://nitter.local/karpathy/search/rss?f=tweets&q=&until=2025-03-04"
+
+    def _http(self):
+        return FakeHttp({
+            self.SEARCH: (_nitter_page(900), {"min-id": "880"}),
+            f"{self.SEARCH}&cursor=880": (_nitter_page(880), {"min-id": "860"}),
+            f"{self.SEARCH}&cursor=860": (_nitter_page(860), {"min-id": "840"}),
+        })
+
+    async def test_the_search_pages_carry_the_date_and_then_the_cursor(self):
+        http = self._http()
+        kind = NitterRssKind(http)
+        start = await kind.start_checkpoint(self.SOURCE, STORED)
+        pages = []
+        async for page in kind.archive_pages(self.SOURCE, 40, start, kind.profile.rate_limit()):
+            pages.append(page)
+        self.assertEqual(http.requests, [self.SEARCH, f"{self.SEARCH}&cursor=880"])
+        self.assertEqual(pages[0].posts[0]["external_id"], "900")
+        self.assertEqual([p.checkpoint["search_until"] for p in pages], ["2025-03-04", "2025-03-04"])
+        self.assertEqual(pages[1].checkpoint["cursor"], "860")
+
+    async def test_a_resume_continues_on_the_search(self):
+        http = self._http()
+        kind = NitterRssKind(http)
+        checkpoint = {"mode": "nitter_cursor", "cursor": "860", "search_until": "2025-03-04",
+                      "pages_fetched": 2, "collected_posts": 40}
+        self.assertTrue(kind.checkpoint_resumable(checkpoint))
+        pages = [page async for page in kind.archive_pages(self.SOURCE, 60, checkpoint, kind.profile.rate_limit())]
+        self.assertEqual(http.requests, [f"{self.SEARCH}&cursor=860"])
+        self.assertEqual(pages[0].checkpoint["search_until"], "2025-03-04")
+
+    async def test_the_live_fetch_stays_on_the_feed(self):
+        http = FakeHttp({"https://nitter.local/karpathy/rss": (_nitter_page(1000), {})})
+        await NitterRssKind(http).fetch_latest(self.SOURCE, 20)
+        self.assertEqual(http.requests, ["https://nitter.local/karpathy/rss"])
+
+
 class NitterKindTests(unittest.TestCase):
     def test_extract_nitter_tweet_count(self):
         html = """
@@ -444,7 +549,7 @@ class YouTubeKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pages), 1)
         self.assertIsNone(pages[0].checkpoint)
         self.assertEqual(len(pages[0].posts), 4)
-        self.assertEqual(youtube.calls, [("archive", "UCx", 4)])
+        self.assertEqual(youtube.calls, [("archive", "UCx", 4, 1)])
 
     async def test_inspect_drops_nothing_but_the_rate_limit(self):
         inspection = await YouTubeKind(_StubYouTube()).inspect(_src("youtube", "UCx"))

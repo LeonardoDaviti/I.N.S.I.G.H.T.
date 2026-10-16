@@ -24,7 +24,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
-from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
+from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status, resumable
 from insight_core.ingestion.gates import FetchGates
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
@@ -37,8 +37,12 @@ from insight_core.services.operations_service import backlog_posts
 from insight_core.services.posts_service import PostsService
 from insight_core.services.sources_service import SourcesService
 from insight_core.services.youtube_service import YouTubeService
+from insight_core.utils.json_safe import iso
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]]
+
+# The target of an archive whose source reports no size: it runs until the source ends.
+UNBOUNDED_ARCHIVE = 1_000_000_000
 
 
 class SourceFetchService:
@@ -98,11 +102,11 @@ class SourceFetchService:
                     "enabled": bool(source.get("enabled")),
                     "stored_posts": stored,
                     "available_posts": archive.get("available_posts"),
-                    # E1: the backlog is available - stored, or None when unknown; the
-                    # plan's remaining_posts is a requested target, never aliased to it.
+                    # E1: the backlog is available - stored, or None when unknown.
                     "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
-                    "remaining_posts": archive.get("remaining_posts"),
                     "estimated_seconds": archive.get("estimated_seconds"),
+                    # When planning last measured the source (None: never).
+                    "last_inspected_at": archive.get("last_inspected_at"),
                     "archive_status": archive.get("status") or "not_archived",
                     "resume_ready": bool(archive.get("resume_ready")),
                     "source_type": archive.get("source_type"),
@@ -153,12 +157,11 @@ class SourceFetchService:
     async def plan_archive(
         self,
         source_id: str,
-        desired_posts: Optional[int] = None,
         *,
         resume: bool = True,
         rate_limit_overrides: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Inspect a source and estimate archive effort."""
+        """Measure a source and say where its archive continues from and how much is older."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
             raise LookupError(f"Source {source_id} not found")
@@ -166,7 +169,7 @@ class SourceFetchService:
         kind = self.kinds.resolve(source)
         self._check_available(kind)
         async with self._kind_session(kind):
-            return await self._plan(source_id, source, kind, desired_posts, resume=resume,
+            return await self._plan(source_id, source, kind, resume=resume,
                                     rate_limit_overrides=rate_limit_overrides)
 
     def _check_available(self, kind: SourceKind) -> None:
@@ -193,35 +196,45 @@ class SourceFetchService:
         source_id: str,
         source: Dict[str, Any],
         kind: SourceKind,
-        desired_posts: Optional[int],
         *,
         resume: bool,
         rate_limit_overrides: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        """Measure the source once, then choose where the archive starts.
+
+        A resumable checkpoint wins (when resume is asked); otherwise the kind's start
+        checkpoint continues below the stored posts, or None starts at the newest post.
+        older_posts (available - stored, or None when the source reports no size) is only
+        for the estimate: an archive runs until the source ends.
+        """
         inspection = await self._inspect(kind, source)
         source_with_settings = self.sources_service.get_source_with_settings(source_id)
         current_archive = (source_with_settings.get("settings") or {}).get("archive", {})
         # Profile defaults <- the persisted rate limit <- this request's overrides.
         rate = kind.profile.rate_limit(current_archive.get("rate_limit"), rate_limit_overrides)
-        checkpoint = current_archive.get("checkpoint") if resume else None
-        resume_available = kind.checkpoint_resumable(checkpoint)
-        resume_collected_posts = resume_counts(checkpoint)[0] if resume_available else 0
+        saved = resumable(kind, current_archive.get("checkpoint"))
+        stats = self.posts_service.get_source_post_stats(source_id)
+        stored = int(stats["post_count"])
+        oldest = iso(stats.get("oldest_published_at"))
+        start = None
+        if not (resume and saved) and stored:
+            start = await kind.start_checkpoint(source, stats)
         available = inspection["available_posts"]
-        desired = desired_posts or available or (source.get("settings") or {}).get("max_posts_per_fetch", 50)
-        desired = min(desired, available or desired)
-        remaining_posts = max(0, desired - resume_collected_posts)
-        estimated_pages = kind.estimate_pages(remaining_posts, inspection["page_size"])
+        older_posts = max(0, available - stored) if isinstance(available, int) else None
+        estimated_pages = kind.estimate_pages(older_posts, inspection["page_size"]) if older_posts is not None else None
 
         inspection.update({
-            "desired_posts": desired,
-            "remaining_posts": remaining_posts,
-            "estimated_pages": estimated_pages,
-            "estimated_seconds": kind.profile.estimate_seconds(estimated_pages, rate),
             "source_id": source_id,
-            "current_stored_posts": self.posts_service.get_source_post_stats(source_id)["post_count"],
-            "resume": bool(resume and resume_available),
-            "resume_available": resume_available,
-            "checkpoint": checkpoint if resume_available else None,
+            "current_stored_posts": stored,
+            "oldest_published_at": oldest,
+            "continues_from": oldest if start is not None else None,
+            "older_posts": older_posts,
+            "estimated_pages": estimated_pages,
+            "estimated_seconds": (kind.profile.estimate_seconds(estimated_pages, rate)
+                                  if estimated_pages is not None else None),
+            "resume": bool(resume and saved),
+            "resume_available": saved is not None,
+            "checkpoint": saved if resume and saved else start,
             "rate_limit": rate.as_settings(),
         })
 
@@ -231,13 +244,12 @@ class SourceFetchService:
     async def archive_source(
         self,
         source_id: str,
-        desired_posts: Optional[int] = None,
         progress_callback: ProgressCallback = None,
         *,
         resume: bool = True,
         rate_limit_overrides: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Archive historical posts for a single source: one loop over kind.archive_pages."""
+        """Archive a source's posts older than the stored ones, until the source ends."""
         source = self.sources_service.get_source_by_id(source_id)
         if not source:
             raise LookupError(f"Source {source_id} not found")
@@ -245,39 +257,40 @@ class SourceFetchService:
         kind = self.kinds.resolve(source)
         self._check_available(kind)
         async with self._kind_session(kind):
-            return await self._archive(source_id, source, kind, desired_posts, progress_callback,
-                                       resume=resume, rate_limit_overrides=rate_limit_overrides)
+            plan = await self._plan(source_id, source, kind, resume=resume,
+                                    rate_limit_overrides=rate_limit_overrides)
+            return await self._archive(source_id, source, kind, plan, progress_callback)
 
     async def _archive(
         self,
         source_id: str,
         source: Dict[str, Any],
         kind: SourceKind,
-        desired_posts: Optional[int],
+        plan: Dict[str, Any],
         progress_callback: ProgressCallback,
-        *,
-        resume: bool,
-        rate_limit_overrides: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        plan = await self._plan(source_id, source, kind, desired_posts, resume=resume,
-                                rate_limit_overrides=rate_limit_overrides)
+        """One loop over kind.archive_pages from the plan's checkpoint (its measurement reused)."""
         rate = kind.profile.rate_limit(plan.get("rate_limit"))
-        target_posts = plan["desired_posts"]
-        start_checkpoint = plan.get("checkpoint") if plan.get("resume") else None
+        # An archive has no limit: a kind stops where the source ends. The target only caps
+        # the count, at the source's size when it reports one.
+        available = plan.get("available_posts")
+        target_posts = available if isinstance(available, int) else UNBOUNDED_ARCHIVE
+        older_posts = plan.get("older_posts")
+        start_checkpoint = plan.get("checkpoint")
         resume_collected_posts, total_pages_fetched = resume_counts(start_checkpoint)
         total_posts_fetched = total_inserted = total_updated = 0
         await self._emit_progress(progress_callback, {
             "stage": "planning_complete",
             "source_type": kind.name,
-            "target_posts": target_posts,
-            "remaining_posts": plan.get("remaining_posts", target_posts),
+            "older_posts": older_posts,
             "estimated_pages": plan.get("estimated_pages"),
             "estimated_seconds": plan.get("estimated_seconds"),
-            "message": f"Planning complete for {target_posts} posts",
-            "progress": min(100.0, (resume_collected_posts / max(target_posts, 1)) * 100.0),
+            "message": "Planning complete: " + (
+                "size unknown" if older_posts is None else f"about {older_posts} older posts"),
+            "progress": 0.0,
         })
 
-        if plan.get("remaining_posts", 0) <= 0:
+        if older_posts == 0:
             post_stats = self.posts_service.get_source_post_stats(source_id)
             result = {
                 **plan,
@@ -288,7 +301,7 @@ class SourceFetchService:
                 "posts_updated": 0,
                 "stored_posts": post_stats["post_count"],
                 "archive_status": derive_archive_status(post_stats["post_count"], plan["available_posts"]),
-                "message": "Archive already covers the requested range",
+                "message": "The archive already reaches the source's oldest post",
             }
             await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
             return result
@@ -332,8 +345,8 @@ class SourceFetchService:
                         "source_type": kind.name,
                         "pages_fetched": total_pages_fetched,
                         "posts_collected": collected,
-                        "target_posts": target_posts,
-                        "progress": min(100.0, (collected / max(target_posts, 1)) * 100.0),
+                        "progress": (min(100.0, total_posts_fetched / older_posts * 100.0)
+                                     if older_posts else None),
                         "message": f"Fetched {kind.name} page {total_pages_fetched}",
                     })
                 break

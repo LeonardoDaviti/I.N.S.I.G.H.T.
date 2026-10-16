@@ -36,6 +36,7 @@ from insight_core.ingestion.kinds.base import (
     RateLimit,
     Source,
     resume_counts,
+    start_at,
 )
 
 SUBSTACK_HOST_KEY = "substack.com"
@@ -111,6 +112,10 @@ class SubstackKind(BaseKind):
         return isinstance(checkpoint, dict) and checkpoint.get("mode") == "substack_offset" and isinstance(
             checkpoint.get("offset"), int
         )
+
+    async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
+        # The archive lists newest first, so the stored posts are the first `stored` positions.
+        return start_at(mode="substack_offset", offset=max(0, int(stored["post_count"]) - ARCHIVE_PAGE_SIZE))
 
     # ------------------------------------------------------------------ SourceKind
 
