@@ -580,17 +580,24 @@ class PostsRepository:
     # ===============================
 
     def get_source_post_stats(self, cur: Cursor, source_id: str) -> Dict[str, Any]:
-        """Return aggregate storage stats for a single source."""
+        """Return aggregate storage stats for a single source.
+
+        oldest_external_id is the oldest post's external_id: where an archive continues from
+        (kind.start_checkpoint).
+        """
         query = """
             SELECT
                 COUNT(*) AS post_count,
                 MIN(published_at) AS oldest_published_at,
                 MAX(published_at) AS latest_published_at,
-                MAX(fetched_at) AS latest_fetched_at
+                MAX(fetched_at) AS latest_fetched_at,
+                (SELECT external_id FROM posts
+                  WHERE source_id = %s AND published_at IS NOT NULL
+                  ORDER BY published_at ASC LIMIT 1) AS oldest_external_id
             FROM posts
             WHERE source_id = %s
         """
-        cur.execute(query, (source_id,))
+        cur.execute(query, (source_id, source_id))
         row = cur.fetchone()
 
         return {
@@ -598,6 +605,7 @@ class PostsRepository:
             "oldest_published_at": row[1],
             "latest_published_at": row[2],
             "latest_fetched_at": row[3],
+            "oldest_external_id": row[4],
         }
 
     # ===============================

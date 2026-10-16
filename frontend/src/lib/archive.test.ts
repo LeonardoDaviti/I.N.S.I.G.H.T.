@@ -1,15 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  archiveCeiling,
-  archivePresets,
-  archiveResultLine,
-  clampDesired,
-  defaultDesired,
-  describeAvailable,
-  describeRate,
-} from './archive.ts';
+import type { ArchivePlan } from '../services/api';
+import { archiveResultLine, describeAvailable, describePlan, describeRate } from './archive.ts';
 
 test('an exact count is the figure, with nothing to qualify', () => {
   assert.deepEqual(describeAvailable({ available: 1722, basis: 'exact', stored: 25 }), { figure: '1,722', note: null });
@@ -42,40 +35,40 @@ test('an unknown total is never a number the source did not give', () => {
 
 test('a source that reports a total but was never measured says so', () => {
   const unmeasured = describeAvailable({ available: null, basis: 'exact', stored: 3 });
-  assert.equal(unmeasured.figure, 'not checked yet');
+  assert.equal(unmeasured.figure, '—');
   assert.match(unmeasured.note ?? '', /Plan/);
 });
 
-test('the ceiling is the known available count, never an unknown one', () => {
-  assert.equal(archiveCeiling(1722, 'exact'), 1722);
-  assert.equal(archiveCeiling(250, 'listing_cap'), 250);
-  assert.equal(archiveCeiling(null, 'exact'), null);
-  assert.equal(archiveCeiling(5000, 'unknown'), null);
+const plan = (over: Partial<ArchivePlan> = {}): ArchivePlan => ({
+  available_posts: 2300,
+  older_posts: 2180,
+  estimated_pages: 109,
+  estimated_seconds: 1080,
+  current_stored_posts: 120,
+  oldest_published_at: '2025-03-03T12:00:00Z',
+  continues_from: '2025-03-03T12:00:00Z',
+  resume: false,
+  resume_available: false,
+  ...over,
 });
 
-test('presets stop below the ceiling and end with all of it', () => {
-  assert.deepEqual(archivePresets(1722), [
-    { label: '100', value: 100 },
-    { label: '500', value: 500 },
-    { label: 'All 1,722', value: 1722 },
-  ]);
-  assert.deepEqual(archivePresets(250), [{ label: '100', value: 100 }, { label: 'All 250', value: 250 }]);
-  assert.deepEqual(archivePresets(100), [{ label: 'All 100', value: 100 }]);
-  assert.deepEqual(archivePresets(null).map((p) => p.value), [100, 500, 1000]);
+test('the plan says what is stored, where the archive continues, and how much is older', () => {
+  assert.equal(describePlan(plan(), '~18m'),
+    'You have 120 posts, back to 3 Mar 2025. The archive continues from there: about 2,180 older posts · ~18m');
 });
 
-test('the wanted count is a whole number clamped to what is available', () => {
-  assert.equal(clampDesired(900, 250), 250);
-  assert.equal(clampDesired(0, 250), 1);
-  assert.equal(clampDesired(12.7, null), 12);
-  assert.equal(clampDesired(Number.NaN, 250), 1);
-  assert.equal(clampDesired(50_000, null), 10_000);
+test('a source that reports no size is planned with its size unknown', () => {
+  assert.equal(describePlan(plan({ older_posts: null, estimated_pages: null, estimated_seconds: null }), null),
+    'You have 120 posts, back to 3 Mar 2025. The archive continues from there · size unknown');
 });
 
-test('the default asks for 500 or everything, whichever is less', () => {
-  assert.equal(defaultDesired(1722), 500);
-  assert.equal(defaultDesired(126), 126);
-  assert.equal(defaultDesired(null), 100);
+test('a resume, a source that cannot jump and an empty source say where they start', () => {
+  assert.match(describePlan(plan({ resume: true, continues_from: null, checkpoint: { collected_posts: 80 } }), null),
+    /resumes from its checkpoint \(80 posts collected so far\): about 2,180 older posts$/);
+  assert.match(describePlan(plan({ continues_from: null }), null), /starts at the newest post: about 2,180 older posts$/);
+  assert.equal(describePlan(plan({ current_stored_posts: 0, oldest_published_at: null, continues_from: null, older_posts: 2300 }), null),
+    'Nothing is stored yet. The archive starts at the newest post: about 2,300 posts');
+  assert.equal(describePlan(plan({ older_posts: 0 }), null), 'You have 120 posts, back to 3 Mar 2025. Nothing older to fetch.');
 });
 
 test('rate limits read as pauses', () => {

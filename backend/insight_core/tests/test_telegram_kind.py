@@ -328,19 +328,18 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await session.close())
         self.assertIsNone(await session.close(), "close is idempotent")
 
-    async def test_the_session_is_open_for_the_inspection_refresh(self):
+    async def test_a_run_records_archive_metadata_without_measuring_the_channel(self):
         writes = []
 
         class Writer:
             def record(self, source_id, kind, data, mode):
-                writes.append((source_id, data))
+                writes.append((data, mode))
 
         client = FakeTelegramClient(channels={"aaa": channel(7)})
         h = Harness(client)
-        h.inspections = DbInspectionRefresher(writer=Writer(), gates=h.gates, clock=h.clock, interval_hours=0,
-                                              enabled=True)
+        h.inspections = DbInspectionRefresher(writer=Writer())
         await h.run([tg_source("aaa")])
-        self.assertEqual(writes[0][1]["available_posts"], 7)
+        self.assertEqual(writes, [({"source_type": "telegram_mtproto", "posts_fetched": 7}, "live")])
         self.assertEqual(client.calls[-1], ("disconnect",))
         self.assertEqual(client.count("connect"), 1)
 

@@ -61,18 +61,15 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     def clock() -> datetime:
         return datetime.now(timezone.utc)
 
-    gates = FetchGates.shared()
     return IngestionRunner(
         catalog=DbSourceCatalog(db_url),
         state=DbFetchStateStore(db_url),
         saver=DbPostSaver(db_url),
         inspections=DbInspectionRefresher(
             writer=ArchiveMetadataWriter(posts=PostsService(db_url), sources=SourcesService(db_url)),
-            gates=gates,
-            clock=clock,
         ),
         registry=KindRegistry.default(KindHttp(), YouTubeService(db_url), db_url=db_url),
-        gates=gates,
+        gates=FetchGates.shared(),
         run_lock=PgAdvisoryRunLock(db_url),
         availability=availability_from_env,
         clock=clock,

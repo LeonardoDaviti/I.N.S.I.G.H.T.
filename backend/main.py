@@ -207,7 +207,6 @@ class SystemStatus(BaseModel):
 
 
 class ArchiveRequest(BaseModel):
-    desiredPosts: int | None = None
     resume: bool | None = True
     pageDelaySeconds: int | None = None
     batchSize: int | None = None
@@ -374,7 +373,6 @@ def _accept_ingestion_run(
 
 async def _run_archive(
     source_id: str,
-    desired_posts: int | None = None,
     *,
     resume: bool = True,
     rate_limit_overrides: Dict[str, Any] | None = None,
@@ -391,18 +389,17 @@ async def _run_archive(
         "archive_source",
         trigger="manual",
         source_id=source_id,
-        payload={"desired_posts": desired_posts, "resume": resume, "rate_limit": rate_limit_overrides or {}},
+        payload={"resume": resume, "rate_limit": rate_limit_overrides or {}},
     )
     try:
         ops.try_append_job_event(
             job_id,
             message="Archive job started",
             level="info",
-            payload={"desired_posts": desired_posts, "resume": resume, "rate_limit": rate_limit_overrides or {}},
+            payload={"resume": resume, "rate_limit": rate_limit_overrides or {}},
         )
         result = await services().source_fetch.archive_source(
             source_id,
-            desired_posts,
             progress_callback=lambda event: ops.try_append_job_event(
                 job_id,
                 message=str(event.get("message") or event.get("stage") or "Archive progress"),
@@ -426,7 +423,8 @@ async def _run_archive(
     ops.try_finish_job(
         job_id,
         status="success" if result.get("success") else "failed",
-        message=result.get("error") or f"Archived {result.get('posts_fetched', 0)} posts",
+        # A paused archive (issue 0016) is a success whose message says why it paused.
+        message=result.get("error") or result.get("message") or f"Archived {result.get('posts_fetched', 0)} posts",
         payload=result,
     )
     return result
@@ -473,14 +471,13 @@ def _accept_archive_run(
         trigger="manual",
         source_id=source_id,
         message="Archive",
-        payload={"desired_posts": request.desiredPosts, "resume": resume, "rate_limit": rate_limit_overrides},
+        payload={"resume": resume, "rate_limit": rate_limit_overrides},
     )
     if not job_id:
         return JSONResponse(status_code=503, content={"success": False, "error": "job tracking unavailable"})
     _archiving_sources.add(source_id)
     background_tasks.add_task(
-        _run_archive_once, source_id, request.desiredPosts,
-        resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
+        _run_archive_once, source_id, resume=resume, rate_limit_overrides=rate_limit_overrides, job_id=job_id,
     )
     return JSONResponse(status_code=202, content=_accepted_job_response(job_id, "archive_source", message="Archive started"))
 
@@ -869,12 +866,11 @@ async def get_archive_catalog():
 @app.post("/api/archive/{source_id}/plan")
 @error_detail("plan the archive")
 async def plan_archive(source_id: str, request: ArchiveRequest):
-    """Estimate archive effort for a source."""
+    """Measure a source and say where its archive continues from and how much is older."""
     logger.info(f"🧭 Planning archive for source: {source_id}")
     try:
         plan = await services().source_fetch.plan_archive(
             source_id,
-            request.desiredPosts,
             resume=bool(request.resume),
             rate_limit_overrides={
                 "page_delay_seconds": request.pageDelaySeconds,
@@ -901,7 +897,6 @@ async def run_archive(source_id: str, request: ArchiveRequest, background_tasks:
     logger.info(f"📦 Running archive for source: {source_id}")
     result = await _run_archive(
         source_id,
-        request.desiredPosts,
         resume=bool(request.resume),
         rate_limit_overrides=rate_limit_overrides,
     )

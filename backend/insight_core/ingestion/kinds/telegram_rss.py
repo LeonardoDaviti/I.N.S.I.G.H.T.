@@ -2,7 +2,7 @@
 
 The bridge answers "Too many requests" (FLOOD_WAIT) when paged quickly, so live pages are
 rate limited too (live_pages_rate_limited) and a live fetch reads only the pages it needs
-for `limit`. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
+for `limit`. That JSON answer is raised as HttpError(status=429), so the caller slows down. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
 every page URL.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
@@ -23,6 +23,7 @@ from insight_core.ingestion.kinds.base import (
     RateLimit,
     Source,
     resume_counts,
+    start_at,
 )
 from insight_core.utils.json_safe import iso
 
@@ -122,17 +123,32 @@ class TelegramRssKind(BaseKind):
             if collected < target:
                 await self.http.sleep(rate.delay_after(pages_fetched))
 
-    async def fetch_page(self, source_url: str, page: int) -> List[Dict[str, Any]]:
-        origin = parsing.origin_from_source(source_url, parsing.TELEGRAM_BASE_URL)
-        username = _username(source_url)
+    async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:
+        # Pages are numbered from the newest, so page stored // page size is at or before the
+        # oldest stored post. The raw page size, not the filtered count: that would skip posts.
+        source_url = str(source["handle_or_url"])
+        limit = urllib.parse.parse_qs(urllib.parse.urlparse(source_url).query).get("limit", [""])[0]
+        page_size = int(limit) if limit.isdigit() else len(await self._feed_items(source_url, 1))
+        return start_at(mode="telegram_page", next_page=max(1, int(stored["post_count"]) // max(1, page_size)))
+
+    async def _feed_items(self, source_url: str, page: int) -> List[Dict[str, Any]]:
+        """Every item of one page as the bridge lists it (sponsored and non-canonical ones too)."""
         body, _ = await self.http.get_text(page_url(source_url, page))
 
         if body.lstrip().startswith("{"):
             payload = json.loads(body)
-            raise ValueError(payload.get("errors", payload))
+            errors = payload.get("errors", payload)
+            if "too many requests" in str(errors).lower():
+                # The bridge answers its flood limit as a JSON body, not a 429 (issue 0016).
+                raise HttpError(f"HTTP 429 from {page_url(source_url, page)}: {errors}", status=429)
+            raise ValueError(errors)
+        origin = parsing.origin_from_source(source_url, parsing.TELEGRAM_BASE_URL)
+        return parsing.parse_feed_posts(body, f"{origin}/rss/{_username(source_url)}")
 
+    async def fetch_page(self, source_url: str, page: int) -> List[Dict[str, Any]]:
+        origin = parsing.origin_from_source(source_url, parsing.TELEGRAM_BASE_URL)
         canonical: List[Dict[str, Any]] = []
-        for post in parsing.parse_feed_posts(body, f"{origin}/rss/{username}"):
+        for post in await self._feed_items(source_url, page):
             match = CANONICAL_RE.match(post["url"])
             if not match or post.get("title", "").startswith("[Sponsored]"):
                 continue

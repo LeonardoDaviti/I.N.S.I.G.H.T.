@@ -239,7 +239,7 @@ describe('Sources → ingestion tab', () => {
           success: true,
           total: 3,
           sources: [
-            catalogEntry(),
+            catalogEntry({ last_inspected_at: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
             catalogEntry({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', platform: 'rss', kind: 'generic_rss',
               stored_posts: 30, available_posts: 30, backlog_posts: 0, archive_status: 'archived' }),
             catalogEntry({ source_id: 'kaitchup', display_name: 'The Kaitchup', platform: 'substack', kind: 'substack',
@@ -253,13 +253,13 @@ describe('Sources → ingestion tab', () => {
     const mkbhd = (await within(catalog).findByText('Marques Brownlee')).closest('li') as HTMLElement;
     expect(within(mkbhd).getByText('partial')).toBeInTheDocument();
     expect(within(mkbhd).getByText(/120 of 1,722 stored/)).toBeInTheDocument();
-    expect(within(mkbhd).getByText(/1,602 in backlog/)).toBeInTheDocument();
+    expect(within(mkbhd).getByText(/1,602 in backlog · measured 3d ago/)).toBeInTheDocument();
     const simon = within(catalog).getByText('Simon Willison’s Weblog').closest('li') as HTMLElement;
     expect(within(simon).getByText('archived')).toBeInTheDocument();
     expect(within(simon).getByText(/no backlog/)).toBeInTheDocument();
     const kaitchup = within(catalog).getByText('The Kaitchup').closest('li') as HTMLElement;
     expect(within(kaitchup).getByText('not archived')).toBeInTheDocument();
-    expect(within(kaitchup).getByText(/0 stored/)).toBeInTheDocument();
+    expect(within(kaitchup).getByText(/0 stored · not measured yet/)).toBeInTheDocument();
 
     await userEvent.type(within(catalog).getByRole('searchbox', { name: 'Search the catalog' }), 'kait');
     expect(within(catalog).queryByText('Marques Brownlee')).toBeNull();
@@ -268,8 +268,8 @@ describe('Sources → ingestion tab', () => {
 
   it('a backfill runs with the chosen resume, page delay, batch size and cooldown', async () => {
     const planSourceArchive = vi.fn().mockResolvedValue({
-      available_posts: 1722, available_basis: 'exact', desired_posts: 500, remaining_posts: 420, estimated_pages: 21,
-      estimated_seconds: 3600, resume: true, resume_available: true,
+      available_posts: 1722, available_basis: 'exact', older_posts: 1602, estimated_pages: 21,
+      estimated_seconds: 3600, current_stored_posts: 120, resume: true, resume_available: true,
       rate_limit: { page_delay_seconds: 8, batch_size: 5, batch_cooldown_seconds: 60 },
     });
     const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'arch-1' });
@@ -295,9 +295,9 @@ describe('Sources → ingestion tab', () => {
     }
     await userEvent.click(within(backfill).getByRole('button', { name: 'Plan' }));
     const rate = { pageDelaySeconds: 8, batchSize: 5, batchCooldownSeconds: 60 };
-    await waitFor(() => expect(planSourceArchive).toHaveBeenCalledWith('mkbhd', 500, true, rate));
+    await waitFor(() => expect(planSourceArchive).toHaveBeenCalledWith('mkbhd', true, rate));
     await userEvent.click(await within(backfill).findByRole('button', { name: 'Resume archive' }));
-    await waitFor(() => expect(startSourceArchive).toHaveBeenCalledWith('mkbhd', 500, true, rate));
+    await waitFor(() => expect(startSourceArchive).toHaveBeenCalledWith('mkbhd', true, rate));
     expect(await within(backfill).findByText('5%')).toBeInTheDocument();
   });
 

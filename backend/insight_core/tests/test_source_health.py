@@ -362,14 +362,14 @@ class _FakeSourcesService:
 
 
 class ArchiveCatalogTests(unittest.TestCase):
-    def test_entries_carry_kind_backlog_remaining_and_eta(self):
+    def test_entries_carry_kind_backlog_eta_and_when_measured(self):
         service = SourceFetchService("postgresql:///unused", kinds=registry())
         service.sources_service = _FakeSourcesService([
             {"id": "a", "platform": "youtube", "handle_or_url": "@a", "enabled": True, "post_count": 10,
-             "settings": {"archive": {"available_posts": 40, "stored_posts": 10, "remaining_posts": 25,
-                                      "estimated_seconds": 120, "status": "partial"}}},
+             "settings": {"archive": {"available_posts": 40, "stored_posts": 10, "estimated_seconds": 120,
+                                      "status": "partial", "last_inspected_at": "2026-10-13T10:00:00+00:00"}}},
             {"id": "b", "platform": "rss", "handle_or_url": "https://b", "enabled": True, "post_count": 3,
-             "settings": {"archive": {"available_posts": None, "remaining_posts": 99}}},
+             "settings": {"archive": {"available_posts": None}}},
             {"id": "c", "platform": "rss", "handle_or_url": "https://c", "enabled": False, "post_count": 0,
              "settings": {}},
         ])
@@ -378,12 +378,12 @@ class ArchiveCatalogTests(unittest.TestCase):
         self.assertEqual(set(entries), {"a", "b"})
         self.assertEqual(entries["a"]["kind"], "youtube_channel")
         self.assertEqual(entries["a"]["backlog_posts"], 30)
-        self.assertEqual(entries["a"]["remaining_posts"], 25)
         self.assertEqual(entries["a"]["estimated_seconds"], 120)
+        self.assertEqual(entries["a"]["last_inspected_at"], "2026-10-13T10:00:00+00:00")
         self.assertEqual(entries["b"]["kind"], "generic_rss")
-        self.assertIsNone(entries["b"]["backlog_posts"], "available unknown: never the plan's remaining")
-        self.assertEqual(entries["b"]["remaining_posts"], 99)
+        self.assertIsNone(entries["b"]["backlog_posts"], "available unknown")
         self.assertIsNone(entries["b"]["estimated_seconds"])
+        self.assertIsNone(entries["b"]["last_inspected_at"], "never measured")
 
 
 if __name__ == "__main__":

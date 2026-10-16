@@ -1,6 +1,6 @@
 # 0015 — Smart archiving: continue below what I have, and no measuring phase in fetch runs
 
-Status: **ready-for-agent** (designed with the owner, 2026-10-16).
+Status: **built** 2026-10-16, not yet deployed (designed with the owner, 2026-10-16).
 
 ## Problem Statement
 - **An archive downloads what I already have first.** It always starts at the source's newest page and walks back. If I have 400 posts and ask for 500, it downloads my 400 again before anything new arrives, and those 400 count toward the 500. On slow, rate-limited sites (Nitter, Reddit, the Telegram bridge) that is minutes of wasted requests, and every wasted request moves us closer to a 429.

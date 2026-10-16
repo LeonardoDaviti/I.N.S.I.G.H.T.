@@ -42,16 +42,28 @@ HOST_FLOORS: Mapping[str, float] = {
     SUBSTACK_HOST_KEY: 2.0,            # every substack source (one Substack backend, §10)
 }
 
+# The learned pace (issue 0016). A host that limits us (HTTP 429) or times out is waited
+# out (its Retry-After, else DEFAULT_WAIT_S; never more than MAX_WAIT_S) and its gap doubles
+# within [MIN_LIMITED_GAP_S, MAX_GAP_S]. SHRINK_AFTER successes in a row take a quarter off
+# the gap, never below the host's floor. Kept for the life of the process.
+MAX_WAIT_S = 120.0
+DEFAULT_WAIT_S = 60.0
+MIN_LIMITED_GAP_S = 5.0
+MAX_GAP_S = 120.0
+SHRINK_AFTER = 20
+SHRINK_FACTOR = 0.75
+
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
 
 
 class HostLimiter:
-    """One in-flight request per host, request starts spaced by the host's floor.
+    """One in-flight request per host, request starts spaced by the host's learned gap.
 
     A global sleep between sources buys nothing under asyncio.gather - every task sleeps at
     the same time - while sources cluster hard by host (12 github.com, 10 reddit.com, 6
-    arxiv). Spacing belongs per host.
+    arxiv). Spacing belongs per host. The gap starts at the host's floor and learns from
+    limited() and succeeded().
     """
 
     def __init__(
@@ -66,12 +78,33 @@ class HostLimiter:
         self._sleep = sleep
         self._locks: dict[str, asyncio.Lock] = {}
         self._last_request_at: dict[str, float] = {}
+        self._gaps: dict[str, float] = {}
+        self._successes: dict[str, int] = {}
 
     host_key = staticmethod(source_host_key)
 
+    def gap(self, host: str) -> float:
+        """Seconds between request starts to this host now: the learned gap, else the floor."""
+        return self._gaps.get(host, float(self.host_floors.get(host, 0.0)))
+
+    def limited(self, host: str, retry_after_s: Optional[float] = None) -> float:
+        """The host limited us (or timed out): double its gap. Returns how long to wait."""
+        self._gaps[host] = min(MAX_GAP_S, max(2 * self.gap(host), MIN_LIMITED_GAP_S))
+        self._successes[host] = 0
+        return min(MAX_WAIT_S, DEFAULT_WAIT_S if retry_after_s is None else max(0.0, retry_after_s))
+
+    def succeeded(self, host: str) -> None:
+        """One request went through; every SHRINK_AFTER in a row take a quarter off a learned gap."""
+        if host not in self._gaps:
+            return
+        self._successes[host] = self._successes.get(host, 0) + 1
+        if self._successes[host] >= SHRINK_AFTER:
+            self._gaps[host] = max(float(self.host_floors.get(host, 0.0)), self._gaps[host] * SHRINK_FACTOR)
+            self._successes[host] = 0
+
     @contextlib.asynccontextmanager
     async def slot(self, host: str, min_interval: float = 0.0) -> AsyncIterator[None]:
-        min_interval = max(float(min_interval or 0), float(self.host_floors.get(host, 0.0)))
+        min_interval = max(float(min_interval or 0), self.gap(host))
         lock = self._locks.get(host)
         if lock is None:
             lock = self._locks[host] = asyncio.Lock()
@@ -163,6 +196,7 @@ class FetchGates:
         self.ytdlp_semaphore = asyncio.Semaphore(self.ytdlp_concurrency)
         self.ytdlp_spacer = StartSpacer(ytdlp_min_start_interval_s, clock=clock, sleep=sleep)
         self.host_limiter = HostLimiter(host_floors, clock=clock, sleep=sleep)
+        self.sleep = sleep   # the wait a limiting host asked for, before the one retry
 
     @classmethod
     def from_env(cls) -> "FetchGates":
@@ -194,7 +228,7 @@ class FetchGates:
     async def slot(
         self, profile: PolitenessProfile, host_key: str, *, per_source_delay_s: float = 0.0
     ) -> AsyncIterator[None]:
-        """Hold every gate the profile needs for one fetch (or inspection) of one source."""
+        """Hold every gate the profile needs for one fetch of one source, or one archive page."""
         async with contextlib.AsyncExitStack() as stack:
             if profile.concurrency_pool == "ytdlp":
                 # No host lock: youtube.com is one host key, and the lock would serialise every

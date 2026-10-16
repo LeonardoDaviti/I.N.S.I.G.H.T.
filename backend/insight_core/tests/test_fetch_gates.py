@@ -19,6 +19,7 @@ from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import PolitenessProfile, source_host_key
 from insight_core.ingestion.kinds.nitter_rss import NITTER_HOSTS
 from insight_core.ingestion.kinds.telegram_rss import TELEGRAM_RSS_HOSTS
+from insight_core.tests._ingestion_fakes import SleepClock
 
 HOST_LOCK = PolitenessProfile(concurrency_pool="host-lock")
 YTDLP = PolitenessProfile(concurrency_pool="ytdlp", requires="ytdlp")
@@ -27,21 +28,6 @@ YTDLP = PolitenessProfile(concurrency_pool="ytdlp", requires="ytdlp")
 def _source(handle: str, platform: str = "rss", priority: int = 999) -> dict:
     return {"id": f"id-{handle}", "handle_or_url": handle, "platform": platform,
             "settings": {"priority": priority}}
-
-
-class FakeClock:
-    """A monotonic clock that only moves when the code under test sleeps."""
-
-    def __init__(self) -> None:
-        self.now = 1000.0
-        self.sleeps: list[float] = []
-
-    def __call__(self) -> float:
-        return self.now
-
-    async def sleep(self, seconds: float) -> None:
-        self.sleeps.append(round(seconds, 6))
-        self.now += seconds
 
 
 class HostKeyTests(unittest.TestCase):
@@ -109,7 +95,7 @@ class HostLimiterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(live["max"], 5, "a per-HOST limiter must not serialise across hosts")
 
     async def test_min_interval_spaces_successive_calls(self):
-        clock = FakeClock()
+        clock = SleepClock()
         limiter = HostLimiter({}, clock=clock, sleep=clock.sleep)
         for _ in range(3):
             async with limiter.slot("example.com", 0.05):
@@ -118,7 +104,7 @@ class HostLimiterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_host_floor_raises_a_lower_source_delay(self):
         """A source configured with 0s on telegram.local still gets the bridge's floor."""
-        clock = FakeClock()
+        clock = SleepClock()
         limiter = HostLimiter({"telegram.local": 5.0}, clock=clock, sleep=clock.sleep)
         for _ in range(2):
             async with limiter.slot("telegram.local", 0):
@@ -126,12 +112,62 @@ class HostLimiterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clock.sleeps, [5.0])
 
     async def test_a_higher_source_delay_beats_the_floor(self):
-        clock = FakeClock()
+        clock = SleepClock()
         limiter = HostLimiter({"telegram.local": 5.0}, clock=clock, sleep=clock.sleep)
         for _ in range(2):
             async with limiter.slot("telegram.local", 12):
                 pass
         self.assertEqual(clock.sleeps, [12.0])
+
+
+class LearnedPaceTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0016: a host that limits us gets a doubled gap; a run of successes shrinks it."""
+
+    def test_a_limit_doubles_the_gap_with_a_minimum_and_a_cap(self):
+        limiter = HostLimiter({"reddit.com": 8.0, "big.test": 100.0})
+        limiter.limited("reddit.com")
+        self.assertEqual(limiter.gap("reddit.com"), 16.0)
+        limiter.limited("free.test")
+        self.assertEqual(limiter.gap("free.test"), 5.0, "a host with no floor still slows to 5 s")
+        limiter.limited("big.test")
+        self.assertEqual(limiter.gap("big.test"), 120.0)
+
+    def test_the_wait_is_retry_after_capped_and_a_minute_without_it(self):
+        limiter = HostLimiter({})
+        self.assertEqual(limiter.limited("a.test", 7), 7)
+        self.assertEqual(limiter.limited("a.test", 600), 120)
+        self.assertEqual(limiter.limited("a.test", None), 60)
+
+    def test_twenty_successes_shrink_the_gap_by_a_quarter_never_below_the_floor(self):
+        limiter = HostLimiter({"reddit.com": 8.0})
+        limiter.limited("reddit.com")   # 16
+        for _ in range(19):
+            limiter.succeeded("reddit.com")
+        self.assertEqual(limiter.gap("reddit.com"), 16.0)
+        limiter.succeeded("reddit.com")
+        self.assertEqual(limiter.gap("reddit.com"), 12.0)
+        for _ in range(40):
+            limiter.succeeded("reddit.com")
+        self.assertEqual(limiter.gap("reddit.com"), 8.0)
+
+    def test_a_limit_resets_the_success_count(self):
+        limiter = HostLimiter({})
+        limiter.limited("a.test")       # 5
+        for _ in range(19):
+            limiter.succeeded("a.test")
+        limiter.limited("a.test")       # 10, count back to 0
+        limiter.succeeded("a.test")
+        self.assertEqual(limiter.gap("a.test"), 10.0)
+
+    async def test_spacing_uses_the_learned_gap(self):
+        clock = SleepClock()
+        limiter = HostLimiter({"reddit.com": 8.0}, clock=clock, sleep=clock.sleep)
+        async with limiter.slot("reddit.com"):
+            pass
+        limiter.limited("reddit.com")
+        async with limiter.slot("reddit.com"):
+            pass
+        self.assertEqual(clock.sleeps, [16.0])
 
 
 class StartSpacerTests(unittest.IsolatedAsyncioTestCase):
@@ -235,7 +271,7 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(handle=source["handle_or_url"]):
                 kind = registry.resolve(source)
                 self.assertEqual(kind.name, kind_name)
-                clock = FakeClock()
+                clock = SleepClock()
                 gates = FetchGates(clock=clock, sleep=clock.sleep)
                 for _ in range(2):
                     async with gates.slot(kind.profile, kind.host_key(source)):
@@ -243,7 +279,7 @@ class SlotTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(clock.sleeps, [floor] if floor else [])
 
     async def test_per_source_delay_applies_when_above_the_floor(self):
-        clock = FakeClock()
+        clock = SleepClock()
         gates = FetchGates(host_floors={}, clock=clock, sleep=clock.sleep)
         for _ in range(2):
             async with gates.slot(HOST_LOCK, "a.example.com", per_source_delay_s=3):

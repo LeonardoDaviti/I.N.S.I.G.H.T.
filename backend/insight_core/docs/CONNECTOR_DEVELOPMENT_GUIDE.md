@@ -20,9 +20,11 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/parsing.py`: pure helpers (feed parsing, `strip_html`, dates, article
   extraction, image URLs).
 - `ingestion/http.py`: `KindHttp`, the one HTTP client every kind uses. It owns the
-  User-Agent, the TLS-skip hosts and the politeness sleep.
+  User-Agent, the TLS-skip hosts and the politeness sleep, and raises every failure as an
+  `HttpError` (status, Retry-After, timed out).
 - `ingestion/gates.py`: `FetchGates` turns a profile into concurrency limits.
-  `HOST_FLOORS` holds the per-host spacing.
+  `HOST_FLOORS` holds each host's starting spacing; a 429 or a timeout doubles it (the
+  learned pace, `BACKEND.md`).
 - `ingestion/runner.py`: `IngestionRunner`, the live fetch (`run_ingestion(FetchRequest) ->
   RunReport`). `services/source_fetch_service.py` runs the archive.
 
@@ -40,20 +42,25 @@ class SourceKind(Protocol):
     async def inspect(self, source) -> Inspection
     def archive_pages(self, source, target, checkpoint, rate) -> AsyncIterator[ArchivePage]
     def checkpoint_resumable(self, checkpoint) -> bool
+    async def start_checkpoint(self, source, stored) -> dict | None
     def estimate_pages(self, remaining, page_size) -> int
     def session(self) -> KindSession
 ```
 
-`BaseKind` gives defaults for `host_key`, `checkpoint_resumable` (false), `estimate_pages`
-and `session` (a no-op). You write `matches`, `fetch_latest`, `inspect` and `archive_pages`.
+`BaseKind` gives defaults for `host_key`, `checkpoint_resumable` (false), `start_checkpoint`
+(None), `estimate_pages` and `session` (a no-op). You write `matches`, `fetch_latest`, `inspect` and `archive_pages`.
 
 - **`matches(source)`** looks at `source["platform"]` and `source["handle_or_url"]`. Keep it
   cheap and with no I/O. The result is cached per source.
 - **`fetch_latest(source, limit)`** returns the newest posts, at most `limit`. The runner calls
   it once per due source.
 - **`inspect(source)`** returns `Inspection(available_posts, page_size, first_post_date, raw)`.
-  The archive UI uses it to plan a backfill. Set `available_basis` to say what the count means
-  (`exact`, `upper_bound`, `estimate`, `listing_cap`, `feed_window`, `unknown`).
+  Planning an archive calls it (a fetch run never does). Set `available_basis` to say what the
+  count means (`exact`, `upper_bound`, `estimate`, `listing_cap`, `feed_window`, `unknown`).
+- **`start_checkpoint(source, stored)`** says where an archive continues below the stored
+  posts (`stored`: `post_count`, `oldest_published_at`, `oldest_external_id`): your own
+  checkpoint shape with `collected_posts: 0, pages_fetched: 0` (`kinds.base.start_at`), one
+  page early, or None when the kind cannot jump (the archive starts at the newest post).
 - **`archive_pages(...)`**: see below.
 
 Raise `KindUnavailable(reason)` when the kind needs something this process does not have.

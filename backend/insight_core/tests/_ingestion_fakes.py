@@ -23,6 +23,21 @@ class FixedClock:
         self.at = self.at + delta
 
 
+class SleepClock:
+    """A monotonic clock that only moves when the code under test sleeps (gates' clock and sleep)."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(round(seconds, 6))
+        self.now += seconds
+
+
 class InMemorySourceCatalog:
     def __init__(self, sources: list[dict], folders: Mapping[str, list[str]] | None = None):
         self.sources = sources

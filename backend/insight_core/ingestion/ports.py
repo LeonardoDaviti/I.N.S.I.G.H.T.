@@ -64,6 +64,8 @@ class PostSaver(Protocol):
 
 
 class InspectionRefresher(Protocol):
+    """Records a fetched source's archive metadata. Never raises."""
+
     async def refresh(self, source: Source, kind: Any, fetched_posts: int) -> None: ...
 
 
@@ -89,7 +91,7 @@ NULL_PROGRESS: ProgressSink = _NullProgress()
 
 # Rough job progress per phase, so the Operations panel's bar moves. Each "source" event
 # moves it from 10 towards 80 by sources done out of due.
-_PHASE_PROGRESS = {"decided": 10.0, "saved": 80.0, "inspected": 100.0}
+_PHASE_PROGRESS = {"decided": 10.0, "saved": 100.0}
 
 
 class JobProgressSink:
@@ -107,23 +109,32 @@ class JobProgressSink:
         if not self.job_id:
             return
         data = data or {}
-        progress, fields, message = _PHASE_PROGRESS.get(phase), None, f"Ingestion {phase}"
+        progress, fields, message, level = _PHASE_PROGRESS.get(phase), None, f"Ingestion {phase}", "info"
         if phase == "source":
             sources = data["sources"]
             progress = 10.0 + 70.0 * sources["done"] / max(1, sources["total"])
             fields = {"sources": sources, "new_posts": data["new_posts"]}
             message = _source_line(data)
+            level = "error" if data.get("status") == "error" else "info"
+        elif phase == "slowed":
+            message, level = slowed_line(data), "warning"
         try:
             self.ops.append_job_event(
                 self.job_id,
                 message=message,
-                level="error" if phase == "source" and data.get("status") == "error" else "info",
+                level=level,
                 progress=progress,
                 payload={"phase": phase, **data},
                 fields=fields,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not record ingestion progress (%s): %s", phase, exc)
+
+
+def slowed_line(data: dict) -> str:
+    """A host limited us: "reddit.com: too many requests, slowing to 16 s" (runner and archive)."""
+    why = "timed out" if data.get("timed_out") else "too many requests"
+    return f"{data['host']}: {why}, slowing to {data['gap_s']:g} s"
 
 
 def _source_line(data: dict) -> str:
