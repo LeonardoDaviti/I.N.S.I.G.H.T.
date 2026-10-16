@@ -2,7 +2,7 @@
 
 The bridge answers "Too many requests" (FLOOD_WAIT) when paged quickly, so live pages are
 rate limited too (live_pages_rate_limited) and a live fetch reads only the pages it needs
-for `limit`. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
+for `limit`. That JSON answer is raised as HttpError(status=429), so the caller slows down. The source URL's query (e.g. ?limit=50, the bridge's page size) is kept on
 every page URL.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
@@ -129,7 +129,11 @@ class TelegramRssKind(BaseKind):
 
         if body.lstrip().startswith("{"):
             payload = json.loads(body)
-            raise ValueError(payload.get("errors", payload))
+            errors = payload.get("errors", payload)
+            if "too many requests" in str(errors).lower():
+                # The bridge answers its flood limit as a JSON body, not a 429 (issue 0016).
+                raise HttpError(f"HTTP 429 from {page_url(source_url, page)}: {errors}", status=429)
+            raise ValueError(errors)
 
         canonical: List[Dict[str, Any]] = []
         for post in parsing.parse_feed_posts(body, f"{origin}/rss/{username}"):

@@ -426,7 +426,8 @@ async def _run_archive(
     ops.try_finish_job(
         job_id,
         status="success" if result.get("success") else "failed",
-        message=result.get("error") or f"Archived {result.get('posts_fetched', 0)} posts",
+        # A paused archive (issue 0016) is a success whose message says why it paused.
+        message=result.get("error") or result.get("message") or f"Archived {result.get('posts_fetched', 0)} posts",
         payload=result,
     )
     return result

@@ -76,9 +76,13 @@ interface RunView {
   fetched?: number;
   inserted?: number;
   pages?: number;
+  /** Why the archive paused (a site limiting us); it resumes from its checkpoint. */
+  pausedReason?: string;
 }
 
 const count = (value: unknown) => (typeof value === 'number' ? value : undefined);
+const pausedReason = (result?: { paused?: boolean; paused_reason?: unknown } | null) =>
+  (result?.paused && typeof result.paused_reason === 'string' ? result.paused_reason : undefined);
 
 function fromJob(job: JobRun): RunView {
   const events = Array.isArray(job.payload?.events) ? job.payload.events as Array<{ message?: string }> : [];
@@ -93,6 +97,7 @@ function fromJob(job: JobRun): RunView {
     fetched: count(payload.posts_fetched),
     inserted: count(payload.posts_inserted),
     pages: count(payload.pages_fetched),
+    pausedReason: pausedReason(payload),
   };
 }
 
@@ -107,6 +112,7 @@ function fromSummary(job: ArchiveJobSummary): RunView {
     fetched: job.result?.posts_fetched,
     inserted: job.result?.posts_inserted,
     pages: job.result?.pages_fetched,
+    pausedReason: pausedReason(job.result),
   };
 }
 
@@ -248,11 +254,11 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
     }
   };
 
-  const start = async () => {
+  const start = async (fromCheckpoint = resume) => {
     setStarting(true);
     setError(null);
     try {
-      const { job_id: started } = await api.startSourceArchive(sourceId, desired, resume, ...rateArgs);
+      const { job_id: started } = await api.startSourceArchive(sourceId, desired, fromCheckpoint, ...rateArgs);
       setJobId(started);
       setPlan(null);
       setPlannedFor(null);
@@ -384,6 +390,13 @@ function ArchiveControls({ sourceId, status, support, pacing, onChanged }: {
       {run && !running ? (
         run.status === 'failed' ? (
           <Notice tone="error" title="The last archive failed" message={run.message || 'No reason was recorded.'} />
+        ) : run.pausedReason ? (
+          <Notice
+            tone="warning"
+            title={`Paused: ${run.pausedReason}`}
+            message={resultLine(run)}
+            action={starting ? undefined : { label: 'Resume', onClick: () => void start(true) }}
+          />
         ) : (
           <p className="text-[0.75rem] text-fg-2">
             <StatusGlyph status="ok" label="last run" />

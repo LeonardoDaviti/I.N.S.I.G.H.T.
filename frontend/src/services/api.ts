@@ -136,6 +136,9 @@ export interface ArchiveJobSummary {
     stored_posts?: number;
     desired_posts?: number;
     error?: string;
+    /** Issue 0016: the archive paused (a site limiting us); Resume continues from its checkpoint. */
+    paused?: boolean;
+    paused_reason?: string;
   };
 }
 

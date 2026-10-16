@@ -247,12 +247,32 @@ The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged setti
 
 - Due sources are fetched in `priority` order, then interleaved by host.
 - `fetch_delay_seconds` is passed to `FetchGates.slot` and sets the minimum gap between
-  requests to that source's host. The host floors in `ingestion/gates.py` still apply.
+  requests to that source's host. The host's learned gap (below) still applies.
 - `max_posts_per_fetch` feeds the cadence rules in `ingestion/schedule.py`, which decide each
   fetch's post limit.
 - Each source's posts are saved as soon as its fetch finishes, so they reach the reader during
   the run; while it runs, the `ingestion_run` job's payload carries `sources: {done, total}`
   and `new_posts`.
+
+### Pacing: a gap per host that learns
+
+`HostLimiter` in `ingestion/gates.py` spaces request starts to one host key (`reddit.com`,
+`platform:reddit`, `substack.com`, the Telegram and Nitter bridges) by that host's gap. The
+gap starts at the host's floor (`HOST_FLOORS`, else 0) and is kept for the life of the
+process, so it carries from one hourly run to the next; a restart starts fresh.
+
+- `KindHttp` only classifies failures: each is an `HttpError` (a `ValueError`) with
+  `status`, `retry_after` and `timed_out`. The Telegram bridge's JSON "Too many requests"
+  answer is raised as a 429.
+- On a 429 or a timeout the runner, still inside the source's slot, waits what the site asks
+  (Retry-After, else 60 s; at most 120 s), doubles the host's gap (at least 5 s, at most
+  120 s), adds a `slowed` event to the job ("reddit.com: too many requests, slowing to
+  16 s") and fetches once more. A second failure fails the source (backoff applies).
+- 20 successes in a row take a quarter off the gap, never below the floor.
+- An archive takes the same `FetchGates.slot` for every page, so a run and an archive on one
+  host are spaced together. On a 429 or a timeout it waits, then asks again from the last
+  recorded checkpoint; twice in a row it pauses: the job succeeds with `paused: true` and
+  `paused_reason` ("reddit.com is limiting us"), and the checkpoint stays resumable.
 
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).

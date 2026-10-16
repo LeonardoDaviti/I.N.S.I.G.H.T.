@@ -1,6 +1,6 @@
 # 0016 — A pace that learns: survive 429s and timeouts instead of failing
 
-Status: **ready-for-agent** (designed with the owner, 2026-10-16).
+Status: **built** 2026-10-16, not yet deployed (designed with the owner, 2026-10-16).
 
 ## Problem Statement
 - **One 429 fails a source, and the next ones fail the same way.** In the full run on the preview, the first subreddit got HTTP 429 "Too Many Requests", and the other 8 were still asked at the same 8-second gap. All 9 failed. A Telegram bridge timeout failed its source too.

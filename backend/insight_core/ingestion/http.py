@@ -5,20 +5,63 @@ whole network edge with one fake (tests/_kind_fakes.FakeHttp) and record every d
 kind asks for through the injected sleeper instead of waiting it out.
 
 urllib is blocking, so every request runs in a worker thread (asyncio.to_thread).
+
+It only classifies failures: every one is an HttpError (a ValueError), carrying the status,
+the Retry-After seconds and whether it timed out. Retrying and slowing down are the
+caller's, where the host is known (issue 0016).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple
 
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_USER_AGENT = "INSIGHT Archive Fetcher/1.0"
+
+
+class HttpError(ValueError):
+    """A failed request: status (None for a network error), retry_after (integer seconds from
+    the Retry-After header, else None), timed_out (a connect or read timeout)."""
+
+    def __init__(self, message: str, *, status: Optional[int] = None, retry_after: Optional[int] = None,
+                 timed_out: bool = False) -> None:
+        super().__init__(message)
+        self.status = status
+        self.retry_after = retry_after
+        self.timed_out = timed_out
+
+    @property
+    def limiting(self) -> bool:
+        """The host is limiting us (429) or not answering in time: wait, slow down, retry once."""
+        return self.status == 429 or self.timed_out
+
+
+def _retry_after(headers: Any) -> Optional[int]:
+    value = str((headers.get("Retry-After") if headers is not None else None) or "").strip()
+    return int(value) if value.isdigit() else None
+
+
+@contextlib.contextmanager
+def _classified(action: str, url: str) -> Iterator[None]:
+    """urllib's failures as HttpError ("HTTP <code> while <action> <url>: <body>")."""
+    try:
+        yield
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise HttpError(f"HTTP {exc.code} while {action} {url}: {body[:200]}", status=exc.code,
+                        retry_after=_retry_after(exc.headers)) from exc
+    except urllib.error.URLError as exc:
+        raise HttpError(f"Failed {action} {url}: {exc.reason}",
+                        timed_out=isinstance(exc.reason, TimeoutError)) from exc
+    except TimeoutError as exc:   # a read timeout escapes urllib unwrapped
+        raise HttpError(f"Timed out {action} {url}", timed_out=True) from exc
 
 
 def _env_hosts(name: str, default: str = "") -> set[str]:
@@ -50,7 +93,7 @@ class KindHttp:
     async def get_text(
         self, url: str, *, user_agent: Optional[str] = None, headers: Optional[Dict[str, str]] = None
     ) -> Tuple[str, Dict[str, str]]:
-        """GET url; returns (body, lower-cased headers). Raises ValueError on HTTP/network errors.
+        """GET url; returns (body, lower-cased headers). Raises HttpError on HTTP/network errors.
 
         headers are extra request headers (e.g. a Cookie); they never appear in errors or logs.
         """
@@ -98,16 +141,11 @@ class KindHttp:
             url,
             headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*", **(extra_headers or {})},
         )
-        try:
+        with _classified("fetching", url):
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
                 body = response.read().decode("utf-8", errors="replace")
                 headers = {key.lower(): value for key, value in response.headers.items()}
                 return body, headers
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise ValueError(f"HTTP {exc.code} while fetching {url}: {body[:200]}") from exc
-        except urllib.error.URLError as exc:
-            raise ValueError(f"Failed to fetch {url}: {exc.reason}") from exc
 
     def _post_json_sync(
         self,
@@ -124,11 +162,6 @@ class KindHttp:
         }
         headers.update(extra_headers or {})
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        try:
+        with _classified("posting to", url):
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
                 return json.loads(response.read().decode("utf-8", errors="replace"))
-        except urllib.error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
-            raise ValueError(f"HTTP {exc.code} while posting to {url}: {body_text[:200]}") from exc
-        except urllib.error.URLError as exc:
-            raise ValueError(f"Failed to post to {url}: {exc.reason}") from exc

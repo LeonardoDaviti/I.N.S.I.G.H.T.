@@ -20,7 +20,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future) |
 | [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | built |
 | [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | ready-for-agent |
-| [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | ready-for-agent |
+| [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, not deployed |
 
 ## Analysis archive
 

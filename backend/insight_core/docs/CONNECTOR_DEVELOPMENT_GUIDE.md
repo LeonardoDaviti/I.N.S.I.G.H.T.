@@ -20,9 +20,11 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/parsing.py`: pure helpers (feed parsing, `strip_html`, dates, article
   extraction, image URLs).
 - `ingestion/http.py`: `KindHttp`, the one HTTP client every kind uses. It owns the
-  User-Agent, the TLS-skip hosts and the politeness sleep.
+  User-Agent, the TLS-skip hosts and the politeness sleep, and raises every failure as an
+  `HttpError` (status, Retry-After, timed out).
 - `ingestion/gates.py`: `FetchGates` turns a profile into concurrency limits.
-  `HOST_FLOORS` holds the per-host spacing.
+  `HOST_FLOORS` holds each host's starting spacing; a 429 or a timeout doubles it (the
+  learned pace, `BACKEND.md`).
 - `ingestion/runner.py`: `IngestionRunner`, the live fetch (`run_ingestion(FetchRequest) ->
   RunReport`). `services/source_fetch_service.py` runs the archive.
 

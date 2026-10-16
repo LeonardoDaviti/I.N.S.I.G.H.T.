@@ -3,7 +3,8 @@
 Orchestration only. Every collaborator is a port injected through the keyword
 constructor, so the scheduler tick, the manual "Run cycle", track fetch, fetch-now and the
 CLI all apply the same policy: the yt-dlp switch, backoff (read and write), politeness
-gates, status recording, save isolation and the inspection refresh.
+gates (and the learned pace: a limiting host is waited out and retried once), status
+recording, save isolation and the inspection refresh.
 
 Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
 record decisions -> per source: fetch under the gates, save, record its outcome ->
@@ -25,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
+from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindSession, KindUnavailable, SourceKind
 from insight_core.ingestion.ports import (
@@ -220,7 +222,7 @@ class IngestionRunner:
 
         async def fetch_and_save(source: Dict[str, Any]) -> _Fetched:
             nonlocal done
-            f = await self._fetch(*by_id[source["id"]], sessions)
+            f = await self._fetch(*by_id[source["id"]], sessions, progress)
             async with save_lock:
                 outcome = f.outcome
                 fetched_count, inserted_before = len(f.posts), saved.inserted
@@ -309,16 +311,31 @@ class IngestionRunner:
         return None
 
     async def _fetch(self, source: Dict[str, Any], kind: SourceKind, decision: FetchDecision,
-                     sessions: _RunSessions) -> _Fetched:
+                     sessions: _RunSessions, progress: ProgressSink) -> _Fetched:
         """Fetch one source under its gates. Never raises."""
         started = time.monotonic()
         posts: List[dict] = []
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
-            async with self.gates.slot(kind.profile, kind.host_key(source), per_source_delay_s=delay):
+            host = kind.host_key(source)
+            async with self.gates.slot(kind.profile, host, per_source_delay_s=delay):
                 await sessions.ensure(kind)
                 logger.info("Fetching up to %s posts from %s", decision.post_limit, _display_name(source))
-                posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                try:
+                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                except HttpError as exc:
+                    if not exc.limiting:
+                        raise
+                    # The host is limiting us: wait what it asks, slow it down, retry once.
+                    # Still inside the slot, so the host's next source waits behind us.
+                    wait = self.gates.host_limiter.limited(host, exc.retry_after)
+                    await self._safely("record progress", progress.event, "slowed", {
+                        "host": host, "timed_out": exc.timed_out, "gap_s": self.gates.host_limiter.gap(host),
+                        "source_id": source["id"], "display_name": _display_name(source),
+                    })
+                    await self.gates.sleep(wait)
+                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                self.gates.host_limiter.succeeded(host)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,
                                               duration_s=time.monotonic() - started)
         except KindUnavailable as exc:

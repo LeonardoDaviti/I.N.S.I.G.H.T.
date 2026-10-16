@@ -8,19 +8,24 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import email.message
+import io
 import re
 import subprocess
 import sys
 import unittest
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.adapters import ADAPTER_CLASSES
 from insight_core.adapters.dario_adapter import DarioAmodeiAdapter
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind
 from insight_core.ingestion.kinds import parsing
@@ -355,6 +360,12 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pages[0].posts), 10)
         self.assertEqual(pages[0].checkpoint["pages_fetched"], 3)
 
+    async def test_the_bridges_too_many_requests_answer_is_a_429(self):
+        http = FakeHttp({"https://tg.i-c-a.su/rss/chan/1?limit=20": '{"errors": ["Too many requests. Try later"]}'})
+        with self.assertRaises(HttpError) as ctx:
+            await TelegramRssKind(http).fetch_latest(self.SOURCE, 20)
+        self.assertEqual(ctx.exception.status, 429)
+
     def test_checkpoint_resumable(self):
         kind = TelegramRssKind(FakeHttp())
         self.assertTrue(kind.checkpoint_resumable({"mode": "telegram_page", "next_page": 5}))
@@ -591,6 +602,35 @@ class KindHttpTests(unittest.TestCase):
         asyncio.run(http.sleep(3))
         asyncio.run(http.sleep(0))
         self.assertEqual(sleeper.calls, [3], "a zero delay is not a sleep")
+
+    def _failing(self, raised: BaseException) -> HttpError:
+        """The HttpError KindHttp.get_text raises when urlopen raises `raised` (no network)."""
+        with mock.patch.object(urllib.request, "urlopen", side_effect=raised):
+            with self.assertRaises(HttpError) as ctx:
+                asyncio.run(KindHttp().get_text("https://reddit.com/r/x/.rss"))
+        return ctx.exception
+
+    def test_a_429_carries_its_status_and_retry_after(self):
+        headers = email.message.Message()
+        headers["Retry-After"] = "7"
+        error = self._failing(urllib.error.HTTPError("https://reddit.com/r/x/.rss", 429, "Too Many Requests",
+                                                     headers, io.BytesIO(b"slow down")))
+        self.assertEqual((error.status, error.retry_after, error.timed_out), (429, 7, False))
+        self.assertTrue(error.limiting)
+        self.assertIsInstance(error, ValueError, "existing callers keep catching ValueError")
+        self.assertTrue(str(error).startswith("HTTP 429 "))
+
+    def test_other_statuses_do_not_slow_down(self):
+        error = self._failing(urllib.error.HTTPError("u", 403, "Forbidden", email.message.Message(), io.BytesIO()))
+        self.assertEqual((error.status, error.retry_after, error.limiting), (403, None, False))
+
+    def test_connect_and_read_timeouts_are_timed_out(self):
+        for raised in (urllib.error.URLError(TimeoutError("timed out")), TimeoutError("The read operation timed out")):
+            with self.subTest(raised=type(raised).__name__):
+                error = self._failing(raised)
+                self.assertTrue(error.timed_out)
+                self.assertTrue(error.limiting)
+                self.assertIsNone(error.status)
 
 
 class AvailableBasisTests(unittest.TestCase):

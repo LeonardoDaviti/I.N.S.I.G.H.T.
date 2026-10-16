@@ -4,9 +4,11 @@ Archive planning and execution for DB-backed sources (Mark IX).
 Fetching lives behind the source-kind seam (insight_core/ingestion/kinds), and every live
 fetch goes through the ingestion runner (insight_core/ingestion). This service keeps:
 - plan_archive / archive_source: one loop over kind.archive_pages, paced by
-  kind.profile.rate_limit(persisted settings, request overrides); every page is one save
-  batch. An unavailable kind (yt-dlp off, no Telegram session)
-  raises KindUnavailable before any planning (the API answers 409). Both run inside the
+  kind.profile.rate_limit(persisted settings, request overrides) and by the same
+  FetchGates.slot per page a fetch takes; every page is one save batch. A host that limits
+  us (429) or times out is waited out and the page retried once from the last checkpoint;
+  twice in a row pauses the archive with its checkpoint kept (issue 0016). An unavailable
+  kind (yt-dlp off, no Telegram session) raises KindUnavailable before any planning (the API answers 409). Both run inside the
   kind's session (B8: telegram_mtproto connects and checks authorisation; every other kind
   has a no-op session), so a session that cannot open is the same 409.
 - fetch_reddit_comments_for_post for the post detail page
@@ -23,10 +25,12 @@ from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.gates import FetchGates
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import KindUnavailable, SourceKind, resume_counts
+from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, SourceKind, resume_counts
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
+from insight_core.ingestion.ports import slowed_line
 from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.operations_service import backlog_posts
@@ -47,6 +51,7 @@ class SourceFetchService:
         http: Optional[KindHttp] = None,
         kinds: Optional[KindRegistry] = None,
         availability: Callable[[], Availability] = availability_from_env,
+        gates: Optional[FetchGates] = None,
     ):
         self.db_url = db_url
         self.sources_service = SourcesService(db_url)
@@ -58,6 +63,8 @@ class SourceFetchService:
         self.kinds = kinds or KindRegistry.default(self.http, self.youtube_service, db_url=db_url)
         self.archive_metadata = ArchiveMetadataWriter(posts=self.posts_service, sources=self.sources_service)
         self.availability = availability
+        # None: the process's FetchGates.shared(), the runner's own (taken inside the loop).
+        self.gates = gates
 
     # ------------------------------------------------------------------ kinds
 
@@ -286,41 +293,89 @@ class SourceFetchService:
             await self._record_archive_metadata(source_id, result, mode="archive", kind=kind)
             return result
 
+        gates = self.gates or FetchGates.shared()
+        host = kind.host_key(source)
+        delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
         checkpoint = start_checkpoint
-        async for page in kind.archive_pages(source, target_posts, start_checkpoint, rate):
-            if page.posts:
-                saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
-                total_posts_fetched += len(page.posts)
-                total_inserted += saved.inserted
-                total_updated += saved.updated
-            collected = resume_collected_posts + total_posts_fetched
-            if page.checkpoint is not None:
-                checkpoint = page.checkpoint
-                total_pages_fetched = int(page.checkpoint.get("pages_fetched") or total_pages_fetched + 1)
-            else:
-                # Single-shot kinds finish in one page; keep a checkpoint for the history.
-                total_pages_fetched += 1
-                checkpoint = {"mode": kind.name, "pages_fetched": total_pages_fetched, "collected_posts": collected}
+        retried = False
+        paused_reason: Optional[str] = None
+        while True:
+            pages = kind.archive_pages(source, target_posts, checkpoint, rate)
+            try:
+                async for page in self._gated(pages, gates, kind, host, delay):
+                    retried = False
+                    if page.posts:
+                        saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
+                        total_posts_fetched += len(page.posts)
+                        total_inserted += saved.inserted
+                        total_updated += saved.updated
+                    collected = resume_collected_posts + total_posts_fetched
+                    if page.checkpoint is not None:
+                        checkpoint = page.checkpoint
+                        total_pages_fetched = int(page.checkpoint.get("pages_fetched") or total_pages_fetched + 1)
+                    else:
+                        # Single-shot kinds finish in one page; keep a checkpoint for the history.
+                        total_pages_fetched += 1
+                        checkpoint = {"mode": kind.name, "pages_fetched": total_pages_fetched,
+                                      "collected_posts": collected}
 
-            await self._record_archive_metadata(source_id, {
-                **plan,
-                "pages_fetched": total_pages_fetched,
-                "posts_fetched": total_posts_fetched,
-                "posts_inserted": total_inserted,
-                "posts_updated": total_updated,
-                "checkpoint": checkpoint,
-            }, mode="archive_progress", kind=kind)
-            await self._emit_progress(progress_callback, {
-                "stage": "page_fetched",
-                "source_type": kind.name,
-                "pages_fetched": total_pages_fetched,
-                "posts_collected": collected,
-                "target_posts": target_posts,
-                "progress": min(100.0, (collected / max(target_posts, 1)) * 100.0),
-                "message": f"Fetched {kind.name} page {total_pages_fetched}",
-            })
+                    await self._record_archive_metadata(source_id, {
+                        **plan,
+                        "pages_fetched": total_pages_fetched,
+                        "posts_fetched": total_posts_fetched,
+                        "posts_inserted": total_inserted,
+                        "posts_updated": total_updated,
+                        "checkpoint": checkpoint,
+                    }, mode="archive_progress", kind=kind)
+                    await self._emit_progress(progress_callback, {
+                        "stage": "page_fetched",
+                        "source_type": kind.name,
+                        "pages_fetched": total_pages_fetched,
+                        "posts_collected": collected,
+                        "target_posts": target_posts,
+                        "progress": min(100.0, (collected / max(target_posts, 1)) * 100.0),
+                        "message": f"Fetched {kind.name} page {total_pages_fetched}",
+                    })
+                break
+            except HttpError as exc:
+                if not exc.limiting:
+                    raise
+                if retried:
+                    # Twice in a row: pause. The last page's checkpoint is saved (no
+                    # completed_at), so Resume continues from it.
+                    paused_reason = f"{host} {'is not answering' if exc.timed_out else 'is limiting us'}"
+                    break
+                retried = True
+                wait = gates.host_limiter.limited(host, exc.retry_after)
+                slowed = {"host": host, "timed_out": exc.timed_out, "gap_s": gates.host_limiter.gap(host)}
+                await self._emit_progress(progress_callback,
+                                          {"stage": "slowed", **slowed, "message": slowed_line(slowed)})
+                await gates.sleep(wait)
+                # The page is asked again from the last recorded checkpoint.
 
         post_stats = self.posts_service.get_source_post_stats(source_id)
+        if paused_reason is not None:
+            result = {
+                **plan,
+                "success": True,
+                "paused": True,
+                "paused_reason": paused_reason,
+                "message": f"Paused: {paused_reason}; resume later",
+                "posts_fetched": total_posts_fetched,
+                "pages_fetched": total_pages_fetched,
+                "posts_inserted": total_inserted,
+                "posts_updated": total_updated,
+                "stored_posts": post_stats["post_count"],
+                "checkpoint": checkpoint,
+            }
+            await self._emit_progress(progress_callback, {
+                "stage": "paused",
+                "source_type": kind.name,
+                "pages_fetched": total_pages_fetched,
+                "posts_fetched": total_posts_fetched,
+                "message": result["message"],
+            })
+            return result
         result = {
             **plan,
             "success": True,
@@ -346,6 +401,20 @@ class SourceFetchService:
             "progress": 100,
         })
         return result
+
+    @staticmethod
+    async def _gated(pages: AsyncIterator[ArchivePage], gates: FetchGates, kind: SourceKind, host: str,
+                     delay: float) -> AsyncIterator[ArchivePage]:
+        """The kind's pages, each asked for under the same gate slot a fetch takes, so a run and
+        an archive on one host are spaced together."""
+        while True:
+            async with gates.slot(kind.profile, host, per_source_delay_s=delay):
+                try:
+                    page = await pages.__anext__()
+                except StopAsyncIteration:
+                    return
+            gates.host_limiter.succeeded(host)
+            yield page
 
     # ------------------------------------------------------------------ post detail
 

@@ -8,13 +8,14 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_posts import SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, Inspection, KindUnavailable
 from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
 from insight_core.ingestion.schedule import Availability
 from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
 from insight_core.services.source_fetch_service import SourceFetchService
+from insight_core.tests._ingestion_fakes import SleepClock, SpyFetchGates
 from insight_core.tests._kind_fakes import FakeKind, RecordingKindSession
 
 
@@ -269,7 +270,8 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         pages = [ArchivePage([{"url": "u1"}, {"url": "u2"}], {"mode": "fake", "pages_fetched": 1, "collected_posts": 2}),
                  ArchivePage([{"url": "u3"}], {"mode": "fake", "pages_fetched": 2, "collected_posts": 3})]
         kind = FakeKind("fake_paged", inspection=Inspection(3, 2, None), pages=pages)
-        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]))
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
+                                     gates=SpyFetchGates())
         service.sources_service = sources = _PlanSources()
         service.posts_service = _Posts()
         service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)
@@ -300,11 +302,82 @@ class ArchiveSourceLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e["stage"] for e in events], ["planning_complete", "page_fetched", "page_fetched", "completed"])
 
 
+def _page(n: int) -> ArchivePage:
+    return ArchivePage([{"url": f"u{n}"}], {"mode": "fake", "page": n, "pages_fetched": n, "collected_posts": n})
+
+
+LIMITED = HttpError("HTTP 429 while fetching", status=429, retry_after=4)
+
+
+class _ScriptedPagesKind(FakeKind):
+    """Each archive_pages call plays the next script: pages, then maybe an error."""
+
+    def __init__(self, *scripts):
+        super().__init__("fake_paged", inspection=Inspection(10, 1, None))
+        self.scripts = list(scripts)
+        self.started_from: list = []
+
+    async def archive_pages(self, source, target, checkpoint, rate):
+        self.started_from.append(checkpoint)
+        for step in self.scripts.pop(0):
+            if isinstance(step, BaseException):
+                raise step
+            yield step
+
+
+class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0016: an archive takes the gate slot per page, retries a limit once, then pauses."""
+
+    def service(self, kind):
+        self.clock = SleepClock()
+        self.gates = SpyFetchGates(clock=self.clock, sleep=self.clock.sleep)
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
+                                     gates=self.gates)
+        service.sources_service = self.sources = _PlanSources()
+        service.posts_service = _Posts()
+        service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=self.sources)
+        service._save_posts = lambda _sid, _posts: SaveBatchResult()
+        return service
+
+    async def test_every_page_takes_the_shared_gate_slot(self):
+        kind = _ScriptedPagesKind([_page(1), _page(2)])
+        await self.service(kind).archive_source("s1")
+        self.assertEqual(self.gates.slots, [("host-lock", "tg.i-c-a.su")] * 3, "each page, and the ask that finds the end")
+
+    async def test_a_page_failing_once_is_retried_from_the_last_checkpoint(self):
+        kind = _ScriptedPagesKind([_page(1), LIMITED], [_page(2)])
+        events = []
+        result = await self.service(kind).archive_source("s1", progress_callback=events.append)
+        self.assertEqual(kind.started_from, [None, _page(1).checkpoint])
+        self.assertEqual(self.clock.sleeps, [4, 1, 5], "the Retry-After, then the new 5 s gap from the last ask")
+        self.assertEqual((result["posts_fetched"], result.get("paused")), (2, None))
+        self.assertIn("tg.i-c-a.su: too many requests, slowing to 5 s",
+                      [e["message"] for e in events if e["stage"] == "slowed"])
+
+    async def test_failing_twice_pauses_with_the_checkpoint_and_resume_starts_there(self):
+        kind = _ScriptedPagesKind([_page(1), LIMITED], [LIMITED], [_page(2)])
+        service = self.service(kind)
+        result = await service.archive_source("s1")
+        self.assertTrue(result["success"])
+        self.assertTrue(result["paused"])
+        self.assertEqual(result["paused_reason"], "tg.i-c-a.su is limiting us")
+        self.assertEqual(result["message"], "Paused: tg.i-c-a.su is limiting us; resume later")
+        saved = self.sources.saved["checkpoint"]
+        self.assertEqual(saved["page"], 1)
+        self.assertNotIn("completed_at", saved, "a paused archive's checkpoint stays resumable")
+        self.assertTrue(self.sources.saved["resume_ready"])
+
+        self.sources.current = self.sources.saved
+        await service.archive_source("s1", resume=True)
+        self.assertEqual(kind.started_from[-1]["page"], 1)
+
+
 class ArchiveKindSessionTests(unittest.IsolatedAsyncioTestCase):
     """B8: plan and archive run inside the kind's session, opened once and always closed."""
 
     def service(self, kind):
-        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]))
+        service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
+                                     gates=SpyFetchGates())
         service.sources_service = sources = _PlanSources()
         service.posts_service = _Posts()
         service.archive_metadata = ArchiveMetadataWriter(posts=service.posts_service, sources=sources)

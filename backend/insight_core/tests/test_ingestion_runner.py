@@ -17,6 +17,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.repo_fetch_state import FetchStateRow
+from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.inspection import DbInspectionRefresher, inspection_due
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import Inspection
@@ -41,6 +42,7 @@ from insight_core.tests._ingestion_fakes import (
     InMemorySourceCatalog,
     RecordingInspectionRefresher,
     RecordingProgressSink,
+    SleepClock,
     SpyFetchGates,
 )
 from insight_core.tests._kind_fakes import FakeKind, unavailable
@@ -79,13 +81,13 @@ class _Harness:
     """One runner over in-memory ports; every port is reachable for assertions."""
 
     def __init__(self, sources, kinds, *, rows=None, folders=None, availability=ALL_ON,
-                 saver=None, lock_held=False):
+                 saver=None, lock_held=False, gates=None):
         self.catalog = InMemorySourceCatalog(sources, folders)
         self.state = InMemoryFetchStateStore(rows)
         self.saver = saver or InMemoryPostSaver()
         self.inspections = RecordingInspectionRefresher()
         self.registry = KindRegistry(kinds)
-        self.gates = SpyFetchGates()
+        self.gates = gates or SpyFetchGates()
         self.lock = FakeRunLock(held=lock_held)
         self.clock = FixedClock(NOW)
         self.progress = RecordingProgressSink()
@@ -328,6 +330,80 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(h.gates.slots), [("host-lock", "a.test"), ("ytdlp", "youtube.com")])
 
 
+def _limited_once(*handles: str, error: HttpError | None = None):
+    """Posts for every source; each of `handles` first fails with `error` (a 429 by default)."""
+    failed: set[str] = set()
+
+    def behaviour(source, limit):
+        handle = source["handle_or_url"]
+        if handle in handles and handle not in failed:
+            failed.add(handle)
+            raise error or HttpError("HTTP 429 while fetching", status=429, retry_after=3)
+        return _posts_for(2)(source, limit)
+    return behaviour
+
+
+class IngestionRunnerPaceTests(unittest.IsolatedAsyncioTestCase):
+    """Issue 0016: a host that limits us is waited out, slowed down and retried once."""
+
+    def _harness(self, sources, behaviour, floors=None):
+        self.clock = SleepClock()
+        gates = SpyFetchGates(host_floors=floors or {}, clock=self.clock, sleep=self.clock.sleep)
+        return _Harness(sources, [_rss_kind(behaviour)], gates=gates)
+
+    async def test_a_429_is_waited_out_and_the_source_fetched(self):
+        source = _source("https://a.test/rss")
+        h = self._harness([source], _limited_once(source["handle_or_url"]))
+        report = await h.run(force=True)
+        self.assertEqual(report.status, "success")
+        self.assertEqual(report.posts_inserted, 2)
+        self.assertEqual(self.clock.sleeps, [3], "the site's Retry-After is the wait")
+        self.assertEqual(h.state.outcomes[0].status, OutcomeStatus.HEALTHY)
+
+    async def test_the_next_source_on_the_host_is_spaced_by_the_doubled_gap(self):
+        first, second = _source("https://a.test/one", priority=1), _source("https://a.test/two", priority=2)
+        h = self._harness([first, second], _limited_once(first["handle_or_url"]), floors={"a.test": 8.0})
+        await h.run(force=True)
+        self.assertEqual(self.clock.sleeps, [3, 16])
+
+    async def test_the_slow_down_is_a_job_event(self):
+        source = _source("https://a.test/rss")
+        h = self._harness([source], _limited_once(source["handle_or_url"]), floors={"a.test": 8.0})
+        await h.run(force=True)
+        slowed = [data for phase, data in h.progress.events if phase == "slowed"]
+        self.assertEqual([(d["host"], d["gap_s"], d["timed_out"]) for d in slowed], [("a.test", 16.0, False)])
+        self.assertEqual(h.progress.phases[:3], ["decided", "slowed", "source"])
+
+    async def test_a_timeout_is_retried_too(self):
+        source = _source("https://a.test/rss")
+        timeout = HttpError("Timed out fetching", timed_out=True)
+        h = self._harness([source], _limited_once(source["handle_or_url"], error=timeout))
+        report = await h.run(force=True)
+        self.assertEqual(report.status, "success")
+        self.assertEqual(self.clock.sleeps, [60], "no Retry-After: a minute")
+
+    async def test_two_429s_fail_the_source(self):
+        source = _source("https://a.test/rss")
+
+        def always_limited(_source, _limit):
+            raise HttpError("HTTP 429 while fetching", status=429)
+        h = self._harness([source], always_limited)
+        report = await h.run(force=True)
+        self.assertEqual(report.status, "failed")
+        self.assertEqual(h.state.outcomes[0].status, OutcomeStatus.ERROR)
+        self.assertEqual(len(h.registry.kinds[0].fetch_calls), 2)
+
+    async def test_other_errors_are_not_retried(self):
+        source = _source("https://a.test/rss")
+
+        def forbidden(_source, _limit):
+            raise HttpError("HTTP 403 while fetching", status=403)
+        h = self._harness([source], forbidden)
+        await h.run(force=True)
+        self.assertEqual(len(h.registry.kinds[0].fetch_calls), 1)
+        self.assertEqual(self.clock.sleeps, [])
+
+
 class JobProgressLineTests(unittest.TestCase):
     """What the Jobs view lists for each source: its counts, or why it failed."""
 
@@ -349,6 +425,21 @@ class JobProgressLineTests(unittest.TestCase):
     def test_a_failed_source_says_why(self):
         message, level = self._line(status="error", error="HTTP 403", fetched=0, new=0)
         self.assertEqual((message, level), ("r/viture: failed, HTTP 403 · 52 of 81 sources", "error"))
+
+    def test_a_slow_down_says_the_host_and_its_new_gap(self):
+        recorded = []
+
+        class _Ops:
+            def append_job_event(self, job_id, **kwargs):
+                recorded.append(kwargs)
+
+        sink = JobProgressSink(_Ops(), "job")
+        sink.event("slowed", {"host": "reddit.com", "timed_out": False, "gap_s": 16.0})
+        sink.event("slowed", {"host": "telegram.local", "timed_out": True, "gap_s": 10.0})
+        self.assertEqual([(r["message"], r["level"]) for r in recorded], [
+            ("reddit.com: too many requests, slowing to 16 s", "warning"),
+            ("telegram.local: timed out, slowing to 10 s", "warning"),
+        ])
 
 
 class IngestionRunnerLockTests(unittest.IsolatedAsyncioTestCase):

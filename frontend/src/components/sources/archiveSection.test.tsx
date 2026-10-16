@@ -130,6 +130,24 @@ describe('ArchiveSection', () => {
     expect(screen.queryByRole('button', { name: 'Run archive' })).not.toBeInTheDocument();
   });
 
+  it('a paused archive says why and resumes from its checkpoint', async () => {
+    const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'job-3' });
+    setup({
+      getSourceArchive: vi.fn().mockResolvedValue(status({
+        archive: { stored_posts: 145, available_posts: 1722, resume_ready: true, checkpoint: { collected_posts: 120, pages_fetched: 6 } },
+        latest_job: { id: 'job-2', status: 'success', message: 'Paused: reddit.com is limiting us; resume later',
+          finished_at: '2026-10-11T10:05:00Z',
+          result: { posts_fetched: 120, posts_inserted: 120, pages_fetched: 6, paused: true, paused_reason: 'reddit.com is limiting us' } },
+      })),
+      startSourceArchive,
+      getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ id: 'job-3' }) }),
+    });
+    const notice = await screen.findByRole('alert');
+    expect(within(notice).getByText('Paused: reddit.com is limiting us')).toBeInTheDocument();
+    fireEvent.click(within(notice).getByRole('button', { name: 'Resume' }));
+    expect(startSourceArchive).toHaveBeenCalledWith('s1', 500, true);
+  });
+
   it('offers to resume a checkpointed run', async () => {
     const planSourceArchive = vi.fn().mockResolvedValue(plan({ resume: true, resume_available: true, remaining_posts: 380 }));
     const startSourceArchive = vi.fn().mockResolvedValue({ job_id: 'job-2' });
