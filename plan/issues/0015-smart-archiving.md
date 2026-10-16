@@ -14,15 +14,16 @@ Status: **ready-for-agent** (designed with the owner, 2026-10-16).
   | Kind | Jump | From |
   |---|---|---|
   | Substack | by position | `offset` = stored posts − one page |
-  | Telegram (account) | by position | `offset_id` = oldest stored message id |
-  | Telegram bridge | by position | `next_page` = stored ÷ page size, one page early |
+  | Telegram (account) | by position | `offset_id` = oldest stored message id (exact: no overlap needed) |
+  | Telegram bridge | by position | `next_page` = stored ÷ the raw page size (always at or before the oldest stored post) |
   | YouTube | by position | channel listing starts at video number stored + 1 − one page |
-  | Nitter | by date | the bridge's search, `until` = the oldest stored tweet's day; then its cursor |
+  | Nitter | by date | the bridge's search RSS, `until` = the day after the oldest stored tweet (`until` is exclusive); then its cursor |
   | Reddit | — | the archive is blocked by Reddit (403); unchanged |
   | Plain RSS | — | a feed holds only its latest posts; unchanged |
 
-- **Overlap a little, never compute exactly.** Each jump starts one page (Nitter: one day) early. Duplicates are already handled by the URL upsert.
-- **The plan says it plainly:** "You have 120 posts, back to 3 Mar 2025. The archive continues from there: about 2,180 older posts · 110 pages · ~18 min."
+- **Overlap a little, never compute exactly.** Each position jump starts one page early (the Telegram account's exact id needs none), and Nitter one day early. Duplicates are already handled by the URL upsert, and the overlap also absorbs posts deleted at the source.
+- **The plan says it plainly:** "You have 120 posts, back to 3 Mar 2025. The archive continues from there: about 2,180 older posts · ~18 min", or "… continues from 3 Mar 2025 · size unknown" when the source doesn't say its size (Substack).
+- **An archive runs until the source ends.** The "Posts to fetch" field goes.
 - **Fetch runs no longer measure sources.** The weekly measurement is deleted. Archive planning measures (as today), and the Archive screen shows each source's last measured size with its date, or "not measured yet". The cheap per-run record (stored post count, last fetch time) stays.
 
 ## User Stories
@@ -39,30 +40,41 @@ Status: **ready-for-agent** (designed with the owner, 2026-10-16).
 11. As the owner, I want planning an archive to measure the source fresh, as today, so that the plan is right.
 
 ## Implementation Decisions
-- **The jump is a checkpoint built from what's stored.** Each kind already resumes from its own checkpoint shape (Substack `offset`, Telegram `offset_id`, Telegram bridge `next_page`, Nitter `cursor`). Each kind gets one optional method, `start_checkpoint(stored: StoredRange) -> Optional[dict]`. `StoredRange` holds the stored count, the oldest stored post's date and its external id. The method returns its usual checkpoint shape positioned one page early, or None (Reddit, plain RSS: no change). No other new seam.
-- **Planning** (the existing `_plan`):
-  - When there's no resumable checkpoint, the start checkpoint is `kind.start_checkpoint(stored range)`.
-  - The default target is "everything older": `available − stored` when `available` is known, otherwise unbounded until the source ends.
-  - The plan returns `continues_from` (oldest stored date) and `older_posts`.
-  - A resumable checkpoint still wins (resume as today).
-- **Stored range:** one query in the posts repository: count, oldest `COALESCE(published_at, fetched_at)`, and that post's external id (from metadata) for the source.
-- **Nitter by date:** the Nitter kind's start checkpoint is `{mode: "nitter_cursor", search_until: "<YYYY-MM-DD>"}`. Its pager fetches `/{user}/search?f=tweets&q=&until=<date>` for the first page, then follows the page's own cursor. This was checked on the owner's bridge on 2026-10-16: 20 tweets from the `until` day back, plus a cursor.
-- **YouTube by position:** the channel listing accepts a start index (yt-dlp's playlist start). The archive passes `stored + 1 − page` as the start.
-- **Counting:** the archive result already reports `posts_inserted`, and the plan, job message and progress show that number as "new". Because the archive starts below what's stored, fetched ≈ new. Kinds keep counting fetched posts toward their target.
-- **Deleting the measuring phase:** remove `inspection_due`, `ARCHIVE_INSPECT_INTERVAL_HOURS` and its environment variables, and the inspect call from the run's post-save refresh. Keep the cheap write: `source_type`, `posts_fetched`, the stored count, and the last live fetch time. The run's "inspected" phase and its progress event go. Each catalog row carries its `last_inspected_at` (already written by planning), shown as "measured 3 d ago" or "not measured yet".
-- **Docs:** `design/docs/pages/sources.md` (archive section), `BACKEND.md` (the ingestion phases), `scripts/README.md` if it names the interval, and `DEPLOYMENT.md`, removing the env vars.
+- **The jump is a checkpoint built from what's stored.** Each kind already resumes from its own checkpoint shape. Each kind gets one optional method, `start_checkpoint(stored) -> Optional[dict]`, returning that shape with `collected_posts: 0, pages_fetched: 0`, or None (Reddit, plain RSS, and any kind that can't jump). `stored` is the existing `get_source_post_stats` result, extended with the oldest post's `external_id` (the `posts.external_id` column); it already has `post_count` and `oldest_published_at`. No new query and no other new seam.
+- **Per kind:**
+  - **Substack:** `{mode: "substack_offset", offset: max(0, stored − ARCHIVE_PAGE_SIZE)}`.
+  - **Telegram account:** `{offset_id: <oldest stored external_id>}`. `offset_id` returns older messages, so it is exact. If the external id is missing or not an integer, return None.
+  - **Telegram bridge:** `{mode: "telegram_page", next_page: max(1, stored // raw_page_size)}`. `raw_page_size` is the source URL's `?limit=` value, or else the item count of the unfiltered page 1. The filtered count is smaller and would skip posts.
+  - **YouTube:** `{mode: "youtube_channel", playlist_start: max(1, stored + 1 − DEFAULT_PAGE_SIZE)}`. `archive_channel_posts` and `_list_channel_entries` gain `start` (yt-dlp `--playlist-start start`; `--playlist-end` only when a target is given). `YouTubeKind.archive_pages` reads `playlist_start` from its checkpoint. It stays a single-shot listing (one long call that can't pause).
+  - **Nitter:** `{mode: "nitter_cursor", search_until: "<oldest stored day + 1, YYYY-MM-DD>"}`. Its first page is `/{user}/search/rss?f=tweets&q=&until=<search_until>`. Later pages are the same URL plus the `min-id` header cursor, the same mechanism as today's pager. This was checked on the owner's bridge on 2026-10-16: RSS, 20 items, a `min-id` header, and `until` exclusive. Every page's checkpoint keeps `search_until`, so a resume stays on the search.
+- **Resume vs jump.** A checkpoint carrying `completed_at` (a finished archive) is never resumable. This check goes in one place, a helper in the archive metadata module, used by both `_plan` and `resume_ready`. A resumable checkpoint wins; otherwise the start checkpoint is used. `_archive` always starts from `plan["checkpoint"]`, which is either the resume checkpoint or the start checkpoint (today it passes one only when resuming).
+- **Planning measures once.** `_archive` reuses the inspection from the plan it was given, instead of calling `_plan` (and `kind.inspect`) a second time.
+- **Target.** An archive runs until the source ends. The target given to kinds is "no limit". For kinds that need a number, use `available` if known, else a large sentinel. The plan's `older_posts` (`available − stored`, or None) is for the estimate only.
+- **Remove the "Posts to fetch" field** and everything only it used: the field in the archive section, `desiredPosts` in the request path, `archivePresets`, `clampDesired`, `defaultDesired` and `archiveCeiling` in the archive lib, and the backend's `desired_posts` parameter if nothing else sends it. No dead code.
+- **Delete the measuring phase:**
+  - the inspect half of the post-run refresh (`inspection_due`, `ARCHIVE_INSPECT_INTERVAL_HOURS`, the `INSIGHT_REFRESH_ARCHIVE_METADATA` and `SAFE_INGEST_REFRESH_ARCHIVE_METADATA` env vars);
+  - `DbInspectionRefresher`'s `gates`, `clock` and interval parameters;
+  - the `inspected` branch in the archive metadata writer;
+  - `"inspected"` in the progress phases (`"saved"` becomes 100).
+
+  Keep the cheap write: `source_type`, `posts_fetched`, the stored count, and the last live fetch time. Rewrite the module docstring.
+- **"Measured".** Catalog rows gain `last_inspected_at` (written by planning), and `ArchiveCatalogEntry` gains the field. The catalog and the sheet both say "measured 3 d ago" or "not measured yet". The sheet's current "checked …" becomes "measured …".
+- **Docs:** `design/docs/pages/sources.md` (archive section), `BACKEND.md` (ingestion phases), and `DEPLOYMENT.md` and `scripts/README.md` wherever they name the removed env vars.
 
 ## Testing Decisions
 - **Kind tests with `FakeHttp`** (prior art: the kind archive tests):
-  - each jumping kind's `start_checkpoint` for a stored range gives the expected shape, one page early;
-  - the Nitter pager's first request is the `until` search, and it then follows the cursor;
+  - each kind's `start_checkpoint` for a stored set gives the expected shape;
+  - the Telegram bridge uses the raw page size, not the filtered one;
+  - the Nitter pager's first request is the search RSS with `until`, page 2 keeps `search_until` and adds the cursor, and a resume continues on the search;
+  - YouTube passes the start to the listing;
   - Reddit and plain RSS return None.
 - **Planning tests** (DB, scratch source):
-  - with 120 stored posts the plan reports `continues_from` and `older_posts`, and its checkpoint is the kind's start checkpoint;
+  - with 120 stored posts the plan reports `continues_from` and `older_posts`, and its checkpoint is the start checkpoint;
   - a resumable checkpoint wins;
-  - no target means everything older.
-- **Runner test:** a run records the cheap metadata and never calls `kind.inspect`, and its phases have no "inspected".
-- **Frontend:** the archive plan renders "continues from" and "older posts"; a catalog row renders "measured …" or "not measured yet". Prior art: `archiveSection.test.tsx`, `SourcesConfig.ingestion.test.tsx`.
+  - a completed checkpoint doesn't win;
+  - `_archive` doesn't inspect a second time.
+- **Runner tests:** a run records the cheap metadata, never calls `kind.inspect`, and has no "inspected" phase. Update the runner tests that expect the inspected phase.
+- **Frontend:** the plan renders "continues from …" and "size unknown"; there's no Posts to fetch field; catalog and sheet render "measured …" or "not measured yet". Prior art: `archiveSection.test.tsx`, `SourcesConfig.ingestion.test.tsx`.
 
 ## Out of Scope
 - Finding holes in the middle of a stored range. The jump assumes the newest range is complete; 0012's hourly polling of busy feeds makes holes rare.
