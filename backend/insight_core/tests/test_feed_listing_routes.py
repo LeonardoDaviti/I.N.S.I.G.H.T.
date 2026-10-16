@@ -166,6 +166,23 @@ class FeedListingRouteTests(unittest.TestCase):
         self.read(ids=marked["ids"], read=False)
         self.assertEqual(self.ids(scope=scope, filter="unread"), [p4, p3, p2, p1])
 
+    def test_a_whole_text_title_comes_back_cut_from_the_feed_and_the_post(self):
+        source = self._source()
+        tweet = "Our new model is out today and it is better at everything. " + "And more besides, " * 50
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO posts (source_id, url, title, content) VALUES (%s, %s, %s, %s) RETURNING id",
+                (source, f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}", tweet, tweet),
+            )
+            post_id = str(cur.fetchone()[0])
+        short = "Our new model is out today and it is better at everything."
+
+        feed_title = next(item["title"] for item in self.feed(scope=f"source:{source}")["items"] if item["id"] == post_id)
+        status, _, body = call(main.app, "GET", f"/api/posts/item/{post_id}")
+        self.assertEqual(status, 200, body)
+        self.assertEqual((feed_title, body["post"]["title"]), (short, short))
+        self.assertEqual(body["post"]["content"], tweet, "the body is served in full")
+
     def test_read_state_rejects_a_mixed_or_empty_body(self):
         source = self._source()
         (post,) = self._posts(source, *self._hours_ago(1))

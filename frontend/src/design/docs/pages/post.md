@@ -6,7 +6,7 @@ states: article, media, long-title, headings, missing-title, loading, error
 
 # Post
 
-Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`), `components/ui/MarkdownRenderer.tsx`, `lib/postTitle.ts`.
+Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`), `components/ui/MarkdownRenderer.tsx`. The title comes from the backend's `display_title`.
 
 ## Purpose
 
@@ -23,9 +23,9 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 - **Post navigation** (ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next.
 - **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to `/settings/sources?source=<id>`, P8), ` / platform`, ` / date` (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
-- **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. A stored title cut with "…" shows the text's whole first line instead (`displayPostTitle`).
+- **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. It is the API's short title, as given: the first line of the title (or of the body, when the title is empty or the body's start cut with "…"), cut over 120 characters at the first sentence end, else at a word with "…". The feed rows show the same title. The tab reads `<title> · INSIGHT`.
 - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
-- **Body:** the content as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own.
+- **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own.
 - **More images** after the body.
 - **YouTube posts:** the player, a line of duration / views / likes / transcript source, a "Watch progress" card (progress bar, position slider, Save progress, Mark complete), then the transcript in collapsed blocks with "Set progress here" and "Open at m:ss".
 - **Reddit posts:** a "Discussion" section with the stored comments.
@@ -35,9 +35,9 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 - **article:** a text post: byline, title, prose.
 - **media:** a hero image, more images after the body, and a video (YouTube embed or watch mode).
-- **long-title:** a title of several lines wraps (never truncates) and balances with `pretty`.
+- **long-title:** a title of several lines (up to 120 characters from the API) wraps, never truncated further, and balances with `pretty`.
 - **headings:** a body using h1–h6, lists, quotes, tables and code, to check the prose scale.
-- **missing-title:** a Telegram or commit post with no real title: the H1 is the text's first line.
+- **missing-title:** a Telegram or commit post with no real title, or a tweet whose whole text is the title: the H1 is the text's first line or first sentence.
 - **loading:** a skeleton in the same frame and column as the loaded page, so nothing jumps on arrival.
 - **error:** "Post not found" with the error message and "Back to the feed". An action that fails (star, copy) shows an error `Notice` with Dismiss above the body.
 

@@ -1,6 +1,6 @@
 # 0009 — A title is a title: cut posts whose whole text is the title
 
-Status: **ready-for-agent** (owner observation on the server, 2026-10-16). UX.
+Status: **built** 2026-10-16 (owner observation on the server, 2026-10-16). UX.
 
 ## Problem Statement
 - From Nitter (and other title-less feeds such as Telegram bridges), the whole tweet is the title. Post 6f3d1519 has a 1,000-character title, newlines and bullet list included. The post page shows it as a 2rem heading and then repeats the same text as the body.

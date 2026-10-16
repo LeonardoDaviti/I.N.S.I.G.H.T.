@@ -27,7 +27,6 @@ import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { decodeFeedContext, postHref, scopePath, sourceSettingsHref, type FeedContext } from '../lib/feedContext';
 import TextLink from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
-import { displayPostTitle } from '../lib/postTitle';
 import { postSourceName } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
@@ -539,9 +538,16 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
     return body.slice(0, 24);
   };
   const sourceName = postSourceName(post);
-  const displayTitle = useMemo(() => displayPostTitle(post.title, postPlainText(post)), [post]);
+  // The API's title is already the short one (issue 0009). A post whose whole text is that
+  // title shows it once, as the heading.
+  const displayTitle = post.title || 'Untitled post';
+  const bodyIsTitle = useMemo(() => postPlainText(post).replace(/\s+/g, ' ') === displayTitle, [post, displayTitle]);
   const publishedLabel = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
+
+  useEffect(() => {
+    document.title = `${displayTitle} · INSIGHT`;
+  }, [displayTitle]);
 
   const handleCopy = async () => {
     if (!post) return;
@@ -851,7 +857,7 @@ function PostView({ postId, detail, api, fixture }: { postId: string; detail: Po
                     <p className="text-[0.9375rem] text-fg-3">No transcript was stored for this video yet.</p>
                   )}
                 </div>
-              ) : (
+              ) : bodyIsTitle ? null : (
                 <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} />
               )}
             </div>

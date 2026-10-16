@@ -39,6 +39,20 @@ describe('PostDetailPage header', () => {
     expect(within(heading.closest('header')!).queryByRole('link', { name: 'simonwillison.net' })).toBeNull();
   });
 
+  it('shows the API title as given and names the tab after it (issue 0009)', async () => {
+    const content = 'Our new model is out today and it is better at everything. And more besides.';
+    render(baseApi(rssPost({ title: 'Our new model is out today and it is better at everything.', content, content_html: undefined })));
+    await screen.findByRole('heading', { level: 1, name: 'Our new model is out today and it is better at everything.' });
+    expect(document.title).toBe('Our new model is out today and it is better at everything. · INSIGHT');
+    expect(within(screen.getByRole('article', { name: 'Post content' })).getByText(content)).toBeInTheDocument();
+  });
+
+  it('does not repeat a body that is exactly the title', async () => {
+    render(baseApi(rssPost({ title: 'Shipping today.', content: 'Shipping today.', content_html: undefined })));
+    await screen.findByRole('heading', { level: 1, name: 'Shipping today.' });
+    expect(screen.getByRole('article', { name: 'Post content' })).toHaveTextContent(/^$/);
+  });
+
   it('lets the title fill the reading column: pretty wrapping, not balanced into two short lines', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
@@ -367,13 +381,6 @@ describe('PostDetailPage loading', () => {
     expect(screen.queryByText('Loading post')).toBeNull();
     expect(api.getPostDetail).not.toHaveBeenCalled();
   });
-
-  it('a stored title cut with "…" shows the text’s whole first line', async () => {
-    const content = 'Update claude-api skill: Claude Opus 5.5 default, build-eval and hillclimb guides (#1930)\n\n* bump';
-    render(baseApi(rssPost({ title: 'Update claude-api skill: Claude Opus 5.5 default, …', content, content_html: undefined })));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Update claude-api skill: Claude Opus 5.5 default, build-eval and hillclimb guides (#1930)' })).toBeInTheDocument();
-  });
-
 });
 
 describe('PostDetailPage feed context and keys', () => {

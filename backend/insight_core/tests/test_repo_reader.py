@@ -346,7 +346,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(item["id"], empty_title)
         self.assertTrue(item["excerpt"].startswith("Hello world word"))
         self.assertLessEqual(len(item["excerpt"]), 280)
-        self.assertEqual(item["title"], item["excerpt"][:80])
+        self.assertTrue(item["title"].startswith("Hello world word") and item["title"].endswith("word…"), item["title"])
         self.assertEqual(item["duration_seconds"], 754)
         self.assertIsNone(item["reading_minutes"], "no reading time for YouTube")
         self.assertEqual(item["media_thumb"], "https://img.invalid/a.jpg")
