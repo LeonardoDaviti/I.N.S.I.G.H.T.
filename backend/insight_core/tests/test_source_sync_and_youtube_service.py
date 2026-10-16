@@ -195,6 +195,16 @@ class YouTubeServiceTests(unittest.TestCase):
         self.assertEqual(result["channel_id"], "UCHkYOD-3fZbuGhwsADBd9ZQ")
         self.assertIn("/channel/UCHkYOD-3fZbuGhwsADBd9ZQ", result["channel_url"])
 
+    def test_an_archive_lists_from_its_start_to_the_channels_end_on_the_scan_budget(self):
+        """Issue 0015: an archive runs until the channel ends, so its listing is a channel scan."""
+        runs = []
+        self.service._run_ytdlp_json = lambda args, timeout: runs.append((args, timeout)) or {"entries": []}
+        self.service.archive_channel_posts("https://www.youtube.com/@chan", start=106)
+        args, timeout = runs[0]
+        self.assertEqual(args[args.index("--playlist-start") + 1], "106")
+        self.assertNotIn("--playlist-end", args)
+        self.assertEqual(timeout, self.service.ytdlp_channel_scan_timeout_seconds)
+
 
 if __name__ == "__main__":
     unittest.main()

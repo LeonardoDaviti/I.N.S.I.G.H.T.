@@ -109,10 +109,10 @@ class YouTubeService:
         entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
         return self._hydrate_entries_to_posts(entries, source_handle)
 
-    def archive_channel_posts(self, source_handle: str, limit: Optional[int], start: int = 1) -> Dict[str, Any]:
-        """Up to `limit` videos (all without one) from video number `start`, newest first."""
+    def archive_channel_posts(self, source_handle: str, start: int = 1) -> Dict[str, Any]:
+        """Every video from video number `start` to the channel's oldest, newest first."""
         channel_ref = self._normalize_channel_ref(source_handle)
-        entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit, start=start)
+        entries = self._list_channel_entries(channel_ref["channel_url"], start=start)
         posts = self._hydrate_entries_to_posts(entries, source_handle)
         return {
             "posts": posts,

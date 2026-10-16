@@ -56,9 +56,9 @@ class _StubYouTube:
         self.calls.append(("live", handle, limit))
         return [{"url": f"https://youtube.com/watch?v={i}"} for i in range(min(limit, 3))]
 
-    def archive_channel_posts(self, handle, limit, start=1):
-        self.calls.append(("archive", handle, limit, start))
-        return {"posts": [{"url": f"https://youtube.com/watch?v={i}"} for i in range(limit)],
+    def archive_channel_posts(self, handle, start=1):
+        self.calls.append(("archive", handle, start))
+        return {"posts": [{"url": f"https://youtube.com/watch?v={i}"} for i in range(3)],
                 "pages_fetched": 1}
 
     def inspect_channel(self, handle):
@@ -424,7 +424,7 @@ class StartCheckpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(checkpoint, {"mode": "youtube_channel", "playlist_start": 106,
                                       "collected_posts": 0, "pages_fetched": 0})
         [page async for page in kind.archive_pages(_src("youtube", "UCx"), 40, checkpoint, kind.profile.rate_limit())]
-        self.assertEqual(youtube.calls, [("archive", "UCx", 40, 106)])
+        self.assertEqual(youtube.calls, [("archive", "UCx", 106)], "to the channel's end, from video 106")
 
     async def test_nitter_jumps_by_date_to_the_day_after_the_oldest_tweet(self):
         checkpoint = await NitterRssKind(FakeHttp()).start_checkpoint(_src("rss", "https://nitter.local/karpathy/rss"),
@@ -548,8 +548,8 @@ class YouTubeKindTests(unittest.IsolatedAsyncioTestCase):
         pages = [page async for page in kind.archive_pages(_src("youtube", "UCx"), 4, None, kind.profile.rate_limit())]
         self.assertEqual(len(pages), 1)
         self.assertIsNone(pages[0].checkpoint)
-        self.assertEqual(len(pages[0].posts), 4)
-        self.assertEqual(youtube.calls, [("archive", "UCx", 4, 1)])
+        self.assertEqual(len(pages[0].posts), 3)
+        self.assertEqual(youtube.calls, [("archive", "UCx", 1)], "the whole channel, from its newest video")
 
     async def test_inspect_drops_nothing_but_the_rate_limit(self):
         inspection = await YouTubeKind(_StubYouTube()).inspect(_src("youtube", "UCx"))

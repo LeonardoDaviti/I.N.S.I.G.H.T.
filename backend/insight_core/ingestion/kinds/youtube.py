@@ -66,9 +66,9 @@ class YouTubeKind(BaseKind):
         return start_at(mode="youtube_channel", playlist_start=start)
 
     async def archive_pages(self, source, target, checkpoint, rate):
-        # Single shot: one yt-dlp listing of `target` videos from the checkpoint's video number
-        # (one long call that cannot pause), so checkpoint None (finished).
+        # Single shot: one yt-dlp listing of every video from the checkpoint's video number (one
+        # long call that cannot pause), so checkpoint None (finished). An archive runs until the
+        # channel ends, so the listing has no end and gets the channel-scan time budget.
         start = int((checkpoint or {}).get("playlist_start") or 1)
-        result = await asyncio.to_thread(self.youtube.archive_channel_posts, str(source["handle_or_url"]),
-                                         target, start)
+        result = await asyncio.to_thread(self.youtube.archive_channel_posts, str(source["handle_or_url"]), start)
         yield ArchivePage(list(result.get("posts") or []), None)
