@@ -12,7 +12,7 @@ Append-only: one line per design decision, newest last. Never edit or delete a l
 - **004** · 2026-10-10 · post · The post is one centred column with three icon actions (↗ ☆ ⧉) beside the title and no machine metadata. · P4, P5, P6 · commit 9a51f95
 - **005** · 2026-10-10 · sources · Ingestion is a tab under Sources; `/ingestion` redirects there reading-only. · P7, P9 · commit d304422
 - **006** · 2026-10-10 · shell · The `/tracks` list is dropped reading-only; ⌘K lists one entry per track instead. · P9, P10 · commit efa0ce5
-- **007** · 2026-10-10 · reader · Fetching leaves the reading views: no fetch button or key in the reader or the post; an empty scope points quietly to Sources. · P7 · commit 30eb7b1
+- **007** · 2026-10-10 · reader · Fetching leaves the reading views: no fetch button or key in the reader or the post; an empty scope points quietly to Sources. Amended 2026-10-16: reading views never start a fetch; the top bar may show that one is running, linking to Sources. · P7 · commit 30eb7b1, `plan/issues/0007-visible-jobs-live-reader.md`
 - **008** · 2026-10-10 · sources · Secrets live only in Sources → Connections, never in `.env` or the environment. · P7 · commits aa8fddc, 114e37d
 - **009** · 2026-10-10 · design · The Design Studio: design rules live once, in `frontend/src/design/docs`, shown at `/design`. · P9 · `plan/INSIGHT_design_studio_plan.md`
 - **010** · 2026-10-10 · reader · The track page is retired into the reader: `/tracks/:id` redirects to `/read/folder/:id`; with analysis on, the track briefing and milestones render in the folder scope. · P9 · design studio plan D5 (S5)

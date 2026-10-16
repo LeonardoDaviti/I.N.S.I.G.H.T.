@@ -56,10 +56,10 @@ Show what helps you choose what to read: source, date, title.
 
 ## P7 Fetching lives in Sources
 
-Reading views never fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections.
+Reading views never start a fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections. The top bar may show that one is running, linking to Sources.
 
-- *Why:* a reader that fetches mixes waiting with reading and leaks job failures into the page.
-- *Do:* an empty scope points quietly to Sources.
+- *Why:* a reader that fetches mixes waiting with reading and leaks job failures into the page. A reader that can't tell anything is running leaves you guessing whether to act.
+- *Do:* an empty scope points quietly to Sources; the top bar's quiet `fetching · 3 of 41` links to the job.
 - *Don't:* a "Fetch now" button in the reader.
 
 ## P8 One click to where it's managed

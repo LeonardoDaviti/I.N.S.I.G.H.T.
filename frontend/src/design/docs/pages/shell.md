@@ -20,7 +20,8 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 ## Anatomy
 
 - **Skip link** "Skip to content" (visible on focus) to `main#main`.
-- **Top bar** (sticky, translucent material, 3.5rem): the inverted `INSIGHT` wordmark (links to `/`); at the right the lowercase slash nav (`feed / sources / blog`), the current word bold with a solid underline; a `go to ⌘K` button (Ctrl+K off Mac); the theme toggle (☾/☀). Its hairline appears only once content scrolls under it.
+- **Top bar** (sticky, translucent material, 3.5rem): the inverted `INSIGHT` wordmark (links to `/`); beside it the activity sign; at the right the lowercase slash nav (`feed / sources / blog`), the current word bold with a solid underline; a `go to ⌘K` button (Ctrl+K off Mac); the theme toggle (☾/☀). Its hairline appears only once content scrolls under it.
+- **Activity sign** (P7): small `text-2` words beside the wordmark, on every page. While an ingestion run or archive job runs, the running glyph and `fetching · 3 of 41` (sources done of due; just `fetching` without a count); for an hour after the newest ingestion run failed, `last fetch failed`. It links to that job (`/settings/sources?tab=ingestion&sub=jobs&job=<id>`). Nothing when idle; the daily work doesn't count. It reads the operations overview, which polls every 5 seconds while a job runs and every 15 otherwise.
 - **Quick switcher:** a dialog at 18vh, 34rem wide: a "Go to…" combobox with `esc`, then a listbox of destinations, each with its group in `text-3` (feed, tracks, sources, theme). The active option is the inverted block with ↵. Unread, Starred, All posts, By source, one entry per track (to `/read/folder/<id>`), Sources, Source health, Ingestion, Blog, Design studio, then "Switch to light/dark theme". Design studio is the last destination, and absent inside a studio frame. "No page matches “…”" when the filter finds nothing.
 - **Keyboard help** (`?`): a dialog with the single-key switch and the key table (Feed / Post page columns).
 - **Design studio** (`/design`, ⌘K only, never in the top bar): its header, modes, Wall, walk, Bench and keys are described in `system/studio.md`.
@@ -29,8 +30,8 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 ## States
 
 - **switcher-many-tracks:** ⌘K with 40+ tracks and long names: the list scrolls inside `min(22rem, 60dvh)`, names truncate, the active option scrolls into view.
-- **narrow-topbar:** at 320px the nav words and the `go to` button give way to the `menu` icon; wordmark, menu and theme toggle fit without wrapping.
-- Also: scrolled (hairline on), route loading, route error.
+- **narrow-topbar:** at 320px the nav words and the `go to` button give way to the `menu` icon; wordmark, menu and theme toggle fit without wrapping, and the activity sign truncates rather than wraps.
+- Also: scrolled (hairline on), route loading, route error, fetching (the activity sign), last fetch failed.
 
 ## Interactions & keys
 
@@ -46,11 +47,11 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 ## A11y & motion
 
 - `header` with a `nav` labelled "Primary"; the current word is `aria-current="page"`. The switcher is a combobox + listbox with `aria-activedescendant`; the `go to` button has `aria-keyshortcuts`.
-- The switcher never animates: it opens many times a day (P12). Dialogs scale from 0.97 (200ms in, 150ms out), sheets slide; both fade under reduced motion. The bar turns solid under reduced transparency.
+- The switcher never animates: it opens many times a day (P12). Neither does the activity sign: it is static words and a glyph. Dialogs scale from 0.97 (200ms in, 150ms out), sheets slide; both fade under reduced motion. The bar turns solid under reduced transparency.
 
 ## Decisions
 
-- 002 hub deleted, 003 reading-only bar, 006 per-track ⌘K entries, 010 track entries open the reader (`../decisions.md`); the studio's own decisions are listed in `system/studio.md`.
+- 002 hub deleted, 003 reading-only bar, 006 per-track ⌘K entries, 007 (amended) the bar shows a running fetch, 010 track entries open the reader (`../decisions.md`); the studio's own decisions are listed in `system/studio.md`.
 
 ## Open issues
 

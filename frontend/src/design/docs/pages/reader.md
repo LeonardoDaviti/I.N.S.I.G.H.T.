@@ -42,7 +42,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 
 - `j`/`k` move the selection (loads more at the end), `o`/Enter open (marks read), `m` read, `s` star, `Shift+A` mark read from the top down to the selection (confirm dialog, then a toast with Undo for 5 s), `?` the shortcut table with the single-key switch.
 - Read and star are optimistic; failures roll back with a toast.
-- New posts never reorder the loaded list; the pill reloads and scrolls to the top.
+- New posts never reorder the loaded list; the pill reloads and scrolls to the top. The unread counts (pill and rail) are checked every 10 seconds while a fetch job runs and every 60 otherwise, never in a hidden tab, and a run saves each source as it is fetched, so the pill appears while posts arrive.
 - Hovering a row reveals its actions instantly with a mouse; on touch and on the selected row they always show.
 - Back from a post selects and scrolls to the post read last.
 - Rail links keep `view` and a non-default `filter`; Starred always goes to `/?filter=starred`.
