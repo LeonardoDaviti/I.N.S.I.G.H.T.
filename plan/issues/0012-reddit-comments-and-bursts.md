@@ -1,6 +1,6 @@
 # 0012 — Reddit: comments that load, and posts that don't flood the top
 
-Status: **ready-for-agent: the bursts half only.** The comments half waits for the owner: Reddit reportedly now requires approval for new API apps, so first confirm a "script" app can be created (owner observations on the server, 2026-10-16).
+Status: **bursts half built** 2026-10-16, not deployed; **comments half waits for the owner**: Reddit reportedly now requires approval for new API apps, so first confirm a "script" app can be created (owner observations on the server, 2026-10-16).
 
 ## Problem Statement
 - **Comments never load.** "That did not work — HTTP 403 while fetching https://www.reddit.com/r/LocalLLaMA/comments/…json". Reddit answers 403 to every unauthenticated JSON request from the server, whatever the User-Agent (already measured 2026-08-14; that is why post ingestion moved to `.rss`). Comments still use `.json`. Reddit is the only platform with comments, so "no comment fetching works".
@@ -53,3 +53,4 @@ Status: **ready-for-agent: the bursts half only.** The comments half waits for t
 
 ## Further Notes
 - Server evidence: r/LocalLLaMA `mean_gap_hours 0.17`, interval basis `backlog_guard`, ~4.3 h interval; feed of 600 newest items correctly dated.
+- As built: the guard binds when the interval exceeds a quarter of the window (`cap = mean_gap × posts / 4`, then `base > cap`), so every fast feed, not only one past its whole window, is polled at a quarter full. On the local preview that moves 4 fast RSS sources (gaps 2.6–3.4 h) from 24 h to 13–17 h.

@@ -111,6 +111,10 @@ A feed item's `<content:encoded>` (the full article) is stored over its `<descri
 (often only a summary). When a generic RSS feed still gives only a teaser (under 1,400
 characters), the article page of each **new** post is read once and its text stored, marked
 `metadata.full_content_fetched` - a later fetch never puts the feed's summary back over it.
+The page's navigation, header, footer, aside, forms and menu/related/share/subscribe/sidebar
+blocks are dropped before the article is picked, and the page wins only when it is clearly
+the same article, longer: the feed body's first 80 characters must appear in the first
+quarter of the page text (not checked for a feed body under 200 characters).
 Pages of one feed are read 2s apart. Links to GitHub, arXiv, Reddit, YouTube, Telegram and
 X are never read as pages. `settings.fetch_full_content: false` turns it off for one source.
 Code: `ingestion/full_text.py`.
@@ -121,6 +125,8 @@ Posts stored before that are repaired once, by hand:
 docker compose exec backend python -m insight_core.scripts.repair_full_text --dry-run   # what it would read
 docker compose exec backend python -m insight_core.scripts.repair_full_text             # read them
 #   --source <source-id>   one source     --limit N   newest N posts     --retry   include posts already tried
+docker compose exec backend python -m insight_core.scripts.repair_full_text --entities --dry-run   # count HTML codes
+docker compose exec backend python -m insight_core.scripts.repair_full_text --entities             # decode them
 ```
 
 Substack sources are read from Substack's API (paid posts only with the Substack session),
@@ -128,6 +134,9 @@ generic RSS sources from the article page; every other kind is skipped. One site
 2s apart, up to 4 sites at once; a site that fails 3 times in a row is left for the next run.
 Every post read is marked `metadata.full_text_checked_at`, so a second run does not read it
 again. The summary is printed as JSON.
+
+`--entities` reads no page: plain text is stored with HTML codes decoded ("That's", not
+"That&#39;s"), and this decodes the codes left in posts stored before that.
 
 ### How a source is decided
 
@@ -141,11 +150,13 @@ again. The summary is printed as JSON.
    until the retry time, then retried
 4. **New source** (no successful fetch, 0 posts) → fetched
 5. **Due**: the adaptive fetch interval has elapsed since the last *successful* fetch (an
-   empty fetch counts) → fetched, otherwise deferred
+   empty fetch counts), or will within 10 minutes (a fetch is recorded when it ends, a tick
+   starts on the hour, so an hourly source is due every tick) → fetched, otherwise deferred
 
 The interval comes from the mean gap between the source's latest 20 posts (half the gap,
 clamped to 24h..21d; 24h probation while there are fewer than 3 dated posts; 168h minimum
-for yt-dlp), capped by a backlog guard so a fast feed is polled before it can overflow.
+for yt-dlp), capped by a backlog guard: a fast feed is polled before its window (the mean
+gap times the posts it exposes) is a quarter full, but not more than hourly.
 `sources.fetch_interval_hours_override` replaces all of that for one source.
 
 ### Scheduler (run_scheduler.py, the ingestion container)

@@ -18,7 +18,7 @@ import psycopg
 
 from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PostsRepository
 from insight_core.ingestion import full_text
-from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds import KindRegistry, parsing
 from insight_core.ingestion.kinds.generic_rss import GenericRssKind
 from insight_core.scripts.repair_full_text import STOP_AFTER_FAILURES, Repair
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
@@ -43,6 +43,56 @@ def _feed(*items: tuple[str, str]) -> str:
 
 def _src(**settings) -> dict:
     return {"id": "s1", "platform": "rss", "handle_or_url": FEED_URL, "settings": settings}
+
+
+PARAGRAPHS = "".join(f"<p>Paragraph {n} of what the author wrote, sentence after sentence.</p>" for n in range(12))
+
+# Modelled on danielmiessler.com (VitePress): preload <link>s, a nav menu in the header,
+# the article in plain <div>s (no <article> or <main>), a related list and a footer.
+MIESSLER_PAGE = f"""<html><head>
+<link rel="preload stylesheet" href="/assets/theme.css" as="style">
+<link rel="modulepreload" href="/assets/chunks/framework.js">
+</head><body><div id="app">
+<header class="VPNav"><div class="VPNavBar"><span class="theme-title">Daniel Miessler</span>
+  <div class="content-body"><nav class="VPNavBarMenu menu"><span class="visually-hidden">Main Navigation</span>
+    <ul><li><a href="/">home</a></li><li><a href="/blog/">blog</a></li><li><a href="/telos/">telos</a></li></ul></nav>
+  <div class="menu"><div class="VPMenu"><p>Newsletter</p></div></div></div></div></header>
+<div class="page-title"><h1 class="frontmatter-title">Custom Content for Everyone</h1>
+<p>People are starting to think about teams making full games with AI.</p>{PARAGRAPHS}
+<ul><li>AIL 1: Daniel dictated this post.</li></ul>
+<div class="related-posts"><h2 class="related-heading">Related Reading</h2>
+  <ul><li class="related-item"><a href="/blog/x"><span class="related-title">Gaming is Metaverse 1.0</span></a></li></ul></div>
+</div>
+<footer class="VPFooter"><p>&copy; 1999 &mdash; 2026 Daniel Miessler. All rights reserved.</p></footer>
+</div></body></html>"""
+
+
+def _text(html: str) -> str:
+    return parsing.strip_html(parsing.extract_article_html(html))
+
+
+class ArticleExtractionTests(unittest.TestCase):
+    def test_menus_footers_and_related_lists_are_not_the_article(self):
+        page = ("<html><body><nav><ul><li>Home</li><li>About</li></ul></nav>"
+                f"<div class=\"post\">{PARAGRAPHS}</div>"
+                "<aside><ul><li>Popular post</li></ul></aside>"
+                "<div id=\"related\"><ul><li>Another post</li></ul></div>"
+                "<footer><p>Footer links</p></footer></body></html>")
+        self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
+
+    def test_a_nested_menu_is_dropped_whole(self):
+        page = (f"<article>{PARAGRAPHS}<div class=\"menu-wrap\"><div><p>Menu item</p></div>"
+                "<p>More menu</p></div><p>The last word.</p></article>")
+        text = _text(page)
+        self.assertNotIn("enu", text)
+        self.assertTrue(text.endswith("The last word."))
+
+    def test_the_miessler_page_is_only_its_article(self):
+        text = _text(MIESSLER_PAGE)
+        self.assertTrue(text.startswith("Custom Content for Everyone People are starting"), text[:80])
+        self.assertTrue(text.endswith("AIL 1: Daniel dictated this post."), text[-80:])
+        for chrome in ("Main Navigation", "telos", "Newsletter", "Related Reading", "Metaverse", "rights reserved"):
+            self.assertNotIn(chrome, text)
 
 
 class _StubYouTube:
@@ -89,6 +139,22 @@ class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
                          "https://news.example.com/a": _article("Tiny.")})
         posts = await GenericRssKind(http).fetch_latest(_src(), 10)
         self.assertEqual(sorted(p["content"] for p in posts), ["Other summary.", "Short summary."])
+
+    async def test_a_page_that_is_not_the_same_article_keeps_the_feed_body(self):
+        body = "A clean feed body that opens the way the author opened it. " * 5
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", body)),
+                         "https://news.example.com/a": _article()})
+        [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(post["content"], body.strip())
+        self.assertNotIn(FULL_TEXT_FLAG, post["metadata"])
+
+    async def test_a_page_that_opens_like_the_feed_body_wins(self):
+        body = "Every paragraph of the article, read from its page. " * 4
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", body)),
+                         "https://news.example.com/a": _article()})
+        [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertTrue(post["metadata"][FULL_TEXT_FLAG])
+        self.assertEqual(post["content"], _text(_article()))
 
     async def test_a_failed_lookup_reads_no_page(self):
         def broken(urls):
@@ -206,3 +272,49 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         content, metadata = self._row(post_id)
         self.assertIn("The whole free post.", content)
         self.assertEqual(metadata["audience"], "everyone")
+
+
+@requires_test_db
+class EntityRepairTests(unittest.IsolatedAsyncioTestCase):
+    """repair_full_text --entities: the HTML codes in stored plain text, decoded with no network."""
+
+    def setUp(self):
+        self.url = db_url()
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.source_id = insert_scratch_source(cur)
+            conn.commit()
+        repo = PostsRepository(self.url)
+        self.ids = []
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            for n, content in enumerate(["That&#39;s it.", "the world&amp;#39;s first", "Plain & simple."]):
+                post_id, _ = repo.upsert_post(cur, {"title": "T", "date": None, "content": content,
+                                                    "url": f"https://news.example.com/e{n}"}, self.source_id)
+                self.ids.append(post_id)
+            conn.commit()
+
+    def tearDown(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            conn.commit()
+
+    def _contents(self) -> list:
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT content FROM posts WHERE id = ANY(%s::uuid[]) ORDER BY url", (self.ids,))
+            return [row[0] for row in cur.fetchall()]
+
+    def _repair(self, http: FakeHttp, **kwargs) -> dict:
+        registry = KindRegistry.default(http, _StubYouTube(), db_url=self.url)
+        return Repair(self.url, http=http, registry=registry).run(entities=True, source_id=self.source_id, **kwargs)
+
+    async def test_codes_are_decoded_without_reading_any_page(self):
+        http = FakeHttp()
+        summary = await self._repair(http)
+        self.assertEqual(summary, {"with_codes": 2, "decoded": 2})
+        self.assertEqual(self._contents(), ["That's it.", "the world's first", "Plain & simple."])
+        self.assertEqual(http.requests, [])
+
+    async def test_a_dry_run_counts_and_writes_nothing(self):
+        summary = await self._repair(FakeHttp(), dry_run=True)
+        self.assertEqual(summary, {"with_codes": 2, "to_decode": 2})
+        self.assertEqual(self._contents(), ["That&#39;s it.", "the world&amp;#39;s first", "Plain & simple."])

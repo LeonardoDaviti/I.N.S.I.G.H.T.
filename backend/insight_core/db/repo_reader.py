@@ -181,7 +181,7 @@ class FeedQuery:
 
 
 def _excerpt(content: str | None) -> str:
-    return strip_html(content, entities="decode")[:EXCERPT_CHARS]
+    return strip_html(content)[:EXCERPT_CHARS]
 
 
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.

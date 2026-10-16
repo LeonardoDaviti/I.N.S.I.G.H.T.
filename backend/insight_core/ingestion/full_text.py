@@ -15,9 +15,14 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 from insight_core.db.repo_posts import FULL_TEXT_FLAG
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
+from insight_core.utils.content_fingerprints import normalize_text
 
 # A body shorter than this is probably a teaser.
 SHORT_BODY_CHARS = 1400
+# The page is the same article when the body's first OPENING_CHARS appear in the first
+# quarter of the page text. A body under SAME_ARTICLE_MIN_CHARS is not checked.
+OPENING_CHARS = 80
+SAME_ARTICLE_MIN_CHARS = 200
 # Seconds between two article pages of one site.
 PAGE_DELAY_S = 2.0
 # Links whose page is not an article: a repository, a paper's abstract page, a thread,
@@ -46,15 +51,23 @@ def is_teaser(post: Mapping[str, Any]) -> bool:
     return len(body_text(post)) < SHORT_BODY_CHARS
 
 
+def _same_article(current_text: str, page_text: str) -> bool:
+    current, page = normalize_text(current_text), normalize_text(page_text)
+    if len(current) < SAME_ARTICLE_MIN_CHARS:
+        return True
+    return current[:OPENING_CHARS] in page[:len(page) // 4]
+
+
 async def read_article(http: KindHttp, url: str, current_text: str) -> Optional[Tuple[str, str]]:
-    """(html, text) of the article at url, or None when the page holds nothing longer.
+    """(html, text) of the article at url, or None when the page holds nothing longer, or is
+    not clearly the same article (the feed body is the better version then).
 
     Raises what the request raises (ValueError for an HTTP or network error).
     """
     page, _ = await http.get_text(url)
     html = parsing.extract_article_html(page)
     text = parsing.strip_html(html)
-    if len(text) <= max(len(current_text) + 250, 700):
+    if len(text) <= max(len(current_text) + 250, 700) or not _same_article(current_text, text):
         return None
     return html, text
 
