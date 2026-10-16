@@ -3,17 +3,46 @@ import { Link, useLocation } from 'react-router-dom';
 import { Command, Menu } from 'lucide-react';
 import ThemeToggle from '../ThemeToggle';
 import Kbd from '../ui/Kbd';
+import StatusGlyph from '../ui/StatusGlyph';
 import { iconButtonClass } from '../ui/styles';
 import { cn } from '../../lib/utils';
+import { useOperationsOverview } from '../../hooks/useOperations';
+import { useNow } from '../../hooks/useNow';
+import { fetchingLabel, recentFailedRun, runningFetchJob } from '../../lib/jobRuns';
+import { sourcesIngestionHref } from '../../lib/ingestionNavigation';
 import { activeNavKey, NAV_ITEMS } from './navigation';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
+ * The activity sign: "fetching · 3 of 41" while an ingestion run or archive job runs,
+ * "last fetch failed" for an hour after a failed run, nothing otherwise. It links to
+ * the job in Sources → ingestion → jobs. Static text, so it never animates.
+ */
+function FetchActivity() {
+  const jobs = useOperationsOverview().data?.jobs;
+  const nowMs = useNow(60_000).getTime();
+  const running = runningFetchJob(jobs);
+  const failed = running ? null : recentFailedRun(jobs, nowMs);
+  const job = running ?? failed;
+  if (!job) return null;
+  return (
+    <Link
+      to={sourcesIngestionHref('jobs', `?job=${encodeURIComponent(job.id)}`)}
+      className="min-w-0 truncate rounded-sm text-fg-2 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg"
+    >
+      {running ? <StatusGlyph status="running" label={fetchingLabel(running)} className="text-[0.8125rem]" /> : (
+        <span className="text-[0.8125rem]">last fetch failed</span>
+      )}
+    </Link>
+  );
+}
+
+/**
  * The one top bar (design docs system/information-architecture.md): the inverted INSIGHT wordmark on the left,
- * the lowercase slash nav (`feed / sources / blog`) and the ⌘K switcher on the right. A translucent
- * material over the black page; its hairline appears only once content scrolls
- * beneath it (apple §12: no divider where nothing overlaps).
+ * the activity sign beside it, the lowercase slash nav (`feed / sources / blog`) and the ⌘K switcher
+ * on the right. A translucent material over the black page; its hairline appears only once content
+ * scrolls beneath it (apple §12: no divider where nothing overlaps).
  */
 export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void }) {
   const { pathname } = useLocation();
@@ -51,6 +80,8 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
         >
           INSIGHT
         </Link>
+
+        <FetchActivity />
 
         <nav aria-label="Primary" className="ml-auto hidden min-w-0 sm:block">
           <ul className="flex items-center gap-1.5 text-[0.875rem]">
