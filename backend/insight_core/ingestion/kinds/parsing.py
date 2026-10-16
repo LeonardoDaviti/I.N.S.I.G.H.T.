@@ -10,7 +10,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, List, Optional
+from html.parser import HTMLParser
+from typing import Any, Dict, List, Optional, Tuple
 
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
@@ -113,8 +114,73 @@ def extract_html_image_urls(html_text: str) -> List[str]:
     return media_urls
 
 
+# Page chrome, dropped with everything inside it before the article is chosen: these
+# elements, and any element (but <html> and <body>) whose class or id token starts with
+# one of the prefixes.
+CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
+CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar")
+VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                       "param", "source", "track", "wbr"})
+TEXT_BLOCKS = "h1|h2|h3|p|blockquote"
+
+
+def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
+    if tag in CHROME_TAGS:
+        return True
+    if tag in ("html", "body"):
+        return False
+    tokens = " ".join(value or "" for name, value in attrs if name in ("class", "id")).lower().split()
+    return any(token.startswith(CHROME_PREFIXES) for token in tokens)
+
+
+class _ChromeStripper(HTMLParser):
+    """Re-emits the page without its chrome. Regex can't find where a nested element ends:
+    `dropping` is the stack of elements open inside the dropped one."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.kept: List[str] = []
+        self.dropping: List[str] = []
+
+    def _keep(self, text: str) -> None:
+        if not self.dropping:
+            self.kept.append(text)
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag not in VOID_TAGS and (self.dropping or _is_chrome(tag, attrs)):
+            self.dropping.append(tag)
+        else:
+            self._keep(self.get_starttag_text() or "")
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        self._keep(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.dropping:
+            self.kept.append(f"</{tag}>")
+        elif tag in self.dropping:  # closes it and whatever was left open inside it
+            del self.dropping[len(self.dropping) - 1 - self.dropping[::-1].index(tag):]
+
+    def handle_data(self, data: str) -> None:
+        self._keep(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._keep(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._keep(f"&#{name};")
+
+
+def _without_chrome(html_text: str) -> str:
+    stripper = _ChromeStripper()
+    stripper.feed(html_text)
+    stripper.close()
+    return "".join(stripper.kept)
+
+
 def extract_article_html(html_text: str) -> str:
     cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg).*?</\1>", "", html_text or "")
+    cleaned = _without_chrome(cleaned)
     candidate_patterns = [
         r"(?is)<article\b[^>]*>(.*?)</article>",
         r"(?is)<main\b[^>]*>(.*?)</main>",
@@ -133,9 +199,10 @@ def extract_article_html(html_text: str) -> str:
         body_match = re.search(r"(?is)<body\b[^>]*>(.*?)</body>", cleaned)
         candidate = body_match.group(1) if body_match else cleaned
 
-    blocks = re.findall(r"(?is)<(?:h1|h2|h3|p|blockquote|li)[^>]*>.*?</(?:h1|h2|h3|p|blockquote|li)>", candidate)
-    if not blocks:
-        blocks = re.findall(r"(?is)<(?:h1|h2|h3|p|blockquote|li)[^>]*>.*?</(?:h1|h2|h3|p|blockquote|li)>", cleaned)
+    # \b: "<li" must not match "<link", nor "<p" "<path".
+    blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b[^>]*>.*?</(?:{TEXT_BLOCKS}|li)>", candidate)
+    if not blocks:  # list items count only inside the chosen candidate
+        blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS})\b[^>]*>.*?</(?:{TEXT_BLOCKS})>", cleaned)
 
     text_size = len(strip_html(" ".join(blocks)))
     if text_size < 500:

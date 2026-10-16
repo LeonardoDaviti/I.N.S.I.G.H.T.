@@ -663,6 +663,23 @@ class PostsRepository:
             (FULL_TEXT_CHECKED, at, post_id),
         )
 
+    def contents_with_entities(self, cur: Cursor, *, source_id: Optional[str] = None) -> List[Tuple[str, str]]:
+        """(id, content) of the stored posts whose plain text holds an HTML code (&#39;)."""
+        cur.execute(
+            """
+            SELECT id, content FROM posts
+            WHERE content ~ '&[#a-zA-Z0-9]+;'
+              AND (%(source_id)s::uuid IS NULL OR source_id = %(source_id)s::uuid)
+            """,
+            {"source_id": source_id},
+        )
+        return [(str(row[0]), row[1]) for row in cur.fetchall()]
+
+    def save_contents(self, cur: Cursor, contents: Sequence[Tuple[str, str]]) -> None:
+        """New plain text for stored posts, nothing else (the content hash already decodes)."""
+        cur.executemany("UPDATE posts SET content = %s, updated_at = now() WHERE id = %s::uuid",
+                        [(content, post_id) for post_id, content in contents])
+
     def update_post_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> bool:
         """Persist metadata for a single post."""
         query = """

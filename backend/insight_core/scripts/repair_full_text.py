@@ -1,6 +1,7 @@
 """Re-read stored teaser posts in full, once (the full-text repair).
 
     python -m insight_core.scripts.repair_full_text [--dry-run] [--source ID] [--limit N] [--retry]
+    python -m insight_core.scripts.repair_full_text --entities [--dry-run] [--source ID]
 
 Which posts: a body shorter than full_text.SHORT_BODY_CHARS that was never read from its
 page, newest first. How each is read again:
@@ -18,6 +19,10 @@ blocking us; its remaining posts are left for the next run.
 Every post read is marked metadata.full_text_checked_at, so the next run does not read it
 again; --retry includes them (after adding a Substack session, say). --dry-run reads
 nothing: it prints what a run would read. The summary is printed as JSON.
+
+--entities reads no page: it decodes the HTML codes ("That&#39;s") left in the plain text
+of posts stored before strip_html decoded them, in every stored post (or --source's).
+With --dry-run it only counts the posts it would change.
 """
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ from insight_core.ingestion.http import KindHttp  # noqa: E402
 from insight_core.ingestion.kinds import KindRegistry  # noqa: E402
 from insight_core.ingestion.kinds.base import KindUnavailable  # noqa: E402
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY, SubstackKind  # noqa: E402
+from insight_core.utils.content_fingerprints import decode_entities  # noqa: E402
 
 logger = logging.getLogger("insight.scripts.repair_full_text")
 
@@ -83,7 +89,9 @@ class Repair:
         self.stopped: Dict[str, str] = {}
 
     async def run(self, *, dry_run: bool = False, source_id: Optional[str] = None,
-                  limit: Optional[int] = None, retry: bool = False) -> Dict[str, Any]:
+                  limit: Optional[int] = None, retry: bool = False, entities: bool = False) -> Dict[str, Any]:
+        if entities:
+            return await asyncio.to_thread(self._decode_entities, dry_run, source_id)
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             posts = self.posts.full_text_candidates(cur, short_chars=full_text.SHORT_BODY_CHARS,
                                                     source_id=source_id, retry=retry, limit=limit)
@@ -113,6 +121,16 @@ class Repair:
             "stopped_sites": self.stopped,
         })
         return summary
+
+    def _decode_entities(self, dry_run: bool, source_id: Optional[str]) -> Dict[str, Any]:
+        with db.transaction(self.db_url) as cur:
+            stored = self.posts.contents_with_entities(cur, source_id=source_id)
+            changed = [(post_id, decoded) for post_id, content in stored
+                       if (decoded := decode_entities(content)) != content]
+            if dry_run:
+                return {"with_codes": len(stored), "to_decode": len(changed)}
+            self.posts.save_contents(cur, changed)
+        return {"with_codes": len(stored), "decoded": len(changed)}
 
     async def _site(self, host: str, items: List[Item]) -> None:
         failures = 0
@@ -170,6 +188,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source", metavar="ID", help="only this source's posts")
     parser.add_argument("--limit", type=int, metavar="N", help="at most N posts, newest first")
     parser.add_argument("--retry", action="store_true", help="include posts an earlier run already read")
+    parser.add_argument("--entities", action="store_true",
+                        help="read no page; decode the HTML codes (&#39;) in stored posts' text")
     return parser.parse_args(argv)
 
 
@@ -186,7 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     http = KindHttp()
     registry = KindRegistry.default(http, YouTubeService(db_url), db_url=db_url)
     summary = asyncio.run(Repair(db_url, http=http, registry=registry).run(
-        dry_run=args.dry_run, source_id=args.source, limit=args.limit, retry=args.retry))
+        dry_run=args.dry_run, source_id=args.source, limit=args.limit, retry=args.retry, entities=args.entities))
     print(json.dumps(summary, indent=2))
     return 0
 

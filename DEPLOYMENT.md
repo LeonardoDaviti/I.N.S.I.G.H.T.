@@ -124,9 +124,12 @@ summary) are re-read by hand, once, after the deploy that brings it:
 ```bash
 docker compose exec backend python -m insight_core.scripts.repair_full_text --dry-run
 docker compose exec backend python -m insight_core.scripts.repair_full_text
+docker compose exec backend python -m insight_core.scripts.repair_full_text --entities --dry-run
+docker compose exec backend python -m insight_core.scripts.repair_full_text --entities
 ```
 
-It makes real requests to the sites (2s apart per site). See
+The first two make real requests to the sites (2s apart per site). `--entities` makes
+none: it decodes the HTML codes ("That&#39;s") stored in older posts' text. See
 `backend/insight_core/scripts/README.md`, "Full text".
 
 ## Development mode
