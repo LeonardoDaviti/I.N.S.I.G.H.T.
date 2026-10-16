@@ -15,7 +15,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0008](0008-clean-full-text.md) | Full text that is clean: no site menus, no HTML codes | ready-for-agent |
 | [0009](0009-short-titles.md) | A title is a title: cut posts whose whole text is the title | ready-for-agent |
 | [0010](0010-post-page-navigation.md) | Post page: back always in reach, the source name reads the source | ready-for-agent |
-| [0011](0011-sources-list-sort-and-read.md) | Sources list: sort by column, find the newest source, read from a row | ready-for-agent |
+| [0011](0011-sources-list-sort-and-read.md) | Sources list: sort by column, find the newest source, read from a row | built |
 | [0012](0012-reddit-comments-and-bursts.md) | Reddit: comments that load, posts that don't flood the top | ready-for-agent |
 | [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future) |
 | [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | ready-for-agent |

@@ -1,6 +1,6 @@
 # 0011 — Sources list: sort by clicking a column, find the newest source, read a source from its row
 
-Status: **ready-for-agent** (owner observations on the server, 2026-10-16). UX.
+Status: **built** 2026-10-16, not yet deployed (owner observations on the server, 2026-10-16). UX.
 
 ## Problem Statement
 - **Sorting hides in a dropdown.** The list has column headers (Name, Kind, Posts, Last post, Status) but they are plain text. Sorting is a separate "Sort" dropdown, and its "Last success" sorts by the last fetch, not by the "Last post" column on screen.
