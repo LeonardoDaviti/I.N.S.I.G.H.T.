@@ -8,10 +8,12 @@ Status: **ready-for-agent** (owner observations on the server, 2026-10-16). Buil
 - **HTML codes show as text.** `&#39;` and similar stay in the stored plain text (16 of 40 posts in two sources on the preview). Previews and the copied text show "That&#39;s".
 
 ## Solution
-- Deploy the full-text work and run the one-off repair (already built; waits for the owner's go).
 - The article reader drops navigation, header, footer, aside and "related" blocks before it picks the article, and list items count only inside the chosen article.
-- Plain text is stored with HTML codes decoded ("That's").
+- Plain text is stored with HTML codes decoded ("That's"), for every kind, in one place.
 - The page wins over the feed only when it is clearly the same article, longer: the feed body's opening must appear near the start of the page text. Otherwise the feed body is kept.
+- A no-network repair option decodes the codes in posts already stored.
+
+**For the owner, after merge (not the implementer's job):** deploy, then run `repair_full_text --dry-run`, then `repair_full_text`, then `repair_full_text --entities`. Posts already read with menus on the local preview need `repair_full_text --retry` (a normal run skips posts already read from their page).
 
 ## User Stories
 1. As the reader, I want every post's full text inside INSIGHT, so that I never leave to read.
@@ -20,20 +22,28 @@ Status: **ready-for-agent** (owner observations on the server, 2026-10-16). Buil
 4. As the reader, I want apostrophes and quotes to look like characters, not codes, so that text reads normally.
 5. As the reader, I want feed previews without codes either, so that the list looks clean.
 6. As the reader, I want a clean feed body kept when the page only adds chrome, so that the better version wins.
-7. As the reader, I want posts already stored with codes to be cleaned by the repair, so that old posts read right too.
+7. As the reader, I want posts already stored with codes cleaned once, without INSIGHT re-reading any site, so that old posts read right too.
 8. As the owner, I want the repair to stay a one-off that I start, so that no outside site is hit without my go.
 9. As the owner, I want the dry run to show how many posts would change, so that I can decide.
 
 ## Implementation Decisions
-- **Article extraction** (the existing `extract_article_html`) removes `<nav>`, `<header>`, `<footer>`, `<aside>`, `<form>` and elements whose class or id says nav/menu/footer/related/share/subscribe before choosing a candidate. Block collection from the whole page (the current fallback) excludes `<li>` outside the candidate.
-- **Entities.** The plain-text field is produced with entity decoding (the existing `strip_html` already has `entities="decode"`); the full-text module and the RSS parser use it for `content`. `content_html` is unchanged.
-- **Same-article check.** `read_article` accepts the page only if its text contains the first ~80 characters of the current body (normalised whitespace, case-insensitive) within its first 25%, or the current body is under 200 characters. Else it returns None (the feed body stays).
-- **Repair.** The existing `repair_full_text` also decodes entities in stored `content` for posts it reads. A separate pass for entity-only fixes is out of scope.
-- No new modules, no new seams: the changes live in the parsing helpers and the full-text module.
+- **Article extraction** (the existing `extract_article_html`) uses the stdlib `html.parser` with a depth count to drop `nav`, `header`, `footer`, `aside`, `form`, and any element whose class or id token starts with `nav`, `menu`, `footer`, `related`, `share`, `subscribe` or `sidebar`, before it chooses a candidate. Regex can't find where a nested element ends. No new dependency. The current whole-page fallback no longer collects `<li>` outside the candidate.
+- **Entities, in one place.** At least ten places produce plain text with `strip_html` and no decoding (telegram_rss, substack, the adapters, the RSS parser). Decision: `strip_html` decodes by default. Remove the `"keep"` option if nothing still needs it. Decoding repeats until nothing changes, at most 2 passes, because some stored text is double-escaped (`&amp;#39;`). The implementer first confirms the raw stored form on the preview database, and the fixtures use it. The content hash already decodes before hashing (`normalize_text`), so this change doesn't make stored posts look changed.
+- **Same-article check.** `read_article` accepts the page only if the first 80 characters of the current body are found in the first 25% of the page text, both decoded, whitespace collapsed and case-folded. A body shorter than 80 characters is matched whole. The check is skipped when the current body is under 200 characters. The existing length rule still applies on top.
+- **`repair_full_text --entities`.** Decodes `content` in every stored post containing `&…;`, with no network; `--dry-run` counts them. This is the only new option.
+- Docs: the `repair_full_text` docstring, `scripts/README.md`, and `DEPLOYMENT.md`'s repair section.
+- No new modules and no new seams: the changes stay in the parsing helpers, the full-text module and the repair script.
 
 ## Testing Decisions
-- Unit tests at the existing parsing/full-text seam with fixture HTML: a page with nav + footer + related list yields only the article paragraphs; a page whose text doesn't contain the feed opening is rejected; `content` decodes `&#39;` / `&amp;` / `&quot;`. Prior art: `test_full_text.py`, `test_source_kinds.py`.
-- A fixture modelled on the Miessler page (nav `<li>` menu, article without `<article>` tag, footer) is the regression case.
+- Unit tests at the existing parsing and full-text seam with fixture HTML:
+  - a page with a nav menu (`<li>`s), a footer and a related list yields only the article paragraphs;
+  - a nested `<div class="menu">` inside the page is dropped whole;
+  - a page whose text doesn't contain the feed's opening is rejected, and the feed body stays;
+  - `strip_html` decodes `&#39;`, `&amp;`, `&quot;` and the double-escaped `&amp;#39;`.
+
+  Prior art: `test_full_text.py`, `test_source_kinds.py`.
+- A fixture modelled on the Miessler page (a nav menu, an article without an `<article>` tag, a footer) is the regression case.
+- Repair: `--entities` on the test database decodes a stored `&#39;` and makes no HTTP request; `--entities --dry-run` writes nothing.
 
 ## Out of Scope
 - A readability library or headless browser.

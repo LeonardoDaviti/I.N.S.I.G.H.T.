@@ -8,27 +8,37 @@ Status: **ready-for-agent** (owner observation on the server, 2026-10-16). UX.
 
 ## Solution
 - When a post's title is long (over 120 characters) or is the start of its body, INSIGHT shows a short title: the first line or first sentence, at most 120 characters, cut at a word with "…".
-- On the post page, when the title was cut from the body, the full text appears once, as the body, not again in the heading.
+- On the post page, the heading shows the short title and the body is rendered in full. When the body is exactly the title (nothing more), it isn't rendered a second time.
 - Applies to posts already stored, with no data change.
 
 ## User Stories
 1. As the reader, I want a tweet's title to be its first sentence, so that the feed row and the heading are short.
 2. As the reader, I want the heading not to repeat the body, so that I read the text once.
 3. As the reader, I want a cut title to end at a word with "…", so that it reads naturally.
-4. As the reader, I want a real title (a blog post's) left alone, so that normal posts don't change.
+4. As the reader, I want a normal-length title (a blog post's) left alone, so that normal posts don't change. A real title over 120 characters is cut too.
 5. As the reader, I want old posts to get the short title too, so that I don't have to refetch.
-6. As the reader, I want the browser tab and copied link text to use the short title, so that they are readable.
-7. As the reader, I want searching or ⌘K to still find words from the full text, so that nothing is lost.
-8. As the reader, I want multi-line titles to use only their first line, so that bullet lists never become headings.
+6. As the reader, I want the browser tab on a post page to show the short title, so that tabs are readable.
+7. As the reader, I want multi-line titles to use only their first line, so that bullet lists never become headings.
 
 ## Implementation Decisions
-- **One rule, in one place: the reader API.** The backend already computes the display title for empty titles (the reader repository's title fallback). That same function gains the cut rule, so the feed and the post detail both return the short title; the stored title is untouched. The response keeps `title` as the display title and adds nothing new unless needed: if the frontend needs to know the title was cut, it gets `title_cut: true`.
-- **The rule:** take the title (or the body when the title is empty); take the first line; if over 120 characters, cut at the end of the first sentence if that is ≤ 120, else at the last word boundary ≤ 117 plus "…". A title is "the body's start" when the normalised body starts with the normalised title's first 60 characters.
-- **Frontend.** The post page hides the duplicated opening only via `title_cut`; the existing `displayPostTitle` stays for its ellipsis case and is not given a second length rule (no duplicate rule in two places).
+- **One rule, in one place.** Add `display_title(title, content)` in the shared post fields module (beside `build_post_fields`). The reader's feed items (today an inline 80-character fallback in the reader repository) and the post detail service both call it, so the feed and the post page show the same title. The stored title is untouched.
+- **The rule:**
+  1. Start from the raw title, or the raw body when the title is empty. Use raw text so its line breaks are still there.
+  2. Keep only the first non-empty line.
+  3. If that is 120 characters or less, it is the title.
+  4. Otherwise cut at the first sentence end (`[.!?…]` followed by a space or the end), found after at least 20 characters, if that end is within 120 characters.
+  5. Otherwise cut at the last space within 117 characters and add "…". With no space in the first 117 characters (CJK, say), cut at 117.
+- **Frontend.** Delete `displayPostTitle` and its tests: it expands a title ending in "…" back to the body's first line (up to 300 characters), which would undo the cut. The post page renders `post.title`. When the body text equals the title, the body is not rendered again; no new API field is needed for that. The post page sets the tab title to `<title> · INSIGHT`. Update `post.md` for the heading rule.
 
 ## Testing Decisions
-- Backend unit tests of the title rule (tweet with bullets → first line; long single sentence → word cut + "…"; normal blog title unchanged; empty title → body start), and a reader route test that a stored 1,000-character title comes back cut. Prior art: reader repository tests for the 80-character fallback.
-- Frontend: the post page with `title_cut` renders the body once.
+- Backend unit tests of `display_title`:
+  - a tweet with a bullet list becomes its first line;
+  - a long single sentence is cut at a word, with "…";
+  - a normal blog title is unchanged;
+  - an empty title becomes the body's start;
+  - a long CJK line is cut hard at 117.
+- Route tests: a stored 1,000-character title comes back cut from both the feed and the post detail. Prior art: `test_post_detail_reader.py`, `test_feed_routes.py`.
+- Frontend: the post page heading renders the API title as given, and the tab title is set.
 
 ## Out of Scope
 - Rewriting stored titles; AI-generated titles.

@@ -36,11 +36,17 @@ Status: **ready-for-agent** (owner observations on the server, 2026-10-16). UX.
 17. As the owner, I want old links with the old sort/group values to still open, so that nothing breaks (unknown values fall back to the default).
 
 ## Implementation Decisions
-- **API:** the source health rows gain `created_at` (from the sources table, already stored). The response type in the frontend client gains the field. No new endpoint.
-- **List view model:** the sources list's view state (in the URL) gets `sort` ∈ {name, kind, posts, lastPost, added, status} and `dir` ∈ {asc, desc}, with a sensible default direction per column (name/kind asc; posts, lastPost, added desc; status: failing first). Default sort: status, as today. `group` ∈ {none, track, platform}, default `none`. Unknown values fall back to defaults.
-- **Headers** in the list become buttons with `aria-sort`. On narrow screens, where columns hide, a compact "Sort: Added ↓" text button opens the same choices (one control, reused; not a second sort system).
-- **Untracked group** renders without a header when grouping by track. The design doc for Sources is updated (it currently asks for the "Not in a track" label).
-- **Read link** uses a new `sourceReadPath(id)` beside the existing `folderReadPath`, both in the feed-context helpers.
+- **API.** Add `s.created_at` to the schedule view query behind source health, and `created_at` to each health row. In the frontend client's `SourceHealthRow` type, add `created_at` and `last_post_at`, and delete the `lastPostAt()` cast helper (it exists only because `last_post_at` was never typed). No new endpoint.
+- **The list's view state** (kept in the URL):
+  - `sort` ∈ {name, kind, posts, lastPost, added, status} and `dir` ∈ {asc, desc}.
+  - Default direction per column: name and kind ascending; posts, lastPost and added descending; status descending, which means worst first (the existing health sort). `asc` reverses it. Ties sort by name.
+  - The default sort stays status.
+  - `group` ∈ {none, track, platform}, default `none`. `writeSourcesView` writes `group=track` explicitly and leaves `none` out.
+- **Old URLs.** `tab=health` maps to group `none`, keeping its status filter. `sort=success`, `group=status` and any unknown value fall back to the defaults.
+- **Headers.** Remove `aria-hidden` from the header row. Each header is a `<button aria-label="Sort by Posts, descending">` with a pressed state, not `aria-sort`: the list isn't a table. On narrow screens, where columns hide, one compact "Sort: Added ↓" text button opens the same choices. It is the same control, not a second sort system.
+- **Untracked sources.** When grouping by track, they render after a thin divider, without a header.
+- **Read link.** Uses `sourceReadPath(id)` from the feed-context helpers, added by issue 0010. Whichever of the two lands first adds it.
+- **Docs.** Update `design/docs/pages/sources.md`: the default grouping, the "Not in a track" label, the "dense" scene (grouped by track today), and the column drop rules, including where "Added" drops.
 
 ## Testing Decisions
 - Pure tests of the list view model (sorting each column both ways, defaults, URL round-trip, unknown values). Prior art: the sources list module tests.
