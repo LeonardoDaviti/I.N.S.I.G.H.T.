@@ -1,6 +1,6 @@
 # 0003 — Clicking a source or track name opens it in Sources
 
-Status: **open** (owner, 2026-10-10). Small UX fix.
+Status: **done** (built in 0fa3545, on the server) · Opened by the owner 2026-10-10. Small UX fix.
 
 ## Problem
 - **Reader:** on `/read/source/:id` (and `/read/folder/:id`), the source or track name in the header is plain text (`FeedToolbar`'s `<h1>`). You can't get from what you're reading to that source's settings, e.g. to remove it, without going to Sources and searching for it.
