@@ -49,7 +49,7 @@ def stats(**overrides) -> CadenceStats:
     """A healthy, fast-ish source with a success an hour ago; override what the case needs."""
     base = dict(
         post_count=50,
-        mean_gap=2 * H,
+        mean_gap=6 * H,
         sample_size=20,
         tier=CadenceTier.FAST,
         override_hours=None,
@@ -88,7 +88,8 @@ class DecideFetchTests(unittest.TestCase):
         self.assertTrue(due.fetch)
 
     def test_fast_source_gets_the_24h_floor(self):
-        self.assertEqual(fetch_interval(stats(mean_gap=2 * H), RSS), (24 * H, "tier"))
+        # 6h x 20 posts = a 120h window: a quarter of it (30h) is past the floor.
+        self.assertEqual(fetch_interval(stats(mean_gap=6 * H), RSS), (24 * H, "tier"))
 
     def test_medium_source_is_half_its_gap(self):
         s = stats(mean_gap=3 * D, tier=CadenceTier.MEDIUM)
@@ -99,18 +100,30 @@ class DecideFetchTests(unittest.TestCase):
         self.assertEqual(fetch_interval(s, RSS), (21 * D, "tier"))
 
     def test_backlog_guard_binds_for_very_fast_sources(self):
-        # 30m gap x 20 posts per fetch = the feed rolls over in 10h; the 24h floor would lose posts.
+        # 30m gap x 20 posts per fetch = the feed rolls over in 10h; polled at a quarter of that.
         s = stats(mean_gap=timedelta(minutes=30), max_posts_per_fetch=20)
-        self.assertEqual(fetch_interval(s, RSS), (10 * H, "backlog_guard"))
+        self.assertEqual(fetch_interval(s, RSS), (2.5 * H, "backlog_guard"))
+
+    def test_a_busy_subreddit_is_polled_before_its_window_is_a_quarter_full(self):
+        # r/LocalLLaMA: a post every ~10 minutes, 25 in the feed = a 4.25h window.
+        s = stats(mean_gap=timedelta(minutes=10.2), max_posts_per_fetch=25)
+        self.assertEqual(fetch_interval(s, RSS), (timedelta(minutes=63.75), "backlog_guard"))
+
+    def test_backlog_guard_binds_once_a_quarter_of_the_window_is_under_the_interval(self):
+        # 4h gap x 20 = an 80h window: the 24h floor would let it fill past a quarter (20h).
+        s = stats(mean_gap=4 * H, max_posts_per_fetch=20)
+        self.assertEqual(fetch_interval(s, RSS), (20 * H, "backlog_guard"))
 
     def test_backlog_guard_beats_the_youtube_floor(self):
-        # 2h gap x max(5, 15) = 30h, well under the 168h yt-dlp floor.
+        # 2h gap x max(5, 15) = a 30h window, a quarter of it well under the 168h yt-dlp floor.
         s = stats(mean_gap=2 * H, max_posts_per_fetch=5)
-        self.assertEqual(fetch_interval(s, YOUTUBE), (30 * H, "backlog_guard"))
+        self.assertEqual(fetch_interval(s, YOUTUBE), (7.5 * H, "backlog_guard"))
 
     def test_backlog_guard_never_goes_below_one_hour(self):
-        s = stats(mean_gap=timedelta(minutes=1), max_posts_per_fetch=20)
-        self.assertEqual(fetch_interval(s, RSS), (1 * H, "backlog_guard"))
+        for gap in (timedelta(minutes=1), timedelta(minutes=8)):  # windows of 20m and 2.7h
+            with self.subTest(gap=gap):
+                s = stats(mean_gap=gap, max_posts_per_fetch=20)
+                self.assertEqual(fetch_interval(s, RSS), (1 * H, "backlog_guard"))
 
     def test_override_beats_tier_guard_and_floor(self):
         for profile, s in (
@@ -210,6 +223,16 @@ class DecideFetchTests(unittest.TestCase):
                 self.assertEqual(d.kind, DecisionKind.SKIP_NOT_DUE)
                 self.assertEqual(d.interval, interval)
                 self.assertEqual(d.next_due_at, s.last_success_at + interval)
+
+    def test_an_hourly_source_fetched_into_a_tick_is_due_at_the_next_tick(self):
+        # The tick starts at NOW - 1h, the fetch ends (last_success_at) 5 minutes into it.
+        d = decide(stats(override_hours=1.0, last_success_at=NOW - 55 * timedelta(minutes=1)))
+        self.assertEqual(d.kind, DecisionKind.FETCH_DUE)
+        self.assertEqual(d.next_due_at, NOW + 5 * timedelta(minutes=1))
+
+    def test_due_slack_is_ten_minutes(self):
+        d = decide(stats(override_hours=1.0, last_success_at=NOW - 49 * timedelta(minutes=1)))
+        self.assertEqual(d.kind, DecisionKind.SKIP_NOT_DUE)
 
     def test_decision_kind_knows_whether_it_fetches(self):
         fetching = {k for k in DecisionKind if k.fetches}

@@ -35,6 +35,12 @@ PROBATION_INTERVAL = timedelta(hours=24)
 TIER_INTERVAL_MIN = timedelta(hours=24)
 TIER_INTERVAL_MAX = timedelta(days=21)
 BACKLOG_GUARD_MIN = timedelta(hours=1)
+# A busy feed is polled before its window (mean_gap x the posts it exposes) is a quarter full.
+BACKLOG_GUARD_SHARE = 4
+# last_success_at is recorded when a fetch ends, ticks are anchored to their start: a source
+# due up to this soon is due now, so a 1h source fetched 5 minutes into a tick is due at the
+# next tick, not the one after.
+DUE_SLACK = timedelta(minutes=10)
 
 # Tier boundaries. refresh_cadence's SQL CASE (db/repo_fetch_state.py and migration 0019)
 # must stay identical to these; a parity test pins them together.
@@ -228,10 +234,11 @@ def fetch_interval(stats: CadenceStats, profile: PolitenessProfile) -> tuple[tim
     if profile.cadence_floor > base:
         base, basis = profile.cadence_floor, "profile_floor"
 
-    # Backlog guard, applied last and allowed to go below the floor: poll before a feed
-    # that exposes N items can push out posts we never saw.
+    # Backlog guard, applied last and allowed to go below the floor: poll a feed that exposes
+    # N items while it is a quarter full, long before it can push out posts we never saw.
     if stats.mean_gap is not None and stats.tier != CadenceTier.UNKNOWN:
-        cap = stats.mean_gap * max(stats.max_posts_per_fetch, profile.min_posts_per_fetch)
+        window = stats.mean_gap * max(stats.max_posts_per_fetch, profile.min_posts_per_fetch)
+        cap = window / BACKLOG_GUARD_SHARE
         if base > cap:
             base, basis = max(cap, BACKLOG_GUARD_MIN), "backlog_guard"
 
@@ -318,9 +325,9 @@ def decide_fetch(
     if stats.last_success_at is None and stats.post_count == 0:
         return decision(DecisionKind.FETCH_NEW_SOURCE, now, "New source (0 posts)")
 
-    # 5. Due check, counted from the last successful fetch (empty fetches count).
+    # 5. Due check, counted from the last successful fetch (empty fetches count), DUE_SLACK early.
     due = (stats.last_success_at or _EPOCH) + interval
-    if now >= due:
+    if now >= due - DUE_SLACK:
         if stats.last_success_at is None:
             detail = f"No recorded successful fetch ({stats.post_count} posts, {_hours(interval)} {basis})"
         else:

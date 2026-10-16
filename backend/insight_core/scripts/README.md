@@ -150,11 +150,13 @@ again. The summary is printed as JSON.
    until the retry time, then retried
 4. **New source** (no successful fetch, 0 posts) → fetched
 5. **Due**: the adaptive fetch interval has elapsed since the last *successful* fetch (an
-   empty fetch counts) → fetched, otherwise deferred
+   empty fetch counts), give or take 10 minutes (a fetch is recorded when it ends, a tick
+   starts on the hour, so an hourly source is due every tick) → fetched, otherwise deferred
 
 The interval comes from the mean gap between the source's latest 20 posts (half the gap,
 clamped to 24h..21d; 24h probation while there are fewer than 3 dated posts; 168h minimum
-for yt-dlp), capped by a backlog guard so a fast feed is polled before it can overflow.
+for yt-dlp), capped by a backlog guard: a fast feed is polled before its window (the mean
+gap times the posts it exposes) is a quarter full, but not more than hourly.
 `sources.fetch_interval_hours_override` replaces all of that for one source.
 
 ### Scheduler (run_scheduler.py, the ingestion container)
