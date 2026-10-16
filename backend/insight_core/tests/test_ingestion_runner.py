@@ -21,7 +21,6 @@ from insight_core.ingestion.inspection import DbInspectionRefresher, inspection_
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import Inspection
 from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
-from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.runner import IngestionRunner
 from insight_core.ingestion.schedule import Availability, backoff_delay
 from insight_core.ingestion.types import (
@@ -240,6 +239,20 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("failed to save", row.last_error)
         self.assertIsNone(row.last_success_at)
 
+    async def test_a_source_whose_posts_all_failed_beside_a_healthy_one_is_failing(self):
+        doomed, fine = _source("https://doomed.test/rss"), _source("https://fine.test/rss")
+        failing = {f"https://doomed.test/rss/p{i}" for i in range(2)}
+        h = _Harness([doomed, fine], [_rss_kind()], saver=InMemoryPostSaver(failing))
+        report = await h.run(force=True)
+        # Saved on its own, the doomed source's failures are not hidden by the healthy one's inserts.
+        self.assertEqual(report.failures, [SourceFailure(doomed["id"], "https://doomed.test/rss", "save",
+                                                         "all 2 posts failed to save")])
+        self.assertEqual(h.state.rows[doomed["id"]].last_outcome, "error")
+        self.assertEqual(h.state.rows[fine["id"]].last_outcome, "healthy")
+        saved = next(d for phase, d in h.progress.events if phase == "saved")
+        self.assertEqual(saved["outcomes"], {"error": 1, "healthy": 1})
+        self.assertEqual(h.inspections.calls, [(fine["id"], "fake_rss", 2)])
+
     async def test_a_save_that_raises_marks_only_that_source_failing(self):
         class BrokenForA(InMemoryPostSaver):
             def save(self, drafts):
@@ -291,9 +304,7 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
                     saved_before_second.append(set(h.saver.known))
                 return await super().fetch_latest(source, limit)
 
-        ops = _RecordingJobOps()
         h = _Harness([first, second], [_GatedKind("fake_rss", behaviour=_posts_for(2))])
-        h.progress = JobProgressSink(ops, "job-1")
 
         async def release_once_first_is_saved():
             while not h.saver.calls:
@@ -303,29 +314,17 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         # A runner that saved only at the end would never release the second fetch.
         report, _ = await asyncio.wait_for(asyncio.gather(h.run(force=True), release_once_first_is_saved()), 5)
         self.assertEqual(saved_before_second, [{"https://first.test/rss/p0", "https://first.test/rss/p1"}])
-        sources = [p["sources"] for p in ops.payloads if "sources" in p]
-        self.assertEqual((sources[0], sources[-1]), ({"done": 1, "total": 2}, {"done": 2, "total": 2}))
-        self.assertEqual(ops.payload["new_posts"], 4)
+        self.assertEqual(
+            [(d["sources"], d["new_posts"]) for phase, d in h.progress.events if phase == "source"],
+            [({"done": 1, "total": 2}, 2), ({"done": 2, "total": 2}, 4)],
+        )
         self.assertEqual(report.posts_inserted, 4)
-        self.assertEqual(len(h.saver.calls), 2)
 
     async def test_fetches_run_under_the_gates(self):
         h = _Harness([_source("https://a.test/rss"), _source("https://youtube.com/@c", "youtube")],
                      [_rss_kind(), _yt_kind()])
         await h.run(force=True)
         self.assertEqual(sorted(h.gates.slots), [("host-lock", "a.test"), ("ytdlp", "youtube.com")])
-
-
-class _RecordingJobOps:
-    """OperationsService.append_job_event in memory: fields land on the job payload."""
-
-    def __init__(self):
-        self.payload: dict = {}
-        self.payloads: list[dict] = []
-
-    def append_job_event(self, job_id, *, message, level, progress=None, payload=None, fields=None):
-        self.payload = {**self.payload, **(fields or {}), "progress": progress}
-        self.payloads.append(dict(self.payload))
 
 
 class IngestionRunnerLockTests(unittest.IsolatedAsyncioTestCase):

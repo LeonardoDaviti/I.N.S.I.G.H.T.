@@ -72,6 +72,8 @@ class RunLock(Protocol):
 
 
 class ProgressSink(Protocol):
+    """The runner calls event() in a worker thread, so it may block on the database."""
+
     def event(self, phase: str, data: dict) -> None: ...
 
 

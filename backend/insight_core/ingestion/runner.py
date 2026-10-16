@@ -186,7 +186,8 @@ class IngestionRunner:
                 due.append((source, kind, decision))
 
         await self._safely("record decisions", self.state.record_decisions, decisions, now=now)
-        progress.event("decided", {"sources_considered": len(sources), "decisions": dict(counts)})
+        await self._safely("record progress", progress.event, "decided",
+                           {"sources_considered": len(sources), "decisions": dict(counts)})
 
         if not due:
             return self._report(request, started, run_id=run_id, status="nothing_due",
@@ -231,20 +232,23 @@ class IngestionRunner:
                         # Outcomes are recorded after the save: a source none of whose posts
                         # reached the database is failing (its failure count grows, it retries
                         # on backoff), not healthy with its next fetch a whole cadence away.
-                        outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR, error=f"save: {error}")
+                        # The rest of the run (counts, inspection refresh) sees the same outcome.
+                        f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
+                                                                  error=f"save: {error}")
                 await self._safely(
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
                     now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
                 )
                 done += 1
-                progress.event("source", {"source_id": source["id"], "display_name": _display_name(source),
-                                          "sources": {"done": done, "total": len(ordered)},
-                                          "new_posts": saved.inserted})
+                await self._safely("record progress", progress.event, "source", {
+                    "source_id": source["id"], "display_name": _display_name(source),
+                    "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
+                })
             return f
 
         fetched: List[_Fetched] = list(await asyncio.gather(*(fetch_and_save(s) for s in ordered)))
         posts_fetched = sum(f.outcome.fetched for f in fetched)
-        progress.event("saved", {
+        await self._safely("record progress", progress.event, "saved", {
             "sources_fetched": len(fetched),
             "posts_fetched": posts_fetched,
             "outcomes": self._outcome_counts([f.outcome for f in fetched]),
@@ -261,8 +265,8 @@ class IngestionRunner:
         for f, r in zip(refreshable, results):
             if isinstance(r, BaseException):
                 logger.warning("Inspection refresh failed for %s: %s", _display_name(f.source), r)
-        progress.event("inspected", {"refreshed": len(refreshable) - inspection_failures,
-                                     "failed": inspection_failures})
+        await self._safely("record progress", progress.event, "inspected",
+                           {"refreshed": len(refreshable) - inspection_failures, "failed": inspection_failures})
 
         failed_sources = {f.source_id for f in failures}
         if failed_sources and len(failed_sources) >= len(fetched):
