@@ -9,6 +9,11 @@ interface MarkdownRendererProps {
   className?: string;
   /** Rewrites each image's src (a post body loads its images through /api/media). */
   imageSrc?: (src: string) => string | undefined;
+  /**
+   * False for stored plain text (a post with no HTML body): it is read as markdown only, so
+   * a literal "<details>" or "&lt;p&gt;" in it shows as text, never as an element.
+   */
+  html?: boolean;
 }
 
 function decodeHtmlEntities(input: string): string {
@@ -46,43 +51,46 @@ export function normalizeRendererContent(content: string): string {
   return dedentHtml(decodeHtmlEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim());
 }
 
-export default function MarkdownRenderer({ content, className = "", imageSrc }: MarkdownRendererProps) {
+const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugins']> = [
+  rehypeRaw,
+  [
+    rehypeSanitize,
+    {
+      ...defaultSchema,
+      attributes: {
+        ...defaultSchema.attributes,
+        a: [
+          ...(defaultSchema.attributes?.a || []),
+          ['href'],
+          ['target'],
+          ['rel'],
+        ],
+        img: [
+          ['src'],
+          ['alt'],
+          ['title'],
+          ['width'],
+          ['height'],
+        ],
+      },
+    },
+  ],
+];
+
+export default function MarkdownRenderer({ content, className = "", imageSrc, html = true }: MarkdownRendererProps) {
   if (!content) {
     return <p className="text-fg-3">No content available</p>;
   }
 
-  const normalizedContent = normalizeRendererContent(content);
+  const normalizedContent = html ? normalizeRendererContent(content) : content;
 
   return (
     <div className={`markdown-content min-w-0 break-words ${className}`}>
       <ReactMarkdown
         // Enable GFM and treat single newlines as breaks
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          rehypeRaw,
-          [
-            rehypeSanitize,
-            {
-              ...defaultSchema,
-              attributes: {
-                ...defaultSchema.attributes,
-                a: [
-                  ...(defaultSchema.attributes?.a || []),
-                  ['href'],
-                  ['target'],
-                  ['rel'],
-                ],
-                img: [
-                  ['src'],
-                  ['alt'],
-                  ['title'],
-                  ['width'],
-                  ['height'],
-                ],
-              },
-            },
-          ],
-        ]}
+        // Without rehype-raw, react-markdown shows any HTML in the text as text.
+        rehypePlugins={html ? HTML_PLUGINS : []}
         skipHtml={false}
         // Monochrome reading styles (design docs system/typography.md): sizes and spacing are in em so
         // the same renderer reads well in the 1.125rem post column and in a small

@@ -55,6 +55,17 @@ describe('PostDetailPage header', () => {
     expect(screen.getByRole('article', { name: 'Post content' })).toHaveTextContent(/^$/);
   });
 
+  it('shows a plain body\'s literal tags as text, keeping its links and line breaks', async () => {
+    // Stored plain text is decoded already: "<details>" here is what the author wrote.
+    const content = 'Wrap spoilers in <details> and <b>.\nMore at https://example.com/a?x=1&y=2';
+    render(baseApi(rssPost({ title: 'Spoilers', content, content_html: undefined })));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    expect(article.querySelector('details, b')).toBeNull();
+    expect(article.querySelector('p')?.textContent).toBe(content);
+    expect(within(article).getByRole('link', { name: 'https://example.com/a?x=1&y=2' }))
+      .toHaveAttribute('href', 'https://example.com/a?x=1&y=2');
+  });
+
   it('lets the title fill the reading column: pretty wrapping, not balanced into two short lines', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });

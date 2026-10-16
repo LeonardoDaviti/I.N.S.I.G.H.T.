@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
-from insight_core.utils.content_fingerprints import strip_html
+from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.post_fields import display_title
@@ -181,7 +181,7 @@ class FeedQuery:
 
 
 def _excerpt(content: str | None) -> str:
-    return strip_html(content)[:EXCERPT_CHARS]
+    return clean_text(content)[:EXCERPT_CHARS]
 
 
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.

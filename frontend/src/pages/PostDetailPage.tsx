@@ -779,11 +779,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   };
 
   const platformLabel = typeof post?.platform === 'string' ? post.platform.toLowerCase() : '';
-  const renderContent = typeof post?.content_html === 'string'
-    ? post.content_html
-    : typeof post?.content === 'string'
-      ? post.content
-      : '';
+  // A post with no HTML body renders its stored plain text, never read as HTML.
+  const bodyHtml = typeof post?.content_html === 'string' ? post.content_html : null;
+  const renderContent = bodyHtml ?? (typeof post?.content === 'string' ? post.content : '');
   // Images the body already shows stay inline; the rest: the first under the
   // title, the others after the text. A video post shows its player instead.
   const media = useMemo(() => postMedia(post, `${renderContent}\n${post.content || ''}`), [post, renderContent]);
@@ -1100,7 +1098,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
               )}
             </div>
           ) : bodyIsTitle ? null : (
-            <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} />
+            <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} />
           )}
         </div>
       </article>

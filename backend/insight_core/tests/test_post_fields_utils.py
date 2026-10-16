@@ -71,13 +71,19 @@ class DisplayTitleTests(unittest.TestCase):
                          "2026 in LLMs (so far)")
 
     def test_an_empty_title_is_the_start_of_the_body(self):
-        self.assertEqual(display_title("", "<p>Release notes</p>\nMore text"), "Release notes")
+        self.assertEqual(display_title("", "  Release   notes\nMore text"), "Release notes")
         self.assertEqual(display_title(None, None), "")
 
     def test_a_title_cut_by_its_source_is_the_body_first_line(self):
         body = "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)\n\n* details"
         self.assertEqual(display_title("Update the claude-api skill: a new default model, …", body),
                          "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)")
+
+    def test_plain_text_is_never_read_as_html(self):
+        # Stored titles and bodies are plain text, already decoded: "<T>" is text, not a tag.
+        self.assertEqual(display_title("Option<T> in Rust", ""), "Option<T> in Rust")
+        self.assertEqual(display_title("", "Use <details> for spoilers\nmore"), "Use <details> for spoilers")
+        self.assertEqual(display_title("That&#39;s it", ""), "That's it", "codes left by older saves")
 
     def test_a_long_cjk_line_is_cut_hard_at_117(self):
         self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")

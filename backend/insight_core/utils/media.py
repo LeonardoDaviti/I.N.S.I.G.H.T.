@@ -7,10 +7,11 @@ an image goes through here so the feed thumbnail and the post page agree.
 """
 from __future__ import annotations
 
-import html
 import re
 import urllib.parse
 from typing import Any, Dict, Iterable, List, Optional
+
+from .content_fingerprints import decode_entities
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".svg")
 _VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v", ".m3u8", ".mkv", ".avi", ".mp3", ".ogg", ".wav")
@@ -29,16 +30,10 @@ _YOUTUBE_PATH_PREFIXES = ("shorts", "embed", "live", "v")
 
 
 def clean_url(value: Any) -> Optional[str]:
-    """Strip and HTML-unescape a stored URL (repeatedly, for `&amp;#038;`). None if unusable."""
+    """Strip and HTML-unescape a stored URL (decode_entities: `&amp;#038;` too). None if unusable."""
     if not isinstance(value, str):
         return None
-    url = value.strip()
-    for _ in range(3):
-        unescaped = html.unescape(url)
-        if unescaped == url:
-            break
-        url = unescaped
-    return url or None
+    return decode_entities(value.strip()) or None
 
 
 def _parts(url: str) -> Optional[urllib.parse.SplitResult]:

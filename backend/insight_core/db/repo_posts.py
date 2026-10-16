@@ -13,6 +13,7 @@ from psycopg import Connection, Cursor
 from insight_core.logs.core.logger_config import setup_logging, get_component_logger
 from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
+from insight_core.utils.content_fingerprints import hash_post_content
 from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
 
@@ -685,9 +686,16 @@ class PostsRepository:
         return [(str(row[0]), row[1]) for row in cur.fetchall()]
 
     def save_contents(self, cur: Cursor, contents: Sequence[Tuple[str, str]]) -> None:
-        """New plain text for stored posts, nothing else (the content hash already decodes)."""
-        cur.executemany("UPDATE posts SET content = %s, updated_at = now() WHERE id = %s::uuid",
-                        [(content, post_id) for post_id, content in contents])
+        """New plain text for stored posts, and the content hash it gives: the hash decodes
+        codes only once, so a double-escaped body ("&amp;#39;") hashes differently decoded."""
+        new = dict(contents)
+        if not new:
+            return
+        cur.execute("SELECT id, title, content_html FROM posts WHERE id = ANY(%s::uuid[])", (list(new),))
+        rows = [(new[str(post_id)], hash_post_content(title, new[str(post_id)], content_html), str(post_id))
+                for post_id, title, content_html in cur.fetchall()]
+        cur.executemany("UPDATE posts SET content = %s, content_hash = %s, updated_at = now() WHERE id = %s::uuid",
+                        rows)
 
     def update_post_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> bool:
         """Persist metadata for a single post."""

@@ -1,4 +1,5 @@
-"""Cheap deterministic content fingerprints: the post content hash, and strip_html (HTML to plain text)."""
+"""Cheap deterministic content fingerprints: the post content hash, strip_html (HTML to plain
+text) and clean_text (plain text tidied for display)."""
 
 from __future__ import annotations
 
@@ -23,22 +24,25 @@ def decode_entities(text: str) -> str:
     return text
 
 
+def clean_text(value: str | None) -> str:
+    """Plain text as shown: HTML codes decoded, every run of whitespace one space. Never read
+    as HTML, so a literal "Option<T>" stays."""
+    return WHITESPACE_RE.sub(" ", decode_entities(str(value or ""))).strip()
+
+
 def strip_html(value: str | None, *, entities: Literal["decode", "decode_first"] = "decode") -> str:
     """Plain text from HTML: every tag becomes a space, every run of whitespace one space.
 
-    entities: "decode" decodes &amp; and friends once the tags are gone (decode_entities);
-    "decode_first" decodes them once, before, so escaped tags (&lt;b&gt;) go too. The
-    content hash uses "decode_first": what it returns is part of every stored hash.
+    entities: "decode" decodes &amp; and friends once the tags are gone (clean_text), so an
+    escaped tag (&lt;b&gt;) stays as text; "decode_first" decodes them once, before, so escaped
+    tags go too. The content hash uses "decode_first": what it returns is part of every stored hash.
     """
     if not value:
         return ""
     text = str(value)
     if entities == "decode_first":
-        text = html.unescape(text)
-    text = HTML_TAG_RE.sub(" ", text)
-    if entities == "decode":
-        text = decode_entities(text)
-    return WHITESPACE_RE.sub(" ", text).strip()
+        return WHITESPACE_RE.sub(" ", HTML_TAG_RE.sub(" ", html.unescape(text))).strip()
+    return clean_text(HTML_TAG_RE.sub(" ", text))
 
 
 def normalize_text(value: str | None) -> str:

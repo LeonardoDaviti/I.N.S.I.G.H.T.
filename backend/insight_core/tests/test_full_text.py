@@ -23,6 +23,7 @@ from insight_core.ingestion.kinds.generic_rss import GenericRssKind
 from insight_core.scripts.repair_full_text import STOP_AFTER_FAILURES, Repair
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
+from insight_core.utils.content_fingerprints import hash_post_content
 
 FEED_URL = "https://news.example.com/feed"
 ARTICLE_TEXT = "Every paragraph of the article, read from its page. " * 40
@@ -320,6 +321,13 @@ class EntityRepairTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary, {"with_codes": 2, "decoded": 2})
         self.assertEqual(self._contents(), ["That's it.", "the world's first", "Plain & simple."])
         self.assertEqual(http.requests, [])
+
+    async def test_a_decoded_body_gets_the_hash_a_refetch_would_give(self):
+        await self._repair(FakeHttp())
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT content, content_hash FROM posts WHERE id = ANY(%s::uuid[])", (self.ids,))
+            for content, content_hash in cur.fetchall():
+                self.assertEqual(content_hash, hash_post_content("T", content, None), content)
 
     async def test_a_dry_run_counts_and_writes_nothing(self):
         summary = await self._repair(FakeHttp(), dry_run=True)

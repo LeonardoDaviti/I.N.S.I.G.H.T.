@@ -337,16 +337,17 @@ class ReaderRepositoryTests(unittest.TestCase):
 
     def test_item_shape(self):
         source = self._source(platform="youtube")
-        content = "<p>Hello <b>world</b></p> " + ("word " * 400)
+        content = "Hello Option<T> " + ("word " * 400)
         empty_title = self._post(source, self.now - timedelta(hours=1), title="", content=content,
                                  metadata={"duration_seconds": 754}, media_urls=["https://img.invalid/a.jpg"])
 
         (item,), _ = self._page(FeedScope("source", source))
 
         self.assertEqual(item["id"], empty_title)
-        self.assertTrue(item["excerpt"].startswith("Hello world word"))
+        # Stored content is plain text: a literal "<T>" is text, not a tag.
+        self.assertTrue(item["excerpt"].startswith("Hello Option<T> word"))
         self.assertLessEqual(len(item["excerpt"]), 280)
-        self.assertTrue(item["title"].startswith("Hello world word") and item["title"].endswith("word…"), item["title"])
+        self.assertTrue(item["title"].startswith("Hello Option<T> word") and item["title"].endswith("word…"), item["title"])
         self.assertEqual(item["duration_seconds"], 754)
         self.assertIsNone(item["reading_minutes"], "no reading time for YouTube")
         self.assertEqual(item["media_thumb"], "https://img.invalid/a.jpg")

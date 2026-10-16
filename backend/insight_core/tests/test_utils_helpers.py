@@ -5,7 +5,7 @@ import unittest
 from datetime import date, datetime, timezone
 from unittest import mock
 
-from insight_core.utils.content_fingerprints import strip_html
+from insight_core.utils.content_fingerprints import clean_text, strip_html
 from insight_core.utils.env import env_float, env_int
 from insight_core.utils.json_safe import iso, json_safe
 
@@ -44,8 +44,16 @@ class StripHtmlTests(unittest.TestCase):
     def test_decode_first_also_drops_escaped_tags(self):
         self.assertEqual(strip_html(self.HTML, entities="decode_first"), "Fish & chips bold")
 
+    def test_tags_go_before_codes_are_decoded(self):
+        # An escaped tag in HTML is text the author wrote: it survives as text.
+        self.assertEqual(strip_html("<p>Use &lt;details&gt; here</p>"), "Use <details> here")
+
     def test_nothing_is_empty(self):
         self.assertEqual(strip_html(None), "")
+        self.assertEqual(clean_text(None), "")
+
+    def test_clean_text_decodes_plain_text_and_never_strips_tags(self):
+        self.assertEqual(clean_text("  Option<T>\n in &amp; out "), "Option<T> in & out")
 
 
 class EnvTests(unittest.TestCase):

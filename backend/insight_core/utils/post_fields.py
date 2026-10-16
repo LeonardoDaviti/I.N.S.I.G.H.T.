@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
-from .content_fingerprints import hash_post_content, strip_html
+from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
 from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 
@@ -22,15 +22,16 @@ def display_title(title: str | None, content: str | None) -> str:
     The text is the title, or the body when the title is empty or is the body's start cut with
     "…" (a tweet, a Telegram post, a GitHub commit). Only its first non-empty line counts. A
     line over 120 characters is cut at its first sentence end (after 20 characters at least),
-    else at the last space within 117 characters, with "…".
+    else at the last space within 117 characters, with "…". Title and body are stored plain
+    text, so nothing in them is read as a tag.
     """
     stored = (title or "").strip()
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
     from_body = not stored or (
-        cut != stored and bool(cut) and strip_html(content, entities="decode").startswith(strip_html(cut, entities="decode"))
+        cut != stored and bool(cut) and clean_text(content).startswith(clean_text(cut))
     )
     text = content if from_body else stored
-    line = next((plain for plain in (strip_html(raw, entities="decode") for raw in (text or "").splitlines()) if plain), "")
+    line = next((plain for plain in (clean_text(raw) for raw in (text or "").splitlines()) if plain), "")
     if len(line) <= TITLE_MAX_CHARS:
         return line
     sentence = SENTENCE_END_RE.search(line, TITLE_MIN_SENTENCE_CHARS - 1)
