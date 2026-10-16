@@ -34,9 +34,8 @@ test('runningFetchJob: the newest fetch job not yet finished, queued ones too', 
 });
 
 test('runProgressLine: sources done of total and new posts, or null before the first source', () => {
-  const running = { id: 'r', job_type: 'ingestion_run', status: 'running', payload: { sources: { done: 52, total: 81 }, new_posts: 334 } } as JobRun;
-  assert.equal(runProgressLine(running), '52 of 81 sources · 334 new posts');
-  const one = { ...running, payload: { sources: { done: 1, total: 1 }, new_posts: 1 } } as JobRun;
-  assert.equal(runProgressLine(one), '1 of 1 source · 1 new post');
-  assert.equal(runProgressLine({ ...running, payload: {} } as JobRun), null);
+  const run = (payload: Record<string, unknown>) => ({ id: 'r', status: 'running', job_type: 'ingestion_run', payload }) as unknown as JobRun;
+  assert.equal(runProgressLine(run({ sources: { done: 52, total: 81 }, new_posts: 334 })), '52 of 81 sources · 334 new posts');
+  assert.equal(runProgressLine(run({ sources: { done: 1, total: 1 }, new_posts: 1 })), '1 of 1 source · 1 new post');
+  assert.equal(runProgressLine(run({})), null);
 });
