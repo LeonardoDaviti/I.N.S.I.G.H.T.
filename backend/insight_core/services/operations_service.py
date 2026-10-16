@@ -157,6 +157,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "stored_posts": stored,
         # When its newest post was published (fetched, if undated): the list's "last new post".
         "last_post_at": iso(source.get("last_post_at")),
+        "created_at": iso(source.get("created_at")),
         "backlog_posts": backlog_posts(archive.get("available_posts"), stored),
         "tier": stats.tier.value,
         "mean_gap_hours": stats.mean_gap.total_seconds() / 3600 if stats.mean_gap is not None else None,

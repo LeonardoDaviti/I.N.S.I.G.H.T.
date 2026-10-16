@@ -141,6 +141,12 @@ class SourceHealthTests(unittest.TestCase):
         self.assertEqual(rows["deferred"]["last_post_at"], (NOW - 5 * H).isoformat())
         self.assertIsNone(rows["new"]["last_post_at"], "no posts -> None")
 
+    def test_row_carries_the_date_the_source_was_added(self):
+        view = schedule_view()
+        view[0] = {**view[0], "created_at": NOW - 72 * H}
+        rows = {r["source_id"]: r for r in make_service(view).get_source_health()["rows"]}
+        self.assertEqual(rows["deferred"]["created_at"], (NOW - 72 * H).isoformat())
+
     def test_row_shape(self):
         pinned = self.rows["pinned"]
         self.assertEqual(pinned["display_name"], "Pinned")
