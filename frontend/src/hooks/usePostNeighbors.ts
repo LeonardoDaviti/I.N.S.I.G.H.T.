@@ -7,7 +7,7 @@ import { neighborsAt, type ContextEntry, type FeedContext, type SortedEntry } fr
 export interface PostNeighbors {
   prev: ContextEntry | null;
   next: ContextEntry | null;
-  /** The context's feed page is still loading. */
+  /** The context's feed page, or the next page that holds `next`, is still loading. */
   loading: boolean;
 }
 
@@ -69,5 +69,5 @@ export function usePostNeighbors(
   if (!around) return { ...NONE, loading: page.isPending };
   const first = nextPage.data?.items.find((item) => item.id !== current?.id);
   const next = around.next ?? (first && loadNext ? { id: first.id, pageCursor: loadNext } : null);
-  return { prev: around.prev, next, loading: false };
+  return { prev: around.prev, next, loading: !next && Boolean(loadNext) && nextPage.isPending };
 }

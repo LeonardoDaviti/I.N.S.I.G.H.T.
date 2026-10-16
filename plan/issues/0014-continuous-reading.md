@@ -1,6 +1,6 @@
 # 0014 — Continuous reading: scroll from one post into the next
 
-Status: **ready-for-agent** (owner observation, 2026-10-16). UX / reading.
+Status: **built** 2026-10-16 (owner observation, 2026-10-16). UX / reading.
 
 ## Problem Statement
 - Reading means: open a post, read, go back or press Next, open the next one. I want to read like an online comic: keep scrolling, and the next post is simply there.

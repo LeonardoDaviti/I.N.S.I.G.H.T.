@@ -14,16 +14,17 @@ export function makeTestQueryClient(): QueryClient {
   });
 }
 
-/** Render inside the app's providers: a fake API, a fresh QueryClient, a MemoryRouter and a Toaster. */
+/** Render inside the app's providers: a fake API, a fresh QueryClient, a MemoryRouter (at `route`, or the
+ *  last of several history entries) and a Toaster. */
 export function renderWithProviders(
   ui: ReactElement,
-  { api, route = '/', queryClient = makeTestQueryClient() }: { api: Api; route?: string; queryClient?: QueryClient },
+  { api, route = '/', queryClient = makeTestQueryClient() }: { api: Api; route?: string | string[]; queryClient?: QueryClient },
 ) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
         <ApiProvider value={api}>
-          <MemoryRouter initialEntries={[route]}>
+          <MemoryRouter initialEntries={Array.isArray(route) ? route : [route]}>
             {children}
             <Toaster />
           </MemoryRouter>

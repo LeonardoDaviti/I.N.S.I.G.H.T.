@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { POST_ID, baseApi, renderPost as render, rssPost, youtubePost } from './PostDetailPage.testkit';
@@ -10,6 +10,7 @@ import MarkdownRenderer, { normalizeRendererContent } from '../components/ui/Mar
 import { makeFakeApi } from '../test/fakeApi';
 import { makeTestQueryClient, renderWithProviders } from '../test/render';
 import { postKey } from '../hooks/usePost';
+import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import { feedItem, feedPage } from '../components/reader/fixtures';
 import type { Api, Post } from '../services/api';
 
@@ -465,5 +466,146 @@ describe('PostDetailPage feed context and keys', () => {
     await screen.findByRole('heading', { level: 1 });
     await user.keyboard('{Escape}');
     expect(await screen.findByTestId('feed')).toHaveTextContent('/');
+  });
+});
+
+// ---- issue 0014: continuous reading, with a stubbed IntersectionObserver ----
+
+/** Observers are fired by hand: `see(element)` says the element entered its observer's root. */
+class StubObserver {
+  static all: StubObserver[] = [];
+  readonly targets = new Set<Element>();
+  constructor(readonly callback: IntersectionObserverCallback) { StubObserver.all.push(this); }
+  observe(target: Element) { this.targets.add(target); }
+  unobserve(target: Element) { this.targets.delete(target); }
+  disconnect() { this.targets.clear(); }
+  takeRecords() { return []; }
+}
+
+function see(target: Element | null) {
+  if (!target) throw new Error('nothing to see');
+  act(() => {
+    for (const observer of [...StubObserver.all]) {
+      if (!observer.targets.has(target)) continue;
+      observer.callback([{ target, isIntersecting: true } as unknown as IntersectionObserverEntry], observer as unknown as IntersectionObserver);
+    }
+  });
+}
+
+const postEnd = (id: string) => document.querySelector(`[data-post-end="${id}"]`);
+const slot = (id: string) => document.querySelector(`[data-post-slot="${id}"]`);
+const streamEnd = () => document.querySelector('[data-stream-end]');
+
+function LocationProbe() {
+  const location = useLocation();
+  return <p data-testid="at">{location.pathname}</p>;
+}
+
+/** The feed, then the post opened from it: Back from the post returns to the feed. */
+function renderStream(api: Api, postId = POST_ID) {
+  return renderWithProviders(
+    <>
+      <Routes>
+        <Route path="/" element={<FeedProbe />} />
+        <Route path="/posts/:postId" element={<PostDetailPage />} />
+      </Routes>
+      <LocationProbe />
+    </>,
+    { api, route: ['/', `/posts/${postId}?ctx=${encodeURIComponent(CTX)}`] },
+  );
+}
+
+async function nextReady() {
+  const top = screen.getByRole('navigation', { name: 'Post navigation' });
+  await waitFor(() => expect(within(top).getByRole('button', { name: 'Next' })).toBeEnabled());
+}
+
+describe('PostDetailPage continuous reading (issue 0014)', () => {
+  beforeEach(() => {
+    StubObserver.all = [];
+    vi.stubGlobal('IntersectionObserver', StubObserver);
+    window.localStorage.clear();
+    resetStoredChoices();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('the next post of the feed follows below once the end of the stream is seen', async () => {
+    renderStream(contextApi());
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    expect(screen.queryByRole('heading', { level: 1, name: 'The older post' })).toBeNull();
+
+    see(streamEnd());
+    expect(await screen.findByRole('heading', { level: 1, name: 'The older post' })).toBeInTheDocument();
+    expect(screen.getAllByRole('article', { name: 'Post content' })).toHaveLength(2);
+    expect(screen.queryByText('You’re all caught up')).toBeNull();
+  });
+
+  it('the address follows the post in view by replacing it, so Back still leaves for the list', async () => {
+    const user = userEvent.setup();
+    renderStream(contextApi());
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+
+    see(slot(NEXT_ID));
+    expect(screen.getByTestId('at')).toHaveTextContent(`/posts/${NEXT_ID}`);
+    expect(screen.getAllByRole('article', { name: 'Post content' })).toHaveLength(2);
+
+    await user.keyboard('u');
+    expect(await screen.findByTestId('feed')).toHaveTextContent('/');
+  });
+
+  it('marks a post read only once its end has passed, not when it appears', async () => {
+    const api = contextApi();
+    renderStream(api);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    expect(api.recordPostOpen).not.toHaveBeenCalled();
+
+    see(postEnd(POST_ID));
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalledTimes(1));
+    expect(api.recordPostOpen).toHaveBeenCalledWith(POST_ID, expect.anything());
+
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(api.recordPostOpen).toHaveBeenCalledTimes(1);
+    see(postEnd(NEXT_ID));
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenLastCalledWith(NEXT_ID, expect.anything()));
+  });
+
+  it('j and k move between the posts in the stream', async () => {
+    const user = userEvent.setup();
+    renderStream(contextApi());
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+
+    await user.keyboard('j');
+    expect(screen.getByTestId('at')).toHaveTextContent(`/posts/${NEXT_ID}`);
+    await user.keyboard('k');
+    expect(screen.getByTestId('at')).toHaveTextContent(`/posts/${POST_ID}`);
+    expect(screen.getAllByRole('article', { name: 'Post content' })).toHaveLength(2);
+  });
+
+  it('ends with "You’re all caught up" and Back / Previous / Next after the last post', async () => {
+    renderStream(contextApi(), NEXT_ID);
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(await screen.findByText('You’re all caught up')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'After the post' })).toBeInTheDocument();
+  });
+
+  it('one post at a time renders a single article and records the open at once', async () => {
+    window.localStorage.setItem('insight.reader.flow', 'single');
+    const api = contextApi();
+    renderStream(api);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    expect(streamEnd()).toBeNull();
+    expect(screen.getAllByRole('article', { name: 'Post content' })).toHaveLength(1);
+    expect(screen.getByRole('navigation', { name: 'After the post' })).toBeInTheDocument();
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalledWith(POST_ID, expect.anything()));
   });
 });

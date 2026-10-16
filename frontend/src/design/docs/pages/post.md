@@ -10,19 +10,23 @@ Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImage
 
 ## Purpose
 
-Read one post, whole, in one centred column with nothing beside it (P4). It is the content and three actions; nothing else.
+Read one post, whole, in one centred column with nothing beside it (P4). It is the content and three actions; nothing else. Read continuously, the next posts of the same feed follow below it, like a comic you keep scrolling.
 
 ## Entry & URL
 
 - `/posts/:postId`, opened from a feed row (title link, `o`/Enter) or a link elsewhere.
 - `?ctx=` carries the feed it came from (scope, filter, page cursor), so prev/next and "Back" survive a reload. Without it there is no prev/next and the way out reads "Back to feed".
 - Dev-only `?data=worst|empty|missing|slow` swaps in fixtures.
-- The post loads through `usePost`, so a post the feed prefetched opens from cache with no skeleton. Opening a post marks it read; the feed's cached rows and counts follow.
+- The post loads through `usePost`, so a post the feed prefetched opens from cache with no skeleton.
+- **Flow** (`insight.reader.flow`, chosen in the reader toolbar, `continuous` by default): continuous needs a `?ctx=`; without one a post stands alone.
+- **Read:** one at a time, opening a post marks it read. Continuous, a post is read once its end has passed the top half of the screen (an end already above the midline counts at once), the first post too. The feed's cached rows and counts follow.
+- **Reading time** runs while the post is current and the tab is visible, and is sent when it stops being current (1 s or more).
 
 ## Anatomy
 
 - **Post navigation** (`PostNav`, ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next. It is a sticky band under the top bar (`reader-material`, `top-topbar`, like the reader toolbar), on one line at every width, so leaving or moving on never needs a scroll up. It sticks without animation.
-- **After the post:** the same three actions once more at `lg` (a tap target), below a hairline at the end of the column.
+- **After the post:** the same three actions once more at `lg` (a tap target), below a hairline at the end of the column. Continuous, they come only after the last post of the feed, under "You’re all caught up".
+- **The stream** (continuous): near the end of the last post the feed's next post joins below (newest first, the same scope and filter, as Next), after a `border-strong` divider with its source and title in `small` `text-3`. The post crossing the screen's midline is current: the URL follows it (replaced), and the sticky navigation, `m`, `s` and the tab title act on it. At most three posts are mounted (previous, current, next); one further away keeps its height. Room of half a screen under the last post lets it reach the midline. Images load lazily as they come near.
 - **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to its feed, `/read/source/<id>`), ` / settings` in `text-3` (a quiet link to `/settings/sources?source=<id>`, P8), ` / platform`, ` / date` (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
 - **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. It is the API's short title, as given: the first line of the title (or of the body, when the title is empty or the body's start cut with "…"), cut over 120 characters at the first sentence end, else at a word with "…". The feed rows show the same title. The tab reads `<title> · INSIGHT`.
 - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
@@ -44,8 +48,8 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Interactions & keys
 
-- `j`/`k` next / previous post in the feed (with a context), `u`/Esc back, `m` toggle read, `s` star, `?` the shortcut table.
-- Prev/next replace the history entry, so Back leaves the post rather than walking every post read.
+- `j`/`k` next / previous post in the feed (with a context), `u`/Esc back, `m` toggle read, `s` star, `?` the shortcut table. In the stream, `j`/`k` (and Next / Previous) jump to a post already there, instantly (P12); past its ends they open the post, which starts a new stream at the top.
+- Prev/next and the stream replace the history entry, so Back leaves the post rather than walking every post read.
 - Star is optimistic and rolls back on failure. Copy puts the stored text (or the HTML's text) on the clipboard.
 
 ## Worst cases
@@ -64,7 +68,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Decisions
 
-- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources (`../decisions.md`).
+- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources, 020 the byline's source name reads the source and the navigation sticks, 021 continuous reading (`../decisions.md`).
 
 ## Open issues
 
