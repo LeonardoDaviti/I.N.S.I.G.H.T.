@@ -74,7 +74,7 @@ Supersedes: the adaptive fetch cadence plan (deleted in issue 0005; it is in git
 | **Mean gap** | The mean time between a source's latest 20 dated posts. Recomputed at most once a day. | `sources.mean_gap_seconds` |
 | **Fetch interval** | How long a successfully fetched source waits before it is due again. | `FetchDecision.interval` |
 | **Probation** | The 24h interval used for `unknown` sources until they have at least 3 dated posts. | `DecisionKind`/tier `unknown` |
-| **Backlog guard** | A cap so that `interval ≤ mean_gap × max_posts_per_fetch`. A feed that exposes N items is polled before it can push out unseen posts. | `_apply_backlog_guard` |
+| **Backlog guard** | A cap so that `interval ≤ mean_gap × max_posts_per_fetch / 4` (issue 0012). A feed that exposes N items is polled before it can push out unseen posts. | `_apply_backlog_guard` |
 | **Override** | `sources.fetch_interval_hours_override`. When set, it replaces the tier interval entirely. | — |
 | **Backoff** | The extra wait after consecutive *error* outcomes: 1h · 2^(n−1), capped at 24h (dormant cap 7d), jittered. It resets on the first non-error outcome. | `backoff_delay()` |
 | **Unavailable** | The source's kind needs something the process does not have: yt-dlp is switched off, or (`telegram_mtproto`) the Telegram API credentials or the authorised session file are missing, the session is not authorised, the session is held by another run, or the account is in a flood wait. Each case carries its own reason. The source is skipped with its own reason, is never counted as backoff, and backoff is not advanced. | `DecisionKind.SKIP_UNAVAILABLE` |
@@ -542,16 +542,16 @@ def backoff_delay(consecutive_failures: int, *, rand: Callable[[], float] = rand
 
    The error ladder applies *regardless of tier*, as the cadence spec requires. `ignore_backoff=True` skips this rule only, so rules 4 and 5 still apply. It exists for B1–B3, where the manual cycle keeps its Mark VIII behaviour (skip backoff, respect freshness: `safe_ingest.py:344-361`). B4 drops the argument from every caller because `force` supersedes it; the parameter is then deleted.
 4. **New source.** No `last_success_at` and `post_count == 0` → `FETCH_NEW_SOURCE`.
-5. **Due check.** `due = (last_success_at or epoch) + interval`. `now >= due` → `FETCH_DUE`, otherwise `SKIP_NOT_DUE`.
+5. **Due check.** `due = (last_success_at or epoch) + interval`. `now >= due - DUE_SLACK` (10 min, issue 0012) → `FETCH_DUE`, otherwise `SKIP_NOT_DUE`.
 
 **`fetch_interval`:**
 1. If an override is set → `override_hours`, with basis `"override"`. The override skips everything below, including the guard ("manual override wins").
 2. If the tier is `unknown` → 24h, basis `"probation"`.
 3. Otherwise: `base = clamp(mean_gap * 0.5, 24h, 21d)`, basis `"tier"`.
 4. Profile floor: `base = max(base, profile.cadence_floor)`, basis `"profile_floor"` if it raised the value. For yt-dlp, `cadence_floor` = 168h. This keeps the Mark VIII weekly YouTube cadence, because yt-dlp is the expensive kind.
-5. **Backlog guard (applied last, may go below the floor):** `cap = mean_gap * max(stats.max_posts_per_fetch, profile.min_posts_per_fetch)`. If `base > cap`, then `base = max(cap, 1h)` with basis `"backlog_guard"`.
+5. **Backlog guard (applied last, may go below the floor):** `cap = mean_gap * max(stats.max_posts_per_fetch, profile.min_posts_per_fetch) / 4` (a quarter of the feed's window, issue 0012). If `base > cap`, then `base = max(cap, 1h)` with basis `"backlog_guard"`.
 
-   The guard only binds for fast sources, where the 24h floor or a yt-dlp week would let the feed overflow. Example: a mean gap of 30 minutes with `max_posts=20` caps the interval at 10h.
+   The guard only binds for fast sources, where the 24h floor or a yt-dlp week would let the feed overflow. Example: a mean gap of 30 minutes with `max_posts=20` caps the interval at 2.5h.
 
 **Tier boundaries** (`tier_for`):
 - `unknown` if `sample_size < 3`

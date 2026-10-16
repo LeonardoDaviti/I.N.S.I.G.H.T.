@@ -150,7 +150,7 @@ again. The summary is printed as JSON.
    until the retry time, then retried
 4. **New source** (no successful fetch, 0 posts) → fetched
 5. **Due**: the adaptive fetch interval has elapsed since the last *successful* fetch (an
-   empty fetch counts), give or take 10 minutes (a fetch is recorded when it ends, a tick
+   empty fetch counts), or will within 10 minutes (a fetch is recorded when it ends, a tick
    starts on the hour, so an hourly source is due every tick) → fetched, otherwise deferred
 
 The interval comes from the mean gap between the source's latest 20 posts (half the gap,

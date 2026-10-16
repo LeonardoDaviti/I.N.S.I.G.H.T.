@@ -1,6 +1,6 @@
 # 0008 — Full text that is clean: no site menus, no HTML codes
 
-Status: **ready-for-agent** (owner observations on the server, 2026-10-16). Builds on the full-text work on local main (c3d09cc, e21bf81), which is not deployed yet.
+Status: **built** 2026-10-16, not deployed (owner observations on the server, 2026-10-16). Builds on the full-text work on local main (c3d09cc, e21bf81), which is not deployed yet.
 
 ## Problem Statement
 - **I still have to leave INSIGHT to read posts.** On the server, NVIDIA's "European Cities Deploy…" (346 characters) and Daniel Miessler's "Custom Content for Everyone" (301 characters) are teasers. That part is fixed on local main but not deployed: on the local preview the same posts come in at 5,765 and 1,294 characters.
@@ -51,3 +51,4 @@ Status: **ready-for-agent** (owner observations on the server, 2026-10-16). Buil
 
 ## Further Notes
 - Local preview evidence (2026-10-16): NVIDIA 5,765 chars from the page; Miessler 1,294 chars including menu and footer.
+- Found while building: the Miessler text was the whole page because the block pattern read `<link …>` as `<li>` (and `<path>` as `<p>`); fixed with a word boundary. `--retry` does not re-read a post already read from its page (it only includes posts a repair marked checked), so the 16 page-read posts on the local preview keep their stored text; on the server none were read yet, so the first repair after deploy reads them clean. On the preview, 1,552 of 7,058 posts hold codes (`&#39;`, `&#8217;`, `&nbsp;`); one YouTube description is double-escaped (`&amp;#39;`).
