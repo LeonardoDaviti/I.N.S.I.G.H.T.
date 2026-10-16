@@ -19,7 +19,7 @@ Status: **ready-for-agent** (owner observation, 2026-10-16). UX / reading.
 4. As the reader, I want the address to follow the post in view, so that a reload or a shared link opens it.
 5. As the reader, I want Back to take me to the list at my place, so that continuous reading doesn't fill history.
 6. As the reader, I want a post marked read only when I've scrolled through it, so that skimming past doesn't lose posts.
-7. As the reader, I want reading time recorded per post, so that Priority (0013) learns correctly.
+7. As the reader, I want reading time recorded per post, so that a future priority order (0013) can learn from it.
 8. As the reader, I want images and videos in later posts to load only as I approach them, so that the page stays fast.
 9. As the reader, I want the stream to end with "You're all caught up" when the feed ends, so that I know I'm done.
 10. As the reader, I want j/k to jump between the posts in the stream, so that keyboard reading still works.

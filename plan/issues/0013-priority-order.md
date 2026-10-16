@@ -1,6 +1,6 @@
 # 0013 — Priority order: the sources I read most come first
 
-Status: **ready-for-agent** (owner observation, 2026-10-16). UX / reading.
+Status: **discussion** (owner, 2026-10-16): a future feature, too complex for INSIGHT now. Don't build yet.
 
 ## Problem Statement
 - The feed has one order: newest first. A burst from a source I rarely read sits above a post from a source I always read. I want an order that puts what matters to me on top.
