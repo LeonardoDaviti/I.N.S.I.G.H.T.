@@ -19,15 +19,6 @@ function lengthLabel(item: FeedItemData): string | null {
   return null;
 }
 
-/** The backend already falls back to the excerpt; this guards a fixture or an old row. */
-function displayTitle(item: FeedItemData): string {
-  const title = item.title?.trim();
-  if (title) return title;
-  const excerpt = item.excerpt?.trim();
-  if (excerpt) return excerpt.length > 80 ? `${excerpt.slice(0, 80)}…` : excerpt;
-  return 'Untitled post';
-}
-
 /** Quiet 32px icon buttons that grow to 44px on touch (spec §F.6). */
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
 
@@ -73,7 +64,8 @@ function FeedItem({
   const isStarred = Boolean(item.starred_at);
   const compact = density === 'compact';
   const titleId = `${feedItemDomId(item.id)}-title`;
-  const title = displayTitle(item);
+  // The API's title already falls back to the body (display_title), as on the post page.
+  const title = item.title?.trim() || 'Untitled post';
   const length = lengthLabel(item);
   // The feed's own order key (published, else fetched), so the column and the day headers agree.
   const time = item.sort_at ?? item.published_at;

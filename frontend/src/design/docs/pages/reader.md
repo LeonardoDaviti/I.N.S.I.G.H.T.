@@ -36,7 +36,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - **empty-scope:** a track or source with no posts: "No posts here yet. Posts appear once ingestion collects them." + a quiet "This track/source in Sources" link (P7).
 - **loading:** a six-row skeleton in the list column; rail lines read "Loading…".
 - **error:** `ErrorState` "Could not load the feed" with Retry; a failed next page is an inline error `Notice` with Retry, keeping the loaded rows. Tracks that fail in the rail say "× Could not load tracks."
-- **worst:** long and unbroken titles, non-Latin and RTL text, missing titles (excerpt or "Untitled post"), 1,000+ unread counts, huge source names (dev `?data=worst` / `huge`).
+- **worst:** long and unbroken titles, non-Latin and RTL text, missing titles ("Untitled post" when the API has no text to make one from), 1,000+ unread counts, huge source names (dev `?data=worst` / `huge`).
 
 ## Interactions & keys
 

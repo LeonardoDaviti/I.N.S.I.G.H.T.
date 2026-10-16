@@ -39,7 +39,7 @@ Status: **built** 2026-10-16, not yet deployed (owner observations on the server
 - **API.** Add `s.created_at` to the schedule view query behind source health, and `created_at` to each health row. In the frontend client's `SourceHealthRow` type, add `created_at` and `last_post_at`, and delete the `lastPostAt()` cast helper (it exists only because `last_post_at` was never typed). No new endpoint.
 - **The list's view state** (kept in the URL):
   - `sort` ∈ {name, kind, posts, lastPost, added, status} and `dir` ∈ {asc, desc}.
-  - Default direction per column: name and kind ascending; posts, lastPost and added descending; status descending, which means worst first (the existing health sort). `asc` reverses it. Ties sort by name.
+  - Default direction per column: name and kind ascending; posts, lastPost and added descending; status descending, which means worst first (the existing health sort). `asc` reverses the status order only. Ties sort by name, A to Z.
   - The default sort stays status.
   - `group` ∈ {none, track, platform}, default `none`. `writeSourcesView` writes `group=track` explicitly and leaves `none` out.
 - **Old URLs.** `tab=health` maps to group `none`, keeping its status filter. `sort=success`, `group=status` and any unknown value fall back to the defaults.

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatJobDuration, jobGlyph } from './jobRuns.ts';
+import type { JobRun } from '../services/api';
+import { formatJobDuration, jobGlyph, runningFetchJob } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -22,4 +23,12 @@ test('formatJobDuration is null until finished, and readable after', () => {
   assert.equal(formatJobDuration(start, after(42_000)), '42s');
   assert.equal(formatJobDuration(start, after(125_000)), '2m 5s');
   assert.equal(formatJobDuration(start, after(3_725_000)), '1h 2m');
+});
+
+test('runningFetchJob: the newest fetch job not yet finished, queued ones too', () => {
+  const job = (id: string, status: string, job_type = 'ingestion_run') => ({ id, status, job_type }) as JobRun;
+  assert.equal(runningFetchJob([job('q', 'queued'), job('r', 'running')])?.id, 'q');
+  assert.equal(runningFetchJob([job('p', 'pending', 'archive_source')])?.id, 'p');
+  assert.equal(runningFetchJob([job('d', 'running', 'scheduler_cycle'), job('s', 'success')]), null);
+  assert.equal(runningFetchJob(undefined), null);
 });

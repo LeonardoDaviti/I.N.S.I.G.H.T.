@@ -18,7 +18,7 @@ const ID = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
 function items() {
   return [
     feedItem({ id: ID(1), title: 'First post' }),
-    feedItem({ id: ID(2), title: '', excerpt: 'An untitled post whose title falls back to its excerpt' }),
+    feedItem({ id: ID(2), title: '', excerpt: 'A post with no text to take a title from' }),
     feedItem({ id: ID(3), title: 'Third post', media_thumb: 'https://img.example/thumb.jpg' }),
   ];
 }
@@ -118,9 +118,9 @@ describe('FeedList', () => {
     for (const article of articles) expect(within(article).getAllByRole('link')).toHaveLength(1);
   });
 
-  it('an item with no title renders the excerpt-prefix title; thumbnails load lazily', async () => {
+  it('an item the API gives no title reads "Untitled post"; thumbnails load lazily', async () => {
     setup();
-    expect(await screen.findByRole('link', { name: /An untitled post whose title/ })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Untitled post' })).toBeInTheDocument();
     const img = document.querySelector('article img') as HTMLImageElement;
     expect(img).toHaveAttribute('loading', 'lazy');
     expect(img).toHaveAttribute('decoding', 'async');

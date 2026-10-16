@@ -68,7 +68,8 @@ export function intervalLabel(row: Pick<SourceHealthRow, 'interval_hours' | 'int
   return `every ${formatHours(row.interval_hours)} · ${INTERVAL_BASIS_LABELS[row.interval_basis] ?? row.interval_basis}`;
 }
 
-function statusRank(status: string): number {
+/** A status's place in HEALTH_STATUS_ORDER (worst first); unknown statuses come last. */
+export function statusRank(status: string): number {
   const index = HEALTH_STATUS_ORDER.indexOf(status as HealthStatus);
   return index === -1 ? HEALTH_STATUS_ORDER.length : index;
 }

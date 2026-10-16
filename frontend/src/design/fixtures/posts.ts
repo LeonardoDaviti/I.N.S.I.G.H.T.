@@ -103,7 +103,8 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
       return detail('p-headings', { title: 'The prose scale, h1 to h6', content_html: HEADINGS, content: HEADINGS.replace(/<[^>]+>/g, '') }, now);
     case 'missing-title':
       return detail('p-missing-title', {
-        title: '',
+        // Stored with no title: the API's title is the text's first line (display_title).
+        title: TELEGRAM.split('\n')[0],
         source_id: sourceId('s-newz'),
         source: 'https://t.me/s/ai_newz',
         source_display_name: 'ai_newz',

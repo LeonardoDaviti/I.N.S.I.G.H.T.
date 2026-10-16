@@ -150,7 +150,8 @@ describe('sortSources', () => {
     expect(ids('posts', 'asc')).toEqual(['b', 'c', 'a']);
     expect(ids('lastPost', 'asc')).toEqual(['c', 'a', 'b']);
     expect(ids('added', 'asc')).toEqual(['b', 'c', 'a']);
-    expect(ids('status', 'asc')).toEqual([...ids('status')].reverse());
+    // Only the status order reverses: the two healthy sources stay A to Z.
+    expect(ids('status', 'asc')).toEqual(['b', 'c', 'a']);
   });
 
   it('applies inside every group', () => {

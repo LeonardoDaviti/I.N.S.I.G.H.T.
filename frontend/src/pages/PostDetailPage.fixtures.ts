@@ -40,7 +40,8 @@ const DETAILS: Record<string, PostDetailResponse> = {
   worst: {
     success: true,
     post: post({
-      title: `Update claude-api skill: Claude Opus 5.5 default, Claude Sonnet 5.5 pricing and ${'Supercalifragilisticexpialidocious'.repeat(3)} across every SDK example`,
+      // The longest title the API sends is 120 characters (display_title); this one is 118, unbroken word included.
+      title: `Update claude-api skill: ${'Supercalifragilisticexpialidocious'.repeat(2)} across every SDK example`,
       source_display_name: `${'anthropics-organisation-with-a-very-long-name/'.repeat(3)}claude-code`,
       content: WORST_HTML,
       content_html: WORST_HTML,

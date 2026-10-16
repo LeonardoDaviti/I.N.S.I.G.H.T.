@@ -8,10 +8,15 @@ import type { JobRun } from '../services/api';
 import { toDate } from './dates.ts';
 import { formatElapsed } from './duration.ts';
 
+/** A job that has not finished: running, or queued to run. */
+function isActive(status?: string | null): boolean {
+  return status === 'running' || status === 'queued' || status === 'pending';
+}
+
 /** Job status -> monochrome glyph (design docs system/status.md). */
 export function jobGlyph(status?: string | null): Status {
   if (status === 'failed') return 'failing';
-  if (status === 'running' || status === 'queued' || status === 'pending') return 'running';
+  if (isActive(status)) return 'running';
   return 'ok';
 }
 
@@ -27,9 +32,9 @@ export function formatJobDuration(startedAt?: string | null, finishedAt?: string
 const FETCH_JOB_TYPES = new Set(['ingestion_run', 'archive_source']);
 const FAILURE_NOTE_MS = 60 * 60_000;
 
-/** The newest running ingestion run or archive job (jobs come newest first), or null. */
+/** The newest running (or queued) ingestion run or archive job (jobs come newest first), or null. */
 export function runningFetchJob(jobs: readonly JobRun[] | undefined): JobRun | null {
-  return jobs?.find((job) => job.status === 'running' && FETCH_JOB_TYPES.has(job.job_type)) ?? null;
+  return jobs?.find((job) => isActive(job.status) && FETCH_JOB_TYPES.has(job.job_type)) ?? null;
 }
 
 /** "fetching · 3 of 41" from the run's live `sources` counter, or "fetching" without one. */
