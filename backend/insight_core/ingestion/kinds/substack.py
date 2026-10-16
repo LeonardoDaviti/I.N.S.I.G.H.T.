@@ -261,7 +261,7 @@ class SubstackKind(BaseKind):
     def _to_post(self, source: Source, base: str, data: Dict[str, Any]) -> Dict[str, Any]:
         audience = str(data.get("audience") or "everyone")
         body_html = str(data.get("body_html") or "")
-        content = _text(parsing.strip_html(body_html)) or _text(data.get("truncated_body_text"))
+        content = parsing.strip_html(body_html) or _text(data.get("truncated_body_text"))
         paywalled = audience in PAID_AUDIENCES and self._is_truncated(content, data.get("wordcount"))
         if paywalled and self._sid and audience == "only_paid":
             raise KindUnavailable(EXPIRED_REASON)
@@ -295,7 +295,6 @@ class SubstackKind(BaseKind):
     def _from_rss(self, source: Source, post: Dict[str, Any]) -> Dict[str, Any]:
         post = dict(post)
         post["title"] = _text(post.get("title"))
-        post["content"] = _text(post.get("content"))
         post["source"] = str(source.get("handle_or_url") or post.get("source"))
         post["metadata"] = {**(post.get("metadata") or {}), "substack": True, "audience": None, "paywalled": None}
         return post

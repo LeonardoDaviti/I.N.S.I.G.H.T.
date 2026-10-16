@@ -12,11 +12,22 @@ HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 WHITESPACE_RE = re.compile(r"\s+")
 
 
-def strip_html(value: str | None, *, entities: Literal["keep", "decode", "decode_first"] = "keep") -> str:
+def decode_entities(text: str) -> str:
+    """HTML codes as characters ("That&#39;s" -> "That's"), twice for double-escaped text
+    ("&amp;#39;"), which some feeds send."""
+    for _ in range(2):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
+def strip_html(value: str | None, *, entities: Literal["decode", "decode_first"] = "decode") -> str:
     """Plain text from HTML: every tag becomes a space, every run of whitespace one space.
 
-    entities: "keep" leaves &amp; and friends as they are; "decode" decodes them once the tags
-    are gone; "decode_first" decodes them before, so escaped tags (&lt;b&gt;) go too. The
+    entities: "decode" decodes &amp; and friends once the tags are gone (decode_entities);
+    "decode_first" decodes them once, before, so escaped tags (&lt;b&gt;) go too. The
     content hash uses "decode_first": what it returns is part of every stored hash.
     """
     if not value:
@@ -26,7 +37,7 @@ def strip_html(value: str | None, *, entities: Literal["keep", "decode", "decode
         text = html.unescape(text)
     text = HTML_TAG_RE.sub(" ", text)
     if entities == "decode":
-        text = html.unescape(text)
+        text = decode_entities(text)
     return WHITESPACE_RE.sub(" ", text).strip()
 
 

@@ -33,11 +33,13 @@ class JsonSafeTests(unittest.TestCase):
 class StripHtmlTests(unittest.TestCase):
     HTML = "<p>Fish &amp; chips</p>\n<p>&lt;b&gt;bold&lt;/b&gt;</p>"
 
-    def test_keep_leaves_entities(self):
-        self.assertEqual(strip_html(self.HTML), "Fish &amp; chips &lt;b&gt;bold&lt;/b&gt;")
+    def test_entities_are_decoded_once_the_tags_go(self):
+        self.assertEqual(strip_html(self.HTML), "Fish & chips <b>bold</b>")
+        self.assertEqual(strip_html("<p>That&#39;s &quot;it&quot;</p>"), 'That\'s "it"')
 
-    def test_decode_decodes_after_the_tags_go(self):
-        self.assertEqual(strip_html(self.HTML, entities="decode"), "Fish & chips <b>bold</b>")
+    def test_double_escaped_text_is_decoded_too(self):
+        # As stored on the preview: "the world&amp;#39;s number one".
+        self.assertEqual(strip_html("the world&amp;#39;s number one"), "the world's number one")
 
     def test_decode_first_also_drops_escaped_tags(self):
         self.assertEqual(strip_html(self.HTML, entities="decode_first"), "Fish & chips bold")
