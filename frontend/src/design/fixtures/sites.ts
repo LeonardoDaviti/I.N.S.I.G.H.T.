@@ -139,6 +139,7 @@ function denseRows(now: Date): SourceHealthRow[] {
       kind: i % 9 === 0 ? 'youtube_channel' : 'generic_rss',
       folders: trackCycle[i % trackCycle.length],
       stored_posts: 20 + ((i * 37) % 900),
+      created_at: at(now, -(3 + ((i * 53) % 400)) * DAY),
       enabled: !disabled,
       ...(disabled ? { status: 'disabled', decision: 'skip_disabled' as const, next_due_at: null } : {}),
       ...(failing ? { status: 'error', decision: 'fetch_retry' as const, last_outcome: 'error', last_error: 'HTTP 404 Not Found', consecutive_failures: 1 } : {}),

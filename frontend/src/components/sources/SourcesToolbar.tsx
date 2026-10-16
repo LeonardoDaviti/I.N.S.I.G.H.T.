@@ -1,24 +1,28 @@
-import { Fragment, forwardRef, useEffect, useRef } from 'react';
+import { Fragment, forwardRef, useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 
 import { FilterChip, Select } from '../ui';
+import SortButton from './SortButton';
 import {
+  DIR_ARROWS,
+  DIR_WORDS,
   GROUP_BY,
   GROUP_BY_LABELS,
   SORT_BY,
   SORT_BY_LABELS,
   STATUS_FILTERS,
+  nextSort,
   type GroupBy,
-  type SortBy,
   type SourcesView,
   type StatusFilter,
 } from './sourceList';
 
 /**
- * The one toolbar above the list (sticky, translucent): search, status chips,
- * group-by and sort. The primary chips (all, enabled, disabled, failing,
+ * The one toolbar above the list (sticky, translucent): search, status chips
+ * and group-by. The primary chips (all, enabled, disabled, failing,
  * unavailable) always show; the secondary ones (backoff, due, scheduled) only
- * with sources or while selected. Its height is published as
+ * with sources or while selected. Below md, where columns hide, "Sort: Added ↓"
+ * opens the column headers' sort buttons as a row. Its height is published as
  * `--sources-toolbar-h` so group headers stick right under it.
  */
 const SourcesToolbar = forwardRef<HTMLInputElement, {
@@ -28,6 +32,7 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
   onChange: (view: SourcesView) => void;
 }>(function SourcesToolbar({ view, counts, total, onChange }, searchRef) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [sorting, setSorting] = useState(false);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -110,16 +115,32 @@ const SourcesToolbar = forwardRef<HTMLInputElement, {
         >
           {GROUP_BY.map((key) => <option key={key} value={key}>{GROUP_BY_LABELS[key]}</option>)}
         </Select>
-        <label htmlFor="sources-sort" className="text-[0.75rem] text-fg-3">Sort</label>
-        <Select
-          id="sources-sort"
-          value={view.sort}
-          onChange={(event) => onChange({ ...view, sort: event.target.value as SortBy })}
-          className={select}
+        <button
+          type="button"
+          onClick={() => setSorting((open) => !open)}
+          aria-expanded={sorting}
+          aria-controls="sources-sort"
+          aria-label={`Sort: ${SORT_BY_LABELS[view.sort]}, ${DIR_WORDS[view.dir]}`}
+          className="whitespace-nowrap rounded-sm text-[0.75rem] text-fg-3 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:hidden"
         >
-          {SORT_BY.map((key) => <option key={key} value={key}>{SORT_BY_LABELS[key]}</option>)}
-        </Select>
+          Sort: {SORT_BY_LABELS[view.sort]} {DIR_ARROWS[view.dir]}
+        </button>
       </div>
+
+      {sorting ? (
+        <div id="sources-sort" role="group" aria-label="Sort by" className="flex basis-full flex-wrap gap-x-4 gap-y-2 text-[0.8125rem] text-fg-3 md:hidden">
+          {SORT_BY.map((column) => (
+            <SortButton
+              key={column}
+              column={column}
+              sort={view.sort}
+              dir={view.dir}
+              onSort={(next) => { onChange(nextSort(view, next)); setSorting(false); }}
+              className="coarse:min-h-[2.75rem]"
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 });

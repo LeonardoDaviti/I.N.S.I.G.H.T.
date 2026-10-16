@@ -9,8 +9,9 @@ import { compactAge, formatLocalDateTime } from '../../lib/dates';
 import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
-import { STATUS_GLYPH, kindLabel, lastPostAt, rowFact, rowName, type SourceGroup } from './sourceList';
-import { folderReadPath } from '../../lib/feedContext';
+import SortButton from './SortButton';
+import { STATUS_GLYPH, kindLabel, rowFact, rowName, type SortBy, type SortDir, type SourceGroup } from './sourceList';
+import { folderReadPath, sourceReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
 const CHECKBOX =
@@ -29,6 +30,7 @@ const COL = {
   kind: 'hidden w-[6.5rem] shrink-0 truncate sm:block',
   posts: 'w-[3.25rem] shrink-0 text-right tabular-nums',
   lastPost: 'hidden w-[3.25rem] shrink-0 text-right tabular-nums sm:block',
+  added: 'hidden w-[3.25rem] shrink-0 text-right tabular-nums md:block',
   note: 'hidden w-[8.5rem] shrink-0 truncate text-right tabular-nums md:block',
 } as const;
 
@@ -56,8 +58,10 @@ export interface SourceListProps {
   onToggleEnabled: (row: SourceHealthRow) => void;
   track: TrackActions;
   now: Date;
-  /** Show every group header (false for the single "no grouping" list). */
-  showHeaders: boolean;
+  sort: SortBy;
+  dir: SortDir;
+  /** A column header was pressed. */
+  onSort: (column: SortBy) => void;
   /** Focus the active row's name when activeKey changes by keyboard. */
   focusToken: number;
   /** The track a deep link (`?track=`) points at, highlighted briefly. */
@@ -66,10 +70,12 @@ export interface SourceListProps {
 
 /**
  * The sources as one dense list (one 36px line per source), in groups whose
- * headers stick under the toolbar and collapse. Every row: select, status
- * glyph, name (opens the detail sheet), kind, posts, last new post, a status
- * note, on/off; on a phone only the glyph, name, posts and switch (never a
- * URL). Roving focus: only the active row's controls are tab stops; j/k move it.
+ * headers stick under the toolbar and collapse (a headless group has none: the
+ * flat list, and the untracked sources after a divider). Every row: select,
+ * status glyph, name (opens the detail sheet), kind, posts, last new post,
+ * added, a status note, read, on/off; on a phone only the glyph, name, posts,
+ * read and switch (never a URL). Roving focus: only the active row's controls
+ * are tab stops; j/k move it.
  */
 export default function SourceList({
   groups,
@@ -84,7 +90,9 @@ export default function SourceList({
   onToggleEnabled,
   track,
   now,
-  showHeaders,
+  sort,
+  dir,
+  onSort,
   focusToken,
   highlightFolderId = null,
 }: SourceListProps) {
@@ -103,33 +111,42 @@ export default function SourceList({
 
   return (
     <div ref={rootRef} className="min-w-0">
-      {/* Column names for the numbers (pointer screens only; rows carry their own labels for AT). */}
-      <div aria-hidden="true" className="hidden h-7 min-w-0 items-center gap-3 border-b border-line px-3 text-[0.6875rem] text-fg-3 sm:flex">
+      {/* The column headers sort the list (narrower screens sort from the toolbar). */}
+      <div role="group" aria-label="Sort sources" className="hidden h-7 min-w-0 items-center gap-3 border-b border-line px-3 text-[0.6875rem] text-fg-3 sm:flex">
         <span className="w-4 shrink-0" />
         <span className="w-3.5 shrink-0" />
-        <span className="min-w-0 flex-1">Name</span>
-        <span className={COL.kind}>Kind</span>
-        <span className={COL.posts}>Posts</span>
-        <span className={COL.lastPost}>Last post</span>
-        <span className={COL.note}>Status</span>
+        <span className="min-w-0 flex-1"><SortButton column="name" sort={sort} dir={dir} onSort={onSort} /></span>
+        <span className={COL.kind}><SortButton column="kind" sort={sort} dir={dir} onSort={onSort} /></span>
+        {(['posts', 'lastPost', 'added', 'status'] as const).map((column) => (
+          <span key={column} className={COL[column === 'status' ? 'note' : column]}>
+            {/* Right-aligned: a label wider than its column spills to the left. */}
+            <SortButton column={column} sort={sort} dir={dir} onSort={onSort} className="w-full justify-end" />
+          </span>
+        ))}
+        <span className="w-8 shrink-0 coarse:w-11" />
         <span className="w-9 shrink-0" />
       </div>
-      {groups.map((group) => {
+      {groups.map((group, index) => {
         const open = !collapsed.has(group.key);
         const ids = group.rows.map((row) => row.source_id);
         const picked = ids.filter((id) => selected.has(id)).length;
         const headerId = `group-${group.key}`;
+        const showHeader = !group.headless;
         return (
           <section
             key={group.key}
-            aria-labelledby={showHeaders ? headerId : undefined}
-            aria-label={showHeaders ? undefined : group.label}
+            aria-labelledby={showHeader ? headerId : undefined}
+            aria-label={showHeader ? undefined : group.label}
             data-folder-id={group.folderId ?? undefined}
             data-highlighted={group.folderId && group.folderId === highlightFolderId ? 'true' : undefined}
             // Scrolled to below the sticky top bar and toolbar; the highlight fades out (instantly with reduced motion).
-            className="min-w-0 scroll-mt-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] rounded-md motion-safe:transition-colors motion-safe:duration-700 data-[highlighted=true]:bg-raised"
+            className={cn(
+              'min-w-0 scroll-mt-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] rounded-md motion-safe:transition-colors motion-safe:duration-700 data-[highlighted=true]:bg-raised',
+              // The untracked sources after the tracks: a thin divider instead of a header.
+              !showHeader && index > 0 && 'mt-4 border-t border-line-strong',
+            )}
           >
-            {showHeaders ? (
+            {showHeader ? (
               <div
                 className="group/row material sticky top-[calc(var(--topbar-h)+var(--sources-toolbar-h,0px))] z-10 flex has-[[role=menu]]:z-[15] h-9 min-w-0 items-center gap-3 border-b border-line px-3"
               >
@@ -197,7 +214,6 @@ export default function SourceList({
                     const tab = key === tabKey ? 0 : -1;
                     const status = row.enabled ? row.status : 'disabled';
                     const isSelected = selected.has(row.source_id);
-                    const postedAt = lastPostAt(row);
                     return (
                       <li
                         key={key}
@@ -253,9 +269,15 @@ export default function SourceList({
                         </span>
                         <span
                           className={cn(COL.lastPost, 'text-[0.75rem] text-fg-3')}
-                          title={postedAt ? `Newest post ${formatLocalDateTime(postedAt) ?? ''}` : 'No posts yet'}
+                          title={row.last_post_at ? `Newest post ${formatLocalDateTime(row.last_post_at) ?? ''}` : 'No posts yet'}
                         >
-                          <span className="sr-only">newest post </span>{compactAge(postedAt, now)}
+                          <span className="sr-only">newest post </span>{compactAge(row.last_post_at, now)}
+                        </span>
+                        <span
+                          className={cn(COL.added, 'text-[0.75rem] text-fg-3')}
+                          title={`Added ${formatLocalDateTime(row.created_at) ?? ''}`}
+                        >
+                          <span className="sr-only">added </span>{compactAge(row.created_at, now)}
                         </span>
                         <span
                           className={cn(
@@ -267,6 +289,18 @@ export default function SourceList({
                         >
                           {rowFact(row, now)}
                         </span>
+                        <Link
+                          to={sourceReadPath(row.source_id)}
+                          tabIndex={tab}
+                          aria-label={`Read ${name}`}
+                          title="Read posts"
+                          className={cn(
+                            'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11 coarse:w-11',
+                            REVEAL,
+                          )}
+                        >
+                          <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+                        </Link>
                         <Switch
                           checked={row.enabled}
                           tabIndex={tab}

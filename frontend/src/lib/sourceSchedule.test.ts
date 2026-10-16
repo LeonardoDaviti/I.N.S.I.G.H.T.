@@ -32,6 +32,8 @@ function row(overrides: Partial<SourceHealthRow> = {}): SourceHealthRow {
     in_main_digest: true,
     folders: [],
     stored_posts: 10,
+    last_post_at: null,
+    created_at: iso(-40 * 24 * HOUR),
     backlog_posts: null,
     tier: 'medium',
     mean_gap_hours: 30,

@@ -354,6 +354,10 @@ export interface SourceHealthRow {
   in_main_digest: boolean;
   folders: { id: string; name: string }[];
   stored_posts: number;
+  /** When its newest post was published (fetched, if undated); null without posts. */
+  last_post_at: string | null;
+  /** When the source was added. */
+  created_at: string;
   backlog_posts: number | null;
   tier: CadenceTier;
   mean_gap_hours: number | null;

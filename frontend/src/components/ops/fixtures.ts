@@ -27,6 +27,8 @@ export function healthRow(overrides: Partial<SourceHealthRow> = {}, now: Date = 
     in_main_digest: true,
     folders: [{ id: 'f-ai', name: 'AI engineering' }],
     stored_posts: 412,
+    last_post_at: at(now, -26 * HOUR),
+    created_at: at(now, -40 * DAY),
     backlog_posts: null,
     tier: 'medium',
     mean_gap_hours: 19.5,

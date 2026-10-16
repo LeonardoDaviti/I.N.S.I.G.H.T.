@@ -85,7 +85,7 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'post', state: 'error', label: 'The post failed to load', url: '/posts/p-article', routes: failing, documented: true },
 
   // ---- sources ----
-  { page: 'sources', state: 'dense', label: '93 sources by track, some failing or in backoff', url: '/settings/sources', routes: site(normalSite), documented: true },
+  { page: 'sources', state: 'dense', label: '93 sources in one list, some failing or in backoff', url: '/settings/sources', routes: site(normalSite), documented: true },
   {
     page: 'sources', state: 'search-no-hits', label: 'No sources match', url: '/settings/sources?q=quantum%20knitting', routes: site(normalSite), documented: true,
   },
