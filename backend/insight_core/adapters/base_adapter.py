@@ -54,7 +54,6 @@ class BaseSourceAdapter(BaseKind):
         entries: Sequence[Any],
         target: int,
         checkpoint: Optional[dict],
-        rate: RateLimit,
         fetch_one: Callable[[Source, Any], Awaitable[Optional[Dict[str, Any]]]],
     ) -> AsyncIterator[ArchivePage]:
         """Archive a discovered entry list in PAGE_SIZE batches, one ArchivePage per batch.
@@ -90,9 +89,6 @@ class BaseSourceAdapter(BaseKind):
                 "total_candidates": len(entries),
             })
             yield ArchivePage(posts, page_checkpoint)
-
-            if collected < target and next_index < len(entries):
-                await self.http.sleep(rate.page_delay_s)
 
     # Subclasses implement matches, fetch_latest, inspect and archive_pages.
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden

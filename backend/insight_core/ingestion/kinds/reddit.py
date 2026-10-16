@@ -107,8 +107,6 @@ class RedditKind(BaseKind):
             if not next_after:
                 break
             current_after = next_after
-            if collected < target:
-                await self.http.sleep(rate.delay_after(pages_fetched))
 
     async def _fetch_listing(
         self,

@@ -155,8 +155,6 @@ class SubstackKind(BaseKind):
             })
             if len(items) < batch:
                 break
-            if collected < target:
-                await self.http.sleep(rate.delay_after(pages_fetched))
 
     async def check_session(self, source: Optional[Source] = None) -> tuple[bool, str]:
         """The connection test: is the cookie set and does it still read paid posts?

@@ -13,7 +13,7 @@ from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import ArchivePage, Inspection, KindUnavailable, start_at
+from insight_core.ingestion.kinds.base import ArchivePage, Inspection, KindUnavailable, PolitenessProfile, start_at
 from insight_core.ingestion.ports import DbPostSaver
 from insight_core.ingestion.kinds.youtube import YOUTUBE_PROFILE
 from insight_core.ingestion.schedule import Availability
@@ -331,9 +331,9 @@ class _ScriptedPagesKind(FakeKind):
 class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
     """Issue 0016: an archive takes the gate slot per page, retries a limit once, then pauses."""
 
-    def service(self, kind):
+    def service(self, kind, host_floors=None):
         self.clock = SleepClock()
-        self.gates = SpyFetchGates(clock=self.clock, sleep=self.clock.sleep)
+        self.gates = SpyFetchGates(clock=self.clock, sleep=self.clock.sleep, host_floors=host_floors or {})
         service = SourceFetchService("postgresql://test:test@localhost/test", kinds=KindRegistry([kind]),
                                      gates=self.gates)
         service.sources_service = self.sources = _PlanSources()
@@ -346,6 +346,16 @@ class ArchiveLearnedPaceTests(unittest.IsolatedAsyncioTestCase):
         kind = _ScriptedPagesKind([_page(1), _page(2)])
         await self.service(kind).archive_source("s1")
         self.assertEqual(self.gates.slots, [("host-lock", "tg.i-c-a.su")] * 3, "each page, and the ask that finds the end")
+
+    async def test_pages_wait_the_larger_of_the_host_gap_and_the_kinds_pause_and_the_plan_says_so(self):
+        """Never the sum: a 5 s host with a 2 s page delay waits 5 s, a 30 s batch cooldown 30 s."""
+        profile = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=2, batch_size=2, batch_cooldown_s=30)
+        kind = FakeKind("fake_paced", profile, inspection=Inspection(4, 1, None), pages=[_page(n) for n in range(1, 5)])
+        service = self.service(kind, host_floors={"tg.i-c-a.su": 5.0})
+        plan = await service.plan_archive("s1")
+        await service.archive_source("s1")
+        self.assertEqual(self.clock.sleeps, [5, 30, 5, 30], "pages 2-4, then the ask that finds the end")
+        self.assertEqual(plan["estimated_seconds"], 4 + 5 + 30 + 5, "one second a page plus the same waits")
 
     async def test_a_page_failing_once_is_retried_from_the_last_checkpoint(self):
         kind = _ScriptedPagesKind([_page(1), LIMITED], [_page(2)])

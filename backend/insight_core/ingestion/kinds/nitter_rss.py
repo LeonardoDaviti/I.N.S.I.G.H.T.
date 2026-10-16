@@ -106,7 +106,7 @@ class NitterRssKind(BaseKind):
         cursor = (checkpoint or {}).get("cursor")
         search_until = (checkpoint or {}).get("search_until")
         async for page in self._pages(str(source["handle_or_url"]), target, cursor, search_until, collected, pages,
-                                      rate):
+                                      None):
             yield page
 
     async def inspect(self, source: Source) -> Inspection:
@@ -119,7 +119,9 @@ class NitterRssKind(BaseKind):
         return Inspection(extract_nitter_tweet_count(profile_html), page_size, None)
 
     async def _pages(self, source_url: str, target: int, cursor: Optional[str], search_until: Optional[str],
-                     initial_collected: int, initial_pages: int, rate: RateLimit):
+                     initial_collected: int, initial_pages: int, rate: Optional[RateLimit]):
+        """Pages until target posts (counting initial_collected). With a rate (a live fetch) the
+        pause between pages is slept here; an archive passes None, its loop paces the pages."""
         seen_urls: set[str] = set()
         collected = initial_collected
         pages_fetched = initial_pages
@@ -155,7 +157,8 @@ class NitterRssKind(BaseKind):
             if collected >= target or not next_cursor or next_cursor == current_cursor:
                 break
             current_cursor = next_cursor
-            await self.http.sleep(rate.delay_after(pages_fetched))
+            if rate is not None:
+                await self.http.sleep(rate.delay_after(pages_fetched))
 
     async def _fetch_page(self, source_url: str, cursor: Optional[str],
                           search_until: Optional[str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:

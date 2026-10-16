@@ -47,7 +47,7 @@ class ZeroToMasteryMonthlyAdapter(BaseSourceAdapter):
     async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
                             rate: RateLimit):
         entries = await self._discover_entries(source)
-        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_entry_post):
+        async for page in self.index_pages(source, entries, target, checkpoint, self._fetch_entry_post):
             yield page
 
     async def _discover_entries(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -71,7 +71,7 @@ class GwernAdapter(BaseSourceAdapter):
     async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
                             rate: RateLimit):
         entries = await self._discover_archive_urls(source)
-        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_page_post):
+        async for page in self.index_pages(source, entries, target, checkpoint, self._fetch_page_post):
             yield page
 
     async def _discover_archive_urls(self, source: Dict[str, Any]) -> List[str]:

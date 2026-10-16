@@ -72,7 +72,7 @@ class TelegramRssKind(BaseKind):
         start_page = int((checkpoint or {}).get("next_page") or 1)
         async for page in self._pages(str(source["handle_or_url"]), target, start_page=start_page,
                                       initial_collected=initial_collected, initial_pages=initial_pages,
-                                      rate=rate):
+                                      rate=None):
             yield page
 
     async def inspect(self, source: Source) -> Inspection:
@@ -89,8 +89,10 @@ class TelegramRssKind(BaseKind):
         return Inspection(highest_post_id, page_size, iso(oldest))
 
     async def _pages(self, source_url: str, target: int, *, start_page: int, initial_collected: int,
-                     initial_pages: int, rate: RateLimit):
-        """Pages from start_page until target posts (counting initial_collected) are reached."""
+                     initial_pages: int, rate: Optional[RateLimit]):
+        """Pages from start_page until target posts (counting initial_collected) are reached. With a
+        rate (a live fetch) the pause between pages is slept here; an archive passes None, its
+        loop paces the pages."""
         seen_urls: set[str] = set()
         collected = initial_collected
         pages_fetched = initial_pages
@@ -120,7 +122,7 @@ class TelegramRssKind(BaseKind):
                 "collected_posts": collected,
             })
             page += 1
-            if collected < target:
+            if rate is not None and collected < target:
                 await self.http.sleep(rate.delay_after(pages_fetched))
 
     async def start_checkpoint(self, source: Source, stored) -> Optional[dict]:

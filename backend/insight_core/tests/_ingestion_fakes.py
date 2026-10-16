@@ -157,7 +157,8 @@ class RecordingProgressSink:
 
 
 class SpyFetchGates(FetchGates):
-    """Real gates with no delays, recording every slot and whether it is currently held."""
+    """Real gates with no host floors or yt-dlp spacing (unless given), recording every slot
+    and whether it is currently held."""
 
     def __init__(self, **kwargs):
         kwargs.setdefault("ytdlp_min_start_interval_s", 0.0)
@@ -169,7 +170,7 @@ class SpyFetchGates(FetchGates):
     @contextlib.asynccontextmanager
     async def slot(self, profile, host_key, *, per_source_delay_s: float = 0.0):
         self.slots.append((profile.concurrency_pool, host_key))
-        async with super().slot(profile, host_key, per_source_delay_s=0.0):
+        async with super().slot(profile, host_key, per_source_delay_s=per_source_delay_s):
             self.inside += 1
             try:
                 yield

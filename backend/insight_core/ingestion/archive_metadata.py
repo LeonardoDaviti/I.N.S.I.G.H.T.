@@ -13,7 +13,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Literal, Optional
 
-from insight_core.ingestion.kinds.base import SourceKind
+from insight_core.ingestion.gates import HOST_FLOORS
+from insight_core.ingestion.kinds.base import RateLimit, Source, SourceKind
 
 Mode = Literal["plan", "archive", "archive_progress", "live"]
 HISTORY_LIMIT = 40
@@ -25,6 +26,18 @@ def resumable(kind: SourceKind, checkpoint: Any) -> Optional[Dict[str, Any]]:
     if isinstance(checkpoint, dict) and not checkpoint.get("completed_at") and kind.checkpoint_resumable(checkpoint):
         return checkpoint
     return None
+
+
+def archive_estimate(kind: SourceKind, source: Source, available_posts: Any, stored: int,
+                     page_size: Optional[int], rate: RateLimit) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """(older posts, pages, seconds) for an archive of the posts older than the stored ones;
+    all None when the source reports no size (E1). Each wait between pages is max(the host's
+    starting gap, the kind's pause), as the archive loop's gate slot waits it."""
+    if isinstance(available_posts, bool) or not isinstance(available_posts, int) or available_posts < 0:
+        return None, None, None
+    older = max(0, available_posts - stored)
+    pages = kind.estimate_pages(older, page_size)
+    return older, pages, kind.profile.estimate_seconds(pages, rate, HOST_FLOORS.get(kind.host_key(source), 0.0))
 
 
 def derive_archive_status(stored_posts: int, available_posts: Optional[int]) -> str:
@@ -55,14 +68,9 @@ class ArchiveMetadataWriter:
         # backlog is known only when the source reports its size; unknown stays None (the UI
         # says "unknown").
         available_posts = data.get("available_posts", current.get("available_posts"))
-        page_size = data.get("page_size", current.get("page_size")) or 1
-        rate = kind.profile.rate_limit(data.get("rate_limit", current.get("rate_limit")))
-        backlog_posts: Optional[int] = None
-        estimated_pages = estimated_seconds = None
-        if isinstance(available_posts, int) and available_posts >= 0:
-            backlog_posts = max(0, available_posts - stored)
-            estimated_pages = kind.estimate_pages(backlog_posts, page_size)
-            estimated_seconds = kind.profile.estimate_seconds(estimated_pages, rate)
+        backlog_posts, estimated_pages, estimated_seconds = archive_estimate(
+            kind, source or {}, available_posts, stored, data.get("page_size", current.get("page_size")) or 1,
+            kind.profile.rate_limit(data.get("rate_limit", current.get("rate_limit"))))
 
         status = current.get("status", "not_archived")
         if mode in {"archive", "archive_progress"}:

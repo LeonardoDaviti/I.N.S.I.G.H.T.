@@ -24,11 +24,16 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 from insight_core.db import database as db
 
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
-from insight_core.ingestion.archive_metadata import ArchiveMetadataWriter, derive_archive_status, resumable
+from insight_core.ingestion.archive_metadata import (
+    ArchiveMetadataWriter,
+    archive_estimate,
+    derive_archive_status,
+    resumable,
+)
 from insight_core.ingestion.gates import FetchGates
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, SourceKind, resume_counts
+from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind, resume_counts
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
 from insight_core.ingestion.ports import slowed_line
 from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
@@ -219,9 +224,8 @@ class SourceFetchService:
         start = None
         if not (resume and saved) and stored:
             start = await kind.start_checkpoint(source, stats)
-        available = inspection["available_posts"]
-        older_posts = max(0, available - stored) if isinstance(available, int) else None
-        estimated_pages = kind.estimate_pages(older_posts, inspection["page_size"]) if older_posts is not None else None
+        older_posts, estimated_pages, estimated_seconds = archive_estimate(
+            kind, source, inspection["available_posts"], stored, inspection["page_size"], rate)
 
         inspection.update({
             "source_id": source_id,
@@ -230,8 +234,7 @@ class SourceFetchService:
             "continues_from": oldest if start is not None else None,
             "older_posts": older_posts,
             "estimated_pages": estimated_pages,
-            "estimated_seconds": (kind.profile.estimate_seconds(estimated_pages, rate)
-                                  if estimated_pages is not None else None),
+            "estimated_seconds": estimated_seconds,
             "resume": bool(resume and saved),
             "resume_available": saved is not None,
             "checkpoint": saved if resume and saved else start,
@@ -315,7 +318,7 @@ class SourceFetchService:
         while True:
             pages = kind.archive_pages(source, target_posts, checkpoint, rate)
             try:
-                async for page in self._gated(pages, gates, kind, host, delay):
+                async for page in self._gated(pages, gates, kind, host, delay, rate, total_pages_fetched):
                     retried = False
                     if page.posts:
                         saved = await asyncio.to_thread(self._save_posts, source_id, page.posts)
@@ -417,16 +420,22 @@ class SourceFetchService:
 
     @staticmethod
     async def _gated(pages: AsyncIterator[ArchivePage], gates: FetchGates, kind: SourceKind, host: str,
-                     delay: float) -> AsyncIterator[ArchivePage]:
+                     delay: float, rate: RateLimit, pages_fetched: int) -> AsyncIterator[ArchivePage]:
         """The kind's pages, each asked for under the same gate slot a fetch takes, so a run and
-        an archive on one host are spaced together."""
+        an archive on one host are spaced together.
+
+        The kind's pause after the last page (its page delay, or a batch cooldown) is the slot's
+        minimum interval, so the wait between two pages is max(host gap, pause), never the sum.
+        """
         while True:
-            async with gates.slot(kind.profile, host, per_source_delay_s=delay):
+            pause = rate.delay_after(pages_fetched) if pages_fetched else 0.0
+            async with gates.slot(kind.profile, host, per_source_delay_s=max(delay, pause)):
                 try:
                     page = await pages.__anext__()
                 except StopAsyncIteration:
                     return
             gates.host_limiter.succeeded(host)
+            pages_fetched += 1
             yield page
 
     # ------------------------------------------------------------------ post detail

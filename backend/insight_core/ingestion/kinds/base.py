@@ -3,8 +3,11 @@
 A source kind is the fetch strategy resolved from a source's platform and URL. Exactly one
 adapter exists per kind; it owns live fetch, inspection and archive pages, and declares
 how hard it may hit its sources in a PolitenessProfile. FetchGates (ingestion/gates.py)
-is the only place a profile is turned into concurrency acquisitions; the page delays are
-slept inside the kind, through KindHttp.sleep, using the RateLimit it was given.
+is the only place a profile is turned into concurrency acquisitions. An archive's pause
+between pages (RateLimit.delay_after) is not slept by the kind: the archive loop hands it to
+the host's gate slot, so the wait between two pages is max(host gap, pause), never the sum.
+Pauses inside one request's worth of work (a live fetch reading several pages, Substack's
+post bodies) are slept by the kind, through KindHttp.sleep.
 
 Import-light on purpose: adapters/*.py import this module.
 """
@@ -102,12 +105,13 @@ class PolitenessProfile:
             batch_cooldown_s=values["batch_cooldown_seconds"],
         )
 
-    def estimate_seconds(self, pages: int, rate: Optional[RateLimit] = None) -> int:
-        """One second per page plus every pause between pages."""
+    def estimate_seconds(self, pages: int, rate: Optional[RateLimit] = None, host_gap_s: float = 0.0) -> int:
+        """One second per page plus every wait between pages: max(host gap, the pause), as the
+        archive loop's gate slot waits it."""
         if pages <= 0:
             return 0
         rate = rate or self.rate_limit()
-        return int(pages + sum(rate.delay_after(n) for n in range(1, pages)))
+        return int(pages + sum(max(host_gap_s, rate.delay_after(n)) for n in range(1, pages)))
 
 
 @dataclass(frozen=True)

@@ -274,7 +274,9 @@ plan's measurement.
 `HostLimiter` in `ingestion/gates.py` spaces request starts to one host key (`reddit.com`,
 `platform:reddit`, `substack.com`, the Telegram and Nitter bridges) by that host's gap. The
 gap starts at the host's floor (`HOST_FLOORS`, else 0) and is kept for the life of the
-process, so it carries from one hourly run to the next; a restart starts fresh.
+process, so it carries from one hourly run to the next; a restart starts fresh. Each process
+keeps its own pace: the scheduler's hourly runs and the API's manual runs and archives do not
+share one (accepted; nothing is stored).
 
 - `KindHttp` only classifies failures: each is an `HttpError` (a `ValueError`) with
   `status`, `retry_after` and `timed_out`. The Telegram bridge's JSON "Too many requests"
@@ -285,7 +287,10 @@ process, so it carries from one hourly run to the next; a restart starts fresh.
   16 s") and fetches once more. A second failure fails the source (backoff applies).
 - 20 successes in a row take a quarter off the gap, never below the floor.
 - An archive takes the same `FetchGates.slot` for every page, so a run and an archive on one
-  host are spaced together. On a 429 or a timeout it waits, then asks again from the last
+  host are spaced together. The kind's pause after a page (its page delay, or the batch
+  cooldown on a batch boundary) is the slot's minimum interval, so two pages are
+  max(host gap, pause) apart, never the sum; kinds do not sleep between archive pages. The
+  plan's time estimate uses the same rule with the host's floor. On a 429 or a timeout it waits, then asks again from the last
   recorded checkpoint; twice in a row it pauses: the job succeeds with `paused: true` and
   `paused_reason` ("reddit.com is limiting us"), and the checkpoint stays resumable.
 

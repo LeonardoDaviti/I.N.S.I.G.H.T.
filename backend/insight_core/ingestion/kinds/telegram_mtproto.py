@@ -252,11 +252,7 @@ class TelegramKind(BaseKind):
         offset_id = int((checkpoint or {}).get("offset_id") or 0) if isinstance(checkpoint, dict) else 0
         entity = await self._call(session, lambda c: c.get_entity(handle))
         seen: set[str] = set()
-        first = True
         while collected < target:
-            if not first:
-                await self.http.sleep(rate.delay_after(pages_fetched))
-            first = False
             messages = await self._call(
                 session, lambda c: c.get_messages(entity, limit=CHUNK_SIZE, offset_id=offset_id))
             if not messages:

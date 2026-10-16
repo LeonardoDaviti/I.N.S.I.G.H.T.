@@ -49,7 +49,7 @@ class DeepLearningBatchAdapter(BaseSourceAdapter):
     async def archive_pages(self, source: Dict[str, Any], target: int, checkpoint: Optional[Dict[str, Any]],
                             rate: RateLimit):
         entries = await self._discover_entries()
-        async for page in self.index_pages(source, entries, target, checkpoint, rate, self._fetch_issue_post):
+        async for page in self.index_pages(source, entries, target, checkpoint, self._fetch_issue_post):
             yield page
 
     async def _discover_entries(self) -> List[Dict[str, Any]]:

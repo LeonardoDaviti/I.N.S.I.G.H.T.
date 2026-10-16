@@ -556,7 +556,7 @@ class FetchInspectArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([len(p.posts) for p in pages], [100, 100, 100, 100, 99, 0])
         self.assertEqual([p.checkpoint and p.checkpoint["offset_id"] for p in pages], [400, 300, 200, 100, 1, None])
         self.assertIsNone(pages[-1].checkpoint)
-        self.assertEqual(h.sleeper.calls, [3, 3, 3, 3, 3])
+        self.assertEqual(h.sleeper.calls, [], "the archive loop paces the chunks")
         self.assertTrue(all(h.kind.checkpoint_resumable(p.checkpoint) for p in pages[:-1]))
 
     async def test_archive_pages_stop_at_the_target(self):

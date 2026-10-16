@@ -343,7 +343,7 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
                          ["Opus spent a night on the board [...]", "[Video]"],
                          "a title that is only the tag keeps it: there is nothing else to show")
 
-    async def test_archive_pages_sleep_the_overridden_delay(self):
+    async def test_archive_pages_leave_the_pause_to_the_archive_loop(self):
         http = self._http()
         kind = TelegramRssKind(http)
         rate = kind.profile.rate_limit({"page_delay_seconds": 9})
@@ -351,7 +351,7 @@ class TelegramRssKindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([len(p.posts) for p in pages], [20, 20, 5])
         self.assertEqual([p.checkpoint["next_page"] for p in pages], [2, 3, 4])
         self.assertEqual(pages[-1].checkpoint["collected_posts"], 45)
-        self.assertEqual(http.sleeper.calls, [9, 9])
+        self.assertEqual(http.sleeper.calls, [], "the gate slot waits max(host gap, pause) between pages")
 
     async def test_archive_resumes_from_the_checkpoint(self):
         http = self._http()
@@ -669,7 +669,7 @@ class SiteAdapterArchivePagesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p.checkpoint["next_index"] for p in pages], [4, 6])
         self.assertEqual([p.checkpoint["pages_fetched"] for p in pages], [1, 2])
         self.assertTrue(all(isinstance(p, ArchivePage) for p in pages))
-        self.assertEqual(http.sleeper.calls, [1], "one page delay between the two batches")
+        self.assertEqual(http.sleeper.calls, [], "the archive loop paces the batches")
         self.assertTrue(adapter.checkpoint_resumable(pages[-1].checkpoint))
 
 

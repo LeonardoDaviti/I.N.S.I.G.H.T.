@@ -87,7 +87,7 @@ Declare limits in the class `profile`, not in code:
 ```python
 PolitenessProfile(
     concurrency_pool="host-lock",   # or "ytdlp"
-    page_delay_s=2,                 # pause between archive pages
+    page_delay_s=2,                 # pause between pages (the archive loop waits it)
     batch_size=0, batch_cooldown_s=0,
     live_pages_rate_limited=False,  # the live fetch reads several pages
     cadence_floor=timedelta(0),     # never fetch more often than this
@@ -112,7 +112,10 @@ PolitenessProfile(
   `pages_fetched` and `collected_posts` (`resume_counts()` reads them back).
 - `checkpoint=None` means finished.
 - `checkpoint_resumable()` says whether a stored checkpoint belongs to your kind.
-- Pause between pages with `await self.http.sleep(rate.delay_after(pages_fetched))`.
+- Do not pause between archive pages: the archive loop waits `rate.delay_after(pages_fetched)`
+  through the host's gate slot, so the wait is max(host gap, pause), never the sum. Pauses
+  inside one page's work (Substack's post bodies) and between the pages of a live fetch are
+  slept with `self.http.sleep(...)`.
 - A kind that can only read its feed uses the `SingleShotArchive` mixin: one page, from
   `fetch_latest`.
 - A site kind with a discovered list of entries can use `BaseSourceAdapter.index_pages`.
