@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
 import { ThemeProvider } from '../ThemeProvider';
-import type { Api } from '../../services/api';
+import type { Api, JobRun } from '../../services/api';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import AppShell from './AppShell';
@@ -20,14 +20,13 @@ const FOLDERS = [
   { id: 'b2', name: 'Security', kind: 'track', sort_order: 1 },
 ];
 
-function shellApi(): Api {
-  return makeFakeApi({
+function renderShell(route: string, jobs: JobRun[] = []) {
+  const getOperationsOverview = vi.fn().mockResolvedValue({ success: true, jobs });
+  const api: Api = makeFakeApi({
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: FOLDERS }),
+    getOperationsOverview,
   });
-}
-
-function renderShell(route: string) {
-  return renderWithProviders(
+  const rendered = renderWithProviders(
     <ThemeProvider>
       <AppShell>
         <Routes>
@@ -35,8 +34,21 @@ function renderShell(route: string) {
         </Routes>
       </AppShell>
     </ThemeProvider>,
-    { api: shellApi(), route },
+    { api, route },
   );
+  return { ...rendered, getOperationsOverview };
+}
+
+/** Until the overview has answered and the shell has rendered it. */
+async function overviewShown(getOperationsOverview: ReturnType<typeof vi.fn>) {
+  await waitFor(() => expect(getOperationsOverview).toHaveBeenCalled());
+  await act(async () => { await getOperationsOverview.mock.results[0].value; });
+}
+
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+function job(fields: Partial<JobRun>): JobRun {
+  return { id: 'job-1', job_type: 'ingestion_run', status: 'running', trigger: 'scheduler', started_at: minutesAgo(2), ...fields };
 }
 
 async function navWords() {
@@ -134,6 +146,40 @@ describe('AppShell', () => {
     renderShell('/');
     expect(screen.getByRole('link', { name: 'feed' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'sources' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('while a run fetches, the top bar shows its progress and links to the job', async () => {
+    const user = userEvent.setup();
+    renderShell('/', [job({ id: 'run 7', payload: { sources: { done: 3, total: 41 }, new_posts: 12 } })]);
+    const sign = await screen.findByRole('link', { name: 'fetching · 3 of 41' });
+    expect(sign).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=jobs&job=run+7');
+    await user.click(sign);
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/sources?tab=ingestion&sub=jobs&job=run+7');
+  });
+
+  it('an archive job or a run without counts reads "fetching"; the daily work does not count', async () => {
+    renderShell('/', [job({ job_type: 'scheduler_cycle', id: 'daily' }), job({ job_type: 'archive_source', id: 'arch' })]);
+    expect(await screen.findByRole('link', { name: 'fetching' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=jobs&job=arch');
+  });
+
+  it('shows nothing when nothing runs', async () => {
+    const { getOperationsOverview } = renderShell('/', [
+      job({ status: 'success', finished_at: minutesAgo(1) }),
+      job({ job_type: 'scheduler_cycle', id: 'daily' }),
+    ]);
+    await overviewShown(getOperationsOverview);
+    expect(screen.queryByText(/fetching|failed/)).toBeNull();
+  });
+
+  it('a run that failed under an hour ago leaves a quiet "last fetch failed" note', async () => {
+    renderShell('/', [job({ status: 'failed', finished_at: minutesAgo(20) })]);
+    expect(await screen.findByRole('link', { name: 'last fetch failed' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=jobs&job=job-1');
+  });
+
+  it('the failure note is gone after an hour', async () => {
+    const { getOperationsOverview } = renderShell('/', [job({ status: 'failed', finished_at: minutesAgo(61) })]);
+    await overviewShown(getOperationsOverview);
+    expect(screen.queryByText('last fetch failed')).toBeNull();
   });
 
   it('the top bar shows feed / sources / blog', async () => {

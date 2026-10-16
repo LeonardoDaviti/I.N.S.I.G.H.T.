@@ -378,7 +378,9 @@ class OperationsService:
         level: str = "info",
         progress: float | None = None,
         payload: Optional[Dict[str, Any]] = None,
+        fields: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Append an event; `progress` and `fields` (live counters) also set top-level payload keys."""
         now_iso = datetime.now(timezone.utc).isoformat()
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -400,6 +402,7 @@ class OperationsService:
                 events.append(event)
                 next_payload = {
                     **current_payload,
+                    **(fields or {}),
                     "events": events[-200:],
                 }
                 if progress is not None:
@@ -475,7 +478,9 @@ class OperationsService:
                       -- to the OS. Full payloads are still served by get_job().
                       jsonb_strip_nulls(jsonb_build_object(
                         'progress',          jr.payload->'progress',
-                        'error',             jr.payload->'error'
+                        'error',             jr.payload->'error',
+                        'sources',           jr.payload->'sources',
+                        'new_posts',         jr.payload->'new_posts'
                       )),
                       jr.started_at,
                       jr.finished_at,

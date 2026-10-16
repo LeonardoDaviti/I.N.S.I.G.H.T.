@@ -19,6 +19,7 @@ function base(methods: Partial<Record<keyof Api, unknown>>) {
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
     getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([])),
     getPostDetail: vi.fn().mockResolvedValue({ success: true, post: { id: 'x' } }),
+    getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [] }),
     ...methods,
   });
 }
@@ -77,6 +78,29 @@ describe('ReaderPage', () => {
     await user.click(pill);
     expect(await screen.findByText('Brand new post')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /new posts/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['while a fetch job runs, every 10 seconds', [{ id: 'j1', job_type: 'ingestion_run', status: 'running', trigger: 'scheduler' }], 10_000],
+    ['with nothing running, every 60 seconds', [], 60_000],
+  ])('the unread counts are checked %s, and new posts show as the pill', async (_, jobs, interval) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'Old post' })]));
+      const getUnreadCounts = vi.fn()
+        .mockResolvedValueOnce({ total: 10, by_source: {}, by_folder: {} })
+        .mockResolvedValue({ total: 12, by_source: {}, by_folder: {} });
+      render(base({ getFeed, getUnreadCounts, getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs }) }));
+      await screen.findByText('Old post');
+      await act(async () => { await vi.advanceTimersByTimeAsync(interval - 1_000); });
+      expect(screen.queryByRole('button', { name: /new posts/ })).not.toBeInTheDocument();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(await screen.findByRole('button', { name: /2 new posts/ })).toBeInTheDocument();
+      expect(getFeed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Shift+A asks first, marks read through the selection, and the toast Undo restores them', async () => {

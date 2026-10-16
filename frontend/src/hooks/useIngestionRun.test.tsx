@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, renderHook, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { useIngestionRun } from './useIngestionRun';
@@ -13,6 +13,11 @@ import { runReport } from '../components/ops/fixtures';
 import { ApiError } from '../lib/apiError';
 import type { Api } from '../services/api';
 
+function Where() {
+  const location = useLocation();
+  return <p data-testid="where">{`${location.pathname}${location.search}`}</p>;
+}
+
 function setup(api: Api) {
   const queryClient = makeTestQueryClient();
   const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
@@ -22,6 +27,7 @@ function setup(api: Api) {
         <ApiProvider value={api}>
           <MemoryRouter>
             {children}
+            <Where />
             <Toaster />
           </MemoryRouter>
         </ApiProvider>
@@ -75,6 +81,18 @@ describe('useIngestionRun', () => {
     expect(result.current.isRunning({ kind: 'source', id: 's2' })).toBe(false);
     await act(async () => { resolve(runReport()); await pending; });
     expect(result.current.isRunning({ kind: 'source', id: 's1' })).toBe(false);
+  });
+
+  it('the toast\'s View job opens the job in Sources → ingestion → jobs', async () => {
+    const fetchSourceNow = vi.fn().mockImplementation(async (_id, { onAccepted }) => {
+      onAccepted({ job_id: 'job-9' });
+      return runReport({ run_id: 'run-9', selector: { kind: 'source', id: 's1' } });
+    });
+    const { result } = setup(makeFakeApi({ fetchSourceNow }));
+    await act(async () => { await result.current.run({ kind: 'source', id: 's1', name: 'Job nine feed' }); });
+    const toast = (await screen.findByText(/Job nine feed/)).closest('li') as HTMLElement;
+    fireEvent.click(within(toast).getByRole('button', { name: 'View job' }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/sources?tab=ingestion&sub=jobs&job=job-9');
   });
 
   it('a failed request shows an error toast and resolves null instead of throwing', async () => {

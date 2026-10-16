@@ -45,6 +45,7 @@ import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
+import { sourceLabel } from '../lib/sourceLabel';
 
 export const SOURCES_WITH_SETTINGS_KEY = ['sources-with-settings'] as const;
 
@@ -334,6 +335,11 @@ export default function SourcesConfig() {
     setShowAddSource(false);
     if (!r.success) setError(r.error || 'Could not add the source');
     invalidate();
+    // A new source is read right away, not at the next scheduler tick. Fetch-now forces a
+    // fetch, so a source added disabled is left alone.
+    if (r.success && r.source_id && data.state === 'enabled') {
+      void runFetch({ kind: 'source', id: r.source_id, name: sourceLabel(data.display_name, data.handle_or_url) }, { startText: 'Added — fetching now' });
+    }
   };
 
   const selectIds = (ids: string[], on: boolean) => setSelected((prev) => {

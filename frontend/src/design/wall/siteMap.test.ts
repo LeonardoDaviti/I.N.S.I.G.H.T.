@@ -77,7 +77,7 @@ describe('the principles the Wall highlights', () => {
     expect(PRINCIPLES[6]).toEqual({
       n: 7,
       title: 'Fetching lives in Sources',
-      rule: 'Reading views never fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections.',
+      rule: 'Reading views never start a fetch, ingest or hold secrets; jobs live in Sources and secrets only in Connections. The top bar may show that one is running, linking to Sources.',
     });
   });
 });

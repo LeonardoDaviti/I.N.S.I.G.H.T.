@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 
 import { useApi } from '../services/ApiContext';
+import { useRunningFetchJob } from './useOperations';
 import type { FeedFilter, FeedGroup, FeedGroupsPage, FeedItem, FeedPage, FeedView, UnreadCounts } from '../services/api';
 import type { ContextEntry } from '../lib/feedContext';
 
@@ -85,13 +86,17 @@ export function useFeed({ scope, filter, view, fixture }: {
   return { ...query, ...derived };
 }
 
-/** Unread counts for the rail badges and the "N new posts" pill. */
+/** Unread counts for the rail badges and the "N new posts" pill. Checked every 10
+ *  seconds while a fetch job runs, else every 60 (never in a hidden tab), so posts
+ *  saved during a run show up as the pill while the list itself stays put. */
 export function useUnreadCounts(fixture?: FeedFixture | null) {
   const api = useApi();
+  const fetching = useRunningFetchJob() !== null;
   return useQuery({
     queryKey: fixture ? [...UNREAD_COUNTS_KEY, 'fixture', fixture.name] : [...UNREAD_COUNTS_KEY],
     queryFn: fixture ? async () => fixture.counts : () => api.getUnreadCounts(),
     staleTime: 30_000,
+    refetchInterval: fixture ? false : fetching ? 10_000 : 60_000,
   });
 }
 

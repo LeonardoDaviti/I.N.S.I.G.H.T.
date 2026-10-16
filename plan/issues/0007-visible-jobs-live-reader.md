@@ -1,6 +1,6 @@
 # 0007 — See the jobs that run, and a reader that updates by itself
 
-Status: **ready-for-agent** (owner observations on the server, 2026-10-16). UX.
+Status: **built** 2026-10-16, not yet deployed (owner observations on the server, 2026-10-16). UX.
 
 ## Problem Statement
 - **I can't tell whether anything is running.** I added a source and it said "due" with a "Fetch now" button. I didn't know whether I had to press it. In fact the scheduler fetched it at the next hourly tick (the 11:28 run fetched 41 due sources and found 125 new posts), and nothing told me.

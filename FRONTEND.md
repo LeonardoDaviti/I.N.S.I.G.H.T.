@@ -27,7 +27,7 @@ Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`),
 | Folder | What lives there |
 | --- | --- |
 | `pages/` | One component per route (`App.tsx` has the route table). |
-| `components/layout/` | The shell: `AppShell`, `TopBar` (wordmark, slash nav, theme toggle), `QuickSwitcher` (Cmd/Ctrl+K). |
+| `components/layout/` | The shell: `AppShell`, `TopBar` (wordmark, activity sign, slash nav, theme toggle), `QuickSwitcher` (Cmd/Ctrl+K). |
 | `components/ui/` | The primitives: `Button`, `TextLink`, `Chip`/`FilterChip`, `StatusGlyph`, `Tabs`, `Input`/`Textarea`/`Select`, `Dialog`, `Sheet`, `Toaster`, `Skeleton`, `Kbd`, `PageHeader`/`Page`. Import them from `components/ui`. |
 | `components/states/` | `LoadingState`, `EmptyState`, `ErrorState`, `Notice`. Every async view uses these. |
 | `components/reader/`, `components/ops/` | The reader (feed, rail, toolbar) and the ingestion/health parts. |
