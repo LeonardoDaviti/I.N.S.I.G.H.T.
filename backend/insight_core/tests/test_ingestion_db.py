@@ -22,11 +22,13 @@ from insight_core.ingestion.ports import (
     DbFetchStateStore,
     DbPostSaver,
     DbSourceCatalog,
+    JobProgressSink,
     PgAdvisoryRunLock,
 )
 from insight_core.ingestion.runner import IngestionRunner
 from insight_core.ingestion.schedule import Availability
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
+from insight_core.services.operations_service import OperationsService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.tests._ingestion_fakes import RecordingInspectionRefresher, SpyFetchGates
 from insight_core.tests._kind_fakes import FakeKind
@@ -84,6 +86,24 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cur.fetchone(), ("manual", "healthy", 3, "fetch_forced"))
             cur.execute("SELECT count(*) FROM posts WHERE source_id = %s", (self.source_id,))
             self.assertEqual(cur.fetchone()[0], 3)
+
+    async def test_a_running_job_lists_its_sources_done_and_new_posts(self):
+        kind = FakeKind("fake_rss", behaviour=lambda s, n: [
+            {"url": f"{s['handle_or_url']}/post/{i}", "title": f"t{i}", "content": "c", "date": None}
+            for i in range(2)
+        ])
+        ops = OperationsService(self.url)
+        job_id = ops.start_job("ingestion_run", trigger="manual", source_id=self.source_id)
+        try:
+            request = FetchRequest(SourceSelector.source(self.source_id), Trigger.MANUAL, force=True)
+            await self._runner(kind).run(request, progress=JobProgressSink(ops, job_id))
+            job = next(j for j in ops.list_recent_jobs(200) if j["id"] == job_id)
+            self.assertEqual(job["payload"]["sources"], {"done": 1, "total": 1})
+            self.assertEqual(job["payload"]["new_posts"], 2)
+        finally:
+            with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM job_runs WHERE id = %s", (job_id,))
+                conn.commit()
 
     async def test_a_held_run_lock_skips_a_full_run(self):
         kind = FakeKind("fake_rss")

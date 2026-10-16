@@ -250,6 +250,9 @@ The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged setti
   requests to that source's host. The host floors in `ingestion/gates.py` still apply.
 - `max_posts_per_fetch` feeds the cadence rules in `ingestion/schedule.py`, which decide each
   fetch's post limit.
+- Each source's posts are saved as soon as its fetch finishes, so they reach the reader during
+  the run; while it runs, the `ingestion_run` job's payload carries `sources: {done, total}`
+  and `new_posts`.
 
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).

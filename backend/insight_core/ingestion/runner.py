@@ -6,7 +6,7 @@ CLI all apply the same policy: the yt-dlp switch, backoff (read and write), poli
 gates, status recording, save isolation and the inspection refresh.
 
 Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
-record decisions -> fetch under the gates -> record outcomes -> one save batch ->
+record decisions -> per source: fetch under the gates, save, record its outcome ->
 refresh inspections -> report. Kind sessions (B8, telegram_mtproto) are opened lazily
 inside the gate slot of a kind's first due source and closed in a finally after the
 inspection refresh; a session that cannot open makes that kind's sources unavailable. A fetch never raises out of the runner; a failing store
@@ -209,57 +209,47 @@ class IngestionRunner:
         ordered = sorted((s for s, _, _ in due),
                          key=lambda s: ((s.get("settings") or {}).get("priority", 999), str(s.get("handle_or_url"))))
         ordered = interleave_by_host(ordered, host_key=lambda s: by_id[s["id"]][1].host_key(s))
-        fetched: List[_Fetched] = list(await asyncio.gather(
-            *(self._fetch(*by_id[s["id"]], sessions) for s in ordered)
-        ))
-        posts_fetched = sum(len(f.posts) for f in fetched)
-        progress.event("fetched", {
+        # Each source is saved as soon as its fetch finishes, so its posts reach the reader
+        # during the run, and its result is merged into the run's one save result. One save
+        # at a time: the database sees one writer, as with the single batch before.
+        saved = SaveBatchResult()
+        failures: List[SourceFailure] = []
+        save_lock = asyncio.Lock()
+        done = 0
+
+        async def fetch_and_save(source: Dict[str, Any]) -> _Fetched:
+            nonlocal done
+            f = await self._fetch(*by_id[source["id"]], sessions)
+            async with save_lock:
+                outcome = f.outcome
+                if outcome.status == OutcomeStatus.ERROR:
+                    failures.append(SourceFailure(source["id"], _display_name(source), "fetch", outcome.error or "error"))
+                elif f.posts:
+                    error = await self._save(f, saved)
+                    if error:
+                        failures.append(SourceFailure(source["id"], _display_name(source), "save", error))
+                        # Outcomes are recorded after the save: a source none of whose posts
+                        # reached the database is failing (its failure count grows, it retries
+                        # on backoff), not healthy with its next fetch a whole cadence away.
+                        outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR, error=f"save: {error}")
+                await self._safely(
+                    "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
+                    now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
+                )
+                done += 1
+                progress.event("source", {"source_id": source["id"], "display_name": _display_name(source),
+                                          "sources": {"done": done, "total": len(ordered)},
+                                          "new_posts": saved.inserted})
+            return f
+
+        fetched: List[_Fetched] = list(await asyncio.gather(*(fetch_and_save(s) for s in ordered)))
+        posts_fetched = sum(f.outcome.fetched for f in fetched)
+        progress.event("saved", {
             "sources_fetched": len(fetched),
             "posts_fetched": posts_fetched,
             "outcomes": self._outcome_counts([f.outcome for f in fetched]),
+            "inserted": saved.inserted, "updated": saved.updated, "failed": saved.failed,
         })
-
-        # Save: one batch for the run.
-        failures: List[SourceFailure] = [
-            SourceFailure(f.source["id"], _display_name(f.source), "fetch", f.outcome.error or "error")
-            for f in fetched if f.outcome.status == OutcomeStatus.ERROR
-        ]
-        drafts = [PostDraft(f.source["id"], post) for f in fetched for post in f.posts]
-        for f in fetched:
-            f.posts = []  # the drafts own the bodies now; release them after the save
-        saved = SaveBatchResult()
-        if drafts:
-            try:
-                saved = await asyncio.to_thread(self.saver.save, drafts)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Save batch failed")
-                for source_id in {d.source_id for d in drafts}:
-                    source = by_id[source_id][0]
-                    failures.append(SourceFailure(source_id, _display_name(source), "save", str(exc)))
-            else:
-                for source_id, c in saved.by_source.items():
-                    if c.get("failed") and not c.get("inserted") and not c.get("updated"):
-                        source = by_id[source_id][0]
-                        failures.append(SourceFailure(source_id, _display_name(source), "save",
-                                                      f"all {c['failed']} posts failed to save"))
-        drafts.clear()
-        progress.event("saved", {"inserted": saved.inserted, "updated": saved.updated, "failed": saved.failed})
-
-        # Outcomes are recorded after the save: a source none of whose posts reached the
-        # database is failing (its failure count grows, it retries on backoff), not healthy
-        # with its failures reset and its next fetch a whole cadence away.
-        save_errors = {f.source_id: f.error for f in failures if f.stage == "save"}
-        outcomes = [
-            dataclasses.replace(f.outcome, status=OutcomeStatus.ERROR, error=f"save: {save_errors[f.source['id']]}")
-            if f.source["id"] in save_errors and f.outcome.status != OutcomeStatus.ERROR else f.outcome
-            for f in fetched
-        ]
-        await self._safely(
-            "record outcomes", self.state.record_outcomes, outcomes, trigger=request.trigger,
-            now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
-        )
-
-        counts_by_source = dict(saved.by_source)
 
         # Refresh inspections for every source that fetched at least one post.
         refreshable = [f for f in fetched if f.outcome.status == OutcomeStatus.HEALTHY]
@@ -283,7 +273,7 @@ class IngestionRunner:
             status = "success"
         inserted_by_source = sorted(
             (InsertedBySource(sid, _display_name(by_id[sid][0]), c.get("inserted", 0))
-             for sid, c in counts_by_source.items() if c.get("inserted")),
+             for sid, c in saved.by_source.items() if c.get("inserted")),
             key=lambda i: (-i.inserted, i.display_name),
         )[:LIST_CAP]
         return self._report(
@@ -295,6 +285,21 @@ class IngestionRunner:
             post_failures=saved.failures[:LIST_CAP],
             inserted_by_source=inserted_by_source,
         )
+
+    async def _save(self, f: _Fetched, saved: SaveBatchResult) -> Optional[str]:
+        """Save one source's posts into `saved`. Returns why the source failed to save, or None."""
+        drafts = [PostDraft(f.source["id"], post) for post in f.posts]
+        f.posts = []  # the drafts own the bodies now; they are released after the save
+        try:
+            result = await asyncio.to_thread(self.saver.save, drafts)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Save failed for %s", _display_name(f.source))
+            return str(exc)
+        saved.merge(result)
+        c = result.by_source.get(f.source["id"]) or {}
+        if c.get("failed") and not c.get("inserted") and not c.get("updated"):
+            return f"all {c['failed']} posts failed to save"
+        return None
 
     async def _fetch(self, source: Dict[str, Any], kind: SourceKind, decision: FetchDecision,
                      sessions: _RunSessions) -> _Fetched:

@@ -87,6 +87,15 @@ class SaveBatchResult:
         counts = self.by_source.setdefault(source_id, {"inserted": 0, "updated": 0, "failed": 0})
         counts[key] += delta
 
+    def merge(self, other: "SaveBatchResult") -> None:
+        """Add another save's result to this one (the runner saves one source at a time)."""
+        self.inserted_ids.extend(other.inserted_ids)
+        self.updated_ids.extend(other.updated_ids)
+        self.failures.extend(other.failures)
+        for source_id, counts in other.by_source.items():
+            for key, delta in counts.items():
+                self._count(source_id, key, delta)
+
 
 class PostsRepository:
     """

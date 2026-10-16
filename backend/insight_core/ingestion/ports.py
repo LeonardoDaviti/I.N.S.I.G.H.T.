@@ -85,12 +85,17 @@ class _NullProgress:
 
 NULL_PROGRESS: ProgressSink = _NullProgress()
 
-# Rough job progress per phase, so the Operations panel's bar moves.
-_PHASE_PROGRESS = {"decided": 10.0, "fetched": 60.0, "saved": 80.0, "inspected": 100.0}
+# Rough job progress per phase, so the Operations panel's bar moves. Each "source" event
+# moves it from 10 towards 80 by sources done out of due.
+_PHASE_PROGRESS = {"decided": 10.0, "saved": 80.0, "inspected": 100.0}
 
 
 class JobProgressSink:
-    """Appends each phase to a job_runs row. Never raises: progress is not worth a run."""
+    """Appends each phase to a job_runs row. Never raises: progress is not worth a run.
+
+    A "source" event (one source fetched and saved) also sets the payload's live counters,
+    `sources: {done, total}` and `new_posts`, which the top bar's activity sign reads.
+    """
 
     def __init__(self, operations_service: Any, job_id: Optional[str]) -> None:
         self.ops = operations_service
@@ -99,13 +104,21 @@ class JobProgressSink:
     def event(self, phase: str, data: dict) -> None:
         if not self.job_id:
             return
+        data = data or {}
+        progress, fields, message = _PHASE_PROGRESS.get(phase), None, f"Ingestion {phase}"
+        if phase == "source":
+            sources = data["sources"]
+            progress = 10.0 + 70.0 * sources["done"] / max(1, sources["total"])
+            fields = {"sources": sources, "new_posts": data["new_posts"]}
+            message = f"Saved {data['display_name']}"
         try:
             self.ops.append_job_event(
                 self.job_id,
-                message=f"Ingestion {phase}",
+                message=message,
                 level="info",
-                progress=_PHASE_PROGRESS.get(phase),
-                payload={"phase": phase, **(data or {})},
+                progress=progress,
+                payload={"phase": phase, **data},
+                fields=fields,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not record ingestion progress (%s): %s", phase, exc)
