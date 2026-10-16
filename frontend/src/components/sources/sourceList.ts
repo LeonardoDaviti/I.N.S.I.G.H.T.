@@ -1,37 +1,55 @@
 /**
  * The Sources page as one list (pure, so it is testable): every source is one
- * health row; the toolbar filters it (search + status), groups it (by track,
- * status, platform, or not at all) and sorts inside each group. The view lives
- * in the URL:
+ * health row; the toolbar filters it (search + status) and groups it (by track
+ * or platform; flat by default), the column headers sort inside each group. The
+ * view lives in the URL:
  *
- *   ?q=simon&status=error&group=status&sort=posts
+ *   ?q=simon&status=error&group=track&sort=added&dir=asc
  *
- * The old Health tab URL (`?tab=health`) maps to `group=status`, keeping its
+ * The old Health tab URL (`?tab=health`) is the flat list, keeping its
  * `?status=` filter, so bookmarks and the command palette still land right.
+ * Retired or unknown values (`sort=success`, `group=status`) fall back to the
+ * defaults. A track deep link (`?track=<id>`, issue 0003) groups by track so
+ * its group is there to scroll to; the first change to the view consumes it.
  */
 import type { Folder, HealthStatus, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
-import { HEALTH_STATUS_LABELS, HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, sortHealthRows } from '../../lib/sourceSchedule';
+import { HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, sortHealthRows } from '../../lib/sourceSchedule';
 import { formatRelativeTime } from '../../lib/dates';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
 
-export type GroupBy = 'track' | 'status' | 'platform' | 'none';
-export const GROUP_BY: readonly GroupBy[] = ['track', 'status', 'platform', 'none'];
+export type GroupBy = 'none' | 'track' | 'platform';
+export const GROUP_BY: readonly GroupBy[] = ['none', 'track', 'platform'];
 export const GROUP_BY_LABELS: Record<GroupBy, string> = {
-  track: 'Track',
-  status: 'Status',
-  platform: 'Platform',
   none: 'No grouping',
+  track: 'Track',
+  platform: 'Platform',
 };
 
-export type SortBy = 'status' | 'name' | 'success' | 'posts';
-export const SORT_BY: readonly SortBy[] = ['status', 'name', 'success', 'posts'];
+/** The sortable columns, in on-screen order. */
+export type SortBy = 'name' | 'kind' | 'posts' | 'lastPost' | 'added' | 'status';
+export const SORT_BY: readonly SortBy[] = ['name', 'kind', 'posts', 'lastPost', 'added', 'status'];
 export const SORT_BY_LABELS: Record<SortBy, string> = {
-  status: 'Status',
   name: 'Name',
-  success: 'Last success',
+  kind: 'Kind',
   posts: 'Posts',
+  lastPost: 'Last post',
+  added: 'Added',
+  status: 'Status',
+};
+
+export type SortDir = 'asc' | 'desc';
+export const DIR_WORDS: Record<SortDir, string> = { asc: 'ascending', desc: 'descending' };
+export const DIR_ARROWS: Record<SortDir, string> = { asc: '↑', desc: '↓' };
+/** A column's first click: text A to Z, numbers and dates biggest/newest first, status worst first. */
+export const DEFAULT_DIR: Record<SortBy, SortDir> = {
+  name: 'asc',
+  kind: 'asc',
+  posts: 'desc',
+  lastPost: 'desc',
+  added: 'desc',
+  status: 'desc',
 };
 
 /** A status chip: one health status, or `enabled` (every source that is on). */
@@ -43,6 +61,7 @@ export interface SourcesView {
   status: StatusFilter | null;
   group: GroupBy;
   sort: SortBy;
+  dir: SortDir;
 }
 
 export const UNASSIGNED_KEY = 'track:none';
@@ -50,6 +69,8 @@ export const UNASSIGNED_KEY = 'track:none';
 export interface SourceGroup {
   key: string;
   label: string;
+  /** Listed without a header (the flat list; untracked sources after the tracks, below a divider). */
+  headless?: boolean;
   /** Set for a real track (links to it, carries its menu). */
   folderId?: string;
   rows: SourceHealthRow[];
@@ -58,26 +79,39 @@ export interface SourceGroup {
 export function readSourcesView(params: URLSearchParams): SourcesView {
   const status = params.get('status');
   const group = params.get('group');
-  const sort = params.get('sort');
-  const legacyHealth = params.get('tab') === 'health';
+  const sort = SORT_BY.includes(params.get('sort') as SortBy) ? (params.get('sort') as SortBy) : 'status';
+  const dir = params.get('dir');
   return {
     q: params.get('q') ?? '',
     status: STATUS_FILTER_VALUES.includes(status ?? '') ? (status as StatusFilter) : null,
-    group: GROUP_BY.includes(group as GroupBy) ? (group as GroupBy) : legacyHealth ? 'status' : 'track',
-    sort: SORT_BY.includes(sort as SortBy) ? (sort as SortBy) : 'status',
+    group: GROUP_BY.includes(group as GroupBy) ? (group as GroupBy) : params.has('track') ? 'track' : 'none',
+    sort,
+    dir: dir === 'asc' || dir === 'desc' ? dir : DEFAULT_DIR[sort],
   };
 }
 
-/** The URL for a view; `track` grouping, `status` sort and empty values stay out of it. Other params (`data`) survive. */
+/**
+ * The URL for a view; no grouping, the `status` sort, a column's own direction
+ * and empty values stay out of it. The legacy tab and a consumed track deep
+ * link go; other params (`data`, `source`) survive.
+ */
 export function writeSourcesView(params: URLSearchParams, view: SourcesView): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete('tab');
+  next.delete('track');
   const set = (key: string, value: string | null) => (value ? next.set(key, value) : next.delete(key));
   set('q', view.q.trim() ? view.q : null);
   set('status', view.status);
-  set('group', view.group === 'track' ? null : view.group);
+  set('group', view.group === 'none' ? null : view.group);
   set('sort', view.sort === 'status' ? null : view.sort);
+  set('dir', view.dir === DEFAULT_DIR[view.sort] ? null : view.dir);
   return next;
+}
+
+/** A column header click: a new column starts in its own direction, the active one reverses. */
+export function nextSort<V extends Pick<SourcesView, 'sort' | 'dir'>>(view: V, sort: SortBy): V {
+  const dir = sort !== view.sort ? DEFAULT_DIR[sort] : view.dir === 'asc' ? 'desc' : 'asc';
+  return { ...view, sort, dir };
 }
 
 export function rowName(row: Pick<SourceHealthRow, 'display_name' | 'source_id'>): string {
@@ -109,38 +143,45 @@ const time = (iso: string | null | undefined) => {
   return Number.isNaN(t) ? -Infinity : t;
 };
 
+/** Each column's ascending order (status has its own, `sortHealthRows`). */
+const ASCENDING: Record<Exclude<SortBy, 'status'>, (a: SourceHealthRow, b: SourceHealthRow) => number> = {
+  name: byName,
+  kind: (a, b) => kindLabel(a).localeCompare(kindLabel(b)),
+  posts: (a, b) => a.stored_posts - b.stored_posts,
+  lastPost: (a, b) => time(a.last_post_at) - time(b.last_post_at),
+  added: (a, b) => time(a.created_at) - time(b.created_at),
+};
+
 /**
- * The order inside a group. Status: worst first, then name. Name: A to Z.
- * Last success: the stalest first (never fetched at the top), so the ones that
- * stopped working surface. Posts: the most first. Ties fall back to the name.
+ * The order inside a group, by one column in a direction (default: the
+ * column's own, DEFAULT_DIR). Status descending is worst first (the backend's
+ * health order); ascending reverses it. A source without posts counts as the
+ * oldest. Ties fall back to the name, A to Z.
  */
-export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy): SourceHealthRow[] {
-  const named = [...rows].sort(byName);
-  if (sort === 'status') return sortHealthRows(named);
-  if (sort === 'name') return named;
-  if (sort === 'posts') return named.sort((a, b) => b.stored_posts - a.stored_posts);
-  return named.sort((a, b) => time(a.last_success_at) - time(b.last_success_at));
+export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy, dir: SortDir = DEFAULT_DIR[sort]): SourceHealthRow[] {
+  if (sort === 'status') {
+    const worstFirst = sortHealthRows(rows);
+    return dir === 'desc' ? worstFirst : worstFirst.reverse();
+  }
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => sign * ASCENDING[sort](a, b) || byName(a, b));
 }
 
 /**
- * Groups in display order. Track: every track in the folder order (empty ones
- * too, unless a search or filter is on), then "Not in a track"; a source in two
- * tracks shows in both. Status: worst first. Inside a group, `sort` (default:
- * worst status first, then name).
+ * Groups in display order. None: one flat list without a header. Track: every
+ * track in the folder order (empty ones too, unless a search or filter is on),
+ * then the sources in no track, without a header; a source in two tracks shows
+ * in both. Platform: A to Z. Inside a group, `sort` in `dir` (default: worst
+ * status first).
  */
 export function groupSources(
   rows: readonly SourceHealthRow[],
   group: GroupBy,
   folders: readonly Pick<Folder, 'id' | 'name'>[] = [],
-  { keepEmpty = true, sort = 'status' }: { keepEmpty?: boolean; sort?: SortBy } = {},
+  { keepEmpty = true, sort = 'status', dir }: { keepEmpty?: boolean; sort?: SortBy; dir?: SortDir } = {},
 ): SourceGroup[] {
-  const sorted = sortSources(rows, sort);
-  if (group === 'none') return [{ key: 'all', label: 'All sources', rows: sorted }];
-  if (group === 'status') {
-    return HEALTH_STATUS_ORDER
-      .map((status) => ({ key: `status:${status}`, label: HEALTH_STATUS_LABELS[status], rows: sorted.filter((row) => row.status === status) }))
-      .filter((g) => g.rows.length > 0);
-  }
+  const sorted = sortSources(rows, sort, dir);
+  if (group === 'none') return [{ key: 'all', label: 'All sources', headless: true, rows: sorted }];
   if (group === 'platform') {
     const map = new Map<string, SourceHealthRow[]>();
     sorted.forEach((row) => map.set(row.platform, [...(map.get(row.platform) ?? []), row]));
@@ -156,7 +197,7 @@ export function groupSources(
     rows: sorted.filter((row) => row.folders.some((f) => f.id === folder.id)),
   }));
   const unassigned = sorted.filter((row) => !row.folders.some((f) => known.has(f.id)));
-  const all = [...groups, { key: UNASSIGNED_KEY, label: 'Not in a track', rows: unassigned }];
+  const all = [...groups, { key: UNASSIGNED_KEY, label: 'Other sources', headless: true, rows: unassigned }];
   return all.filter((g) => g.rows.length > 0 || (keepEmpty && g.folderId));
 }
 
@@ -242,9 +283,4 @@ const KIND_LABELS: Record<string, string> = {
 
 export function kindLabel(row: Pick<SourceHealthRow, 'kind' | 'platform'>): string {
   return KIND_LABELS[row.kind] ?? getPlatformLabel(row.platform);
-}
-
-/** When the source's newest post was published (the backend's `last_post_at`; older backends omit it). */
-export function lastPostAt(row: SourceHealthRow): string | null {
-  return (row as SourceHealthRow & { last_post_at?: string | null }).last_post_at ?? null;
 }

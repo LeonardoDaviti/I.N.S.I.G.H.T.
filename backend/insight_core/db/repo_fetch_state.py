@@ -295,7 +295,7 @@ class FetchStateRepository:
     def load_schedule_view(
         self, cur: Cursor, source_ids: Optional[Sequence[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Every source with its cadence columns, post count, newest post, folders and fetch state.
+        """Every source with its cadence columns, added date, post count, newest post, folders and fetch state.
 
         For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
         `settings` is merged with the platform defaults exactly as the runner's source
@@ -314,7 +314,7 @@ class FetchStateRepository:
             f"""
             SELECT s.id, s.platform, s.handle_or_url, s.enabled, s.in_main_digest, s.settings,
                    s.mean_gap_seconds, s.cadence_sample_size, s.cadence_tier,
-                   s.cadence_computed_at, s.fetch_interval_hours_override,
+                   s.cadence_computed_at, s.fetch_interval_hours_override, s.created_at,
                    (SELECT count(*) FROM posts p WHERE p.source_id = s.id) AS post_count,
                    (SELECT max(COALESCE(p.published_at, p.fetched_at)) FROM posts p
                      WHERE p.source_id = s.id) AS last_post_at,
@@ -335,7 +335,7 @@ class FetchStateRepository:
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
-            state_values = r[14:]
+            state_values = r[15:]
             rows.append(
                 {
                     "id": str(r[0]),
@@ -349,9 +349,10 @@ class FetchStateRepository:
                     "cadence_tier": r[8],
                     "cadence_computed_at": r[9],
                     "fetch_interval_hours_override": r[10],
-                    "post_count": int(r[11] or 0),
-                    "last_post_at": r[12],
-                    "folders": [{"id": str(f["id"]), "name": f["name"]} for f in (r[13] or [])],
+                    "created_at": r[11],
+                    "post_count": int(r[12] or 0),
+                    "last_post_at": r[13],
+                    "folders": [{"id": str(f["id"]), "name": f["name"]} for f in (r[14] or [])],
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
             )

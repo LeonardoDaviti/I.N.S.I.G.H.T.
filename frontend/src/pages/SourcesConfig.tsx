@@ -21,6 +21,7 @@ import {
   filterByStatus,
   filterSources,
   groupSources,
+  nextSort,
   rangeIds,
   readSourcesView,
   rowName,
@@ -80,9 +81,10 @@ const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as r
 /**
  * Settings → Sources: every source on one dense list (spec §9, reading-first).
  * The old Sources and Health tabs are one view now: the toolbar searches,
- * filters by status and groups (by track, status or platform); a row opens the
- * detail sheet (settings, cadence, fetch now, delete); checkboxes select for
- * the bulk bar. `?tab=health` still works: it opens the list grouped by status.
+ * filters by status and groups (by track or platform), the column headers sort;
+ * a row opens the detail sheet (settings, cadence, fetch now, delete) or the
+ * reader on that source; checkboxes select for the bulk bar. `?tab=health`
+ * still works: it opens the list, keeping its status filter.
  */
 export default function SourcesConfig() {
   const api = useApi();
@@ -93,7 +95,7 @@ export default function SourcesConfig() {
 
   // Three tabs: the list, Connections (?tab=connections, spec §10.1) and
   // Ingestion (?tab=ingestion, reading-finish R3). The legacy Health tab URL
-  // becomes the status grouping it stood for.
+  // becomes the list view (readSourcesView).
   const tabParam = searchParams.get('tab');
   const tab = isExtraTab(tabParam) ? tabParam : 'sources';
   useEffect(() => {
@@ -193,8 +195,8 @@ export default function SourcesConfig() {
   const rows = useMemo(() => filterSources(allRows, view), [allRows, view.q, view.status]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtering = Boolean(view.q.trim() || view.status);
   const groups = useMemo(
-    () => groupSources(rows, view.group, folders, { keepEmpty: !filtering, sort: view.sort }),
-    [rows, view.group, view.sort, folders, filtering],
+    () => groupSources(rows, view.group, folders, { keepEmpty: !filtering, sort: view.sort, dir: view.dir }),
+    [rows, view.group, view.sort, view.dir, folders, filtering],
   );
   const counts = useMemo(() => {
     const searched = filterSources(allRows, { q: view.q, status: null });
@@ -446,7 +448,9 @@ export default function SourcesConfig() {
         onToggleEnabled={(row) => void setEnabled([row.source_id], !row.enabled)}
         track={trackActions}
         now={now}
-        showHeaders={view.group !== 'none'}
+        sort={view.sort}
+        dir={view.dir}
+        onSort={(column) => setView(nextSort(view, column))}
         focusToken={focusToken}
       />
     );
@@ -580,7 +584,7 @@ export default function SourcesConfig() {
         open={pendingDelete !== null}
         title={pendingDelete?.kind === 'folder' ? `Delete the track "${pendingDelete.name}"?` : `Delete ${pendingDelete?.kind === 'sources' && pendingDelete.ids.length === 1 ? `"${pendingDelete.name}"` : pendingDelete?.name ?? ''}?`}
         description={pendingDelete?.kind === 'folder'
-          ? 'The track is deleted. Its sources and their posts stay (they move to "Not in a track" if they are in no other track).'
+          ? 'The track is deleted. Its sources and their posts stay.'
           : 'Every post collected from them is deleted too. This cannot be undone; disabling keeps the posts.'}
         confirmLabel={pendingDelete?.kind === 'folder' ? 'Delete track' : pendingDelete?.kind === 'sources' && pendingDelete.ids.length > 1 ? `Delete ${pendingDelete.ids.length} sources` : 'Delete source'}
         destructive

@@ -68,24 +68,50 @@ const rowIds = (root: HTMLElement = document.body) =>
 const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`li[data-source-id="${id}"]`)[nth];
 
 describe('SourcesConfig', () => {
-  it('is one list grouped by track: sources, connections and ingestion tabs, no expert labels, one line per source', async () => {
+  it('is one flat list by default: sources, connections and ingestion tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'connections', 'ingestion']);
     expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
-    expect(groupNames()).toEqual(['AI engineering2', 'AR glasses2', 'Not in a track1']);
-    // A source in two tracks shows in both; worst status first inside a group.
-    expect(rowIds()).toEqual(['flaky', 'simon', 'flaky', 'off', 'tg']);
+    expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
+    expect(screen.getByRole('combobox', { name: 'Group' })).toHaveValue('none');
+    // Worst status first.
+    expect(rowIds()).toEqual(['flaky', 'tg', 'simon', 'off']);
     expect(rowOf('flaky')).toHaveTextContent('retry in 3h');
     expect(within(rowOf('off')).getByRole('switch', { name: 'Enable Road to VR' })).toHaveAttribute('aria-checked', 'false');
   });
 
-  it('?tab=health opens the list grouped by status, keeping its status filter', async () => {
-    setup('/settings/sources?tab=health');
+  it('grouped by track: a source in two tracks shows in both, the untracked come last without a header', async () => {
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
-    expect(groupNames()).toEqual(['Backoff1', 'Unavailable1', 'Scheduled1', 'Disabled1']);
-    expect(screen.getByRole('combobox', { name: 'Group' })).toHaveValue('status');
+    expect(groupNames()).toEqual(['AI engineering2', 'AR glasses2']);
+    expect(rowIds()).toEqual(['flaky', 'simon', 'flaky', 'off', 'tg']);
+    expect(screen.queryByText(/not in a track/i)).not.toBeInTheDocument();
+  });
+
+  it('the Group choices are none, track and platform; there is no Sort dropdown', async () => {
+    setup();
+    await screen.findByText('Road to VR');
+    const options = within(screen.getByRole('combobox', { name: 'Group' })).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toEqual(['No grouping', 'Track', 'Platform']);
+    expect(screen.queryByRole('combobox', { name: 'Sort' })).not.toBeInTheDocument();
+  });
+
+  it('?tab=health opens the flat list, keeping its status filter', async () => {
+    setup('/settings/sources?tab=health&status=disabled');
+    await screen.findByText('Road to VR');
+    expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
+    expect(rowIds()).toEqual(['off']);
+    await waitFor(() => expect(where()).toBe('/settings/sources?status=disabled'));
+  });
+
+  it('old sort and group values open the default list', async () => {
+    setup('/settings/sources?group=status&sort=success');
+    await screen.findByText('Road to VR');
+    expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
+    expect(rowIds()).toEqual(['flaky', 'tg', 'simon', 'off']);
+    expect(screen.getByRole('button', { name: 'Sort by Status, descending' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('?tab=health&status=error shows only failing sources', async () => {
@@ -96,7 +122,7 @@ describe('SourcesConfig', () => {
   });
 
   it('search, status chips and group-by filter and regroup the list', async () => {
-    setup();
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search sources' }), 'simon');
     expect(rowIds()).toEqual(['simon']);
@@ -115,7 +141,7 @@ describe('SourcesConfig', () => {
   });
 
   it('a group header collapses and expands its rows', async () => {
-    setup();
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
     const header = screen.getByRole('button', { name: /^AI engineering/ });
     await userEvent.click(header);
@@ -152,7 +178,7 @@ describe('SourcesConfig', () => {
   });
 
   it('a group checkbox selects the whole group; Escape clears the selection', async () => {
-    setup();
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select every source in AR glasses' }));
     expect(screen.getByRole('region', { name: 'Selected sources' })).toHaveTextContent('2 selected');
@@ -161,7 +187,7 @@ describe('SourcesConfig', () => {
   });
 
   it('j/k move the active row and focus, x selects it, o opens its sheet', async () => {
-    setup();
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
     await userEvent.keyboard('j');
     expect(rowOf('flaky', 0)).toHaveAttribute('aria-current', 'true');
@@ -181,7 +207,7 @@ describe('SourcesConfig', () => {
   });
 
   it('the list keys work while a row checkbox has focus', async () => {
-    setup();
+    setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
     await userEvent.click(within(rowOf('simon')).getByRole('checkbox'));
     await userEvent.keyboard('j');
@@ -273,23 +299,58 @@ describe('SourcesConfig', () => {
     const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button').map((b) => b.textContent);
     expect(chips).toEqual(['All4', 'Enabled3', 'Disabled1', 'Failing1', 'Unavailable1', 'Backoff1', 'Scheduled1']);
     await userEvent.click(screen.getByRole('button', { name: /^Enabled/ }));
-    expect([...new Set(rowIds())]).toEqual(['flaky', 'simon', 'tg']);
+    expect(rowIds()).toEqual(['flaky', 'tg', 'simon']);
   });
 
-  it('sort orders the rows inside each group and lives in the URL', async () => {
+  it('a column header sorts, a second press reverses, and the sort lives in the URL', async () => {
+    const day = 86_400_000;
     const many = [
-      healthRow({ source_id: 'b', display_name: 'Bravo', stored_posts: 5 }),
-      healthRow({ source_id: 'a', display_name: 'Alpha', stored_posts: 50 }),
-      healthRow({ source_id: 'c', display_name: 'Charlie', stored_posts: 9, status: 'error', last_outcome: 'error', last_error: 'boom' }),
+      healthRow({ source_id: 'b', display_name: 'Bravo', stored_posts: 5, created_at: new Date(Date.now() - 2 * day).toISOString() }),
+      healthRow({ source_id: 'a', display_name: 'Alpha', stored_posts: 50, created_at: new Date(Date.now() - 30 * day).toISOString() }),
+      healthRow({ source_id: 'c', display_name: 'Charlie', stored_posts: 9, status: 'error', last_outcome: 'error', last_error: 'boom', created_at: new Date(Date.now() - 9 * day).toISOString() }),
     ];
     setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse(many)) });
     await screen.findByText('Alpha');
     expect(rowIds()).toEqual(['c', 'a', 'b']);
-    const sort = screen.getByRole('combobox', { name: 'Sort' });
-    await userEvent.selectOptions(sort, 'name');
+    const headers = screen.getByRole('group', { name: 'Sort sources' });
+    await userEvent.click(within(headers).getByRole('button', { name: 'Sort by Name' }));
     expect(rowIds()).toEqual(['a', 'b', 'c']);
-    await userEvent.selectOptions(sort, 'posts');
+    await userEvent.click(within(headers).getByRole('button', { name: 'Sort by Posts' }));
     expect(rowIds()).toEqual(['a', 'c', 'b']);
+
+    // Added: newest first, then reversed.
+    await userEvent.click(within(headers).getByRole('button', { name: 'Sort by Added' }));
+    expect(rowIds()).toEqual(['b', 'c', 'a']);
+    const added = within(headers).getByRole('button', { name: 'Sort by Added, descending' });
+    expect(added).toHaveAttribute('aria-pressed', 'true');
+    expect(where()).toBe('/settings/sources?sort=added');
+    await userEvent.click(added);
+    expect(rowIds()).toEqual(['a', 'c', 'b']);
+    expect(within(headers).getByRole('button', { name: 'Sort by Added, ascending' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(headers).getByRole('button', { name: 'Sort by Posts' })).toHaveAttribute('aria-pressed', 'false');
+    expect(where()).toBe('/settings/sources?sort=added&dir=asc');
+  });
+
+  it('on narrow screens "Sort: …" opens the same column choices', async () => {
+    setup('/settings/sources?sort=added');
+    await screen.findByText('Road to VR');
+    const toggle = screen.getByRole('button', { name: 'Sort: Added, descending' });
+    expect(toggle).toHaveTextContent('Sort: Added ↓');
+    await userEvent.click(toggle);
+    const choices = screen.getByRole('group', { name: 'Sort by' });
+    expect(within(choices).getAllByRole('button').map((b) => b.textContent)).toEqual(['Name', 'Kind', 'Posts', 'Last post', 'Added↓', 'Status']);
+    await userEvent.click(within(choices).getByRole('button', { name: 'Sort by Added, descending' }));
+    expect(where()).toBe('/settings/sources?sort=added&dir=asc');
+    expect(screen.getByRole('button', { name: 'Sort: Added, ascending' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('each row reads its source; the sheet has Read posts', async () => {
+    setup();
+    await screen.findByText('Road to VR');
+    expect(within(rowOf('simon')).getByRole('link', { name: 'Read Simon Willison’s Weblog' })).toHaveAttribute('href', '/read/source/simon');
+    await userEvent.click(screen.getByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('link', { name: 'Read posts' })).toHaveAttribute('href', '/read/source/simon');
   });
 
   it('shift-click selects the range from the last checked row', async () => {
@@ -339,7 +400,7 @@ describe('SourcesConfig', () => {
 
   it('a track header fetches the track; its menu renames, switches the digest and deletes after a confirmation', async () => {
     const fetchFolderNow = vi.fn().mockResolvedValue(runReport({ selector: { kind: 'folder', id: 'f-ai' } }));
-    const { api } = setup('/settings/sources', { fetchFolderNow });
+    const { api } = setup('/settings/sources?group=track', { fetchFolderNow });
     await screen.findByText('Road to VR');
     await userEvent.click(screen.getByRole('button', { name: 'Fetch track AI engineering' }));
     await waitFor(() => expect(fetchFolderNow).toHaveBeenCalledWith('f-ai', expect.any(Object)));

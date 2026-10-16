@@ -6,6 +6,7 @@ import {
   filterSources,
   groupSources,
   kindLabel,
+  nextSort,
   rangeIds,
   readSourcesView,
   sortSources,
@@ -26,24 +27,49 @@ const rows = [
 ];
 
 describe('readSourcesView / writeSourcesView', () => {
-  it('defaults to track grouping, no search, no status', () => {
-    expect(readSourcesView(new URLSearchParams(''))).toEqual({ q: '', status: null, group: 'track', sort: 'status' });
+  const defaults = { q: '', status: null, group: 'none', sort: 'status', dir: 'desc' };
+
+  it('defaults to the flat list, worst status first, no search, no status', () => {
+    expect(readSourcesView(new URLSearchParams(''))).toEqual(defaults);
   });
 
-  it('maps the old ?tab=health to status grouping and keeps its ?status= filter', () => {
-    expect(readSourcesView(new URLSearchParams('tab=health&status=error'))).toEqual({ q: '', status: 'error', group: 'status', sort: 'status' });
+  it('maps the old ?tab=health to the flat list and keeps its ?status= filter', () => {
+    expect(readSourcesView(new URLSearchParams('tab=health&status=error'))).toEqual({ ...defaults, status: 'error' });
   });
 
-  it('an explicit group wins over the legacy tab; unknown values fall back', () => {
+  it('retired and unknown values fall back to the defaults', () => {
+    expect(readSourcesView(new URLSearchParams('group=status&sort=success&dir=asc'))).toEqual({ ...defaults, dir: 'asc' });
+    expect(readSourcesView(new URLSearchParams('group=nope&status=bogus&sort=nope&dir=up'))).toEqual(defaults);
     expect(readSourcesView(new URLSearchParams('tab=health&group=platform')).group).toBe('platform');
-    expect(readSourcesView(new URLSearchParams('group=nope&status=bogus&sort=nope'))).toEqual({ q: '', status: null, group: 'track', sort: 'status' });
-    expect(readSourcesView(new URLSearchParams('status=enabled&sort=posts'))).toMatchObject({ status: 'enabled', sort: 'posts' });
+  });
+
+  it('a column without a direction takes its own', () => {
+    expect(readSourcesView(new URLSearchParams('sort=name'))).toMatchObject({ sort: 'name', dir: 'asc' });
+    expect(readSourcesView(new URLSearchParams('sort=added'))).toMatchObject({ sort: 'added', dir: 'desc' });
+    expect(readSourcesView(new URLSearchParams('sort=lastPost&dir=asc'))).toMatchObject({ sort: 'lastPost', dir: 'asc' });
   });
 
   it('writes only non-default values, drops the legacy tab and keeps other params', () => {
-    const next = writeSourcesView(new URLSearchParams('tab=health&data=worst'), { q: 'simon', status: null, group: 'track', sort: 'status' });
+    const next = writeSourcesView(new URLSearchParams('tab=health&data=worst'), { q: 'simon', status: null, group: 'none', sort: 'status', dir: 'desc' });
     expect(next.toString()).toBe('data=worst&q=simon');
-    expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'status', sort: 'name' }).toString()).toBe('status=due&group=status&sort=name');
+    expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'track', sort: 'added', dir: 'desc' }).toString())
+      .toBe('status=due&group=track&sort=added');
+    expect(writeSourcesView(new URLSearchParams(''), { q: '', status: null, group: 'platform', sort: 'name', dir: 'desc' }).toString())
+      .toBe('group=platform&sort=name&dir=desc');
+  });
+
+  it('round-trips every view', () => {
+    const view = { q: 'ai', status: 'enabled', group: 'track', sort: 'posts', dir: 'asc' } as const;
+    expect(readSourcesView(writeSourcesView(new URLSearchParams(''), view))).toEqual(view);
+  });
+});
+
+describe('nextSort (a header click)', () => {
+  it('a new column starts in its own direction; the active one reverses', () => {
+    expect(nextSort({ sort: 'status', dir: 'desc' }, 'added')).toEqual({ sort: 'added', dir: 'desc' });
+    expect(nextSort({ sort: 'added', dir: 'desc' }, 'added')).toEqual({ sort: 'added', dir: 'asc' });
+    expect(nextSort({ sort: 'added', dir: 'asc' }, 'added')).toEqual({ sort: 'added', dir: 'desc' });
+    expect(nextSort({ sort: 'added', dir: 'asc' }, 'name')).toEqual({ sort: 'name', dir: 'asc' });
   });
 });
 
@@ -66,36 +92,34 @@ describe('filterSources', () => {
 });
 
 describe('groupSources', () => {
-  it('by track: every track in order (empty ones too), then the unassigned, a source in two tracks in both', () => {
+  it('by track: every track in order (empty ones too), then the untracked without a header, a source in two tracks in both', () => {
     const groups = groupSources(rows, 'track', [ai, ar, empty]);
     expect(groups.map((g) => [g.label, g.rows.map((r) => r.source_id)])).toEqual([
       ['AI engineering', ['flaky', 'simon']],
       ['AR glasses', ['flaky', 'off']],
       ['Empty track', []],
-      ['Not in a track', ['tg']],
+      ['Other sources', ['tg']],
     ]);
+    expect(groups.map((g) => Boolean(g.headless))).toEqual([false, false, false, true]);
     expect(groups[0].folderId).toBe('f-ai');
     expect(groups[3].key).toBe(UNASSIGNED_KEY);
   });
 
-  it('drops empty tracks when asked (a search is on) and an empty unassigned group always', () => {
+  it('drops empty tracks when asked (a search is on) and an empty untracked group always', () => {
     const groups = groupSources(rows.slice(0, 2), 'track', [ai, empty], { keepEmpty: false });
     expect(groups.map((g) => g.label)).toEqual(['AI engineering']);
   });
 
-  it('a source whose only track is unknown counts as unassigned', () => {
+  it('a source whose only track is unknown counts as untracked', () => {
     const groups = groupSources([healthRow({ source_id: 'x', folders: [{ id: 'gone', name: 'Gone' }] })], 'track', []);
-    expect(groups.map((g) => g.label)).toEqual(['Not in a track']);
+    expect(groups.map((g) => g.key)).toEqual([UNASSIGNED_KEY]);
   });
 
-  it('by status: worst first, empty statuses dropped', () => {
-    expect(groupSources(rows, 'status').map((g) => g.label)).toEqual(['Backoff', 'Unavailable', 'Scheduled', 'Disabled']);
-  });
-
-  it('by platform and none', () => {
+  it('by platform, and none: one headless list', () => {
     expect(groupSources(rows, 'platform').map((g) => [g.label, g.rows.length])).toEqual([['RSS', 3], ['Telegram', 1]]);
     const all = groupSources(rows, 'none');
     expect(all).toHaveLength(1);
+    expect(all[0].headless).toBe(true);
     expect(all[0].rows.map((r) => r.source_id)).toEqual(['flaky', 'tg', 'simon', 'off']);
   });
 });
@@ -104,24 +128,33 @@ describe('sortSources', () => {
   const now = Date.now();
   const ago = (h: number) => new Date(now - h * 3_600_000).toISOString();
   const list = [
-    healthRow({ source_id: 'b', display_name: 'Bravo', stored_posts: 5, last_success_at: ago(1) }),
-    healthRow({ source_id: 'a', display_name: 'alpha', stored_posts: 50, last_success_at: ago(48), status: 'error' }),
-    healthRow({ source_id: 'c', display_name: 'Charlie', stored_posts: 5, last_success_at: null }),
+    healthRow({ source_id: 'b', display_name: 'Bravo', kind: 'youtube_channel', stored_posts: 5, last_post_at: ago(1), created_at: ago(500) }),
+    healthRow({ source_id: 'a', display_name: 'alpha', kind: 'generic_rss', stored_posts: 50, last_post_at: ago(48), created_at: ago(2), status: 'error' }),
+    healthRow({ source_id: 'c', display_name: 'Charlie', kind: 'generic_rss', stored_posts: 5, last_post_at: null, created_at: ago(90) }),
   ];
-  const ids = (sort: Parameters<typeof sortSources>[1]) => sortSources(list, sort).map((r) => r.source_id);
+  const ids = (sort: Parameters<typeof sortSources>[1], dir?: Parameters<typeof sortSources>[2]) =>
+    sortSources(list, sort, dir).map((r) => r.source_id);
 
-  it('status puts the worst first; name is A to Z, case-insensitive', () => {
-    expect(ids('status')[0]).toBe('a');
+  it('each column in its own direction by default, ties by name', () => {
     expect(ids('name')).toEqual(['a', 'b', 'c']);
+    expect(ids('kind')).toEqual(['a', 'c', 'b']);
+    expect(ids('posts')).toEqual(['a', 'b', 'c']);
+    expect(ids('lastPost')).toEqual(['b', 'a', 'c']);
+    expect(ids('added')).toEqual(['a', 'c', 'b']);
+    expect(ids('status')[0]).toBe('a');
   });
 
-  it('last success puts the stalest first (never fetched on top); posts the most first, ties by name', () => {
-    expect(ids('success')).toEqual(['c', 'a', 'b']);
-    expect(ids('posts')).toEqual(['a', 'b', 'c']);
+  it('each column reversed, ties still by name', () => {
+    expect(ids('name', 'desc')).toEqual(['c', 'b', 'a']);
+    expect(ids('kind', 'desc')).toEqual(['b', 'a', 'c']);
+    expect(ids('posts', 'asc')).toEqual(['b', 'c', 'a']);
+    expect(ids('lastPost', 'asc')).toEqual(['c', 'a', 'b']);
+    expect(ids('added', 'asc')).toEqual(['b', 'c', 'a']);
+    expect(ids('status', 'asc')).toEqual([...ids('status')].reverse());
   });
 
   it('applies inside every group', () => {
-    expect(groupSources(list, 'none', [], { sort: 'posts' })[0].rows.map((r) => r.source_id)).toEqual(['a', 'b', 'c']);
+    expect(groupSources(list, 'none', [], { sort: 'added', dir: 'asc' })[0].rows.map((r) => r.source_id)).toEqual(['b', 'c', 'a']);
   });
 });
 
