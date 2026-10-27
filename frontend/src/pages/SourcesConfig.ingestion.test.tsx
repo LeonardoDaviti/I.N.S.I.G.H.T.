@@ -160,6 +160,8 @@ describe('Sources → ingestion tab', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Change interval' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/briefing/i)).toBeNull();
+    // The sync toggle says what it deletes (issue 0027).
+    expect(within(dialog).getByText('The sources follow the file: a source missing from it is deleted, with its posts.')).toBeInTheDocument();
     const tick = within(dialog).getByLabelText(/check for due sources every/i);
     await userEvent.clear(tick);
     await userEvent.type(tick, '30');
