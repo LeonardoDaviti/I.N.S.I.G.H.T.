@@ -5,6 +5,7 @@ datetimes, so kinds and site adapters can share them without holding a service.
 """
 from __future__ import annotations
 
+import html as html_lib
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -123,6 +124,9 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
 CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar")
 CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories")
+# A table of contents is a menu too (anthropic.com's "StickyTableOfContents-module__Trigger").
+CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents")
+CHROME_TOKENS = frozenset({"toc"})
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
 TEXT_BLOCKS = "h1|h2|h3|p|blockquote"
@@ -134,7 +138,8 @@ def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
     if tag in ("html", "body"):
         return False
     tokens = " ".join(value or "" for name, value in attrs if name in ("class", "id")).lower().split()
-    return any(token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) for token in tokens)
+    return any(token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) or token in CHROME_TOKENS
+               or any(part in token for part in CHROME_PARTS) for token in tokens)
 
 
 class _ChromeStripper(HTMLParser):
@@ -182,7 +187,31 @@ def _without_chrome(html_text: str) -> str:
     return "".join(stripper.kept)
 
 
-def extract_article_html(html_text: str) -> str:
+IMG_TAG_RE = re.compile(r"(?is)<img\b[^>]*>")
+IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|alt|width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+
+
+def _article_image(tag: str, base_url: str) -> str:
+    """An <img> as an article keeps it: its real address (a lazy image's data-src; Next.js's
+    /_next/image?url= unwrapped; made absolute against base_url) and its alt. '' for a
+    tracking pixel or an address that can't be fetched."""
+    attrs = {name.lower(): html_lib.unescape(dq or sq) for name, dq, sq in IMG_ATTR_RE.findall(tag)}
+    if "1" in (attrs.get("width"), attrs.get("height")):
+        return ""
+    src = attrs.get("data-src") or attrs.get("src") or ""
+    if src.startswith("data:"):
+        return ""
+    if urllib.parse.urlparse(src).path.endswith("/_next/image"):
+        src = (urllib.parse.parse_qs(urllib.parse.urlparse(src).query).get("url") or [src])[0]
+    src = urllib.parse.urljoin(base_url, src) if base_url else src
+    if not src.startswith(("http://", "https://")):
+        return ""
+    return f'<img src="{html_lib.escape(src)}" alt="{html_lib.escape(attrs.get("alt", ""))}">'
+
+
+def extract_article_html(html_text: str, base_url: str = "") -> str:
+    """The article's text blocks and images, in page order. base_url (the page's address)
+    makes relative image addresses absolute; without it they are left out."""
     cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg).*?</\1>", "", html_text or "")
     cleaned = _without_chrome(cleaned)
     candidate_patterns = [
@@ -202,11 +231,11 @@ def extract_article_html(html_text: str) -> str:
         candidates = [body_match.group(1) if body_match else cleaned]
     for candidate in candidates:
         # \b: "<li" must not match "<link", nor "<p" "<path".
-        blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b[^>]*>.*?</(?:{TEXT_BLOCKS}|li)>", candidate)
+        blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b[^>]*>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b[^>]*>", candidate)
         if not blocks:  # list items count only inside the chosen candidate
             blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS})\b[^>]*>.*?</(?:{TEXT_BLOCKS})>", cleaned)
         if len(strip_html(" ".join(blocks))) >= 500:
-            return "\n".join(blocks)
+            return IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url), "\n".join(blocks))
     return ""
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -87,6 +88,35 @@ class ArticleExtractionTests(unittest.TestCase):
         text = _text(page)
         self.assertNotIn("enu", text)
         self.assertTrue(text.endswith("The last word."))
+
+    def test_images_stay_in_place_with_their_real_address(self):
+        # anthropic.com/news/2026-us-midterms: 3 charts through Next.js's /_next/image?url=…, in <div>s.
+        cdn = "https://www-cdn.anthropic.com/images/chart.png"
+        next_src = "/_next/image?url=" + urllib.parse.quote(cdn, safe="") + "&amp;w=3840&amp;q=75"
+        page = ("<html><body><main>" + PARAGRAPHS
+                + f'<div><span><img alt="A chart" srcset="/_next/image?x 1x" src="{next_src}"></span></div>'
+                + '<p>Between the charts.</p><img src="/images/local.jpg" alt="">'
+                + '<img src="https://t.example/pixel.gif" width="1" height="1">'
+                + '<img src="data:image/gif;base64,R0lGOD" data-src="https://cdn.example/lazy.jpg">'
+                + "<p>After them.</p></main></body></html>")
+        html = parsing.extract_article_html(page, base_url="https://www.anthropic.com/news/x")
+        self.assertIn(f'<img src="{cdn}" alt="A chart">', html)
+        self.assertIn('<img src="https://www.anthropic.com/images/local.jpg" alt="">', html)
+        self.assertIn('<img src="https://cdn.example/lazy.jpg" alt="">', html)
+        self.assertNotIn("pixel.gif", html)
+        self.assertNotIn("srcset", html)
+        self.assertLess(html.index("A chart"), html.index("Between the charts."))
+        # Without a base, a relative image can't be fetched, so it goes.
+        self.assertNotIn("local.jpg", parsing.extract_article_html(page))
+
+    def test_a_table_of_contents_is_not_the_article(self):
+        # anthropic.com: a sticky "Chapter 01: Connecting people to trusted sources" menu.
+        page = ('<html><body><main><div class="StickyTableOfContents-module__Trigger"><p>Chapter 01: '
+                'Connecting people</p></div><div class="toc"><p>Contents</p></div>' + PARAGRAPHS
+                + "</main></body></html>")
+        text = _text(page)
+        self.assertNotIn("Chapter 01", text)
+        self.assertNotIn("Contents", text)
 
     def test_a_small_article_card_does_not_hide_the_main_text(self):
         # deepmind.google: three <article> cards of 4-12 words, the 1,080-word post in <main>.

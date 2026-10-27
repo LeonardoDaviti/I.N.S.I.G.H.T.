@@ -65,7 +65,7 @@ async def read_article(http: KindHttp, url: str, current_text: str) -> Optional[
     Raises what the request raises (ValueError for an HTTP or network error).
     """
     page, _ = await http.get_text(url)
-    html = parsing.extract_article_html(page)
+    html = parsing.extract_article_html(page, base_url=url)
     text = parsing.strip_html(html)
     if len(text) <= max(len(current_text) + 250, 700) or not _same_article(current_text, text):
         return None

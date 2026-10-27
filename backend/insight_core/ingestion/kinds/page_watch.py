@@ -240,7 +240,7 @@ def _title(page: str, url: str) -> str:
 
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
     """The post the page at url is, or None when it is no article (see the module docstring)."""
-    content_html = parsing.extract_article_html(page)
+    content_html = parsing.extract_article_html(page, base_url=url)
     content = parsing.strip_html(content_html)
     date = page_date(page)
     if not content or (date is None and parsing.meta_content(page, "og:type").lower() != "article"):
