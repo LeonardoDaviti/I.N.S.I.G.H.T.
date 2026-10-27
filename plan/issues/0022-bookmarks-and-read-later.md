@@ -1,6 +1,6 @@
 # 0022 — Bookmarks: read later, keep, and what the star means
 
-Status: **discussion** (owner, 2026-10-27): ideology proposed and partly decided 2026-10-28, below. Nothing is built.
+Status: **discussion** (owner, 2026-10-27): decided 2026-10-28 (below); ready to spec. Nothing is built.
 
 ## The owner's observations
 - "Can you add a feature like bookmarks? But first discuss how bookmarks should work for each post and what bookmarks are needed for." (2026-10-16)
@@ -40,4 +40,6 @@ Status: **discussion** (owner, 2026-10-27): ideology proposed and partly decided
 - **Later is never cleared automatically**: no expiry ("don't clear later").
 - **The current star stays**: today's starred posts keep their star, which is Keep.
 - **A saved page (0031) sorts by when it was saved**, not by the article's own date.
-- Still open: does finishing a post clear it from Later, and do Later posts leave Unread?
+- **Finishing a post takes it out of Later** (only nothing *automatic*, like an expiry).
+- **A Later post stays in Unread too**: it shows in both lists.
+- The model is decided; ready to spec.
