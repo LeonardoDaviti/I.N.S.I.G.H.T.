@@ -553,6 +553,17 @@ export interface AddSourceResponse extends Envelope {
   source_id?: string;
 }
 
+export interface FoundFeed {
+  url: string;
+  title: string;
+}
+
+/** What the feed finder made of an address: a feed already, feeds found for it, a site INSIGHT reads itself, or nothing. */
+export interface FeedFinding extends Envelope {
+  status?: 'feed' | 'found' | 'direct' | 'none';
+  feeds?: FoundFeed[];
+}
+
 export interface YouTubeProgressInput {
   videoUrl: string;
   title: string;
@@ -668,6 +679,8 @@ export function createApi() {
     /** Every source's schedule-aware health row, worst first, plus the summary. */
     getSourcesHealth: () => request<SourcesHealthResponse>('/api/sources/health'),
     addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources', { method: 'POST', body: payload })),
+    /** The feeds for any page address (issue 0026); takes up to about 10 seconds. */
+    findFeed: (url: string) => settle(request<FeedFinding>('/api/sources/find-feed', { method: 'POST', body: { url } })),
     updateSourceSettings: (sourceId: string, settings: SourceSettings) =>
       settle(request<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, { method: 'PUT', body: settings })),
     setSourceEnabled: (sourceId: string, enabled: boolean) =>

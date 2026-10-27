@@ -22,6 +22,13 @@ so a new kind needs no change anywhere else.
 - `ingestion/http.py`: `KindHttp`, the one HTTP client every kind uses. It owns the
   User-Agent, the TLS-skip hosts and the politeness sleep, and raises every failure as an
   `HttpError` (status, Retry-After, timed out).
+- `ingestion/feed_finder.py`: `find_feeds(http, registry, url)`, behind Add source
+  (`POST /api/sources/find-feed`). It turns a page address into its feeds: an address a
+  kind other than `generic_rss` matches is left alone (`direct`), so a new kind's `matches()`
+  is all it takes for Add source to keep its addresses as typed. Otherwise it tries platform
+  rules (Medium, GitHub releases), the page's `<link rel="alternate">` and feed-like `<a>`
+  links, the section and home pages, then common feed paths, proving each candidate from its
+  first 64 KB (`KindHttp.get_start`).
 - `ingestion/gates.py`: `FetchGates` turns a profile into concurrency limits.
   `HOST_FLOORS` holds each host's starting spacing; a 429 or a timeout doubles it (the
   learned pace, `BACKEND.md`).

@@ -259,11 +259,14 @@ describe('SourcesConfig', () => {
     let finish: (value: unknown) => void = () => {};
     const fetchSourceNow = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
     const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
-    setup('/settings/sources', { addSource, fetchSourceNow });
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'feed', feeds: [{ url: 'https://new.example/feed.xml', title: 'New' }] });
+    setup('/settings/sources', { addSource, fetchSourceNow, findFeed });
     await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.type(within(dialog).getByLabelText('Feed URL or handle'), 'https://new.example/feed.xml');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+    const add = within(dialog).getByRole('button', { name: 'Add source' });
+    await waitFor(() => expect(add).toBeEnabled());
+    await userEvent.click(add);
 
     await waitFor(() => expect(fetchSourceNow).toHaveBeenCalledWith('new-1', expect.any(Object)));
     expect(await screen.findByText('Added — fetching now')).toBeInTheDocument();
@@ -317,6 +320,80 @@ describe('SourcesConfig', () => {
     // Others stay, and so do templates with a field (one source per value).
     expect(within(dialog).getByRole('button', { name: 'Gwern' })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'GitHub Trending' })).toBeInTheDocument();
+  });
+
+  describe('Add source finds the feed of a page (issue 0026)', () => {
+    const typePage = async (findFeed: unknown, getSources?: unknown) => {
+      const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
+      setup('/settings/sources', { addSource, findFeed, fetchSourceNow: vi.fn().mockResolvedValue(runReport()),
+        ...(getSources ? { getSources } : {}) });
+      if (getSources) await waitFor(() => expect(getSources).toHaveBeenCalled());
+      await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+      const dialog = await screen.findByRole('dialog');
+      const field = within(dialog).getByLabelText('Feed URL or handle');
+      await userEvent.type(field, 'borretti.me/article/no-man-is-an-island');
+      return { dialog, field, addSource, add: within(dialog).getByRole('button', { name: 'Add source' }) };
+    };
+    const feed = (url: string, title: string) => ({ url, title });
+
+    it('one feed found: the field becomes it, named by its title, and a quiet line says so', async () => {
+      let answer: (value: unknown) => void = () => {};
+      const findFeed = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+      const { dialog, field, add, addSource } = await typePage(findFeed);
+      expect(within(dialog).getByText('Looking for a feed…')).toBeInTheDocument();
+      expect(add).toBeDisabled();
+      await waitFor(() => expect(findFeed).toHaveBeenCalledWith('borretti.me/article/no-man-is-an-island'));
+      await act(async () => { answer({ success: true, status: 'found', feeds: [feed('https://borretti.me/feed.xml', 'Fernando Borretti')] }); });
+
+      expect(field).toHaveValue('https://borretti.me/feed.xml');
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('Fernando Borretti');
+      expect(within(dialog).getByText('Found the feed for this page: borretti.me/feed.xml')).toBeInTheDocument();
+      field.focus();
+      await userEvent.tab();   // leaving the field does not look again: the feed is known
+      expect(findFeed).toHaveBeenCalledTimes(1);
+      await userEvent.click(add);
+      await waitFor(() => expect(addSource).toHaveBeenCalled());
+      expect(addSource.mock.calls[0][0]).toMatchObject({ handle_or_url: 'https://borretti.me/feed.xml', display_name: 'Fernando Borretti' });
+    });
+
+    it('several feeds: a choice list, the first chosen; another can be picked', async () => {
+      const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [
+        feed('https://arstechnica.com/ai/feed/', 'AI - Ars Technica'), feed('https://arstechnica.com/feed/', 'Ars Technica'),
+      ] });
+      const { dialog, field } = await typePage(findFeed);
+      const first = await within(dialog).findByRole('radio', { name: /AI - Ars Technica/ });
+      expect(first).toBeChecked();
+      expect(within(dialog).getByText('This page has 2 feeds')).toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole('radio', { name: /^Ars Technica/ }));
+      expect(field).toHaveValue('https://arstechnica.com/feed/');
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('Ars Technica');
+      expect(within(dialog).getByRole('button', { name: 'Add source' })).toBeEnabled();
+    });
+
+    it('a site INSIGHT reads directly is left as typed', async () => {
+      const { dialog, field, add } = await typePage(vi.fn().mockResolvedValue({ success: true, status: 'direct', feeds: [] }));
+      expect(await within(dialog).findByText('INSIGHT reads this site directly')).toBeInTheDocument();
+      expect(field).toHaveValue('borretti.me/article/no-man-is-an-island');
+      expect(add).toBeEnabled();
+    });
+
+    it('no feed found: Add stays disabled', async () => {
+      const { dialog, add } = await typePage(vi.fn().mockResolvedValue({ success: true, status: 'none', feeds: [] }));
+      expect(await within(dialog).findByText('No feed found on this page')).toBeInTheDocument();
+      expect(add).toBeDisabled();
+    });
+
+    it('a found feed already in the sources says so', async () => {
+      const getSources = vi.fn().mockResolvedValue({ success: true, total: 1, sources: [
+        { id: 'fb', platform: 'rss', handle_or_url: 'https://borretti.me/feed.xml', enabled: true, settings: {} },
+      ] });
+      const { dialog, add } = await typePage(
+        vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [feed('https://borretti.me/feed.xml', 'Fernando Borretti')] }),
+        getSources,
+      );
+      expect(await within(dialog).findByText('This feed is already in your sources')).toBeInTheDocument();
+      expect(add).toBeDisabled();
+    });
   });
 
   it('the row switch toggles one source', async () => {

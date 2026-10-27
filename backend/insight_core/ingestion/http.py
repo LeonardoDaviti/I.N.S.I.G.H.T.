@@ -99,6 +99,11 @@ class KindHttp:
         """
         return await asyncio.to_thread(self._get_text_sync, url, user_agent, headers)
 
+    async def get_start(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
+        """GET url, reading at most max_bytes of the body: (those bytes, the final URL after
+        redirects). For a quick look at a page or a feed (the feed finder). Raises HttpError."""
+        return await asyncio.to_thread(self._get_start_sync, url, max_bytes)
+
     async def get_json(self, url: str, *, user_agent: Optional[str] = None) -> Any:
         body, _ = await self.get_text(url, user_agent=user_agent)
         return json.loads(body)
@@ -146,6 +151,12 @@ class KindHttp:
                 body = response.read().decode("utf-8", errors="replace")
                 headers = {key.lower(): value for key, value in response.headers.items()}
                 return body, headers
+
+    def _get_start_sync(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
+        request = urllib.request.Request(url, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
+        with _classified("fetching", url):
+            with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
+                return response.read(max_bytes), response.geturl()
 
     def _post_json_sync(
         self,
