@@ -168,7 +168,6 @@ function Reader({ scope }: { scope: string }) {
       <div className="flex min-h-[calc(100dvh-var(--topbar-h))] bg-bg text-fg">
         <ReaderNavRail
           scope={scope}
-          filter={filter}
           counts={counts.data}
           search={railSearch}
           drawerOpen={navOpen}
@@ -176,7 +175,7 @@ function Reader({ scope }: { scope: string }) {
         />
         <div className="min-w-0 flex-1">
           <FeedToolbar
-            title={filter === 'starred' && scope === 'all' ? 'Starred' : title}
+            title={title}
             titleHref={scopeSettingsHref(scope)}
             subtitle={subtitle}
             filter={filter}

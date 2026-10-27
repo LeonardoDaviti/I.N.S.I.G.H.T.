@@ -41,9 +41,9 @@ export function useFolders({ enabled = true }: { enabled?: boolean } = {}) {
   });
 }
 
-/** The label of a scope: "All posts", a track's name or a source's name. */
+/** The label of a scope: "Main feed", a track's name or a source's name. */
 export function scopeLabel(scope: string, folders: Folder[] | undefined, sourceNames: Map<string, string>): string {
-  if (scope === 'all') return 'All posts';
+  if (scope === 'all') return 'Main feed';
   const [kind, id] = scope.split(':');
   if (kind === 'folder') return folders?.find((folder) => folder.id === id)?.name ?? 'Track';
   const name = sourceNames.get(id);

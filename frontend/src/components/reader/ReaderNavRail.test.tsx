@@ -46,7 +46,7 @@ describe('ReaderNavRail', () => {
     const rail = await screen.findByRole('navigation', { name: 'Feeds' });
     expect(await within(rail).findByRole('link', { name: /Agentic News.*5 unread/ })).toBeInTheDocument();
     expect(await within(rail).findByRole('link', { name: /Simon Willison’s Weblog.*7 unread/ })).toBeInTheDocument();
-    expect(within(rail).getByRole('link', { name: /All posts.*12,847 unread/ })).toBeInTheDocument();
+    expect(within(rail).getByRole('link', { name: /Main feed.*12,847 unread/ })).toBeInTheDocument();
   });
 
   it('marks the active scope with aria-current="page"', async () => {
@@ -54,7 +54,16 @@ describe('ReaderNavRail', () => {
     const rail = await screen.findByRole('navigation', { name: 'Feeds' });
     const active = await within(rail).findByRole('link', { name: /Agentic News/ });
     expect(active).toHaveAttribute('aria-current', 'page');
-    expect(within(rail).getByRole('link', { name: /All posts/ })).not.toHaveAttribute('aria-current');
+    expect(within(rail).getByRole('link', { name: /Main feed/ })).not.toHaveAttribute('aria-current');
+  });
+
+  it('the scope is "Main feed"; Starred is only a Show choice, and /?filter=starred still opens it (issue 0027)', async () => {
+    setup('/?filter=starred');
+    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    expect(within(rail).queryByRole('link', { name: /Starred/ })).toBeNull();
+    expect(within(rail).getByRole('link', { name: /Main feed/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('radio', { name: 'Starred' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Main feed/);
   });
 
   it('below md it is a drawer toggled from the toolbar', async () => {
@@ -63,7 +72,7 @@ describe('ReaderNavRail', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /open navigation/i }));
     const drawer = await screen.findByRole('dialog', { name: 'Feeds' });
-    expect(within(drawer).getByRole('link', { name: /All posts/ })).toBeInTheDocument();
+    expect(within(drawer).getByRole('link', { name: /Main feed/ })).toBeInTheDocument();
     await user.click(within(drawer).getByRole('link', { name: /Agentic News/ }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
