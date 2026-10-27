@@ -262,6 +262,13 @@ class PageWatchKindTests(unittest.TestCase):
                                            f"{SITE}/sitemap.xml": sitemap})).fetch_latest(source(), 10))
         self.assertEqual(len(posts), 5)
 
+    def test_a_sitemap_is_read_up_to_its_cap_and_a_cut_off_one_keeps_its_first_entries(self):
+        cap = SITEMAP.index("/news/claude-2") + 80      # cut inside the next <url>
+        with mock.patch.object(page_watch, "SITEMAP_MAX_BYTES", cap):
+            inspection = run(self.kind().inspect(source()))
+        self.assertEqual(self.http.byte_caps[f"{SITE}/sitemap.xml"], cap)
+        self.assertEqual(inspection.raw["sitemap_urls"], 3)     # 100k-context-windows, announcements, claude-2
+
     def test_a_failing_article_page_is_skipped_but_a_limiting_one_stops_the_fetch(self):
         posts = run(self.kind(anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})).fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])

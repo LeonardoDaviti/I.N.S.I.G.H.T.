@@ -8,7 +8,8 @@ home page the most common first segment of its deeper links.
 The articles are the union of
   - the listing page's same-host links under the prefix, in page order (newest first), and
   - the sitemap's URLs under the prefix (robots.txt's Sitemap: lines, else /sitemap.xml; an
-    index is followed to at most MAX_SITEMAPS files; .gz files are skipped),
+    index is followed to at most MAX_SITEMAPS files, each read up to SITEMAP_MAX_BYTES; .gz
+    files are skipped),
 the listing page itself left out. A live fetch reads the ones not stored yet, listing links
 first, then the sitemap's by lastmod (newest first); an archive reads them all, one article
 page per archive page so the host gate spaces them.
@@ -47,6 +48,7 @@ from insight_core.utils.json_safe import iso
 logger = logging.getLogger("insight.ingestion.page_watch")
 
 MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an index's children)
+SITEMAP_MAX_BYTES = 5_000_000   # a sitemap is read up to this; a longer one keeps its first entries
 SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
 FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
 PREVIEW_ITEMS = 5
@@ -162,20 +164,36 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
             continue
         read += 1
         try:
-            body, _ = await http.get_text(url)
-            root = ET.fromstring(body.encode("utf-8"))
-        except Exception as exc:  # noqa: BLE001 - a broken sitemap is no sitemap
+            body, _ = await http.get_start(url, SITEMAP_MAX_BYTES)
+        except Exception as exc:  # noqa: BLE001 - a missing sitemap is no sitemap
             logger.debug("Page watch: sitemap %s skipped (%s)", url, exc)
             continue
-        locs = [(parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")) for node in root
-                if parsing.local_name(node.tag) in ("url", "sitemap")]
-        if parsing.local_name(root.tag) == "sitemapindex":
+        root, locs = _sitemap_locs(body)
+        if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
             queue.extend(sorted(children, key=lambda child: not (section and section in child or "post" in child)))
         else:
             entries.extend((loc, lastmod) for loc, lastmod in locs if loc)
     return entries
+
+
+def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
+    """(the root's name, the (loc, lastmod) of each <url> or <sitemap>), as far as the file is
+    readable: a sitemap cut at SITEMAP_MAX_BYTES or broken halfway keeps the entries before."""
+    parser = ET.XMLPullParser(events=("start", "end"))
+    root, locs = "", []
+    try:
+        parser.feed(body)
+    except ET.ParseError:
+        pass
+    for event, node in parser.read_events():
+        name = parsing.local_name(node.tag)
+        if not root:
+            root = name
+        elif event == "end" and name in ("url", "sitemap"):
+            locs.append((parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")))
+    return root, locs
 
 
 def page_date(page: str) -> Optional[datetime]:

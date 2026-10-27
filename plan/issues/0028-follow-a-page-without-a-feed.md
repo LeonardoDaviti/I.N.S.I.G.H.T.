@@ -26,7 +26,8 @@ with no rules to write beyond one optional path.
     segment of its same-host links two or more segments deep. The owner may override it.
   - Discovery: the listing page's same-host links under the prefix (page order), plus the
     sitemap's URLs under it (robots.txt `Sitemap:` lines, else `/sitemap.xml`; an index is
-    followed to at most 5 files, children naming the section or "post" first; `.gz` skipped).
+    followed to at most 5 files, children naming the section or "post" first; `.gz` skipped;
+    each read up to 5 MB, a longer one keeping its first entries, 0029).
     The listing page itself is left out; URLs lose their fragment and trailing slash; deduped.
   - Live fetch: the candidates not stored yet (the `stored_urls` lookup generic RSS uses),
     listing links first, then the sitemap's by lastmod, newest first; up to `limit` posts
