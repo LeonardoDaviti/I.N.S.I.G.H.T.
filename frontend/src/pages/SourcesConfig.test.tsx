@@ -90,11 +90,11 @@ describe('SourcesConfig', () => {
     expect(screen.queryByText(/not in a track/i)).not.toBeInTheDocument();
   });
 
-  it('the Group choices are none, track and platform; there is no Sort dropdown', async () => {
+  it('the Group choices are none, track and kind; there is no Sort dropdown', async () => {
     setup();
     await screen.findByText('Road to VR');
     const options = within(screen.getByRole('combobox', { name: 'Group' })).getAllByRole('option').map((o) => o.textContent);
-    expect(options).toEqual(['No grouping', 'Track', 'Platform']);
+    expect(options).toEqual(['No grouping', 'Track', 'Kind']);
     expect(screen.queryByRole('combobox', { name: 'Sort' })).not.toBeInTheDocument();
   });
 
@@ -133,7 +133,7 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['off']);
     await userEvent.click(screen.getByRole('button', { name: /^All/ }));
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'platform');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'kind');
     expect(groupNames()).toEqual(['RSS3', 'Telegram1']);
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'none');
     expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
@@ -244,6 +244,16 @@ describe('SourcesConfig', () => {
     const sent = updateSourceSettings.mock.calls[0][1];
     expect(sent).not.toHaveProperty('max_posts_per_fetch');
     expect(sent).not.toHaveProperty('priority');
+  });
+
+  it('the sheet names the source’s kind, as the list does, not its platform (issue 0027)', async () => {
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'kc', display_name: 'The Kaitchup', platform: 'rss', kind: 'substack', folders: [] }),
+    ])) });
+    await userEvent.click(await screen.findByRole('button', { name: 'The Kaitchup' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText(/^Substack ·/)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/^RSS ·/)).toBeNull();
   });
 
   it('the sheet names the switch "Show in Main feed", says no digest and nothing about tracks it may not have (issue 0027)', async () => {

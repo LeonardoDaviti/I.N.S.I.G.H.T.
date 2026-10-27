@@ -15,12 +15,12 @@ import { feedItem, feedPage } from '../components/reader/fixtures';
 import type { Api, Post } from '../services/api';
 
 describe('PostDetailPage header', () => {
-  it('shows the source host, platform, date, title and the original link', async () => {
+  it('shows the source host, date, title and the original link, and no platform (issue 0027)', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
     const header = heading.closest('header')!;
     expect(within(header).getByText('simonwillison.net')).toBeInTheDocument();
-    expect(within(header).getByText('rss')).toBeInTheDocument();
+    expect(within(header).queryByText('rss')).toBeNull();
     expect(header.querySelector('time')).toHaveAttribute('dateTime', '2026-09-27T23:54:15+00:00');
     const original = within(header).getByRole('link', { name: /open original/i });
     expect(original).toHaveAttribute('href', 'https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/');

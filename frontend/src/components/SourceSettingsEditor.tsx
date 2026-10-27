@@ -13,7 +13,7 @@ import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperation
 import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
 import { formatCount, plural } from '../lib/format';
-import { STATUS_GLYPH } from './sources/sourceList';
+import { STATUS_GLYPH, kindLabel } from './sources/sourceList';
 import { Button, FilterChip, Input, Sheet, SheetContent, StatusGlyph, Switch, TextLink } from './ui';
 import { Notice } from './states';
 import { getPlatformLabel, sourceLabel } from '../lib/sourceLabel';
@@ -226,7 +226,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
     <Sheet open onOpenChange={(open) => { if (!open && !isSaving) onClose(); }}>
       <SheetContent
         title={name}
-        description={<>{getPlatformLabel(source.platform)} · <TextLink to={sourceReadPath(source.id)}>Read posts</TextLink></>}
+        description={<>{healthRow ? kindLabel(healthRow) : getPlatformLabel(source.platform)} · <TextLink to={sourceReadPath(source.id)}>Read posts</TextLink></>}
         className="w-[min(32rem,100vw)]"
       >
         {/* A div, not a form: the cadence editor below is its own form and forms cannot nest. */}

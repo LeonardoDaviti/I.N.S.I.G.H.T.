@@ -762,7 +762,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
     setTogglingFavorite(false);
   };
 
-  const platformLabel = typeof post?.platform === 'string' ? post.platform.toLowerCase() : '';
   // A post with no HTML body renders its stored plain text, never read as HTML.
   const bodyHtml = typeof post?.content_html === 'string' ? post.content_html : null;
   const renderContent = bodyHtml ?? (typeof post?.content === 'string' ? post.content : '');
@@ -861,7 +860,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
         </p>
       ) : null}
 
-      {/* ---- Header: source / platform / date and the actions on one line, then the title ---- */}
+      {/* ---- Header: source / date and the actions on one line, then the title ---- */}
       <header className="mb-8">
         <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
@@ -888,12 +887,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
               </span>
             )}
             {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
-            {platformLabel ? (
-              <span className="whitespace-nowrap">
-                <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
-                {platformLabel}
-              </span>
-            ) : null}
             {publishedLabel ? (
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
