@@ -126,6 +126,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const jobs = useOperationsOverview().data?.jobs;
   const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
+  const fetchable = enabled && healthRow?.status !== 'unavailable';
   const [inMainDigest, setInMainDigest] = useState<boolean | null>(null);
   const mainDigest = inMainDigest ?? healthRow?.in_main_digest ?? null;
   const [savingDigest, setSavingDigest] = useState(false);
@@ -234,16 +235,20 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void run(fetchTarget)}
-                disabled={fetching || !enabled}
-                aria-busy={fetching}
-                title="Optional: the scheduler fetches due sources by itself. Fetch now ignores cadence and backoff."
-              >
-                {fetching ? 'Fetching…' : 'Fetch now'}
-              </Button>
+              {fetchable ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void run(fetchTarget)}
+                  disabled={fetching}
+                  aria-busy={fetching}
+                  title="Optional: the scheduler fetches due sources by itself. Fetch now ignores cadence and backoff."
+                >
+                  {fetching ? 'Fetching…' : 'Fetch now'}
+                </Button>
+              ) : !enabled ? (
+                <p className="text-[0.8125rem] text-fg-2">Off: not fetched until you switch it on.</p>
+              ) : null}
               {onToggleEnabled ? (
                 <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] text-fg-2">
                   {enabled ? 'On' : 'Off'}
@@ -282,35 +287,41 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <p className={hint(false)}>Select a track to add this source to it. Saves instantly.</p>
           </fieldset>
 
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
-              <p className="mt-0.5 text-[0.75rem] text-fg-3">
-                Off keeps it fetched and readable through its tracks, but out of the feed. Saves instantly.
-              </p>
-            </div>
-            <Switch
-              checked={mainDigest ?? false}
-              aria-labelledby="main_digest_label"
-              disabled={mainDigest === null || savingDigest}
-              onCheckedChange={() => void toggleMainDigest()}
-              className="mt-0.5"
-            />
-          </div>
+          {/* A source that is off or cannot be fetched has no cadence, main-feed or archive to set:
+              its one line above says why (issue 0027). */}
+          {fetchable ? (
+            <>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
+                  <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                    Off keeps it fetched and readable through its tracks, but out of the feed. Saves instantly.
+                  </p>
+                </div>
+                <Switch
+                  checked={mainDigest ?? false}
+                  aria-labelledby="main_digest_label"
+                  disabled={mainDigest === null || savingDigest}
+                  onCheckedChange={() => void toggleMainDigest()}
+                  className="mt-0.5"
+                />
+              </div>
 
-          <div className="rounded-md border border-line p-3">
-            {healthRow ? (
-              <CadenceOverrideEditor row={healthRow} />
-            ) : (
-              <p className="text-[0.75rem] text-fg-3">
-                {health.isError ? `Cadence unavailable: ${errorMessage(health.error)}` : 'Loading cadence…'}
-              </p>
-            )}
-          </div>
+              <div className="rounded-md border border-line p-3">
+                {healthRow ? (
+                  <CadenceOverrideEditor row={healthRow} />
+                ) : (
+                  <p className="text-[0.75rem] text-fg-3">
+                    {health.isError ? `Cadence unavailable: ${errorMessage(health.error)}` : 'Loading cadence…'}
+                  </p>
+                )}
+              </div>
 
-          <div className="rounded-md border border-line p-3">
-            <ArchiveSection sourceId={source.id} />
-          </div>
+              <div className="rounded-md border border-line p-3">
+                <ArchiveSection sourceId={source.id} />
+              </div>
+            </>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>

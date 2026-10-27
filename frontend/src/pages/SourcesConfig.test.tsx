@@ -247,6 +247,27 @@ describe('SourcesConfig', () => {
   });
 
   it.each([
+    ['a disabled source', healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [] }),
+      /Off: not fetched until you switch it on/],
+    ['an unavailable source', healthRow({
+      source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [],
+      unavailable_reason: 'no Telegram session; sign in under Sources → Connections', decision_detail: 'Unavailable: no Telegram session',
+    }), /add in Connections/],
+  ])('%s’s sheet says why in one line, without cadence, main feed, archive or Fetch now (issue 0027)', async (_, row, line) => {
+    const name = row.display_name;
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([row])) });
+    await userEvent.click(await screen.findByRole('button', { name }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findAllByText(line)).toHaveLength(1);
+    expect(within(sheet).queryByRole('button', { name: 'Fetch now' })).toBeNull();
+    expect(within(sheet).queryByRole('textbox', { name: /override|own|hours/i })).toBeNull();
+    expect(within(sheet).queryByText(/main feed/i)).toBeNull();
+    expect(within(sheet).queryByText(/archive/i)).toBeNull();
+    // Name, fetch delay, the switch and Delete stay.
+    expect(within(sheet).getByRole('button', { name: 'Delete source…' })).toBeInTheDocument();
+  });
+
+  it.each([
     ['the next check',{ next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
     ['that the scheduler is not running', { next_tick_at: null }, 'due · scheduler not running'],
   ])('a due source says %s, and Fetch now reads as optional', async (_, state, label) => {
