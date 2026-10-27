@@ -330,7 +330,7 @@ export default function SourcesConfig() {
     invalidate();
   };
 
-  const handleAddSource = async (data: { handle_or_url: string; display_name: string; fetch_delay_seconds: number; priority: number; max_posts_per_fetch: number; state: string }) => {
+  const handleAddSource = async (data: { handle_or_url: string; display_name: string; fetch_delay_seconds: number; state: string }) => {
     const r = await api.addSource({ platform: 'rss', ...data });
     setShowAddSource(false);
     if (!r.success) setError(r.error || 'Could not add the source');

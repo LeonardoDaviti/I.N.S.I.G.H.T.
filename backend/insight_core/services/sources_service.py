@@ -156,10 +156,12 @@ class SourcesService:
 
     @staticmethod
     def _valid_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
-        """The settings a user may set, the numbers parsed. ValueError for a value that is not a number."""
-        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch"}
+        """The settings a user may set, the numbers parsed. ValueError for a value that is not a number.
+
+        Posts per fetch is not one of them: it is the kind's own number (issue 0027)."""
+        valid_keys = {"display_name", "fetch_delay_seconds", "priority"}
         validated = {k: v for k, v in settings.items() if k in valid_keys}
-        for key in ("fetch_delay_seconds", "priority", "max_posts_per_fetch"):
+        for key in ("fetch_delay_seconds", "priority"):
             if key in validated:
                 try:
                     validated[key] = int(validated[key])

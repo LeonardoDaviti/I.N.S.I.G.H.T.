@@ -274,7 +274,6 @@ class NewSourceRequest(BaseModel):
     display_name: str | None = None
     fetch_delay_seconds: int | None = None
     priority: int | None = None
-    max_posts_per_fetch: int | None = None
     state: str | None = "enabled"
 
 
@@ -680,8 +679,7 @@ async def list_sources():
 async def add_source(request: NewSourceRequest):
     """Add one source. 400 when it is already a source or handle_or_url is empty."""
     platform = (request.platform or "rss").strip()
-    settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority",
-                                           "max_posts_per_fetch"}, exclude_none=True)
+    settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority"}, exclude_none=True)
     created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
                                                    enabled=(request.state or "enabled") == "enabled")
     _export_sources_json()
@@ -692,7 +690,7 @@ async def add_source(request: NewSourceRequest):
 @app.put("/api/sources/{source_id}/settings")
 @error_detail("update the source settings")
 async def update_source_settings(source_id: str, settings: dict):
-    """Body: any of {display_name, fetch_delay_seconds, priority, max_posts_per_fetch}."""
+    """Body: any of {display_name, fetch_delay_seconds, priority}; posts per fetch is the kind's own."""
     result = services().sources.update_source_settings(source_id, settings)
     return {"success": True, "source_id": source_id, "settings": result.get("settings", {})}
 

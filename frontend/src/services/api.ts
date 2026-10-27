@@ -8,8 +8,6 @@ export type { Envelope };
 export interface SourceSettings {
   display_name?: string;
   fetch_delay_seconds?: number;
-  priority?: number;
-  max_posts_per_fetch?: number;
   archive?: Record<string, unknown>;
 }
 
@@ -544,8 +542,6 @@ export interface NewSource {
   handle_or_url: string;
   display_name?: string;
   fetch_delay_seconds?: number;
-  priority?: number;
-  max_posts_per_fetch?: number;
   state?: string;
 }
 

@@ -113,11 +113,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState(source.settings.display_name || '');
   const [fetchDelayText, setFetchDelayText] = useState(String(source.settings.fetch_delay_seconds ?? 1));
-  const [priorityText, setPriorityText] = useState(String(source.settings.priority ?? 999));
-  const maxPostsPerFetch = source.settings.max_posts_per_fetch ?? 50;
   const fetchDelay = parseWhole(fetchDelayText, 0, 60, 'Fetch delay');
-  const priority = parseWhole(priorityText, 1, 9999, 'Priority');
-  const formValid = 'value' in fetchDelay && 'value' in priority;
+  const formValid = 'value' in fetchDelay;
 
   // Cadence and the main-digest flag come from the health row (one cached query for all sources).
   const health = useSourcesHealth();
@@ -193,17 +190,16 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   };
 
   const handleSave = async () => {
-    if (!('value' in fetchDelay) || !('value' in priority)) return;
+    if (!('value' in fetchDelay)) return;
     setIsSaving(true);
     setError(null);
 
     try {
-      // Only send non-empty display_name, otherwise send null to use default
+      // Only send non-empty display_name, otherwise send null to use default.
+      // Posts per fetch and fetch order are INSIGHT's own per kind: never sent (issue 0027).
       const settingsToSave = {
         display_name: displayName.trim() || undefined,
         fetch_delay_seconds: fetchDelay.value,
-        priority: priority.value,
-        max_posts_per_fetch: maxPostsPerFetch,
       };
 
       const response = await api.updateSourceSettings(source.id, settingsToSave);
@@ -332,26 +328,6 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
                 {'error' in fetchDelay ? `× ${fetchDelay.error}` : '0 to 60 seconds after each fetch.'}
               </p>
             </div>
-            <div>
-              <label htmlFor="priority" className={label}>Priority</label>
-              <Input
-                id="priority"
-                inputMode="numeric"
-                value={priorityText}
-                onChange={(e) => setPriorityText(e.target.value)}
-                aria-invalid={'error' in priority}
-                aria-describedby="priority_help"
-                className="tabular-nums"
-              />
-              <p id="priority_help" className={hint('error' in priority)}>
-                {'error' in priority ? `× ${priority.error}` : '1 to 9999; lower is fetched first.'}
-              </p>
-            </div>
-            <div>
-              <label htmlFor="max_posts" className={label}>Max posts per fetch</label>
-              <Input id="max_posts" type="number" value={maxPostsPerFetch} readOnly disabled className="tabular-nums" />
-              <p className={hint(false)}>Not enforced yet.</p>
-            </div>
           </div>
 
           {error ? <Notice tone="error" title={error} /> : null}
@@ -360,7 +336,6 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             {onDelete ? (
               <Button variant="danger" onClick={onDelete} disabled={isSaving} className="mr-auto">Delete source…</Button>
             ) : null}
-            <Button variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
             <Button variant="primary" onClick={() => void handleSave()} disabled={isSaving || !formValid}>
               {isSaving ? 'Saving…' : 'Save'}
             </Button>

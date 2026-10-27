@@ -11,8 +11,8 @@ interface Template {
   id: string;
   name: string;
   platform: string;
-  variableName: string;
-  defaultVariableValue?: string;
+  // None: the template always builds one address (Pipecraft, Gwern…), so there is no field.
+  variableName?: string;
   // An empty variable still builds a source (GitHub Trending: all languages).
   optionalVariable?: boolean;
   variableLabel?: string;
@@ -22,8 +22,6 @@ interface Template {
   buildDisplayName?: (value: string) => string;
   defaultSettings: {
     fetch_delay_seconds: number;
-    priority: number;
-    max_posts_per_fetch: number;
   };
 }
 
@@ -41,8 +39,6 @@ const TEMPLATES: Template[] = [
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     defaultSettings: {
       fetch_delay_seconds: 10,
-      priority: 999,
-      max_posts_per_fetch: 50,
     },
   },
   {
@@ -57,76 +53,50 @@ const TEMPLATES: Template[] = [
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
     defaultSettings: {
       fetch_delay_seconds: 5,
-      priority: 999,
-      max_posts_per_fetch: 50,
     },
   },
   {
     id: 'lesswrong',
     name: 'LessWrong',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'lesswrong',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Main LessWrong archive',
-    helperText: 'Uses the custom LessWrong adapter for live fetch plus deep archive through GraphQL.',
+    helperText: 'LessWrong\'s posts; the archive reaches far back.',
     buildHandle: () => 'https://www.lesswrong.com/feed.xml',
     buildDisplayName: () => 'LessWrong',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 20,
     },
   },
   {
     id: 'gwern',
     name: 'Gwern',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'gwern',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Main Gwern archive',
-    helperText: 'Uses the custom Gwern adapter for sitemap-backed archive depth and newest-page live fetch.',
+    helperText: 'Gwern\'s essays from gwern.net; the archive reaches every page.',
     buildHandle: () => 'https://gwern.net',
     buildDisplayName: () => 'Gwern',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 20,
     },
   },
   {
     id: 'dario-amodei',
     name: 'Dario Amodei Blog',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'dario',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Dario Amodei personal site',
-    helperText: 'Uses the custom Dario adapter for essays and posts from darioamodei.com.',
+    helperText: 'Dario Amodei\'s essays and posts from darioamodei.com.',
     buildHandle: () => 'https://darioamodei.com',
     buildDisplayName: () => 'Dario Amodei',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 10,
     },
   },
   {
     id: 'pipecraft',
     name: 'Pipecraft (Tornike Gomareli)',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'pipecraft',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Tornike Gomareli personal site',
-    helperText: 'Uses the custom Pipecraft adapter for posts and essays from pipecraft.me, read in full from its own API.',
+    helperText: 'Tornike Gomareli\'s posts and essays from pipecraft.me, read in full.',
     buildHandle: () => 'https://www.pipecraft.me/',
     buildDisplayName: () => 'Pipecraft',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 5,
     },
   },
   {
@@ -145,59 +115,39 @@ const TEMPLATES: Template[] = [
     buildDisplayName: (value) => (value.trim() ? `GitHub Trending · ${value.trim()}` : 'GitHub Trending'),
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 25,
     },
   },
   {
     id: 'deeplearning-batch',
     name: 'DeepLearning.AI The Batch',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'the-batch',
-    variableLabel: 'Archive Scope',
-    placeholder: 'The Batch newsletter',
-    helperText: 'Uses the custom The Batch adapter with sitemap-backed issue discovery and full newsletter archive.',
+    helperText: 'Every issue of The Batch newsletter; the archive reaches its first issue.',
     buildHandle: () => 'https://www.deeplearning.ai/the-batch/',
     buildDisplayName: () => 'DeepLearning.AI The Batch',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 10,
     },
   },
   {
     id: 'philschmid-cloud-attention',
     name: 'Cloud Attention',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'cloud-attention',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Phil Schmid newsletter archive',
-    helperText: 'Uses the custom Cloud Attention adapter for paginated issue discovery and full issue ingestion.',
+    helperText: 'Every issue of Phil Schmid\'s Cloud Attention newsletter, read in full.',
     buildHandle: () => 'https://www.philschmid.de/cloud-attention',
     buildDisplayName: () => 'Phil Schmid Cloud Attention',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 10,
     },
   },
   {
     id: 'ztm-ml-monthly',
     name: 'ZTM AI & ML Monthly',
     platform: 'rss',
-    variableName: 'site',
-    defaultVariableValue: 'machine-learning-monthly',
-    variableLabel: 'Archive Scope',
-    placeholder: 'Zero To Mastery monthly AI newsletter',
-    helperText: 'Uses the custom ZTM adapter for full AI & ML Monthly archive discovery and post hydration.',
+    helperText: 'Every issue of Zero To Mastery\'s AI & ML Monthly newsletter, read in full.',
     buildHandle: () => 'https://zerotomastery.io/newsletters/machine-learning-monthly/1/',
     buildDisplayName: () => 'Zero To Mastery AI & ML Monthly',
     defaultSettings: {
       fetch_delay_seconds: 1,
-      priority: 999,
-      max_posts_per_fetch: 10,
     },
   },
   {
@@ -212,8 +162,6 @@ const TEMPLATES: Template[] = [
     buildDisplayName: (value) => `@${value.replace(/^@/, '').trim()}`,
     defaultSettings: {
       fetch_delay_seconds: 2,
-      priority: 999,
-      max_posts_per_fetch: 5,
     },
   },
 ];
@@ -239,8 +187,6 @@ interface AddSourceModalProps {
     handle_or_url: string;
     display_name: string;
     fetch_delay_seconds: number;
-    priority: number;
-    max_posts_per_fetch: number;
     state: SourceState;
   }) => void;
 }
@@ -253,8 +199,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   const [fetchDelay, setFetchDelay] = useState(1);
-  const [priority, setPriority] = useState(999);
-  const [maxPosts, setMaxPosts] = useState(50);
   const [isResolvingChannel, setIsResolvingChannel] = useState(false);
   const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(null);
   // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
@@ -325,14 +269,11 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
     setFetchDelay(template.defaultSettings.fetch_delay_seconds);
-    setPriority(template.defaultSettings.priority);
-    setMaxPosts(template.defaultSettings.max_posts_per_fetch);
     // Clear previous values
-    const initialValue = template.defaultVariableValue || '';
-    setTemplateVariable(initialValue);
-    const builds = Boolean(initialValue || template.optionalVariable);
-    setHandleOrUrl(builds ? template.buildHandle(initialValue) : '');
-    setDisplayName(builds ? (template.buildDisplayName?.(initialValue) || initialValue) : '');
+    setTemplateVariable('');
+    const builds = !template.variableName || Boolean(template.optionalVariable);
+    setHandleOrUrl(builds ? template.buildHandle('') : '');
+    setDisplayName(builds ? (template.buildDisplayName?.('') || '') : '');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
     setIsResolvingChannel(false);
     setResolvedChannelName(null);
@@ -358,8 +299,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
       handle_or_url: handleOrUrl.trim(),
       display_name: displayName.trim(),
       fetch_delay_seconds: fetchDelay,
-      priority,
-      max_posts_per_fetch: maxPosts,
       state: 'enabled',
     });
 
@@ -395,19 +334,23 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
 
           {selectedTemplate && (
             <div className="rounded-md border border-line bg-surface p-3">
-              <label htmlFor="template-var" className={label}>
-                {(selectedTemplate.variableLabel || selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1))} (for {selectedTemplate.name})
-              </label>
-              <Input
-                id="template-var"
-                value={templateVariable}
-                onChange={(e) => setTemplateVariable(e.target.value)}
-                placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}…`}
-              />
-              <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
-                → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
-              </p>
-              {selectedTemplate.helperText && <p className={hint}>{selectedTemplate.helperText}</p>}
+              {selectedTemplate.variableName ? (
+                <>
+                  <label htmlFor="template-var" className={label}>
+                    {(selectedTemplate.variableLabel || selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1))} (for {selectedTemplate.name})
+                  </label>
+                  <Input
+                    id="template-var"
+                    value={templateVariable}
+                    onChange={(e) => setTemplateVariable(e.target.value)}
+                    placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}…`}
+                  />
+                  <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
+                    → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
+                  </p>
+                </>
+              ) : null}
+              {selectedTemplate.helperText && <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>}
               {platform === 'youtube' && youtubeLookupValue && (
                 <p className="mt-2 text-[0.75rem] text-fg-2">
                   {isResolvingChannel
@@ -503,33 +446,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
                   className="tabular-nums"
                 />
                 <p className={hint}>Wait after fetching this source.</p>
-              </div>
-              <div>
-                <label htmlFor="priority" className={label}>Priority</label>
-                <Input
-                  id="priority"
-                  type="number"
-                  min="1"
-                  max="9999"
-                  value={priority}
-                  onChange={(e) => setPriority(parseInt(e.target.value) || 999)}
-                  className="tabular-nums"
-                />
-                <p className={hint}>Lower is fetched first.</p>
-              </div>
-              <div>
-                <label htmlFor="max_posts" className={label}>Max posts per fetch</label>
-                <Input
-                  id="max_posts"
-                  type="number"
-                  min="1"
-                  max="200"
-                  value={maxPosts}
-                  onChange={(e) => setMaxPosts(parseInt(e.target.value) || 50)}
-                  className="tabular-nums"
-                  disabled
-                />
-                <p className={hint}>Not enforced yet.</p>
               </div>
             </div>
           </details>

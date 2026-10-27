@@ -134,7 +134,7 @@ function sourcesWithSettings(site: Site): { success: true; sources: SourceWithSe
     handle_or_url: row.display_name.startsWith('http') ? row.display_name : `https://feeds.example.org/${row.source_id}.xml`,
     enabled: row.enabled,
     post_count: row.stored_posts,
-    settings: { display_name: row.display_name, fetch_delay_seconds: 0, priority: 0, max_posts_per_fetch: 50 },
+    settings: { display_name: row.display_name, fetch_delay_seconds: 0 },
   }));
   return { success: true, sources, total: sources.length };
 }

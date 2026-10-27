@@ -230,8 +230,24 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.deleteSource).toHaveBeenCalledWith('simon'));
   });
 
+  it('the sheet saves its name and fetch delay only: no posts per fetch, no priority, no Cancel beside settings that save instantly', async () => {
+    const updateSourceSettings = vi.fn().mockResolvedValue({ success: true });
+    setup('/settings/sources', { updateSourceSettings });
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText(/max posts per fetch/i)).toBeNull();
+    expect(within(sheet).queryByText(/not enforced/i)).toBeNull();
+    expect(within(sheet).queryByLabelText(/priority/i)).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSourceSettings).toHaveBeenCalled());
+    const sent = updateSourceSettings.mock.calls[0][1];
+    expect(sent).not.toHaveProperty('max_posts_per_fetch');
+    expect(sent).not.toHaveProperty('priority');
+  });
+
   it.each([
-    ['the next check', { next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
+    ['the next check',{ next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
     ['that the scheduler is not running', { next_tick_at: null }, 'due · scheduler not running'],
   ])('a due source says %s, and Fetch now reads as optional', async (_, state, label) => {
     const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
@@ -277,9 +293,17 @@ describe('SourcesConfig', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Pipecraft (Tornike Gomareli)' }));
+    // One address: no field to fill, one plain sentence, and the address stays editable.
+    expect(within(dialog).queryByText(/archive scope/i)).toBeNull();
+    expect(within(dialog).queryByRole('textbox', { name: /pipecraft/i })).toBeNull();
+    expect(within(dialog).queryByText(/adapter|sitemap/i)).toBeNull();
+    expect(within(dialog).getByLabelText('Feed URL or handle')).toBeEnabled();
+    expect(within(dialog).queryByText(/max posts per fetch|priority/i)).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(JSON.stringify(addSource.mock.calls[0])).toContain('https://www.pipecraft.me/');
+    expect(addSource.mock.calls[0][0]).not.toHaveProperty('max_posts_per_fetch');
+    expect(addSource.mock.calls[0][0]).not.toHaveProperty('priority');
   });
 
   it('the GitHub Trending template adds all languages, or the one typed', async () => {
