@@ -282,6 +282,29 @@ describe('SourcesConfig', () => {
     expect(JSON.stringify(addSource.mock.calls[0])).toContain('https://www.pipecraft.me/');
   });
 
+  it('the GitHub Trending template adds all languages, or the one typed', async () => {
+    const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'gh-1' });
+    setup('/settings/sources', { addSource });
+    const add = async (language: string) => {
+      await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+      const dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'GitHub Trending' }));
+      if (language) await userEvent.type(within(dialog).getByLabelText(/^Language/), language);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    };
+    await add('');
+    await waitFor(() => expect(addSource).toHaveBeenCalledTimes(1));
+    expect(addSource.mock.calls[0][0]).toMatchObject({
+      handle_or_url: 'https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml', display_name: 'GitHub Trending',
+    });
+    await add('Python');
+    await waitFor(() => expect(addSource).toHaveBeenCalledTimes(2));
+    expect(addSource.mock.calls[1][0]).toMatchObject({
+      handle_or_url: 'https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml', display_name: 'GitHub Trending · Python',
+    });
+  });
+
   it('the row switch toggles one source', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');

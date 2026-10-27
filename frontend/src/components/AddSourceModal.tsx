@@ -13,6 +13,8 @@ interface Template {
   platform: string;
   variableName: string;
   defaultVariableValue?: string;
+  // An empty variable still builds a source (GitHub Trending: all languages).
+  optionalVariable?: boolean;
   variableLabel?: string;
   placeholder?: string;
   helperText?: string;
@@ -128,6 +130,26 @@ const TEMPLATES: Template[] = [
     },
   },
   {
+    id: 'github-trending',
+    name: 'GitHub Trending',
+    platform: 'rss',
+    variableName: 'language',
+    variableLabel: 'Language',
+    optionalVariable: true,
+    placeholder: 'All languages',
+    helperText: 'Today\'s trending repositories, each a post with its README, from the GitHubTrendingRSS feed (github.com has none). Leave empty for all languages. For the week or the month, change daily/ to weekly/ or monthly/ in the URL.',
+    buildHandle: (value) => {
+      const language = value.trim().toLowerCase().replace(/\s+/g, '-');
+      return `https://mshibanami.github.io/GitHubTrendingRSS/daily/${encodeURIComponent(language || 'all')}.xml`;
+    },
+    buildDisplayName: (value) => (value.trim() ? `GitHub Trending · ${value.trim()}` : 'GitHub Trending'),
+    defaultSettings: {
+      fetch_delay_seconds: 1,
+      priority: 999,
+      max_posts_per_fetch: 25,
+    },
+  },
+  {
     id: 'deeplearning-batch',
     name: 'DeepLearning.AI The Batch',
     platform: 'rss',
@@ -238,7 +260,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
 
   // Update URL when template variable changes
   useEffect(() => {
-    if (selectedTemplate && templateVariable) {
+    if (selectedTemplate && (templateVariable || selectedTemplate.optionalVariable)) {
       const normalized = templateVariable.trim();
       const sourceValue = selectedTemplate.buildHandle(normalized);
       setHandleOrUrl(sourceValue);
@@ -290,8 +312,9 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     // Clear previous values
     const initialValue = template.defaultVariableValue || '';
     setTemplateVariable(initialValue);
-    setHandleOrUrl(initialValue ? template.buildHandle(initialValue) : '');
-    setDisplayName(initialValue ? (template.buildDisplayName?.(initialValue) || initialValue) : '');
+    const builds = Boolean(initialValue || template.optionalVariable);
+    setHandleOrUrl(builds ? template.buildHandle(initialValue) : '');
+    setDisplayName(builds ? (template.buildDisplayName?.(initialValue) || initialValue) : '');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
     setIsResolvingChannel(false);
     setResolvedChannelName(null);
@@ -364,7 +387,7 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
                 placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}…`}
               />
               <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
-                → {selectedTemplate.buildHandle(templateVariable || `{${selectedTemplate.variableName}}`)}
+                → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
               </p>
               {selectedTemplate.helperText && <p className={hint}>{selectedTemplate.helperText}</p>}
               {platform === 'youtube' && youtubeLookupValue && (
