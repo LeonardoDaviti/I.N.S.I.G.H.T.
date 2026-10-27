@@ -2,6 +2,11 @@
 set -euo pipefail
 
 git pull
+# The build stamp the Ingestion tab shows (issue 0020). sudo resets the environment,
+# so the build passes these three through by name.
+export INSIGHT_VERSION="$(cat VERSION)"
+export INSIGHT_COMMIT="$(git rev-parse --short HEAD)"
+export INSIGHT_COMMIT_DATE="$(git log -1 --format=%cs)"
 sudo docker compose down
-sudo docker compose build --pull backend ingestion frontend
+sudo --preserve-env=INSIGHT_VERSION,INSIGHT_COMMIT,INSIGHT_COMMIT_DATE docker compose build --pull backend ingestion frontend
 sudo docker compose up -d --remove-orphans

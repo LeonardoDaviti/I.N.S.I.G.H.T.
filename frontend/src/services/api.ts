@@ -109,6 +109,9 @@ export interface FeedParams {
 /** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
 export type AvailableBasis = 'exact' | 'upper_bound' | 'estimate' | 'listing_cap' | 'feed_window' | 'unknown';
 
+/** GET /api/version: the build an image was stamped with (issue 0020); null when unset. */
+export interface BuildVersion { version: string | null; commit: string | null; commit_date: string | null; }
+
 /** GET /api/archive/{id}/status `support`: can this source archive (no network involved). */
 export interface ArchiveSupport {
   kind: string;
@@ -727,6 +730,7 @@ export function createApi() {
         ingestTickMinutes: config.ingest_tick_minutes,
       },
     })),
+    getVersion: () => request<BuildVersion>('/api/version'),
     getIngestionLogs: (log = 'application', lines = 200) =>
       request<LogTailResponse>(`/api/ingestion/logs?${new URLSearchParams({ log, lines: String(lines) }).toString()}`),
 

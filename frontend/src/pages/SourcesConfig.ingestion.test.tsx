@@ -78,6 +78,7 @@ function setup({
     getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: scheduler() }),
     getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: { ...runReport() } }) }),
     runIngestionCycle: vi.fn().mockResolvedValue(runReport({ summary: '3 due, 75 deferred, 0 failed; 7 new posts', posts_inserted: 7 })),
+    getVersion: vi.fn().mockResolvedValue({ version: null, commit: null, commit_date: null }),
     ...overrides,
   };
   const utils = renderWithProviders(<SourcesConfig />, { api: makeFakeApi(methods), route });
@@ -341,5 +342,18 @@ describe('Sources → ingestion tab', () => {
     expect(screen.queryByRole('region', { name: 'Source registry' })).toBeNull();
     expect(screen.queryByText(/briefing/i)).toBeNull();
     expect(screen.queryByText(/fetch one source/i)).toBeNull();
+  });
+
+  it('ends with the running version: a dev build in tests, on every view', async () => {
+    const { api } = setup();
+    expect(await screen.findByText('I.N.S.I.G.H.T. dev build')).toBeInTheDocument();
+    expect(api.getVersion).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('link', { name: 'jobs' }));
+    expect(await screen.findByText('I.N.S.I.G.H.T. dev build')).toBeInTheDocument();
+  });
+
+  it('an API on another build says the two are out of step', async () => {
+    setup({ overrides: { getVersion: vi.fn().mockResolvedValue({ version: 'Mark IX v9.0', commit: '0b1458d', commit_date: '2026-10-11' }) } });
+    expect(await screen.findByText('I.N.S.I.G.H.T. Web dev build · API Mark IX v9.0 · 0b1458d, out of step')).toBeInTheDocument();
   });
 });

@@ -230,6 +230,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/credentials', respond: () => site.credentials },
     { path: '/api/operations/overview', respond: () => ({ success: true, jobs: site.jobs, alerts: [], scheduler: site.scheduler }) },
     { path: '/api/operations/scheduler', respond: () => ({ success: true, scheduler: site.scheduler }) },
+    { path: '/api/version', respond: () => ({ version: null, commit: null, commit_date: null }) },
     {
       path: '/api/operations/jobs/:jobId',
       respond: ({ params }) => ({ success: true, job: site.jobs.find((job) => job.id === params.jobId) ?? null }),
