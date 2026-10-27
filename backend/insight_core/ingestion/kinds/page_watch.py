@@ -185,14 +185,15 @@ def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
     root, locs = "", []
     try:
         parser.feed(body)
+        # The parser reports a broken document here, at the read, after the events before it.
+        for event, node in parser.read_events():
+            name = parsing.local_name(node.tag)
+            if not root:
+                root = name
+            elif event == "end" and name in ("url", "sitemap"):
+                locs.append((parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")))
     except ET.ParseError:
         pass
-    for event, node in parser.read_events():
-        name = parsing.local_name(node.tag)
-        if not root:
-            root = name
-        elif event == "end" and name in ("url", "sitemap"):
-            locs.append((parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")))
     return root, locs
 
 

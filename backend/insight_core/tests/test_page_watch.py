@@ -327,6 +327,14 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(result["prefix"], "/blog/")
         self.assertIn("Public benefit fund", [item["title"] for item in result["items"]])
 
+    def test_a_sitemap_that_is_not_xml_is_no_sitemap(self):
+        # deepmind.google (2026-10-28): a sitemap answered with bytes that aren't XML (compressed,
+        # no .gz name) raised from the parser's read step and failed the preview with a 500.
+        http = FakeHttp(anthropic(**{f"{SITE}/sitemap.xml": "\x1f\x8b\x08 not xml at all"}))
+        result = run(preview(http, LISTING))
+        self.assertEqual((result["prefix"], result["sitemap"]), ("/news/", False))
+        self.assertGreater(result["found"], 0)
+
     def test_a_prefix_override_narrows_the_section(self):
         result = run(preview(FakeHttp(anthropic()), LISTING, "news/claude"))
         self.assertEqual((result["prefix"], result["found"]), ("/news/claude/", 0))
