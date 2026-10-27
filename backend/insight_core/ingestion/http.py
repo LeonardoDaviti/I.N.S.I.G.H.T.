@@ -6,7 +6,7 @@ kind asks for through the injected sleeper instead of waiting it out.
 
 urllib is blocking, so every request runs in a worker thread (asyncio.to_thread).
 
-It only classifies failures: every one is an HttpError (a ValueError), carrying the status,
+It only classifies failures: every one (a dropped connection or a truncated body too) is an HttpError (a ValueError), carrying the status,
 the Retry-After seconds and whether it timed out. Retrying and slowing down are the
 caller's, where the host is known (issue 0016).
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import json
 import os
 import ssl
@@ -62,6 +63,8 @@ def _classified(action: str, url: str) -> Iterator[None]:
                         timed_out=isinstance(exc.reason, TimeoutError)) from exc
     except TimeoutError as exc:   # a read timeout escapes urllib unwrapped
         raise HttpError(f"Timed out {action} {url}", timed_out=True) from exc
+    except (OSError, http.client.HTTPException) as exc:   # a dropped connection, a truncated body
+        raise HttpError(f"Failed {action} {url}: {type(exc).__name__}") from exc
 
 
 def _env_hosts(name: str, default: str = "") -> set[str]:
