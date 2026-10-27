@@ -635,7 +635,7 @@ describe('SourcesConfig', () => {
     expect(within(sheet).getByRole('button', { name: /Delete source/ }).querySelector('[data-danger-mark]')).not.toBeNull();
   });
 
-  it('the cadence override validates before it calls the API', async () => {
+  it('how often it is fetched: plain words, and your own hours are validated before the API (issue 0027)', async () => {
     const setCadenceOverride = vi.fn().mockResolvedValue({
       success: true,
       row: healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', override_hours: 6, interval_hours: 6, interval_basis: 'override', folders: [ai] }),
@@ -643,22 +643,24 @@ describe('SourcesConfig', () => {
     setup('/settings/sources', { setCadenceOverride });
     await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
     const sheet = await screen.findByRole('dialog');
-    const input = within(sheet).getByRole('textbox', { name: /override/i });
+    const input = within(sheet).getByRole('textbox', { name: /set your own/i });
+    expect(within(sheet).getByText(/^Fetched every /)).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/probation|tier|backlog guard|kind floor|override/i);
 
     await userEvent.type(input, '3000');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     expect(await within(sheet).findByText(/between 1 and 2160 hours/i)).toBeInTheDocument();
     expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(setCadenceOverride).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
     await userEvent.type(input, 'abc');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     expect(setCadenceOverride).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
     await userEvent.type(input, '6');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     await waitFor(() => expect(setCadenceOverride).toHaveBeenCalledWith('simon', 6));
   });
 });
