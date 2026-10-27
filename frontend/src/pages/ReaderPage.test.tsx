@@ -195,6 +195,19 @@ describe('ReaderPage', () => {
     expect(within(dialog).queryByText(/fetch/i)).toBeNull();
   });
 
+  it('one source offers neither Stream / By source nor Continuous / One at a time, and ?view=by_source is ignored', async () => {
+    const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'One post' })]));
+    render(base({
+      getFeed,
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+    }), `/read/source/${ID(7)}?view=by_source`);
+    expect(await screen.findByRole('radiogroup', { name: 'Show' })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'View' })).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: 'Posts' })).toBeNull();
+    await waitFor(() => expect(getFeed).toHaveBeenCalled());
+    expect(JSON.stringify(getFeed.mock.calls)).not.toContain('by_source');
+  });
+
   it('an empty source says there are no posts yet and links quietly to Sources', async () => {
     render(base({
       getFeed: vi.fn().mockResolvedValue(feedPage([])),

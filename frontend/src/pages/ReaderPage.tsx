@@ -89,7 +89,9 @@ function Reader({ scope }: { scope: string }) {
   const queryClient = useQueryClient();
   const rawFilter = params.get('filter');
   const filter: FeedFilter = isFeedFilter(rawFilter) ? rawFilter : 'unread';
-  const view: FeedView = params.get('view') === 'by_source' ? 'by_source' : 'stream';
+  // One source has nothing to group by source, so it is always a stream.
+  const oneSource = scope.startsWith('source:');
+  const view: FeedView = !oneSource && params.get('view') === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
   const [density, setDensity] = useDensityPreference();
@@ -185,6 +187,7 @@ function Reader({ scope }: { scope: string }) {
             onDensityChange={setDensity}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
+            oneSource={oneSource}
             pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
           />
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">

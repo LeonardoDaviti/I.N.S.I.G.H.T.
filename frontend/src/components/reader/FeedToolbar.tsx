@@ -43,6 +43,8 @@ export interface FeedToolbarProps {
   /** Below md the title is the button that opens the feeds drawer. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
+  /** One source's posts: no View (nothing to group by source) and no Posts flow choice. */
+  oneSource?: boolean;
   /** The "N new posts" pill, when there are any. */
   pill?: ReactNode;
 }
@@ -51,14 +53,15 @@ export interface FeedToolbarProps {
  * The reader's sticky toolbar, under the app's one top bar: the scope title and
  * its unread count and the shortcut help as a labelled text action (fetching is
  * an ingestion job and lives in Sources), then the filter, view, density and how
- * the post page flows (stored here, read there) as slash-separated words. The
+ * the post page flows (stored here, read there) as slash-separated words; one
+ * source's posts show neither the view nor the flow choice. The
  * theme toggle, the wordmark and the app menu live in the top bar only. Below md the title opens
  * the feeds drawer (a chevron says so), so there is no second hamburger. From md
  * up, a source or track title links to where it is managed in Sources.
  */
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange, density, onDensityChange,
-  onOpenNav, onOpenHelp, pill,
+  onOpenNav, onOpenHelp, oneSource = false, pill,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
@@ -95,9 +98,9 @@ export default function FeedToolbar({
         {subtitle ? <p className="-mt-1 text-[0.8125rem] tabular-nums text-fg-3 sm:hidden">{subtitle}</p> : null}
         <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
           <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
-          <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />
+          {oneSource ? null : <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />}
           <div className="hidden md:block"><SlashChoice label="Density" value={density} options={DENSITIES} onChange={onDensityChange} /></div>
-          <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />
+          {oneSource ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
           {pill ? <div className="ml-auto">{pill}</div> : null}
         </div>
       </div>
