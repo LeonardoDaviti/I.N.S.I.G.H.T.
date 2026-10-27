@@ -114,7 +114,8 @@ class KindResolutionTests(unittest.TestCase):
     def test_every_kind_is_registered_once(self):
         names = [kind.name for kind in _registry().kinds]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(len(names), 14, "7 sites + substack, reddit, youtube, telegram_rss, nitter, mtproto, generic")
+        self.assertEqual(len(names), 15, "page_watch + 7 sites + substack, reddit, youtube, telegram_rss, nitter, mtproto, generic")
+        self.assertEqual(names[0], "page_watch", "its setting is the owner's explicit choice")
         self.assertEqual(names[-1], "generic_rss", "generic_rss is the fallback")
 
     def test_resolution_is_cached_per_platform_and_handle(self):
@@ -753,6 +754,7 @@ class AvailableBasisTests(unittest.TestCase):
     """What each kind's inspected available_posts means, so the archive UI can say it honestly."""
 
     EXPECTED = {
+        "page_watch": "estimate",              # listing links and sitemap URLs; some are no post
         "lesswrong_graphql": "exact",          # counted through the GraphQL API
         "gwern_site": "estimate",              # candidate pages discovered on the index
         "dario_site": "exact",

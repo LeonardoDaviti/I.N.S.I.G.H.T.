@@ -4,7 +4,8 @@ import { useApi } from '../services/ApiContext';
 import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
-import type { FeedFinding, FoundFeed } from '../services/api';
+import { localDateISO, toDate } from '../lib/dates';
+import type { FeedFinding, FoundFeed, PageWatchPreview } from '../services/api';
 
 type SourceState = 'enabled' | 'disabled' | 'error';
 
@@ -231,6 +232,18 @@ function sameAddress(address: string): string {
   return address.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '');
 }
 
+/** A path as the server keeps it: "news" -> "/news/"; "" stays "" (the server infers it). */
+function normalisePath(path: string): string {
+  const inner = path.trim().replace(/^\/+|\/+$/g, '');
+  return path.trim() ? (inner ? `/${inner}/` : '/') : '';
+}
+
+/** A preview item's local calendar date; "" without one. */
+function calendarDate(value: string | null): string {
+  const date = toDate(value);
+  return date ? localDateISO(date) : '';
+}
+
 /** An address as a line shows it: no scheme. */
 function shortAddress(address: string): string {
   return address.replace(/^https?:\/\//, '');
@@ -248,6 +261,7 @@ interface AddSourceModalProps {
     priority: number;
     max_posts_per_fetch: number;
     state: SourceState;
+    page_watch?: { prefix: string };
   }) => void;
 }
 
@@ -373,8 +387,39 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
             : finding?.status === 'none' ? 'No feed found on this page'
               : finding?.status === 'found' && foundFeeds.length === 1 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}`
                 : null;
+  // No feed: the page itself can be followed, its articles read from its links and the
+  // sitemap (issue 0028). The preview is asked again when the path changes.
+  const [followFor, setFollowFor] = useState<string | null>(null);
+  const [path, setPath] = useState('');
+  const [pagePreview, setPagePreview] = useState<(PageWatchPreview & { for: string; asked: string }) | null>(null);
+  const following = findsFeed && settled && finding?.status === 'none' && followFor === address;
+  const askedPath = normalisePath(path);
+  const previewed = !!pagePreview && pagePreview.for === address
+    && (!askedPath || askedPath === pagePreview.asked || askedPath === pagePreview.prefix);
+  const pageItems = previewed ? pagePreview?.items ?? [] : [];
+
+  useEffect(() => {
+    if (!following || previewed) return;
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      void api.previewPageWatch(address, askedPath || undefined).then((result) => {
+        if (cancelled) return;
+        setPagePreview({ ...result, for: address, asked: askedPath });
+        if (!askedPath && result.prefix) setPath(result.prefix);
+      });
+    }, askedPath ? 600 : 0);
+    return () => { cancelled = true; window.clearTimeout(timeout); };
+  }, [api, following, previewed, address, askedPath]);
+
+  const pageNote = !following ? null
+    : !previewed ? 'Looking for articles…'
+      : pagePreview?.success === false ? `Could not read this page: ${pagePreview.error ?? 'unknown error'}`
+        : pageItems.length === 0 ? 'This page\'s articles can\'t be read without a browser (it builds them with JavaScript).'
+          : `Found ${pagePreview?.found} article${pagePreview?.found === 1 ? '' : 's'} under ${pagePreview?.prefix}${pagePreview?.sitemap ? ' (from the sitemap)' : ''}`;
+  const canFollow = following && previewed && pageItems.length > 0;
+
   const canAdd = !!address && !saveSid.isPending && !looking && !alreadyAdded
-    && !(findsFeed && finding?.status === 'none');
+    && !(findsFeed && finding?.status === 'none' && !canFollow);
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
@@ -409,12 +454,14 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
     }
 
     onAdd({
-      handle_or_url: handleOrUrl.trim(),
+      // A followed page is read as an address: it needs its scheme.
+      handle_or_url: canFollow && !/^https?:\/\//i.test(address) ? `https://${address}` : address,
       display_name: displayName.trim(),
       fetch_delay_seconds: fetchDelay,
       priority,
       max_posts_per_fetch: maxPosts,
       state: 'enabled',
+      ...(canFollow && pagePreview?.prefix ? { page_watch: { prefix: pagePreview.prefix } } : {}),
     });
 
     onClose();
@@ -495,6 +542,37 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
             />
             {alreadyAdded && !looking ? <p role="status" className={hint}>This feed is already in your sources</p> : null}
             {feedNote ? <p role="status" className={hint}>{feedNote}</p> : null}
+            {findsFeed && settled && finding?.status === 'none' && !alreadyAdded && !following ? (
+              <Button size="sm" className="mt-2" onClick={() => setFollowFor(address)}>Follow this page instead</Button>
+            ) : null}
+            {following ? (
+              <div className="mt-2 space-y-3 rounded-md border border-line p-3" data-testid="page-watch">
+                <p role="status" className="text-[0.8125rem] text-fg-2">{pageNote}</p>
+                {pageItems.length > 0 ? (
+                  <ul className="space-y-1">
+                    {pageItems.map((item) => (
+                      <li key={item.url} className="flex gap-2 text-[0.8125rem] text-fg">
+                        <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                        <span className="shrink-0 tabular-nums text-fg-3">{calendarDate(item.published_at)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div>
+                  <label htmlFor="page_watch_path" className={label}>Path <span className="font-normal text-fg-3">(optional)</span></label>
+                  <Input
+                    id="page_watch_path"
+                    value={path}
+                    onChange={(e) => setPath(e.target.value)}
+                    placeholder="/news/"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono"
+                  />
+                  <p className={hint}>Only the site&apos;s pages under this path are followed.</p>
+                </div>
+              </div>
+            ) : null}
             {findsFeed && settled && finding?.status === 'found' && foundFeeds.length > 1 ? (
               <fieldset className="mt-2">
                 <legend className={hint}>This page has {foundFeeds.length} feeds</legend>
