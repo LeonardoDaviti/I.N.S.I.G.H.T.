@@ -427,13 +427,22 @@ describe('SourcesConfig', () => {
     expect(document.querySelector('kbd')).toBeNull();
   });
 
-  it('status chips: all, enabled, disabled, failing, unavailable always; backoff only with sources', async () => {
+  it('status chips: all, enabled, disabled, failing always; unavailable only with sources; no backoff, which failing counts (issue 0027)', async () => {
     setup();
     await screen.findByText('Road to VR');
     const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button').map((b) => b.textContent);
-    expect(chips).toEqual(['All4', 'Enabled3', 'Disabled1', 'Failing1', 'Unavailable1', 'Backoff1', 'Scheduled1']);
+    expect(chips).toEqual(['All4', 'Enabled3', 'Disabled1', 'Failing1', 'Unavailable1', 'Scheduled1']);
     await userEvent.click(screen.getByRole('button', { name: /^Enabled/ }));
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon']);
+  });
+
+  it('with no unavailable source there is no "Unavailable 0" chip', async () => {
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),
+    ])) });
+    await screen.findByText('Simon Willison’s Weblog');
+    const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button').map((b) => b.textContent);
+    expect(chips).toEqual(['All1', 'Enabled1', 'Disabled0', 'Failing0', 'Scheduled1']);
   });
 
   it('a column header sorts, a second press reverses, and the sort lives in the URL', async () => {

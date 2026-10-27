@@ -257,16 +257,15 @@ export function rowFact(row: SourceHealthRow, now: Date): string {
 }
 
 /**
- * Status chips. The primary ones always show (after All): enabled, disabled,
- * failing (error + backoff, like the "N source errors" chip), unavailable. The
+ * Status chips. The primary ones always show (after All): enabled, disabled and
+ * failing (error + backoff, like the "N source errors" chip, so backoff has no chip of its own). The
  * secondary ones narrow further and show only when they have sources.
  */
 export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: boolean }[] = [
   { value: 'enabled', label: 'Enabled' },
   { value: 'disabled', label: 'Disabled' },
   { value: 'error', label: 'Failing' },
-  { value: 'unavailable', label: 'Unavailable' },
-  { value: 'backoff', label: 'Backoff', secondary: true },
+  { value: 'unavailable', label: 'Unavailable', secondary: true },
   { value: 'due', label: 'Due', secondary: true },
   { value: 'deferred', label: 'Scheduled', secondary: true },
 ];
