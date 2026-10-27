@@ -170,12 +170,14 @@ Each source can have optional settings stored in the `settings` JSONB field:
   "display_name": "Friendly Name",       // null = use handle_or_url
   "fetch_delay_seconds": 5,              // Minimum seconds between requests to this source's host
   "priority": 1,                         // Lower = fetch first (default: 999)
-  "max_posts_per_fetch": 50              // Upper bound for one live fetch
+  "page_watch": {"prefix": "/news/"}     // Follow a page without a feed (issue 0028)
 }
 ```
 
 **Defaults** depend on the platform (`SourcesRepository._platform_defaults` in `db/repo_sources.py`).
-For `rss`: `fetch_delay_seconds` 1, `priority` 999, `max_posts_per_fetch` 20.
+For `rss`: `fetch_delay_seconds` 1, `priority` 999, `max_posts_per_fetch` 20. The posts per
+fetch is the platform default only: the API does not accept it, and migration 0029 removed the
+values stored before (issue 0029).
 
 ### How Settings Work
 
@@ -196,7 +198,7 @@ For `rss`: `fetch_delay_seconds` 1, `priority` 999, `max_posts_per_fetch` 20.
     "display_name": "TechCrunch",       # from database (override)
     "fetch_delay_seconds": 1,           # from defaults
     "priority": 1,                      # from database (override)
-    "max_posts_per_fetch": 50          # from defaults
+    "max_posts_per_fetch": 20          # from defaults
 }
 ```
 
@@ -248,7 +250,7 @@ The ingestion runner (`insight_core/ingestion/runner.py`) reads the merged setti
 - Due sources are fetched in `priority` order, then interleaved by host.
 - `fetch_delay_seconds` is passed to `FetchGates.slot` and sets the minimum gap between
   requests to that source's host. The host's learned gap (below) still applies.
-- `max_posts_per_fetch` feeds the cadence rules in `ingestion/schedule.py`, which decide each
+- `max_posts_per_fetch` (the platform default) feeds the cadence rules in `ingestion/schedule.py`, which decide each
   fetch's post limit.
 - Each source's posts are saved as soon as its fetch finishes, so they reach the reader during
   the run; while it runs, the `ingestion_run` job's payload carries `sources: {done, total}`
@@ -412,10 +414,10 @@ the result when the job finishes.
 | POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
 | POST | `/api/posts/item/{post_id}/reddit-comments` | Fetch a Reddit post's comments | `{limit?, refresh?, asyncMode?}` |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
-| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
+| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
 | POST | `/api/sources/find-feed` | The feeds for any page address (`ingestion/feed_finder.py`, under 10 s): `{status: feed\|found\|direct\|none, feeds: [{url, title}]}` | `{url}` (no scheme: https) |
 | POST | `/api/sources/page-watch/preview` | Following a page without a feed (`ingestion/kinds/page_watch.py`, issue 0028): `{prefix, found, sitemap, items: [{url, title, published_at}]}`, `found` the article URLs under the prefix (listing links and sitemap), `items` the first 5 read; no items: its articles need a browser. 400 when the page cannot be read (its status only, never the site's answer) | `{url, prefix?}` (no scheme: https; only http and https; prefix inferred from the page's path) |
-| PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, max_posts_per_fetch}` |
+| PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, page_watch}` |
 | PUT | `/api/sources/{source_id}/enabled` | Enable or disable | `{enabled}` |
 | PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |
 | PUT | `/api/sources/{source_id}/cadence` | Set or clear the fetch interval override | `{override_hours}` (1-2160, or null) |
