@@ -5,6 +5,7 @@ records the politeness delays a kind asked for instead of waiting them out.
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable, Mapping
 
 from insight_core.ingestion.http import KindHttp
@@ -43,7 +44,7 @@ class RecordingSleeper:
         self.calls.append(seconds)
 
 
-Response = Any  # str | (str, headers) | Exception | dict (JSON) | callable(url) -> one of these
+Response = Any  # str | (str, headers) | Exception | dict (JSON) | callable(url) -> one of these (or awaits one)
 
 
 class FakeHttp(KindHttp):
@@ -54,6 +55,7 @@ class FakeHttp(KindHttp):
         responses: Mapping[str, Response] | Callable[[str], Response] | None = None,
         *,
         sleep: RecordingSleeper | None = None,
+        redirects: Mapping[str, str] | None = None,
     ) -> None:
         self.sleeper = sleep or RecordingSleeper()
         super().__init__(sleep=self.sleeper, timeout=1, user_agent="test-agent")
@@ -61,6 +63,8 @@ class FakeHttp(KindHttp):
         self.requests: list[str] = []
         self.request_headers: list[tuple[str, dict[str, str]]] = []
         self.posts: list[tuple[str, dict]] = []
+        self.redirects = dict(redirects or {})   # url -> the final URL get_start reports
+        self.byte_caps: dict[str, int] = {}      # url -> the max_bytes get_start was asked for
 
     def _answer(self, url: str) -> Response:
         if callable(self.responses):
@@ -84,6 +88,15 @@ class FakeHttp(KindHttp):
         if isinstance(answer, tuple):
             return answer
         return str(answer), {}
+
+    async def get_start(self, url: str, max_bytes: int) -> tuple[bytes, str]:
+        self.requests.append(url)
+        self.byte_caps[url] = max_bytes
+        answer = self._answer(url)
+        if inspect.isawaitable(answer):
+            answer = await answer
+        body = answer[0] if isinstance(answer, tuple) else answer
+        return str(body).encode("utf-8")[:max_bytes], self.redirects.get(url, url)
 
     def headers_for(self, url: str) -> dict[str, str]:
         """The extra headers of the last GET of url."""

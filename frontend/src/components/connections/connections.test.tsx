@@ -215,9 +215,16 @@ describe('AddSourceModal: Substack', () => {
   function renderModal(methods: Partial<Record<keyof Api, unknown>>) {
     const onAdd = vi.fn();
     const onClose = vi.fn();
-    renderWithProviders(<AddSourceModal platform="rss" onAdd={onAdd} onClose={onClose} />, { api: makeFakeApi(methods) });
+    // A Substack address is read directly: the feed finder leaves it as typed.
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'direct', feeds: [] });
+    renderWithProviders(<AddSourceModal platform="rss" onAdd={onAdd} onClose={onClose} />, { api: makeFakeApi({ findFeed, ...methods }) });
     return { onAdd, onClose };
   }
+  const addWhenReady = async () => {
+    const add = screen.getByRole('button', { name: 'Add source' });
+    await waitFor(() => expect(add).toBeEnabled());
+    await userEvent.click(add);
+  };
 
   it('offers the optional substack.sid only for a Substack URL and saves it to Connections', async () => {
     const putCredential = vi.fn().mockResolvedValue(savedSubstack());
@@ -232,7 +239,7 @@ describe('AddSourceModal: Substack', () => {
     expect(sid).toHaveAttribute('type', 'password');
     expect(screen.getByTestId('substack-sid')).toHaveTextContent('DevTools → Application → Cookies');
     await userEvent.type(sid, `substack.sid=${SECRET}`);
-    await userEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await addWhenReady();
 
     await waitFor(() => expect(putCredential).toHaveBeenCalledWith('substack', 'sid', SECRET));
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ handle_or_url: 'https://kaitchup.substack.com/' })));
@@ -243,7 +250,7 @@ describe('AddSourceModal: Substack', () => {
     const { onAdd } = renderModal({ getCredentials: vi.fn().mockResolvedValue(credentials(substackView())), putCredential });
     await userEvent.type(screen.getByLabelText('Feed URL or handle'), 'https://kaitchup.substack.com/');
     await userEvent.type(await screen.findByLabelText(/Paid subscription/), 'bad value');
-    await userEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await addWhenReady();
     expect(await screen.findByRole('alert')).toHaveTextContent('That does not look like a substack.sid cookie');
     expect(onAdd).not.toHaveBeenCalled();
 

@@ -21,6 +21,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from insight_core.db import database
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.ingestion import run_ingestion
+from insight_core.ingestion.feed_finder import find_feeds
+from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
@@ -276,6 +278,10 @@ class NewSourceRequest(BaseModel):
     priority: int | None = None
     max_posts_per_fetch: int | None = None
     state: str | None = "enabled"
+
+
+class FindFeedRequest(BaseModel):
+    url: str = ""
 
 
 class SourceEnabledRequest(BaseModel):
@@ -687,6 +693,20 @@ async def add_source(request: NewSourceRequest):
     _export_sources_json()
     return {"success": True, "source_id": created["source_id"], "platform": platform,
             "handle_or_url": created["handle"]}
+
+
+# The feed finder's own client: a short socket timeout (it bounds every request itself too).
+FEED_FINDER_HTTP = KindHttp(timeout=5)
+
+
+@app.post("/api/sources/find-feed")
+@error_detail("look for the feed")
+async def find_feed(request: FindFeedRequest):
+    """The feeds for any page address (issue 0026): status feed (it is one), found, direct (a
+    kind reads the site itself) or none, with feeds [{url, title}]. 400 when url is empty."""
+    finding = await find_feeds(FEED_FINDER_HTTP, services().source_fetch.kinds, request.url)
+    return {"success": True, "status": finding.status,
+            "feeds": [{"url": feed.url, "title": feed.title} for feed in finding.feeds]}
 
 
 @app.put("/api/sources/{source_id}/settings")

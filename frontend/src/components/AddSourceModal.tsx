@@ -4,6 +4,7 @@ import { useApi } from '../services/ApiContext';
 import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from './ui';
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
+import type { FeedFinding, FoundFeed } from '../services/api';
 
 type SourceState = 'enabled' | 'disabled' | 'error';
 
@@ -230,6 +231,11 @@ function sameAddress(address: string): string {
   return address.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '');
 }
 
+/** An address as a line shows it: no scheme. */
+function shortAddress(address: string): string {
+  return address.replace(/^https?:\/\//, '');
+}
+
 interface AddSourceModalProps {
   platform: string;
   /** The addresses already in the sources: a one-address template among them is not offered. */
@@ -322,6 +328,54 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
     };
   }, [api, platform, youtubeLookupValue, displayNameManuallyEdited]);
 
+  // A typed address that is not a feed: after a pause (or on leaving the field) the finder
+  // looks for the page's feed, and the field becomes it (issue 0026). Add waits meanwhile.
+  const address = handleOrUrl.trim();
+  const findsFeed = platform === 'rss' && !selectedTemplate;
+  const [lookup, setLookup] = useState('');
+  const [finding, setFinding] = useState<(FeedFinding & { for: string }) | null>(null);
+  const foundFeeds = finding?.feeds ?? [];
+  const settled = !!finding && (finding.for === address || foundFeeds.some((feed) => feed.url === address));
+  const looking = findsFeed && !!address && !settled;
+  const alreadyAdded = !!address && added.has(sameAddress(address));
+
+  useEffect(() => {
+    if (!findsFeed || !address) return;
+    const timeout = window.setTimeout(() => setLookup(address), 600);
+    return () => window.clearTimeout(timeout);
+  }, [findsFeed, address]);
+
+  useEffect(() => {
+    if (!lookup || (finding && (finding.for === lookup || (finding.feeds ?? []).some((feed) => feed.url === lookup)))) return;
+    let cancelled = false;
+    void api.findFeed(lookup).then((result) => {
+      if (cancelled) return;
+      setFinding({ ...result, for: lookup });
+      const first = result.status === 'feed' || result.status === 'found' ? result.feeds?.[0] : undefined;
+      if (first) {
+        setHandleOrUrl(first.url);
+        if (!displayNameManuallyEdited && first.title) setDisplayName(first.title);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [api, lookup, finding, displayNameManuallyEdited]);
+
+  const chooseFeed = (feed: FoundFeed) => {
+    setHandleOrUrl(feed.url);
+    if (!displayNameManuallyEdited && feed.title) setDisplayName(feed.title);
+  };
+
+  const feedNote = !findsFeed || !address ? null
+    : looking ? 'Looking for a feed…'
+      : alreadyAdded ? null
+        : finding?.success === false ? 'Could not look for a feed; the address is added as typed.'
+          : finding?.status === 'direct' ? 'INSIGHT reads this site directly'
+            : finding?.status === 'none' ? 'No feed found on this page'
+              : finding?.status === 'found' && foundFeeds.length === 1 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}`
+                : null;
+  const canAdd = !!address && !saveSid.isPending && !looking && !alreadyAdded
+    && !(findsFeed && finding?.status === 'none');
+
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
     setFetchDelay(template.defaultSettings.fetch_delay_seconds);
@@ -374,7 +428,7 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
       <DialogContent title="Add source" className="w-[min(32rem,calc(100vw-2rem))]">
         <form
           className="mt-4 space-y-5"
-          onSubmit={(event) => { event.preventDefault(); if (handleOrUrl.trim()) void handleAdd(); }}
+          onSubmit={(event) => { event.preventDefault(); if (canAdd) void handleAdd(); }}
         >
           {availableTemplates.length > 0 && (
             <div>
@@ -437,7 +491,32 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
               placeholder="https://example.com/feed.xml"
               disabled={!!selectedTemplate && !!templateVariable}
               autoComplete="off"
+              onBlur={() => { if (findsFeed && address) setLookup(address); }}
             />
+            {alreadyAdded && !looking ? <p role="status" className={hint}>This feed is already in your sources</p> : null}
+            {feedNote ? <p role="status" className={hint}>{feedNote}</p> : null}
+            {findsFeed && settled && finding?.status === 'found' && foundFeeds.length > 1 ? (
+              <fieldset className="mt-2">
+                <legend className={hint}>This page has {foundFeeds.length} feeds</legend>
+                <div className="mt-1.5 space-y-1.5">
+                  {foundFeeds.map((feed) => (
+                    <label key={feed.url} className="flex cursor-pointer items-start gap-2.5 text-[0.8125rem] text-fg">
+                      <input
+                        type="radio"
+                        name="found_feed"
+                        className="mt-1 accent-current"
+                        checked={address === feed.url}
+                        onChange={() => chooseFeed(feed)}
+                      />
+                      <span className="min-w-0">
+                        {feed.title || shortAddress(feed.url)}
+                        <span className="block font-mono text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">{shortAddress(feed.url)}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ) : null}
           </div>
 
           {substack ? (
@@ -536,7 +615,7 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
 
           <DialogFooter>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={!handleOrUrl.trim() || saveSid.isPending}>
+            <Button type="submit" variant="primary" disabled={!canAdd}>
               <Plus aria-hidden="true" /> Add source
             </Button>
           </DialogFooter>
