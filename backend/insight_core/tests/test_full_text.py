@@ -88,6 +88,15 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("enu", text)
         self.assertTrue(text.endswith("The last word."))
 
+    def test_a_small_article_card_does_not_hide_the_main_text(self):
+        # deepmind.google: three <article> cards of 4-12 words, the 1,080-word post in <main>.
+        body = "".join(f"<p>Paragraph {n} of the real post, long enough to read as an article.</p>" for n in range(12))
+        page = ('<html><body><section><article><h3><a href="/blog/x">Related post</a></h3></article></section>'
+                f'<main><h1>SynthID</h1>{body}</main></body></html>')
+        text = _text(page)
+        self.assertIn("Paragraph 11 of the real post", text)
+        self.assertNotIn("Related post", text)
+
     def test_a_themes_tag_list_goes_but_wordpress_article_classes_stay(self):
         # The NVIDIA blog's shape: WordPress classes on <article>, a plugin wrapper, a tag list.
         page = ('<article class="post category-ai tag-agents"><div class="has-highlight-and-share">'
