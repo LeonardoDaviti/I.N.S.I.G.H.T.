@@ -1,4 +1,4 @@
-"""Base for the six site adapters. BaseSourceAdapter implements SourceKind directly.
+"""Base for the seven site adapters. BaseSourceAdapter implements SourceKind directly.
 
 A site adapter is a source kind like any other (spec §D.2): it takes the shared KindHttp,
 uses the pure helpers in ingestion/kinds/parsing.py, and yields one ArchivePage per page

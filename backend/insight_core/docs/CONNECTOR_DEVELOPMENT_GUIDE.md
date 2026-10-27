@@ -14,8 +14,8 @@ so a new kind needs no change anywhere else.
   and matches everything.
 - `ingestion/kinds/*.py`: the generic kinds (`generic_rss`, `substack`, `reddit_subreddit`,
   `youtube_channel`, `telegram_rss`, `nitter_rss`, `telegram_mtproto`).
-- `adapters/*.py`: the six site kinds for sites with no usable feed (LessWrong, Gwern,
-  Dario Amodei, The Batch, Phil Schmid, Zero to Mastery). They extend `BaseSourceAdapter`,
+- `adapters/*.py`: the seven site kinds for sites with no usable feed (LessWrong, Gwern,
+  Dario Amodei, The Batch, Phil Schmid, Zero to Mastery, pipecraft.me). They extend `BaseSourceAdapter`,
   which is a `BaseKind`.
 - `ingestion/kinds/parsing.py`: pure helpers (feed parsing, `strip_html`, dates, article
   extraction, image URLs).
