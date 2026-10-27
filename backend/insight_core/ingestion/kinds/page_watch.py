@@ -69,9 +69,13 @@ def normalise_prefix(value: Any) -> str:
 
 
 def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
-    """An absolute http(s) URL without its fragment or trailing slash; None for anything else."""
-    absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base or url, html.unescape(url.strip())))[0]
-    parsed = urllib.parse.urlparse(absolute)
+    """An absolute http(s) URL without its fragment or trailing slash; None for anything else
+    (a malformed one, "http://[x/", too)."""
+    try:
+        absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base or url, html.unescape(url.strip())))[0]
+        parsed = urllib.parse.urlparse(absolute)
+    except ValueError:
+        return None
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None
     return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/") or "/"))
@@ -143,8 +147,8 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
     entries: List[Tuple[str, Optional[str]]] = []
     read = 0
     while queue and read < MAX_SITEMAPS:
-        url = queue.pop(0)
-        if urllib.parse.urlparse(url).path.endswith(".gz"):
+        url = _clean(queue.pop(0))
+        if url is None or urllib.parse.urlparse(url).path.endswith(".gz"):
             continue
         read += 1
         try:

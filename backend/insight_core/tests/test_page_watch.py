@@ -215,6 +215,14 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertIn(f"{SITE}/news/claude-2", [p["url"] for p in posts])
         self.assertNotIn(f"{SITE}/sitemap-old.xml.gz", self.http.requests)
 
+    def test_a_malformed_link_is_skipped(self):
+        listing = NEWS_PAGE.replace("<main>", '<main><a href="http://[x/">Broken</a>')
+        robots = ROBOTS + "Sitemap: http://[x/sitemap.xml\n"
+        sitemap = SITEMAP.replace("</urlset>", "<url><loc>http://[x/news/y</loc></url></urlset>")
+        posts = run(self.kind(anthropic(**{LISTING: listing, f"{SITE}/robots.txt": robots,
+                                           f"{SITE}/sitemap.xml": sitemap})).fetch_latest(source(), 10))
+        self.assertEqual(len(posts), 5)
+
     def test_a_failing_article_page_is_skipped_but_a_limiting_one_stops_the_fetch(self):
         posts = run(self.kind(anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})).fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])

@@ -240,10 +240,19 @@ def _feed_links(body: bytes, page_url: str) -> List[str]:
         links.close()
     except Exception:  # noqa: BLE001 - keep what was read before the page broke the parser
         pass
-    base = urllib.parse.urljoin(page_url, links.base) if links.base else page_url
-    absolute = (urllib.parse.urldefrag(urllib.parse.urljoin(base, href.strip()))[0]
-                for href in links.alternates + links.anchors)
-    return list(dict.fromkeys(url for url in absolute if urllib.parse.urlparse(url).scheme in ("http", "https")))
+    base = (_absolute(page_url, links.base) if links.base else None) or page_url
+    absolute = (_absolute(base, href) for href in links.alternates + links.anchors)
+    return list(dict.fromkeys(url for url in absolute if url))
+
+
+def _absolute(base: str, href: str) -> Optional[str]:
+    """href as an absolute http(s) URL without its fragment; None for anything else (a
+    malformed one, "http://[x/", too)."""
+    try:
+        url = urllib.parse.urldefrag(urllib.parse.urljoin(base, href.strip()))[0]
+        return url if urllib.parse.urlparse(url).scheme in ("http", "https") else None
+    except ValueError:
+        return None
 
 
 def _is_feed_type(value: str) -> bool:
@@ -252,7 +261,10 @@ def _is_feed_type(value: str) -> bool:
 
 
 def _looks_like_feed(href: str, text: str) -> bool:
-    path = urllib.parse.urlparse(href.lower()).path
+    try:
+        path = urllib.parse.urlparse(href.lower()).path
+    except ValueError:      # a malformed link
+        return False
     return (bool(FEED_SEGMENTS & set(path.split("/"))) or path.endswith(FEED_ENDINGS)
             or " ".join(text.lower().split()) in FEED_LINK_TEXTS)
 
