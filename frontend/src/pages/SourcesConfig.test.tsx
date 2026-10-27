@@ -124,6 +124,13 @@ describe('SourcesConfig', () => {
     expect(screen.getByRole('button', { name: /Failing/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('the old ?status=backoff opens Failing, its chip shown (issue 0029)', async () => {
+    setup('/settings/sources?status=backoff');
+    await screen.findByText('Flaky Feed');
+    expect(rowIds()).toEqual(['flaky']);
+    expect(screen.getByRole('button', { name: /Failing/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('search, status chips and group-by filter and regroup the list', async () => {
     setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
