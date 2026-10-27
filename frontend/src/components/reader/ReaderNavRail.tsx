@@ -117,7 +117,7 @@ function RailContent({ scope, counts, search, onNavigate }: {
   }
 
   return (
-    <nav aria-label="Feeds" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
+    <nav aria-label="Main feed, tracks and sources" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
       <div className="space-y-0.5 pt-2">
         <RailLink
           to={withSearch('/')}
@@ -220,7 +220,7 @@ export default function ReaderNavRail({ scope, counts, search, drawerOpen, onDra
             className="reader-drawer reader-rail fixed inset-y-0 left-0 z-50 flex w-[min(18rem,85vw)] flex-col overflow-y-auto border-r border-line-strong bg-bg md:hidden"
           >
             <div className="flex items-center justify-between pl-4 pr-1 pt-1">
-              <Dialog.Title className="text-[0.9375rem] font-semibold tracking-[-0.011em] text-fg">Feeds</Dialog.Title>
+              <Dialog.Title className="text-[0.9375rem] font-semibold tracking-[-0.011em] text-fg">Main feed, tracks and sources</Dialog.Title>
               <Dialog.Close
                 aria-label="Close navigation"
                 className={iconButtonClass}

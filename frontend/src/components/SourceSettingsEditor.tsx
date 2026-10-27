@@ -186,7 +186,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
         if (isMember) next.add(folderId); else next.delete(folderId);
         return next;
       });
-      setError(res.error || 'Failed to update folders');
+      setError(res.error || 'Could not change the source’s tracks');
     }
   };
 

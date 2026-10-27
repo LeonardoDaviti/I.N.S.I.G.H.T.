@@ -40,7 +40,7 @@ export interface FeedToolbarProps {
   onViewChange: (view: FeedView) => void;
   density: FeedDensity;
   onDensityChange: (density: FeedDensity) => void;
-  /** Below md the title is the button that opens the feeds drawer. */
+  /** Below md the title is the button that opens the drawer of the main feed, tracks and sources. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
   /** One source's posts: no View (nothing to group by source) and no Posts flow choice. */
@@ -56,7 +56,7 @@ export interface FeedToolbarProps {
  * the post page flows (stored here, read there) as slash-separated words; one
  * source's posts show neither the view nor the flow choice. The
  * theme toggle, the wordmark and the app menu live in the top bar only. Below md the title opens
- * the feeds drawer (a chevron says so), so there is no second hamburger. From md
+ * the drawer of the main feed, tracks and sources (a chevron says so), so there is no second hamburger. From md
  * up, a source or track title links to where it is managed in Sources.
  */
 export default function FeedToolbar({
