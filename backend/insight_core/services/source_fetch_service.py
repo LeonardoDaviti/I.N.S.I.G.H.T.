@@ -148,10 +148,7 @@ class SourceFetchService:
     @staticmethod
     def _support(kind: SourceKind, settings: Dict[str, Any], availability: Availability) -> Dict[str, Any]:
         """archive_support from a source's merged settings."""
-        try:
-            limit = int(settings.get("max_posts_per_fetch") or DEFAULT_MAX_POSTS_PER_FETCH)
-        except (TypeError, ValueError):
-            limit = DEFAULT_MAX_POSTS_PER_FETCH
+        limit = int(settings.get("max_posts_per_fetch") or DEFAULT_MAX_POSTS_PER_FETCH)
         # The floor decide_fetch applies too: what one live fetch really reads.
         live_fetch_limit = max(limit, kind.profile.min_posts_per_fetch)
         support: Dict[str, Any] = {
@@ -165,9 +162,8 @@ class SourceFetchService:
         reason = unavailable_reason(kind.profile, availability)
         if reason is not None:
             return {**support, "archivable": False, "reason": reason, "unavailable": True}
-        refused = getattr(kind, "archive_refused", None)
-        if refused:
-            return {**support, "archivable": False, "reason": refused}
+        if kind.archive_refused:
+            return {**support, "archivable": False, "reason": kind.archive_refused}
         if kind.available_basis == "feed_window":
             available = (settings.get("archive") or {}).get("available_posts")
             if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:

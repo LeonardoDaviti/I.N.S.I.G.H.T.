@@ -274,7 +274,6 @@ export interface JobRun {
 
 export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced'
   | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
-export type CadenceTier = 'fast' | 'medium' | 'slow' | 'unknown';
 export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
 /** One status per health row (B6): the summary buckets plus `disabled`. */
 export type HealthStatus = 'error' | 'backoff' | 'unavailable' | 'due' | 'deferred' | 'disabled';
@@ -359,7 +358,6 @@ export interface SourceHealthRow {
   /** When the source was added. */
   created_at: string;
   backlog_posts: number | null;
-  tier: CadenceTier;
   mean_gap_hours: number | null;
   interval_hours: number;
   interval_basis: IntervalBasis;
@@ -514,7 +512,6 @@ export interface NewSource {
   handle_or_url: string;
   display_name?: string;
   fetch_delay_seconds?: number;
-  state?: string;
   /** Follow a page without a feed (issue 0028): stored as settings.page_watch. */
   page_watch?: { prefix: string };
 }

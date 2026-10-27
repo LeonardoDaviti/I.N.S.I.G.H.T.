@@ -323,22 +323,20 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             </>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
-              <Input
-                id="fetch_delay"
-                inputMode="numeric"
-                value={fetchDelayText}
-                onChange={(e) => setFetchDelayText(e.target.value)}
-                aria-invalid={'error' in fetchDelay}
-                aria-describedby="fetch_delay_help"
-                className="tabular-nums"
-              />
-              <p id="fetch_delay_help" className={hint('error' in fetchDelay)}>
-                {'error' in fetchDelay ? `× ${fetchDelay.error}` : '0 to 60 seconds after each fetch.'}
-              </p>
-            </div>
+          <div className="sm:w-1/2">
+            <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
+            <Input
+              id="fetch_delay"
+              inputMode="numeric"
+              value={fetchDelayText}
+              onChange={(e) => setFetchDelayText(e.target.value)}
+              aria-invalid={'error' in fetchDelay}
+              aria-describedby="fetch_delay_help"
+              className="tabular-nums"
+            />
+            <p id="fetch_delay_help" className={hint('error' in fetchDelay)}>
+              {'error' in fetchDelay ? `× ${fetchDelay.error}` : '0 to 60 seconds after each fetch.'}
+            </p>
           </div>
 
           {error ? <Notice tone="error" title={error} /> : null}

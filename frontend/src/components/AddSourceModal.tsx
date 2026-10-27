@@ -7,8 +7,6 @@ import { errorMessage } from '../lib/apiError';
 import { localDateISO, toDate } from '../lib/dates';
 import type { FeedFinding, FoundFeed, PageWatchPreview } from '../services/api';
 
-type SourceState = 'enabled' | 'disabled' | 'error';
-
 interface Template {
   id: string;
   name: string;
@@ -18,12 +16,11 @@ interface Template {
   optionalVariable?: boolean;
   variableLabel?: string;
   placeholder?: string;
-  helperText?: string;
+  helperText: string;
   buildHandle: (value: string) => string;
-  buildDisplayName?: (value: string) => string;
-  defaultSettings: {
-    fetch_delay_seconds: number;
-  };
+  buildDisplayName: (value: string) => string;
+  // Seconds to wait after fetching it; 1 when unset.
+  fetchDelay?: number;
 }
 
 // Hardcoded templates
@@ -37,9 +34,7 @@ const TEMPLATES: Template[] = [
     helperText: 'Creates a source like https://nitter.local/{username}/rss',
     buildHandle: (value) => `https://nitter.local/${value.replace(/^@/, '').trim()}/rss`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
-    defaultSettings: {
-      fetch_delay_seconds: 10,
-    },
+    fetchDelay: 10,
   },
   {
     id: 'telegram-rss',
@@ -50,9 +45,7 @@ const TEMPLATES: Template[] = [
     helperText: 'Creates a source like https://telegram.local/rss/seeallochnaya?limit=50',
     buildHandle: (value) => `https://telegram.local/rss/${value.replace(/^@/, '').trim()}?limit=50`,
     buildDisplayName: (value) => value.replace(/^@/, '').trim(),
-    defaultSettings: {
-      fetch_delay_seconds: 5,
-    },
+    fetchDelay: 5,
   },
   {
     id: 'lesswrong',
@@ -60,9 +53,6 @@ const TEMPLATES: Template[] = [
     helperText: 'LessWrong\'s posts; the archive reaches far back.',
     buildHandle: () => 'https://www.lesswrong.com/feed.xml',
     buildDisplayName: () => 'LessWrong',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'gwern',
@@ -70,9 +60,6 @@ const TEMPLATES: Template[] = [
     helperText: 'Gwern\'s essays from gwern.net; the archive reaches every page.',
     buildHandle: () => 'https://gwern.net',
     buildDisplayName: () => 'Gwern',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'dario-amodei',
@@ -80,9 +67,6 @@ const TEMPLATES: Template[] = [
     helperText: 'Dario Amodei\'s essays and posts from darioamodei.com.',
     buildHandle: () => 'https://darioamodei.com',
     buildDisplayName: () => 'Dario Amodei',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'pipecraft',
@@ -90,9 +74,6 @@ const TEMPLATES: Template[] = [
     helperText: 'Tornike Gomareli\'s posts and essays from pipecraft.me, read in full.',
     buildHandle: () => 'https://www.pipecraft.me/',
     buildDisplayName: () => 'Pipecraft',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'github-trending',
@@ -107,9 +88,6 @@ const TEMPLATES: Template[] = [
       return `https://mshibanami.github.io/GitHubTrendingRSS/daily/${encodeURIComponent(language || 'all')}.xml`;
     },
     buildDisplayName: (value) => (value.trim() ? `GitHub Trending · ${value.trim()}` : 'GitHub Trending'),
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'deeplearning-batch',
@@ -117,9 +95,6 @@ const TEMPLATES: Template[] = [
     helperText: 'Every issue of The Batch newsletter; the archive reaches its first issue.',
     buildHandle: () => 'https://www.deeplearning.ai/the-batch/',
     buildDisplayName: () => 'DeepLearning.AI The Batch',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'philschmid-cloud-attention',
@@ -127,9 +102,6 @@ const TEMPLATES: Template[] = [
     helperText: 'Every issue of Phil Schmid\'s Cloud Attention newsletter, read in full.',
     buildHandle: () => 'https://www.philschmid.de/cloud-attention',
     buildDisplayName: () => 'Phil Schmid Cloud Attention',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
   {
     id: 'ztm-ml-monthly',
@@ -137,17 +109,13 @@ const TEMPLATES: Template[] = [
     helperText: 'Every issue of Zero To Mastery\'s AI & ML Monthly newsletter, read in full.',
     buildHandle: () => 'https://zerotomastery.io/newsletters/machine-learning-monthly/1/',
     buildDisplayName: () => 'Zero To Mastery AI & ML Monthly',
-    defaultSettings: {
-      fetch_delay_seconds: 1,
-    },
   },
 ];
 
 /** The address a template always builds, whatever its field (Pipecraft, Gwern…); null when the
  *  field changes it (Nitter, GitHub Trending), so it can be added once per value. */
 function fixedHandle(template: Template): string | null {
-  const handle = template.buildHandle('a');
-  return handle === template.buildHandle('b') ? handle : null;
+  return template.variableName ? null : template.buildHandle('');
 }
 
 /** An address compared loosely: no scheme, www. or trailing slash, any case. */
@@ -180,7 +148,6 @@ interface AddSourceModalProps {
     handle_or_url: string;
     display_name: string;
     fetch_delay_seconds: number;
-    state: SourceState;
     page_watch?: { prefix: string };
   }) => void;
 }
@@ -217,7 +184,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
       
       // Auto-fill display name if user hasn't manually edited it
       if (!displayNameManuallyEdited) {
-        setDisplayName(selectedTemplate.buildDisplayName?.(normalized) || normalized);
+        setDisplayName(selectedTemplate.buildDisplayName(normalized));
       }
     }
   }, [selectedTemplate, templateVariable, displayNameManuallyEdited]);
@@ -305,19 +272,16 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
-    setFetchDelay(template.defaultSettings.fetch_delay_seconds);
+    setFetchDelay(template.fetchDelay ?? 1);
     // Clear previous values
     setTemplateVariable('');
     const builds = !template.variableName || Boolean(template.optionalVariable);
     setHandleOrUrl(builds ? template.buildHandle('') : '');
-    setDisplayName(builds ? (template.buildDisplayName?.('') || '') : '');
+    setDisplayName(builds ? template.buildDisplayName('') : '');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
   };
 
   const handleAdd = async () => {
-    if (!handleOrUrl.trim()) {
-      return;
-    }
     const cookie = substack ? cookieValue(sid) : '';
     if (cookie) {
       setSidError(null);
@@ -335,7 +299,6 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
       handle_or_url: canFollow && !/^https?:\/\//i.test(address) ? `https://${address}` : address,
       display_name: displayName.trim(),
       fetch_delay_seconds: fetchDelay,
-      state: 'enabled',
       ...(canFollow && pagePreview?.prefix ? { page_watch: { prefix: pagePreview.prefix } } : {}),
     });
 
@@ -374,20 +337,20 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
               {selectedTemplate.variableName ? (
                 <>
                   <label htmlFor="template-var" className={label}>
-                    {(selectedTemplate.variableLabel || selectedTemplate.variableName.charAt(0).toUpperCase() + selectedTemplate.variableName.slice(1))} (for {selectedTemplate.name})
+                    {selectedTemplate.variableLabel} (for {selectedTemplate.name})
                   </label>
                   <Input
                     id="template-var"
                     value={templateVariable}
                     onChange={(e) => setTemplateVariable(e.target.value)}
-                    placeholder={selectedTemplate.placeholder || `Enter ${selectedTemplate.variableName}…`}
+                    placeholder={selectedTemplate.placeholder}
                   />
                   <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
                     → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
                   </p>
                 </>
               ) : null}
-              {selectedTemplate.helperText && <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>}
+              <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>
             </div>
           )}
 
@@ -517,20 +480,18 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
 
           <details className="group">
             <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Advanced</summary>
-            <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
-                <Input
-                  id="fetch_delay"
-                  type="number"
-                  min="0"
-                  max="60"
-                  value={fetchDelay}
-                  onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
-                  className="tabular-nums"
-                />
-                <p className={hint}>Wait after fetching this source.</p>
-              </div>
+            <div className="mt-3 sm:w-1/2">
+              <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
+              <Input
+                id="fetch_delay"
+                type="number"
+                min="0"
+                max="60"
+                value={fetchDelay}
+                onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
+                className="tabular-nums"
+              />
+              <p className={hint}>Wait after fetching this source.</p>
             </div>
           </details>
 
