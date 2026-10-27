@@ -30,6 +30,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | Trending built (RSS feed); Following later |
 | [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
 | [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |
+| [0026](0026-feed-finder.md) | Find a site's feed from any page URL | ready-for-agent |
 
 ## Analysis archive
 
@@ -46,4 +47,3 @@ Still open from the old backend `FUTURES.md` (the rest is built or obsolete):
 - Conditional fetching: send `ETag` / `If-Modified-Since` and skip unchanged feeds.
 - Post versioning: keep a post's earlier text when its source edits it.
 - Retention: a policy for old posts (soft delete, then purge).
-- Feed discovery: find the feed from a site URL when adding a source.
