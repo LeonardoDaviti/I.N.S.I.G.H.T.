@@ -425,13 +425,10 @@ class CredentialsServiceTests(unittest.TestCase):
     def _provider(self, listing, provider):
         return next(p for p in listing["providers"] if p["provider"] == provider)
 
-    def test_listing_names_every_provider_and_public_feeds_need_nothing(self):
+    def test_listing_names_the_providers_with_something_to_add(self):
+        # Issue 0027: Reddit and YouTube read public feeds, so they have no row at all.
         listing = self.service.list()
-        self.assertEqual([p["provider"] for p in listing["providers"]],
-                         ["substack", "telegram", "reddit", "youtube"])
-        reddit = self._provider(listing, "reddit")
-        self.assertFalse(reddit["needed"])
-        self.assertEqual(reddit["fields"], [])
+        self.assertEqual([p["provider"] for p in listing["providers"]], ["substack", "telegram"])
         sid = self._field(self._provider(listing, "substack"), "sid")
         self.assertEqual((sid["set"], sid["source"], sid["last4"]), (False, "none", None))
         self.assertNotIn("env", sid)
@@ -476,7 +473,7 @@ class CredentialsServiceTests(unittest.TestCase):
             self.service.put("substack", "password", "x")
         with self.assertRaises(CredentialInvalid):
             self.service.put("telegram", "session", "1abc")
-        with self.assertRaises(CredentialInvalid):
+        with self.assertRaises(CredentialNotFound):
             run(self.service.test("reddit"))
 
     def test_the_substack_test_is_recorded_and_a_new_value_clears_it(self):

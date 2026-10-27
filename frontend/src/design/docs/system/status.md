@@ -22,7 +22,7 @@ Every state is a shape plus a word, never colour alone. Glyphs are inline SVG (f
 | `starred` | ★ filled star | starred | `text` |
 | `running` | ◐ (static) + "running…" | running | `text`; no spinner loop faster than needed |
 
-Connections reuse the glyphs with their own words: `working`, `set · not tested`, `failing`, `incomplete`, `sign in needed`, `not set`, `not needed` (`components/connections/connectionStatus.ts`).
+Connections reuse the glyphs with their own words: `working`, `set · not tested`, `failing`, `incomplete`, `sign in needed`, `not set` (`components/connections/connectionStatus.ts`).
 
 - **Destructive actions:** `Button variant="danger"` is an inverted block and always sits behind a `ConfirmDialog` that says what goes with it.
 - **Errors:** `Notice tone="error"` and `ErrorState` (inverted glyph block + the word). Warnings use a dashed border.

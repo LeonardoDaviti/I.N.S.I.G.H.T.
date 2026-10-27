@@ -9,7 +9,7 @@ Providers:
 - substack {sid}: the substack.sid cookie of the owner's logged-in browser.
 - telegram {api_id, api_hash, session}: the session is the Telethon StringSession saved by
   the browser sign-in (login_start -> login_code -> login_password), the only session.
-- reddit, youtube: public feeds, nothing to add.
+- Reddit and YouTube read public feeds: nothing to add, so they have no row.
 A row stored for a provider not listed here (an old gemini key) is kept but never shown.
 
 Test: substack reads the newest paid post of a configured Substack source (or asks
@@ -53,7 +53,6 @@ class ProviderSpec:
     label: str
     description: str
     fields: Tuple[FieldSpec, ...] = ()
-    needed: bool = True
     testable: bool = False
     sign_in: bool = False
 
@@ -77,8 +76,6 @@ PROVIDERS: Tuple[ProviderSpec, ...] = (
         testable=True,
         sign_in=True,
     ),
-    ProviderSpec("reddit", "Reddit", "Not needed: public feeds.", needed=False),
-    ProviderSpec("youtube", "YouTube", "Not needed: public feeds.", needed=False),
 )
 _SPECS = {spec.provider: spec for spec in PROVIDERS}
 
@@ -204,7 +201,7 @@ class CredentialsService:
             fields.append(view)
         return {
             "provider": spec.provider, "label": spec.label, "description": spec.description,
-            "needed": spec.needed, "testable": spec.testable, "sign_in": spec.sign_in,
+            "testable": spec.testable, "sign_in": spec.sign_in,
             "configured": bool(fields) and all(f["set"] for f in fields),
             "fields": fields,
             "test": self._test_view(spec.provider, rows),

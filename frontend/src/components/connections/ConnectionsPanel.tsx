@@ -36,25 +36,18 @@ function ProviderSection({ view, open, onToggle }: { view: CredentialProviderVie
   return (
     <li className="border-b border-line last:border-b-0" data-provider={view.provider}>
       <h3 className="m-0">
-        {view.needed ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls={panelId}
-            onClick={onToggle}
-            className={cn(ROW, 'rounded-sm hover:bg-raised/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg')}
-          >
-            <ChevronRight aria-hidden="true" className={cn('mt-[0.2rem] h-4 w-4 shrink-0 text-fg-3', open && 'rotate-90')} />
-            {heading}
-          </button>
-        ) : (
-          <div className={ROW}>
-            <span aria-hidden="true" className="h-4 w-4 shrink-0" />
-            {heading}
-          </div>
-        )}
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onToggle}
+          className={cn(ROW, 'rounded-sm hover:bg-raised/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg')}
+        >
+          <ChevronRight aria-hidden="true" className={cn('mt-[0.2rem] h-4 w-4 shrink-0 text-fg-3', open && 'rotate-90')} />
+          {heading}
+        </button>
       </h3>
-      {open && view.needed ? (
+      {open ? (
         <div id={panelId} className="space-y-5 pb-5 pl-8 pr-1 pt-1">
           {view.provider === 'substack' ? <SubstackHowTo /> : null}
           {writable.map((field) => (

@@ -9,7 +9,7 @@ import type { FixtureRoute } from '../frame/transport';
 import { pending, serverError } from '../frame/transport';
 import type { FrameDriver } from '../frame/driver';
 import type { CredentialsResponse } from '../../services/api';
-import { credentials, publicView, substackView, telegramView } from '../../components/connections/fixtures';
+import { credentials, substackView, telegramView } from '../../components/connections/fixtures';
 import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
 import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
@@ -101,21 +101,17 @@ const SCENARIOS: FrameScenario[] = [
     routes: connections((now) => credentials(
       substackView({ test: tested(now, true, 'Read the newest paid post of The Kaitchup in full') }, SET),
       telegramView({ apiSet: true, session: true, test: tested(now, true, 'Signed in as @owner') }),
-      publicView('reddit'),
-      publicView('youtube'),
     )),
   },
   {
     page: 'sources', state: 'connections-unset', label: 'Nothing set', url: '/settings/sources?tab=connections', documented: true,
-    routes: connections(() => credentials(substackView(), telegramView(), publicView('reddit'), publicView('youtube'))),
+    routes: connections(() => credentials(substackView(), telegramView())),
   },
   {
     page: 'sources', state: 'connections-expired', label: 'A failing test and a lapsed session', url: '/settings/sources?tab=connections', documented: true,
     routes: connections((now) => credentials(
       substackView({ test: tested(now, false, 'substack.com answered 401 Unauthorized: the session cookie has expired; copy a fresh substack.sid') }, SET),
       telegramView({ apiSet: true, session: false }),
-      publicView('reddit'),
-      publicView('youtube'),
     )),
   },
   {

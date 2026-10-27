@@ -302,7 +302,7 @@ export interface RunReport {
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -331,7 +331,6 @@ export interface CredentialProviderView {
   provider: CredentialProviderId;
   label: string;
   description: string;
-  needed: boolean;
   testable: boolean;
   sign_in: boolean;
   configured: boolean;

@@ -19,10 +19,9 @@ export interface ProviderStatus {
 /**
  * One provider's state as a glyph and a word (monochrome, design docs system/status.md):
  * working (tested ok), failing (last test failed, or a saved value cannot be read),
- * set (all fields set, not tested yet), not set, not needed.
+ * set (all fields set, not tested yet), not set.
  */
 export function providerStatus(view: CredentialProviderView): ProviderStatus {
-  if (!view.needed) return { glyph: 'disabled', label: 'not needed' };
   const broken = view.fields.find((f) => f.error);
   if (broken) return { glyph: 'failing', label: 'failing', message: broken.error ?? undefined };
   if (view.test && !view.test.ok) return { glyph: 'failing', label: 'failing', message: view.test.message };
