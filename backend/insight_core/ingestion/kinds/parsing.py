@@ -138,8 +138,19 @@ def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
     if tag in ("html", "body"):
         return False
     tokens = " ".join(value or "" for name, value in attrs if name in ("class", "id")).lower().split()
-    return any(token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) or token in CHROME_TOKENS
-               or any(part in token for part in CHROME_PARTS) for token in tokens)
+    return any(_chrome_token(token) for token in tokens)
+
+
+def _chrome_token(token: str) -> bool:
+    if (token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) or token in CHROME_TOKENS
+            or any(part in token for part in CHROME_PARTS)):
+        return True
+    # A component part ("block__element"): each part is judged on its own, so blog.google's
+    # "article-share__title" and 9to5google's "article__meta-guides" go, while a whole-article
+    # wrapper like "has-highlight-and-share" (no "__") stays.
+    parts = token.split("__")
+    return len(parts) > 1 and any(part.startswith(CHROME_PREFIXES + ("meta",)) or part.endswith(("-share", "_share"))
+                                  for part in parts)
 
 
 class _ChromeStripper(HTMLParser):

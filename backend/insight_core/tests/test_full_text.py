@@ -109,6 +109,17 @@ class ArticleExtractionTests(unittest.TestCase):
         # Without a base, a relative image can't be fetched, so it goes.
         self.assertNotIn("local.jpg", parsing.extract_article_html(page))
 
+    def test_component_parts_named_share_or_meta_are_chrome_but_a_share_wrapper_is_not(self):
+        # blog.google's "article-share__title", 9to5google's "article__meta-guides" (2026-10-28);
+        # NVIDIA wraps whole articles in "has-highlight-and-share", which must stay.
+        page = ('<html><body><main><div class="article-share__title"><p>Share x.com Facebook LinkedIn</p></div>'
+                '<ul class="article__meta-guides"><li class="meta__guide">Samsung</li></ul>'
+                f'<div class="has-highlight-and-share">{PARAGRAPHS}</div></main></body></html>')
+        text = _text(page)
+        self.assertNotIn("LinkedIn", text)
+        self.assertNotIn("Samsung", text)
+        self.assertIn("Paragraph 11 of what the author wrote", text)
+
     def test_a_table_of_contents_is_not_the_article(self):
         # anthropic.com: a sticky "Chapter 01: Connecting people to trusted sources" menu.
         page = ('<html><body><main><div class="StickyTableOfContents-module__Trigger"><p>Chapter 01: '
