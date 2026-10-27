@@ -256,7 +256,15 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dic
     if not address:
         raise ValueError("An address is needed to follow a page")
     address = address if "://" in address else f"https://{address}"
-    found = await discover(http, address, prefix)
+    if urllib.parse.urlparse(address).scheme.lower() not in ("http", "https"):
+        raise ValueError("Only an http or https page can be followed")
+    try:
+        found = await discover(http, address, prefix)
+    except HttpError as exc:
+        # The detail goes back to the caller: the status, never the site's answer.
+        logger.info("Page watch preview: %s could not be read (%s)", address, str(exc)[:300])
+        reason = f"HTTP {exc.status}" if exc.status else "no answer in time" if exc.timed_out else "no connection"
+        raise ValueError(f"The page could not be read ({reason})") from None
     candidates = found.candidates()
     fan_out = asyncio.Semaphore(PREVIEW_FAN_OUT)
 

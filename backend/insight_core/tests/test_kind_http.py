@@ -50,6 +50,16 @@ class DroppedConnectionTests(unittest.TestCase):
                 asyncio.run(KindHttp().get_start("https://x.example/", 10))
 
 
+class SchemeTests(unittest.TestCase):
+    def test_only_http_and_https_are_requested(self):
+        with mock.patch.object(urllib.request, "urlopen") as urlopen:
+            for call in (lambda h: h.get_text("file:///etc/hostname"), lambda h: h.get_start("ftp://x.example/", 10),
+                         lambda h: h.post_json("gopher://x.example/", {})):
+                with self.assertRaises(HttpError):
+                    asyncio.run(call(KindHttp()))
+        urlopen.assert_not_called()
+
+
 class SlowDrip:
     """A local server that answers at once with a long body, then drips it a byte at a time.
     `closed_after` is the seconds from the request until the client closed the connection."""

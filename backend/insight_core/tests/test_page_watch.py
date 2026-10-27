@@ -351,6 +351,21 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertGreaterEqual(status, 400)
         self.assertFalse(body.get("success", False))
 
+    def test_the_sites_answer_stays_out_of_the_error(self):
+        self.http.responses["https://secret.example/"] = HttpError(
+            "HTTP 500 while fetching https://secret.example/: internal token abc123", status=500)
+        status, _, body = call(main.app, "POST", "/api/sources/page-watch/preview",
+                               json_body={"url": "https://secret.example/"})
+        self.assertEqual(status, 400)
+        self.assertNotIn("abc123", str(body))
+        self.assertIn("HTTP 500", str(body))
+
+    def test_only_http_and_https_pages_are_previewed(self):
+        status, _, body = call(main.app, "POST", "/api/sources/page-watch/preview",
+                               json_body={"url": "file:///etc/hostname"})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.http.requests, [])
+
 
 class AddPageWatchSourceTests(unittest.TestCase):
     def test_add_passes_settings_page_watch(self):

@@ -8,7 +8,7 @@ urllib is blocking, so every request runs in a worker thread: the loop's default
 or the executor given (the Add source dialog's client has its own few threads, so a slow
 site it is asked about never holds up ingestion's).
 
-It only classifies failures: every one (a dropped connection or a truncated body too) is an HttpError (a ValueError), carrying the status,
+It requests only http and https addresses, and only classifies failures: every one (a dropped connection or a truncated body too) is an HttpError (a ValueError), carrying the status,
 the Retry-After seconds and whether it timed out. Retrying and slowing down are the
 caller's, where the host is known (issue 0016).
 """
@@ -74,6 +74,12 @@ def _classified(action: str, url: str) -> Iterator[None]:
         raise HttpError(f"Timed out {action} {url}", timed_out=True) from exc
     except (OSError, http.client.HTTPException) as exc:   # a dropped connection, a truncated body
         raise HttpError(f"Failed {action} {url}: {type(exc).__name__}") from exc
+
+
+def _web(url: str) -> None:
+    """Only http and https are requested: a file:// or ftp:// address is an HttpError."""
+    if urllib.parse.urlparse(url).scheme.lower() not in ("http", "https"):
+        raise HttpError(f"Not a web address: {url}")
 
 
 def _env_hosts(name: str, default: str = "") -> set[str]:
@@ -163,6 +169,7 @@ class KindHttp:
     def _get_text_sync(
         self, url: str, user_agent: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None
     ) -> Tuple[str, Dict[str, str]]:
+        _web(url)
         request = urllib.request.Request(
             url,
             headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*", **(extra_headers or {})},
@@ -174,6 +181,7 @@ class KindHttp:
                 return body, headers
 
     def _get_start_sync(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
+        _web(url)
         deadline = time.monotonic() + self.timeout
         request = urllib.request.Request(url, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
         with _classified("fetching", url):
@@ -196,6 +204,7 @@ class KindHttp:
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        _web(url)
         body = json.dumps(payload).encode("utf-8")
         headers = {
             "User-Agent": user_agent or self.user_agent,
