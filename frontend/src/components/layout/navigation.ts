@@ -51,8 +51,7 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'feed-starred', label: 'Starred', group: 'feed', to: '/?filter=starred', keywords: 'saved favourites star' },
   { id: 'feed-all', label: 'All posts', group: 'feed', to: '/?filter=all', keywords: 'everything posts' },
   { id: 'feed-by-source', label: 'By source', group: 'feed', to: '/?view=by_source', keywords: 'grouped sources view' },
-  { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source' },
-  { id: 'sources-health', label: 'Source health', group: 'sources', to: '/settings/sources?tab=health', keywords: 'cadence backoff failing due schedule' },
+  { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source health cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },
   { id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' },
 ];
