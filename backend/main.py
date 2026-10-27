@@ -23,6 +23,7 @@ from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.ingestion import run_ingestion
 from insight_core.ingestion.feed_finder import find_feeds
 from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.kinds import page_watch
 from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
@@ -278,10 +279,16 @@ class NewSourceRequest(BaseModel):
     priority: int | None = None
     max_posts_per_fetch: int | None = None
     state: str | None = "enabled"
+    page_watch: Dict[str, Any] | None = None     # settings.page_watch: follow a page (issue 0028)
 
 
 class FindFeedRequest(BaseModel):
     url: str = ""
+
+
+class PageWatchPreviewRequest(BaseModel):
+    url: str = ""
+    prefix: str | None = None
 
 
 class SourceEnabledRequest(BaseModel):
@@ -688,6 +695,8 @@ async def add_source(request: NewSourceRequest):
     platform = (request.platform or "rss").strip()
     settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority",
                                            "max_posts_per_fetch"}, exclude_none=True)
+    if request.page_watch is not None:
+        settings["page_watch"] = request.page_watch
     created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
                                                    enabled=(request.state or "enabled") == "enabled")
     _export_sources_json()
@@ -695,7 +704,7 @@ async def add_source(request: NewSourceRequest):
             "handle_or_url": created["handle"]}
 
 
-# The feed finder's own client: a short socket timeout (it bounds every request itself too).
+# The Add source dialog's own client (the feed finder, the page-watch preview): a short socket timeout.
 FEED_FINDER_HTTP = KindHttp(timeout=5)
 
 
@@ -707,6 +716,16 @@ async def find_feed(request: FindFeedRequest):
     finding = await find_feeds(FEED_FINDER_HTTP, services().source_fetch.kinds, request.url)
     return {"success": True, "status": finding.status,
             "feeds": [{"url": feed.url, "title": feed.title} for feed in finding.feeds]}
+
+
+@app.post("/api/sources/page-watch/preview")
+@error_detail("preview the page")
+async def preview_page_watch(request: PageWatchPreviewRequest):
+    """Following a page without a feed (issue 0028): {prefix, found (article URLs discovered),
+    sitemap (some came from the sitemap), items [{url, title, published_at}]}, the first 5 read.
+    No items: the page's articles cannot be read (built with JavaScript). 400 when url is empty
+    or the page cannot be read."""
+    return {"success": True, **await page_watch.preview(FEED_FINDER_HTTP, request.url, request.prefix)}
 
 
 @app.put("/api/sources/{source_id}/settings")

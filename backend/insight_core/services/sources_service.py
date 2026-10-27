@@ -8,7 +8,16 @@ import psycopg
 
 from insight_core.db import database as db
 from insight_core.db.repo_sources import SourcesRepository
+from insight_core.ingestion.kinds.page_watch import normalise_prefix
 from insight_core.logs.core.logger_config import get_component_logger
+
+def _valid_page_watch(value: Any) -> Dict[str, Any]:
+    """settings.page_watch (issue 0028): {} or {"prefix": "/news/"}."""
+    if not isinstance(value, dict):
+        raise ValueError("page_watch must be an object")
+    prefix = value.get("prefix")
+    return {"prefix": normalise_prefix(prefix)} if prefix else {}
+
 
 class SourcesService:
     """Manages sources (add, update, delete, list)."""
@@ -157,8 +166,10 @@ class SourcesService:
     @staticmethod
     def _valid_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         """The settings a user may set, the numbers parsed. ValueError for a value that is not a number."""
-        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch"}
+        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "max_posts_per_fetch", "page_watch"}
         validated = {k: v for k, v in settings.items() if k in valid_keys}
+        if "page_watch" in validated:
+            validated["page_watch"] = _valid_page_watch(validated["page_watch"])
         for key in ("fetch_delay_seconds", "priority", "max_posts_per_fetch"):
             if key in validated:
                 try:

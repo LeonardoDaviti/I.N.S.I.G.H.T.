@@ -10,10 +10,18 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/base.py`: the interface (`SourceKind`), the `BaseKind` defaults,
   `PolitenessProfile`, `RateLimit`, `Inspection`, `ArchivePage`, `KindUnavailable`.
 - `ingestion/kinds/__init__.py`: `KindRegistry`. `KindRegistry.default` lists the real kinds
-  in resolution order. The first kind whose `matches()` is true wins. `generic_rss` is last
-  and matches everything.
-- `ingestion/kinds/*.py`: the generic kinds (`generic_rss`, `substack`, `reddit_subreddit`,
-  `youtube_channel`, `telegram_rss`, `nitter_rss`, `telegram_mtproto`).
+  in resolution order. The first kind whose `matches()` is true wins. `page_watch` is first
+  (its setting is the owner's explicit choice); `generic_rss` is last and matches everything.
+- `ingestion/kinds/*.py`: the generic kinds (`page_watch`, `generic_rss`, `substack`,
+  `reddit_subreddit`, `youtube_channel`, `telegram_rss`, `nitter_rss`, `telegram_mtproto`).
+- `ingestion/kinds/page_watch.py` (issue 0028): a page with no feed, followed. It matches
+  `settings.page_watch = {"prefix"?: "/news/"}` and reads the listing page's same-host links
+  under the prefix (page order) plus the sitemap's URLs under it (robots.txt `Sitemap:`, else
+  `/sitemap.xml`), each article page through `extract_article_html`, dated from the page's own
+  meta (the sitemap's lastmod is a fallback: it is often a redeploy date). A page with no body,
+  or with neither a date nor `og:type` article (a category page), is no post. It extends
+  `BaseSourceAdapter` for `index_pages`, one article per archive page. `preview()` is behind
+  `POST /api/sources/page-watch/preview`. Before writing a site adapter, try it.
 - `adapters/*.py`: the seven site kinds for sites with no usable feed (LessWrong, Gwern,
   Dario Amodei, The Batch, Phil Schmid, Zero to Mastery, pipecraft.me). They extend `BaseSourceAdapter`,
   which is a `BaseKind`.

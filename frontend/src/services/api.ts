@@ -547,6 +547,8 @@ export interface NewSource {
   priority?: number;
   max_posts_per_fetch?: number;
   state?: string;
+  /** Follow a page without a feed (issue 0028): stored as settings.page_watch. */
+  page_watch?: { prefix: string };
 }
 
 export interface AddSourceResponse extends Envelope {
@@ -562,6 +564,15 @@ export interface FoundFeed {
 export interface FeedFinding extends Envelope {
   status?: 'feed' | 'found' | 'direct' | 'none';
   feeds?: FoundFeed[];
+}
+
+/** Following a page without a feed (issue 0028): the article URLs found under the path, the first few read. */
+export interface PageWatchPreview extends Envelope {
+  prefix?: string;
+  found?: number;
+  /** Some of the articles came from the site's sitemap. */
+  sitemap?: boolean;
+  items?: { url: string; title: string; published_at: string | null }[];
 }
 
 export interface YouTubeProgressInput {
@@ -681,6 +692,9 @@ export function createApi() {
     addSource: (payload: NewSource) => settle(request<AddSourceResponse>('/api/sources', { method: 'POST', body: payload })),
     /** The feeds for any page address (issue 0026); takes up to about 10 seconds. */
     findFeed: (url: string) => settle(request<FeedFinding>('/api/sources/find-feed', { method: 'POST', body: { url } })),
+    /** What following a page without a feed would give (issue 0028); reads a few of its pages. */
+    previewPageWatch: (url: string, prefix?: string) =>
+      settle(request<PageWatchPreview>('/api/sources/page-watch/preview', { method: 'POST', body: { url, ...(prefix ? { prefix } : {}) } })),
     updateSourceSettings: (sourceId: string, settings: SourceSettings) =>
       settle(request<SourceSettingsResponse>(`/api/sources/${sourceId}/settings`, { method: 'PUT', body: settings })),
     setSourceEnabled: (sourceId: string, enabled: boolean) =>

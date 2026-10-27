@@ -323,10 +323,10 @@ describe('SourcesConfig', () => {
   });
 
   describe('Add source finds the feed of a page (issue 0026)', () => {
-    const typePage = async (findFeed: unknown, getSources?: unknown) => {
+    const typePage = async (findFeed: unknown, getSources?: unknown, more: Record<string, unknown> = {}) => {
       const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'new-1' });
       setup('/settings/sources', { addSource, findFeed, fetchSourceNow: vi.fn().mockResolvedValue(runReport()),
-        ...(getSources ? { getSources } : {}) });
+        ...(getSources ? { getSources } : {}), ...more });
       if (getSources) await waitFor(() => expect(getSources).toHaveBeenCalled());
       await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
       const dialog = await screen.findByRole('dialog');
@@ -381,6 +381,49 @@ describe('SourcesConfig', () => {
       const { dialog, add } = await typePage(vi.fn().mockResolvedValue({ success: true, status: 'none', feeds: [] }));
       expect(await within(dialog).findByText('No feed found on this page')).toBeInTheDocument();
       expect(add).toBeDisabled();
+    });
+
+    describe('no feed: follow the page instead (issue 0028)', () => {
+      const none = () => vi.fn().mockResolvedValue({ success: true, status: 'none', feeds: [] });
+      const items = [
+        { url: 'https://borretti.me/article/a', title: 'Article A', published_at: '2026-10-12T00:00:00+00:00' },
+        { url: 'https://borretti.me/article/b', title: 'Article B', published_at: '2026-10-01T00:00:00+00:00' },
+      ];
+
+      it('shows the preview, re-previews a new path, and adds with settings.page_watch', async () => {
+        const previewPageWatch = vi.fn((_url: string, prefix?: string) => Promise.resolve(prefix
+          ? { success: true, prefix, found: 1, sitemap: false, items: items.slice(1) }
+          : { success: true, prefix: '/article/', found: 279, sitemap: true, items }));
+        const { dialog, add, addSource } = await typePage(none(), undefined, { previewPageWatch });
+        await userEvent.click(await within(dialog).findByRole('button', { name: 'Follow this page instead' }));
+
+        expect(await within(dialog).findByText('Found 279 articles under /article/ (from the sitemap)')).toBeInTheDocument();
+        expect(previewPageWatch).toHaveBeenCalledWith('borretti.me/article/no-man-is-an-island', undefined);
+        expect(within(dialog).getByText('Article A')).toBeInTheDocument();
+        expect(within(dialog).getByText('2026-10-12')).toBeInTheDocument();
+        const path = within(dialog).getByLabelText(/^Path/);
+        expect(path).toHaveValue('/article/');
+        expect(add).toBeEnabled();
+
+        await userEvent.clear(path);
+        await userEvent.type(path, 'article/b');
+        expect(await within(dialog).findByText('Found 1 article under /article/b/')).toBeInTheDocument();
+        expect(previewPageWatch).toHaveBeenLastCalledWith('borretti.me/article/no-man-is-an-island', '/article/b/');
+        expect(within(dialog).queryByText('Article A')).not.toBeInTheDocument();
+
+        await userEvent.click(add);
+        await waitFor(() => expect(addSource).toHaveBeenCalled());
+        expect(addSource.mock.calls[0][0]).toMatchObject({
+          handle_or_url: 'https://borretti.me/article/no-man-is-an-island', page_watch: { prefix: '/article/b/' } });
+      });
+
+      it('a page built with JavaScript says so and cannot be added', async () => {
+        const previewPageWatch = vi.fn().mockResolvedValue({ success: true, prefix: '/', found: 0, sitemap: false, items: [] });
+        const { dialog, add } = await typePage(none(), undefined, { previewPageWatch });
+        await userEvent.click(await within(dialog).findByRole('button', { name: 'Follow this page instead' }));
+        expect(await within(dialog).findByText('This page\'s articles can\'t be read without a browser (it builds them with JavaScript).')).toBeInTheDocument();
+        expect(add).toBeDisabled();
+      });
     });
 
     it('a found feed already in the sources says so', async () => {

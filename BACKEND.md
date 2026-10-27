@@ -412,8 +412,9 @@ the result when the job finishes.
 | POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
 | POST | `/api/posts/item/{post_id}/reddit-comments` | Fetch a Reddit post's comments | `{limit?, refresh?, asyncMode?}` |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
-| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled"}` |
+| POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
 | POST | `/api/sources/find-feed` | The feeds for any page address (`ingestion/feed_finder.py`, under 10 s): `{status: feed\|found\|direct\|none, feeds: [{url, title}]}` | `{url}` (no scheme: https) |
+| POST | `/api/sources/page-watch/preview` | Following a page without a feed (`ingestion/kinds/page_watch.py`, issue 0028): `{prefix, found, sitemap, items: [{url, title, published_at}]}`, `found` the article URLs under the prefix (listing links and sitemap), `items` the first 5 read; no items: its articles need a browser. 400 when the page cannot be read | `{url, prefix?}` (no scheme: https; prefix inferred from the page's path) |
 | PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, max_posts_per_fetch}` |
 | PUT | `/api/sources/{source_id}/enabled` | Enable or disable | `{enabled}` |
 | PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |

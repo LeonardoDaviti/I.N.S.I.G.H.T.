@@ -32,6 +32,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |
 | [0026](0026-feed-finder.md) | Find a site's feed from any page URL | built, not deployed |
 | [0027](0027-illogicalities.md) | Illogicalities: controls and words that contradict their place | discussion |
+| [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, not deployed |
 
 ## Analysis archive
 
