@@ -210,6 +210,15 @@ def extract_article_html(html_text: str) -> str:
     return ""
 
 
+def web_address(value: Any, needed: str) -> str:
+    """An address as the owner typed it ("a.com/blog"), stripped, with https:// when it has no
+    scheme. ValueError(needed) when it is empty."""
+    address = str(value or "").strip()
+    if not address:
+        raise ValueError(needed)
+    return address if "://" in address else f"https://{address}"
+
+
 def origin_from_source(source_url: str, fallback: str) -> str:
     parsed = urllib.parse.urlparse(source_url)
     if parsed.scheme and parsed.netloc:

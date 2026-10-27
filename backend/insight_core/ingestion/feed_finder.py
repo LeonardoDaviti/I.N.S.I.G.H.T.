@@ -31,7 +31,7 @@ from typing import Iterable, List, Literal, Optional, Sequence, Tuple
 
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
-from insight_core.ingestion.kinds.parsing import local_name, path_segments
+from insight_core.ingestion.kinds.parsing import local_name, origin_from_source, path_segments, web_address
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
 
@@ -85,10 +85,7 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFi
 
 
 def _normalise(url: str) -> str:
-    address = (url or "").strip()
-    if not address:
-        raise ValueError("An address is needed to look for its feed")
-    parsed = urllib.parse.urlparse(address if "://" in address else f"https://{address}")
+    parsed = urllib.parse.urlparse(web_address(url, "An address is needed to look for its feed"))
     return urllib.parse.urlunparse(parsed._replace(path=parsed.path or "/"))
 
 
@@ -121,7 +118,7 @@ class _Search:
         if feeds := await self._prove([link for got in pages if got for link in _feed_links(*got)]):
             return FeedFinding("found", feeds)
 
-        origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlparse(here))
+        origin = origin_from_source(here, "")
         if feeds := await self._prove([origin + path for path in COMMON_PATHS], limit=None, first=True):
             return FeedFinding("found", feeds[:1])
         return FeedFinding("none")
@@ -202,8 +199,7 @@ def _platform_feed(url: str) -> Optional[str]:
 
 def _around(here: str, url: str) -> List[str]:
     """The section page (first path segment) and the home page of here, less the page itself."""
-    parsed = urllib.parse.urlparse(here)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
+    origin = origin_from_source(here, "")
     segments = path_segments(here)
     pages = ([f"{origin}/{segments[0]}/"] if len(segments) >= 2 else []) + [f"{origin}/"]
     seen = {here.rstrip("/"), url.rstrip("/")}

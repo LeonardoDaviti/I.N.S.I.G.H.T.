@@ -146,7 +146,7 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
 
 
 async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tuple[str, Optional[str]]]:
-    origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlparse(listing))
+    origin = parsing.origin_from_source(listing, "")
     try:
         robots, _ = await http.get_text(f"{origin}/robots.txt")
     except Exception:  # noqa: BLE001 - no robots.txt: the usual address
@@ -219,13 +219,8 @@ def _title(page: str, url: str) -> str:
     return title or url
 
 
-async def read_page(http: KindHttp, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
-    """The post at url, or None when the page is no article (see the module docstring)."""
-    page, _ = await http.get_text(url)
-    return post_from(page, source_url, url, lastmod)
-
-
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
+    """The post the page at url is, or None when it is no article (see the module docstring)."""
     content_html = parsing.extract_article_html(page)
     content = parsing.strip_html(content_html)
     date = page_date(page)
@@ -252,10 +247,7 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime])
 async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dict[str, Any]:
     """What following the page would give: {prefix, found, sitemap, items[{url, title, published_at}]},
     items the first PREVIEW_ITEMS posts (read PREVIEW_FAN_OUT at a time)."""
-    address = (url or "").strip()
-    if not address:
-        raise ValueError("An address is needed to follow a page")
-    address = address if "://" in address else f"https://{address}"
+    address = parsing.web_address(url, "An address is needed to follow a page")
     if urllib.parse.urlparse(address).scheme.lower() not in ("http", "https"):
         raise ValueError("Only an http or https page can be followed")
     try:
@@ -271,7 +263,8 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dic
     async def one(candidate: str) -> Optional[Dict[str, Any]]:
         async with fan_out:
             try:
-                return await read_page(http, address, candidate, found.sitemap.get(candidate))
+                page, _ = await http.get_text(candidate)
+                return post_from(page, address, candidate, found.sitemap.get(candidate))
             except Exception as exc:  # noqa: BLE001 - an unreadable page is just not shown
                 logger.debug("Page watch preview: %s skipped (%s)", candidate, exc)
                 return None
