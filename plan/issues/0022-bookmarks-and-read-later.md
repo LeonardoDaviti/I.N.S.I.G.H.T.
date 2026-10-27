@@ -1,6 +1,6 @@
 # 0022 — Bookmarks: read later, keep, and what the star means
 
-Status: **discussion** (owner, 2026-10-27). Nothing is built; decide the model first.
+Status: **discussion** (owner, 2026-10-27): ideology proposed 2026-10-28, below. Nothing is built.
 
 ## The owner's observations
 - "Can you add a feature like bookmarks? But first discuss how bookmarks should work for each post and what bookmarks are needed for." (2026-10-16)
@@ -23,3 +23,15 @@ Status: **discussion** (owner, 2026-10-27). Nothing is built; decide the model f
 ## Notes for the discussion
 - The likely smallest model: an unread row offers **Read later**; the star means **Keep** and is offered once a post is read. A "Read later" view in the reader rail lists them; reading one clears it. Remembering the scroll position in a long post is a separate, small feature.
 - Saved posts are input for the future analysis version: what I keep says what matters to me (compare 0013, priority order).
+
+## Proposed ideology (2026-10-28, for the owner to decide)
+**Read later is a short promise that keeps itself small; Keep is a small library of what mattered.**
+- The trap: read-later apps become graveyards (saving is free, reading costs time; Pocket shut down 2025, Omnivore 2024). Pinterest never empties boards because a save there is inspiration that takes a second to look at, and every save teaches it your taste; for reading, borrow only "a save is a signal" (Discover, the analysis version).
+- **Later empties itself:** finishing a post clears it; unopened for 14 days, it leaves Later quietly (still in its source and All).
+- **Later shows its cost and sits in your path:** one quiet line at the top of the Main feed, "Later · 6 posts · 52 min"; the list oldest first.
+- **Keep is deliberate and rare:** offered at the end of a read post ("Keep this?") and on the post page, not on unread rows. Never automatic.
+- **No folders or boards:** tracks group sources, search (v9.3) finds anything.
+- Show: Unread · Later · Kept · All (Starred goes). Keys: `l` Later, `s` Keep.
+- Saved pages (0031) go to Later by default once this lands.
+
+**Decisions:** the expiry (14 d / 7 d / never); whether Later posts leave Unread (proposed: yes); today's stars → Kept (or Later if unread).
