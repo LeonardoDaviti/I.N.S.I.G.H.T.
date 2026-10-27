@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { RunReport, SchedulerConfig } from '../../services/api';
 import { OPERATIONS_OVERVIEW_KEY, SCHEDULER_KEY, useOperationsOverview, useSchedulerConfig } from '../../hooks/useOperations';
@@ -10,6 +10,7 @@ import { useNow } from '../../hooks/useNow';
 import { asRunReport } from '../../lib/runReport';
 import { formatCount } from '../../lib/format';
 import { nextTickLabel, schedulerStaleness } from '../../lib/schedulerStatus';
+import { WEB_BUILD, versionLine } from '../../lib/version';
 import IngestionStatusNotice from '../ops/IngestionStatusNotice';
 import RunCycleButton from '../ops/RunCycleButton';
 import RunReportSummary from '../ops/RunReportSummary';
@@ -41,6 +42,8 @@ export default function IngestionPanel() {
   const scheduler = useSchedulerConfig();
   // Every 30 seconds: enough for a minute countdown.
   const nowMs = useNow(30_000).getTime();
+  // The API's build, once per page load: the line at the bottom (issue 0020).
+  const apiVersion = useQuery({ queryKey: ['version'], queryFn: () => api.getVersion(), staleTime: Infinity, retry: false });
 
   // The newest stored ingestion run, so the report survives a reload.
   const storedReport = (() => {
@@ -121,6 +124,7 @@ export default function IngestionPanel() {
           </section>
         </div>
       )}
+      <p className="text-[0.75rem] tabular-nums text-fg-3">{versionLine(WEB_BUILD, apiVersion.data)}</p>
       {scheduler.data && schedulerOpen ? (
         <SchedulerDialog
           open

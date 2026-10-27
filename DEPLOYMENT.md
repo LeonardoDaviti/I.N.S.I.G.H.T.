@@ -75,6 +75,17 @@ docker compose up -d --remove-orphans
 `./update` does the same without the dump: `git pull`, `docker compose down`, build, `up -d`.
 If only environment variables changed: `docker compose up -d --force-recreate`.
 
+### Version
+
+The repo-root `VERSION` file holds the running version in the Mark scheme, e.g.
+`Mark IX v9.1` (Mark = major, vN.x = its release). Bump it by hand in each release's commit.
+`./update` exports it with the commit as build args, `INSIGHT_VERSION` (VERSION's contents),
+`INSIGHT_COMMIT` (short SHA) and `INSIGHT_COMMIT_DATE` (YYYY-MM-DD); compose passes them to
+the backend, ingestion and frontend images. The API answers them at `GET /api/version`, the
+web app has them inlined by Vite, and the Ingestion tab's last line shows both, saying "out of
+step" when they differ. A plain `docker compose build` leaves them empty: `dev build`. To stamp
+one by hand, export the three as `./update` does before building.
+
 An older `.env` may still hold `INSIGHT_ANALYSIS`, `VITE_INSIGHT_ANALYSIS`, `GEMINI_*`,
 `GOOGLE_API_KEY` or `INSIGHT_GENERATE_*_BRIEFING` from the analysis version. Nothing reads them
 any more, so they are harmless; delete them when convenient. A Gemini key saved in Connections

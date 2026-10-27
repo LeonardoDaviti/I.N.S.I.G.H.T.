@@ -1022,6 +1022,13 @@ async def health_check():
     }
 
 
+@app.get("/api/version")
+async def get_version():
+    """The build this image was stamped with (INSIGHT_VERSION, INSIGHT_COMMIT,
+    INSIGHT_COMMIT_DATE; issue 0020). Each is null when unset, as in local dev."""
+    return {key: os.getenv(f"INSIGHT_{key.upper()}") or None for key in ("version", "commit", "commit_date")}
+
+
 @app.get("/api/status", response_model=SystemStatus)
 @error_detail("build the system status")
 async def get_status():

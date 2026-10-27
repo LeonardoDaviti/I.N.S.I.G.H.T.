@@ -22,6 +22,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # The build stamp (issue 0020), exported by ./update from VERSION.
+        INSIGHT_VERSION: ${INSIGHT_VERSION:-}
+        INSIGHT_COMMIT: ${INSIGHT_COMMIT:-}
+        INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-api
     restart: unless-stopped
     depends_on:
@@ -67,6 +72,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # The build stamp (issue 0020), exported by ./update from VERSION.
+        INSIGHT_VERSION: ${INSIGHT_VERSION:-}
+        INSIGHT_COMMIT: ${INSIGHT_COMMIT:-}
+        INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-ingestion
     restart: unless-stopped
     depends_on:
@@ -113,6 +123,10 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        # The build stamp (issue 0020), exported by ./update from VERSION.
+        INSIGHT_VERSION: ${INSIGHT_VERSION:-}
+        INSIGHT_COMMIT: ${INSIGHT_COMMIT:-}
+        INSIGHT_COMMIT_DATE: ${INSIGHT_COMMIT_DATE:-}
     container_name: insight-frontend
     restart: unless-stopped
     depends_on:

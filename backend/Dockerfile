@@ -19,6 +19,15 @@ RUN python -m pip install --upgrade pip && python -m pip install --no-cache-dir 
 COPY . .
 RUN chmod +x docker/start-backend.sh docker/start-ingestion.sh
 
+# The build stamp (issue 0020): GET /api/version reads these. Last, so a new commit
+# rebuilds only this layer.
+ARG INSIGHT_VERSION=
+ARG INSIGHT_COMMIT=
+ARG INSIGHT_COMMIT_DATE=
+ENV INSIGHT_VERSION=$INSIGHT_VERSION \
+    INSIGHT_COMMIT=$INSIGHT_COMMIT \
+    INSIGHT_COMMIT_DATE=$INSIGHT_COMMIT_DATE
+
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
