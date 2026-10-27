@@ -652,7 +652,7 @@ export function createApi() {
     /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
     setCadenceOverride: (sourceId: string, hours: number | null) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
-    /** Include/exclude one source from the main digest and the main feed. */
+    /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
         `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
@@ -668,7 +668,7 @@ export function createApi() {
     /** Rename a track. */
     renameTrack: (folderId: string, name: string) => request<Envelope>(`/api/folders/${enc(folderId)}`, { method: 'PUT', body: { name } }),
     deleteFolder: (folderId: string) => settle(request<Envelope>(`/api/folders/${folderId}`, { method: 'DELETE' })),
-    /** Every source in the track in (true) or out of (false) the main feed and digest. */
+    /** Every source in the track shown in (true) or left out of (false) the Main feed. */
     setTrackMainDigest: (folderId: string, inMainDigest: boolean) =>
       request<Envelope>(`/api/folders/${enc(folderId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } }),
     getSourceFolders: (sourceId: string) => settle(request<SourceFoldersResponse>(`/api/sources/${sourceId}/folders`)),

@@ -116,7 +116,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const fetchDelay = parseWhole(fetchDelayText, 0, 60, 'Fetch delay');
   const formValid = 'value' in fetchDelay;
 
-  // Cadence and the main-digest flag come from the health row (one cached query for all sources).
+  // Cadence and the main-feed flag come from the health row (one cached query for all sources).
   const health = useSourcesHealth();
   const healthRow = givenRow ?? health.data?.rows.find((row) => row.source_id === source.id) ?? null;
   const { run, isRunning } = useIngestionRun();
@@ -293,9 +293,9 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <>
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">In the main feed and digest</div>
+                  <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">Show in Main feed</div>
                   <p className="mt-0.5 text-[0.75rem] text-fg-3">
-                    Off keeps it fetched and readable through its tracks, but out of the feed. Saves instantly.
+                    Off keeps it fetched and readable on its own page, but out of the Main feed. Saves instantly.
                   </p>
                 </div>
                 <Switch

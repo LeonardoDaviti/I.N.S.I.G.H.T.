@@ -8,7 +8,7 @@ const ITEM =
 
 /**
  * The ⋯ menu beside a track title: rare actions live here, off the scanning
- * path (rename, the main-digest switch, delete; on a phone also fetch now). A small hand-rolled menu
+ * path (rename, Show in Main feed, delete; on a phone also fetch now). A small hand-rolled menu
  * (button + role="menu"): arrows and Home/End move, Escape, outside click and
  * Tab close it, focus moves into it on open and back to ⋯ on close.
  */
@@ -108,7 +108,7 @@ export default function TrackMenu({
             <span aria-hidden="true" className="inline-flex w-3 justify-center">
               {inMainDigest === 'mixed' ? <Minus className="h-3.5 w-3.5" /> : inMainDigest ? <Check className="h-3.5 w-3.5" /> : null}
             </span>
-            In main feed and digest
+            Show in Main feed
           </button>
           <div role="separator" className="my-1 h-px bg-line" />
           <button type="button" role="menuitem" onClick={pick(onDelete)} className={`${ITEM} font-medium`}>

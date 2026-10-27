@@ -270,9 +270,9 @@ export default function SourcesConfig() {
     const ok = await each(ids, async (id) => {
       await api.setSourceMainDigest(id, on);
       return { success: true };
-    }, on ? 'add to the main digest' : 'take out of the main digest');
+    }, on ? 'show in the Main feed' : 'leave out of the Main feed');
     void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
-    if (ok) toast(`${plural(ids.length, 'source')} ${on ? 'in' : 'out of'} the main digest`);
+    if (ok) toast(`${plural(ids.length, 'source')} ${on ? 'shown in' : 'left out of'} the Main feed`);
   };
 
   const trackActions: TrackActions = {
@@ -290,7 +290,7 @@ export default function SourcesConfig() {
       void (async () => {
         try {
           await api.setTrackMainDigest(id, on);
-          toast(`${name}: ${on ? 'in' : 'out of'} the main feed and digest`);
+          toast(`${name}: ${on ? 'shown in' : 'left out of'} the Main feed`);
         } catch (err) {
           setError(`Could not change ${name}: ${errorMessage(err)}`);
         }

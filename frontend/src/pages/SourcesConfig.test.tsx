@@ -246,6 +246,15 @@ describe('SourcesConfig', () => {
     expect(sent).not.toHaveProperty('priority');
   });
 
+  it('the sheet names the switch "Show in Main feed", says no digest and nothing about tracks it may not have (issue 0027)', async () => {
+    setup();
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('switch', { name: 'Show in Main feed' })).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/digest/i);
+    expect(sheet).not.toHaveTextContent(/through its tracks/i);
+  });
+
   it.each([
     ['a disabled source', healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [] }),
       /Off: not fetched until you switch it on/],
@@ -520,7 +529,7 @@ describe('SourcesConfig', () => {
     expect(within(rowOf('off')).getByRole('checkbox').className).not.toContain('opacity-0');
   });
 
-  it('the bulk bar removes from a track and switches the main digest', async () => {
+  it('the bulk bar removes from a track and switches Show in Main feed', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');
     await userEvent.click(within(rowOf('simon')).getByRole('checkbox'));
@@ -533,7 +542,7 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.removeSourceFromFolder).toHaveBeenCalledWith('f-ar', 'off'));
     expect(api.removeSourceFromFolder).toHaveBeenCalledTimes(1);
 
-    await userEvent.selectOptions(within(bar).getByRole('combobox', { name: 'Main digest' }), 'off');
+    await userEvent.selectOptions(within(bar).getByRole('combobox', { name: 'Show in Main feed' }), 'off');
     await waitFor(() => expect(api.setSourceMainDigest).toHaveBeenCalledTimes(2));
     expect(api.setSourceMainDigest).toHaveBeenCalledWith('simon', false);
     expect(api.setSourceMainDigest).toHaveBeenCalledWith('off', false);
@@ -541,7 +550,7 @@ describe('SourcesConfig', () => {
     expect(within(bar).getByRole('button', { name: 'Delete…' })).toBeInTheDocument();
   });
 
-  it('a track header fetches the track; its menu renames, switches the digest and deletes after a confirmation', async () => {
+  it('a track header fetches the track; its menu renames, switches Show in Main feed and deletes after a confirmation', async () => {
     const fetchFolderNow = vi.fn().mockResolvedValue(runReport());
     const { api } = setup('/settings/sources?group=track', { fetchFolderNow });
     await screen.findByText('Road to VR');
@@ -563,7 +572,7 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.renameTrack).toHaveBeenCalledWith('f-ai', 'Agents'));
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
-    const digest = screen.getByRole('menuitemcheckbox', { name: 'In main feed and digest' });
+    const digest = screen.getByRole('menuitemcheckbox', { name: 'Show in Main feed' });
     expect(digest).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(digest);
     await waitFor(() => expect(api.setTrackMainDigest).toHaveBeenCalledWith('f-ai', false));

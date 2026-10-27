@@ -12,7 +12,7 @@ const PICKER =
 /**
  * Appears while sources are selected: a small floating bar at the bottom
  * centre (translucent, one short ease-out in; none under reduced motion).
- * Enable, disable, add to / remove from a track, main digest on/off, delete;
+ * Enable, disable, add to / remove from a track, Show in Main feed on/off, delete;
  * Esc or × clears the selection. The pickers are native selects that act on
  * change and reset, so each is one gesture.
  */
@@ -83,7 +83,7 @@ export default function BulkActionBar({
           </select>
         </>
       ) : null}
-      <label htmlFor={digestId} className="sr-only">Main digest</label>
+      <label htmlFor={digestId} className="sr-only">Show in Main feed</label>
       <select
         id={digestId}
         value=""
@@ -91,9 +91,9 @@ export default function BulkActionBar({
         onChange={(event) => { if (event.target.value) onMainDigest(event.target.value === 'on'); }}
         className={PICKER}
       >
-        <option value="">Main digest…</option>
-        <option value="on">In the main digest</option>
-        <option value="off">Out of the main digest</option>
+        <option value="">Main feed…</option>
+        <option value="on">Show in Main feed</option>
+        <option value="off">Leave out of Main feed</option>
       </select>
       <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete}>Delete…</Button>
       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClear} aria-label="Clear selection" title="Clear selection (Esc)">

@@ -56,7 +56,7 @@ export interface DirectorySource extends SearchableSource {
 
 /**
  * Every source the reader can open, for the rail's filter: all health rows
- * (enabled or not, in the main digest or not) with their readable label, kind
+ * (enabled or not, in the Main feed or not) with their readable label, kind
  * and, once `withUrls` is on, their feed URL. The URLs come from
  * GET /api/sources, fetched only when the owner starts filtering;
  * until then (or if it fails) a source matches on its names and kind.

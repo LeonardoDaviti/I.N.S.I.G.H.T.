@@ -14,7 +14,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 
 ## Entry & URL
 
-- `/` is the unread feed of the main digest. `/read/:scopeKind/:scopeId?` scopes it: `/read/folder/<id>` (a track), `/read/source/<id>` (a source). An unknown scope kind redirects to `/`.
+- `/` is the Main feed: its unread posts from the sources shown in it. `/read/:scopeKind/:scopeId?` scopes it: `/read/folder/<id>` (a track), `/read/source/<id>` (a source). An unknown scope kind redirects to `/`.
 - `/tracks/:id` redirects (replace) to `/read/folder/:id` (decision 010).
 - Query: `?filter=unread|starred|all` (unread is the default and stays out of the URL), `?view=stream|by_source`, dev-only `?data=worst|empty|one|huge`. Density (`comfortable / compact`) persists locally, not in the URL.
 - Reached from the wordmark, the `feed` nav word, the rail, ⌘K (Main feed, By source, one entry per track) and Back from a post. Old links keep working: `/?filter=starred` opens the main feed with Show starred.
