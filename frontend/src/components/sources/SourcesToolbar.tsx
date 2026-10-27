@@ -19,8 +19,8 @@ import {
 
 /**
  * The one toolbar above the list (sticky, translucent): search, status chips
- * and group-by. The primary chips (all, enabled, disabled, failing,
- * unavailable) always show; the secondary ones (backoff, due, scheduled) only
+ * and group-by. The primary chips (all, enabled, disabled, failing) always
+ * show; the secondary ones (unavailable, due, scheduled) only
  * with sources or while selected. Below md, where columns hide, "Sort: Added ↓"
  * opens the column headers' sort buttons as a row. Its height is published as
  * `--sources-toolbar-h` so group headers stick right under it.

@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Inbox, Star, X } from 'lucide-react';
+import { Inbox, X } from 'lucide-react';
 
-import type { FeedFilter, UnreadCounts } from '../../services/api';
+import type { UnreadCounts } from '../../services/api';
 import { useReaderDirectory, useSourceDirectory } from '../../hooks/useReaderDirectory';
 import { scopePath } from '../../lib/feedContext';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
@@ -87,8 +87,8 @@ function SourceFilter({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
-function RailContent({ scope, filter, counts, search, onNavigate }: {
-  scope: string; filter: FeedFilter; counts: UnreadCounts | undefined; search: string; onNavigate?: () => void;
+function RailContent({ scope, counts, search, onNavigate }: {
+  scope: string; counts: UnreadCounts | undefined; search: string; onNavigate?: () => void;
 }) {
   const { folders } = useReaderDirectory();
   const [showAllSources, setShowAllSources] = useState(false);
@@ -100,7 +100,7 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
   const unread = (id: string) => counts?.by_source?.[id] ?? 0;
 
   // Most unread first, then by name. A source the directory cannot name (deleted)
-  // has no row: "Unknown source 12,847" is noise; its posts stay in All posts.
+  // has no row: "Unknown source 12,847" is noise; its posts stay in the main feed.
   const allSources = useMemo(() => [...directory.sources].sort((a, b) => (
     (counts?.by_source?.[b.id] ?? 0) - (counts?.by_source?.[a.id] ?? 0) || a.label.localeCompare(b.label)
   )), [directory.sources, counts]);
@@ -117,21 +117,14 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
   }
 
   return (
-    <nav aria-label="Feeds" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
+    <nav aria-label="Main feed, tracks and sources" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
       <div className="space-y-0.5 pt-2">
         <RailLink
           to={withSearch('/')}
-          current={scope === 'all' && filter !== 'starred'}
-          label="All posts"
+          current={scope === 'all'}
+          label="Main feed"
           count={counts?.total}
           icon={<Inbox aria-hidden="true" className="h-4 w-4 shrink-0" />}
-          onNavigate={onNavigate}
-        />
-        <RailLink
-          to="/?filter=starred"
-          current={scope === 'all' && filter === 'starred'}
-          label="Starred"
-          icon={<Star aria-hidden="true" className="h-4 w-4 shrink-0" />}
           onNavigate={onNavigate}
         />
       </div>
@@ -192,7 +185,7 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
 }
 
 /**
- * The reader's persistent nav (spec §F.1 item 8): All posts, Starred, the tracks
+ * The reader's persistent nav (spec §F.1 item 8): the main feed, the tracks
  * and the sources with unread posts, each with its unread badge. The wordmark
  * and the app sections live in the top bar only; this rail is just the feeds.
  * The sources section has a filter over every source (not only those with
@@ -200,9 +193,8 @@ function RailContent({ scope, filter, counts, search, onNavigate }: {
  * is a sticky rail; below md the same content is a drawer opened from the
  * toolbar, which slides in from the left and leaves the same way.
  */
-export default function ReaderNavRail({ scope, filter, counts, search, drawerOpen, onDrawerOpenChange }: {
+export default function ReaderNavRail({ scope, counts, search, drawerOpen, onDrawerOpenChange }: {
   scope: string;
-  filter: FeedFilter;
   counts: UnreadCounts | undefined;
   /** The query string kept on rail links (view etc.), with its leading "?" or empty. */
   search: string;
@@ -212,7 +204,7 @@ export default function ReaderNavRail({ scope, filter, counts, search, drawerOpe
   return (
     <>
       <aside className="reader-rail sticky top-topbar hidden h-[calc(100dvh-var(--topbar-h))] w-60 shrink-0 flex-col overflow-y-auto border-r border-line pt-2 md:flex lg:w-64">
-        <RailContent scope={scope} filter={filter} counts={counts} search={search} />
+        <RailContent scope={scope} counts={counts} search={search} />
       </aside>
       <Dialog.Root open={drawerOpen} onOpenChange={onDrawerOpenChange}>
         <Dialog.Portal>
@@ -228,7 +220,7 @@ export default function ReaderNavRail({ scope, filter, counts, search, drawerOpe
             className="reader-drawer reader-rail fixed inset-y-0 left-0 z-50 flex w-[min(18rem,85vw)] flex-col overflow-y-auto border-r border-line-strong bg-bg md:hidden"
           >
             <div className="flex items-center justify-between pl-4 pr-1 pt-1">
-              <Dialog.Title className="text-[0.9375rem] font-semibold tracking-[-0.011em] text-fg">Feeds</Dialog.Title>
+              <Dialog.Title className="text-[0.9375rem] font-semibold tracking-[-0.011em] text-fg">Main feed, tracks and sources</Dialog.Title>
               <Dialog.Close
                 aria-label="Close navigation"
                 className={iconButtonClass}
@@ -236,7 +228,7 @@ export default function ReaderNavRail({ scope, filter, counts, search, drawerOpe
                 <X aria-hidden="true" className="h-4 w-4" />
               </Dialog.Close>
             </div>
-            <RailContent scope={scope} filter={filter} counts={counts} search={search} onNavigate={() => onDrawerOpenChange(false)} />
+            <RailContent scope={scope} counts={counts} search={search} onNavigate={() => onDrawerOpenChange(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

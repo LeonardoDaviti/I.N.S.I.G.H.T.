@@ -43,18 +43,27 @@ beforeEach(() => {
 describe('ReaderNavRail', () => {
   it('renders unread badges from the counts', async () => {
     setup();
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     expect(await within(rail).findByRole('link', { name: /Agentic News.*5 unread/ })).toBeInTheDocument();
     expect(await within(rail).findByRole('link', { name: /Simon Willison’s Weblog.*7 unread/ })).toBeInTheDocument();
-    expect(within(rail).getByRole('link', { name: /All posts.*12,847 unread/ })).toBeInTheDocument();
+    expect(within(rail).getByRole('link', { name: /Main feed.*12,847 unread/ })).toBeInTheDocument();
   });
 
   it('marks the active scope with aria-current="page"', async () => {
     setup(`/read/folder/${FOLDER}`);
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     const active = await within(rail).findByRole('link', { name: /Agentic News/ });
     expect(active).toHaveAttribute('aria-current', 'page');
-    expect(within(rail).getByRole('link', { name: /All posts/ })).not.toHaveAttribute('aria-current');
+    expect(within(rail).getByRole('link', { name: /Main feed/ })).not.toHaveAttribute('aria-current');
+  });
+
+  it('the scope is "Main feed"; Starred is only a Show choice, and /?filter=starred still opens it (issue 0027)', async () => {
+    setup('/?filter=starred');
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
+    expect(within(rail).queryByRole('link', { name: /Starred/ })).toBeNull();
+    expect(within(rail).getByRole('link', { name: /Main feed/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('radio', { name: 'Starred' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Main feed/);
   });
 
   it('below md it is a drawer toggled from the toolbar', async () => {
@@ -62,15 +71,15 @@ describe('ReaderNavRail', () => {
     setup();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /open navigation/i }));
-    const drawer = await screen.findByRole('dialog', { name: 'Feeds' });
-    expect(within(drawer).getByRole('link', { name: /All posts/ })).toBeInTheDocument();
+    const drawer = await screen.findByRole('dialog', { name: 'Main feed, tracks and sources' });
+    expect(within(drawer).getByRole('link', { name: /Main feed/ })).toBeInTheDocument();
     await user.click(within(drawer).getByRole('link', { name: /Agentic News/ }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('carries only feeds: no second wordmark, no dead hub link, no theme toggle (the top bar owns those)', async () => {
     setup();
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     expect(within(rail).queryByRole('link', { name: /all tools/i })).not.toBeInTheDocument();
     expect(screen.queryByText('INSIGHT')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /switch to (light|dark) theme/i })).not.toBeInTheDocument();
@@ -78,14 +87,14 @@ describe('ReaderNavRail', () => {
 
   it('never shows a raw feed URL: URL-named sources get a derived name', async () => {
     setup('/', 'https://rss.arxiv.org/rss/cs.AI');
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     expect(await within(rail).findByRole('link', { name: /^arXiv cs\.AI/ })).toBeInTheDocument();
     expect(within(rail).queryByText(/rss\.arxiv\.org/)).not.toBeInTheDocument();
   });
 
   it('hides an unread source the directory cannot name instead of "Unknown source"', async () => {
     setup('/', 'Simon Willison’s Weblog', { total: 9, by_source: { [SOURCE]: 7, 'gone-source': 2 }, by_folder: {} });
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     expect(await within(rail).findByRole('link', { name: /Simon Willison’s Weblog.*7 unread/ })).toBeInTheDocument();
     expect(within(rail).queryByText(/Unknown source/)).not.toBeInTheDocument();
     expect(within(rail).queryByRole('link', { name: /2 unread/ })).not.toBeInTheDocument();
@@ -93,7 +102,7 @@ describe('ReaderNavRail', () => {
 
   it('has no settings link (the top bar owns sources)', async () => {
     setup();
-    const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+    const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
     expect(within(rail).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
   });
 
@@ -124,7 +133,7 @@ describe('ReaderNavRail', () => {
     }
 
     async function railAndField(firstLink: RegExp = /Simon Willison’s Weblog/) {
-      const rail = await screen.findByRole('navigation', { name: 'Feeds' });
+      const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
       await within(rail).findByRole('link', { name: firstLink });
       return { rail, field: within(rail).getByRole('textbox', { name: 'Filter sources' }) };
     }
@@ -203,13 +212,13 @@ describe('ReaderNavRail', () => {
       setupDirectory();
       await railAndField();
       await user.click(screen.getByRole('button', { name: /open navigation/i }));
-      const drawer = await screen.findByRole('dialog', { name: 'Feeds' });
+      const drawer = await screen.findByRole('dialog', { name: 'Main feed, tracks and sources' });
       const field = within(drawer).getByRole('textbox', { name: 'Filter sources' });
       await user.click(field);
       await user.type(field, 'cafe');
       await user.keyboard('{Escape}');
       expect(field).toHaveValue('');
-      expect(screen.getByRole('dialog', { name: 'Feeds' })).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'Main feed, tracks and sources' })).toBeInTheDocument();
       await user.keyboard('{Escape}');
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });

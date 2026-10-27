@@ -1,11 +1,11 @@
 /**
- * Source schedule presentation (Mark IX §F.3): due times, backoff, cadence tiers,
+ * Source schedule presentation (Mark IX §F.3): due times, backoff, how often a source is fetched,
  * intervals and the health-table order. Pure; `now` is injected.
  *
  * `sortHealthRows` mirrors `operations_service._health_sort_key` exactly, so the
  * table reads in the same order the API returns and the next run decides.
  */
-import type { CadenceTier, HealthStatus, IntervalBasis, SourceHealthRow } from '../services/api';
+import type { HealthStatus, SourceHealthRow } from '../services/api';
 import { toDate } from './dates.ts';
 import { formatHours, formatSpan } from './duration.ts';
 
@@ -20,14 +20,6 @@ export const HEALTH_STATUS_LABELS: Record<HealthStatus, string> = {
   due: 'Due',
   deferred: 'Scheduled',
   disabled: 'Disabled',
-};
-
-export const INTERVAL_BASIS_LABELS: Record<IntervalBasis, string> = {
-  override: 'override',
-  tier: 'tier',
-  probation: 'probation',
-  backlog_guard: 'backlog guard',
-  profile_floor: 'kind floor',
 };
 
 /** Override bounds accepted by PUT /api/sources/{id}/cadence (90 days max). */
@@ -53,19 +45,22 @@ export function backoffLabel(row: SourceHealthRow, now: Date = new Date()): stri
   return row.dormant ? `dormant · ${base}` : base;
 }
 
-const TIER_LABELS: Record<CadenceTier, string> = {
-  fast: 'Fast',
-  medium: 'Medium',
-  slow: 'Slow',
-  unknown: 'Probation',
-};
-
-export function tierLabel(tier: CadenceTier): string {
-  return TIER_LABELS[tier] ?? tier;
+/** Why a source waits as long as it does, in plain words (no tier, guard or floor). */
+function cadenceReason(row: Pick<SourceHealthRow, 'interval_basis' | 'mean_gap_hours'>): string {
+  switch (row.interval_basis) {
+    case 'override': return 'your own setting';
+    case 'probation': return 'new source, until it has 3 dated posts';
+    case 'backlog_guard': return 'often enough to catch every post its feed lists';
+    case 'profile_floor': return 'the least wait for its kind';
+    default: return row.mean_gap_hours !== null && row.mean_gap_hours !== undefined
+      ? `it posts about every ${formatHours(row.mean_gap_hours)}`
+      : 'from how often it posts';
+  }
 }
 
-export function intervalLabel(row: Pick<SourceHealthRow, 'interval_hours' | 'interval_basis'>): string {
-  return `every ${formatHours(row.interval_hours)} · ${INTERVAL_BASIS_LABELS[row.interval_basis] ?? row.interval_basis}`;
+/** "Fetched every 1d (new source, until it has 3 dated posts)". */
+export function cadenceLine(row: Pick<SourceHealthRow, 'interval_hours' | 'interval_basis' | 'mean_gap_hours'>): string {
+  return `Fetched every ${formatHours(row.interval_hours)} (${cadenceReason(row)})`;
 }
 
 /** A status's place in HEALTH_STATUS_ORDER (worst first); unknown statuses come last. */
@@ -129,12 +124,12 @@ export function filterHealthRows(rows: readonly SourceHealthRow[], status: strin
 
 export type OverrideParse = { ok: true; value: number | null } | { ok: false; error: string };
 
-/** The override field: empty clears it (back to the tier), otherwise hours in [1, 2160]. */
+/** The "Set your own" field: empty clears it (back to automatic), otherwise hours in [1, 2160]. */
 export function parseOverrideHours(input: string): OverrideParse {
   const text = input.trim();
   if (!text) return { ok: true, value: null };
   if (!/^\d+(\.\d+)?$/.test(text)) {
-    return { ok: false, error: 'Enter a number of hours, or leave it empty to use the cadence tier.' };
+    return { ok: false, error: 'Enter a number of hours, or leave it empty to fetch it automatically.' };
   }
   const value = Number(text);
   if (!Number.isFinite(value) || value < OVERRIDE_MIN_HOURS || value > OVERRIDE_MAX_HOURS) {

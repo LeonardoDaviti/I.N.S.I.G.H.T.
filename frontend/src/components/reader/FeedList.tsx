@@ -316,6 +316,7 @@ function FeedList({
                   dayLabel={days[index].label}
                   position={index + 1}
                   setSize={hasNextPage ? -1 : items.length}
+                  showSource={!scope.startsWith('source:')}
                   {...shared}
                 />
               </Fragment>

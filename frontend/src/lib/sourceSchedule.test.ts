@@ -7,10 +7,9 @@ import {
   effectiveHealthStatus,
   filterHealthRows,
   formatDue,
-  intervalLabel,
+  cadenceLine,
   parseOverrideHours,
   sortHealthRows,
-  tierLabel,
   withEffectiveStatus,
 } from './sourceSchedule.ts';
 import type { SourceHealthRow } from '../services/api';
@@ -84,17 +83,19 @@ test('backoffLabel: retry countdown, dormant, retry due, none', () => {
   assert.equal(backoffLabel(row(), NOW), null);
 });
 
-test('tierLabel names every cadence tier', () => {
-  assert.equal(tierLabel('fast'), 'Fast');
-  assert.equal(tierLabel('medium'), 'Medium');
-  assert.equal(tierLabel('slow'), 'Slow');
-  assert.equal(tierLabel('unknown'), 'Probation');
-});
-
-test('intervalLabel', () => {
-  assert.equal(intervalLabel(row({ interval_hours: 6, interval_basis: 'override' })), 'every 6h · override');
-  assert.equal(intervalLabel(row({ interval_hours: 24, interval_basis: 'probation' })), 'every 1d · probation');
-  assert.equal(intervalLabel(row({ interval_hours: 3, interval_basis: 'backlog_guard' })), 'every 3h · backlog guard');
+test('cadenceLine says how often and why, in plain words (issue 0027)', () => {
+  assert.equal(cadenceLine(row({ interval_hours: 24, interval_basis: 'probation' })),
+    'Fetched every 1d (new source, until it has 3 dated posts)');
+  assert.equal(cadenceLine(row({ interval_hours: 6, interval_basis: 'override' })), 'Fetched every 6h (your own setting)');
+  assert.equal(cadenceLine(row({ interval_hours: 4, interval_basis: 'tier', mean_gap_hours: 8 })),
+    'Fetched every 4h (it posts about every 8h)');
+  assert.equal(cadenceLine(row({ interval_hours: 3, interval_basis: 'backlog_guard' })),
+    'Fetched every 3h (often enough to catch every post its feed lists)');
+  assert.equal(cadenceLine(row({ interval_hours: 168, interval_basis: 'profile_floor' })),
+    'Fetched every 7d (the least wait for its kind)');
+  for (const basis of ['probation', 'override', 'tier', 'backlog_guard', 'profile_floor'] as const) {
+    assert.doesNotMatch(cadenceLine(row({ interval_hours: 5, interval_basis: basis })), /probation|tier|guard|floor|override/i);
+  }
 });
 
 test('sortHealthRows matches the backend: status order, then most failures, then soonest due, then name', () => {

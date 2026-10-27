@@ -38,8 +38,8 @@ export interface TrackActions {
   fetch: (folderId: string, name: string) => void;
   isFetching: (folderId: string) => boolean;
   rename: (folderId: string, name: string) => void;
-  /** Whether the track's sources are in the main feed and digest; null while unknown. */
-  inMainDigest: (folderId: string) => boolean | null;
+  /** Whether the track's sources are in the main feed: all, none or mixed; null while unknown. */
+  inMainDigest: (folderId: string) => boolean | 'mixed' | null;
   setMainDigest: (folderId: string, name: string, on: boolean) => void;
   remove: (folderId: string, name: string) => void;
 }

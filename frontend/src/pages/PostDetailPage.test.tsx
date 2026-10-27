@@ -15,12 +15,12 @@ import { feedItem, feedPage } from '../components/reader/fixtures';
 import type { Api, Post } from '../services/api';
 
 describe('PostDetailPage header', () => {
-  it('shows the source host, platform, date, title and the original link', async () => {
+  it('shows the source host, date, title and the original link, and no platform (issue 0027)', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
     const header = heading.closest('header')!;
     expect(within(header).getByText('simonwillison.net')).toBeInTheDocument();
-    expect(within(header).getByText('rss')).toBeInTheDocument();
+    expect(within(header).queryByText('rss')).toBeNull();
     expect(header.querySelector('time')).toHaveAttribute('dateTime', '2026-09-27T23:54:15+00:00');
     const original = within(header).getByRole('link', { name: /open original/i });
     expect(original).toHaveAttribute('href', 'https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/');
@@ -129,6 +129,17 @@ describe('PostDetailPage reading view', () => {
     const actions = screen.getByRole('group', { name: 'Post actions' });
     const labels = Array.from(actions.querySelectorAll('a, button')).map((control) => control.getAttribute('aria-label'));
     expect(labels).toEqual(['Open original', 'Open discussion', 'Star', 'Copy text']);
+  });
+
+  it('a Reddit post offers no Fetch comments (Reddit refuses it); comments stored with it still show', async () => {
+    const { unmount } = render(baseApi(rssPost({ platform: 'reddit' })));
+    await screen.findByRole('heading', { name: '2026 in LLMs (so far)' });
+    expect(screen.queryByRole('button', { name: /comments/i })).toBeNull();
+    expect(screen.queryByText('Discussion')).toBeNull();
+    unmount();
+    render(baseApi(rssPost({ platform: 'reddit', metadata: { reddit_discussion: { comments: [{ id: 'c1', author: 'ann', body: 'Nice post', score: 3 }] } } })));
+    expect(await screen.findByText('Nice post')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /comments/i })).toBeNull();
   });
 
   it('shows a tooltip naming the action on hover', async () => {
@@ -464,6 +475,16 @@ describe('PostDetailPage feed context and keys', () => {
     expect(await screen.findByTestId('feed')).toHaveTextContent('/');
   });
 
+  it('without a context the shortcut help lists no j / k for the post (issue 0027)', async () => {
+    const user = userEvent.setup();
+    renderAt(contextApi(), `/posts/${POST_ID}`);
+    await screen.findByRole('heading', { level: 1 });
+    await user.keyboard('?');
+    const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });
+    expect(within(dialog).queryByText('Next / previous post in the feed')).toBeNull();
+    expect(within(dialog).getByText('Next / previous item (loads more at the end)')).toBeInTheDocument();
+  });
+
   it('repeats Back / Previous / Next after the post, and they move like the top row (issue 0010)', async () => {
     const user = userEvent.setup();
     const api = contextApi();
@@ -522,7 +543,7 @@ function LocationProbe() {
 }
 
 /** The feed, then the post opened from it: Back from the post returns to the feed. */
-function renderStream(api: Api, postId = POST_ID) {
+function renderStream(api: Api, postId = POST_ID, ctx = CTX) {
   return renderWithProviders(
     <>
       <Routes>
@@ -531,7 +552,7 @@ function renderStream(api: Api, postId = POST_ID) {
       </Routes>
       <LocationProbe />
     </>,
-    { api, route: ['/', `/posts/${postId}?ctx=${encodeURIComponent(CTX)}`] },
+    { api, route: ['/', `/posts/${postId}?ctx=${encodeURIComponent(ctx)}`] },
   );
 }
 
@@ -595,6 +616,15 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await waitFor(() => expect(api.recordPostOpen).toHaveBeenLastCalledWith(NEXT_ID, expect.anything()));
   });
 
+  it('the next post starts after a plain rule: its header already names its source and title (issue 0027)', async () => {
+    renderStream(contextApi());
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(screen.getAllByText('The older post')).toHaveLength(1);
+  });
+
   it('j and k move between the posts in the stream', async () => {
     const user = userEvent.setup();
     renderStream(contextApi());
@@ -615,6 +645,13 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await screen.findByRole('heading', { level: 1, name: 'The older post' });
     expect(await screen.findByText('You’re all caught up')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'After the post' })).toBeInTheDocument();
+  });
+
+  it.each(['all:starred:', 'all:all:'])('under %s the stream ends with "You’ve reached the end", as the list does (issue 0027)', async (ctx) => {
+    renderStream(contextApi(), NEXT_ID, ctx);
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(await screen.findByText('You’ve reached the end')).toBeInTheDocument();
+    expect(screen.queryByText('You’re all caught up')).toBeNull();
   });
 
   it('one post at a time renders a single article and records the open at once', async () => {

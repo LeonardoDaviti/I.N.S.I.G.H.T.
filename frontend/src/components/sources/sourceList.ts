@@ -19,12 +19,12 @@ import { formatRelativeTime } from '../../lib/dates';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
 
-export type GroupBy = 'none' | 'track' | 'platform';
-export const GROUP_BY: readonly GroupBy[] = ['none', 'track', 'platform'];
+export type GroupBy = 'none' | 'track' | 'kind';
+export const GROUP_BY: readonly GroupBy[] = ['none', 'track', 'kind'];
 export const GROUP_BY_LABELS: Record<GroupBy, string> = {
   none: 'No grouping',
   track: 'Track',
-  platform: 'Platform',
+  kind: 'Kind',
 };
 
 /** The sortable columns, in on-screen order. */
@@ -78,7 +78,8 @@ export interface SourceGroup {
 
 export function readSourcesView(params: URLSearchParams): SourcesView {
   const status = params.get('status');
-  const group = params.get('group');
+  // ?group=platform is the old name of Group by Kind.
+  const group = params.get('group') === 'platform' ? 'kind' : params.get('group');
   const sort = SORT_BY.includes(params.get('sort') as SortBy) ? (params.get('sort') as SortBy) : 'status';
   const dir = params.get('dir');
   return {
@@ -171,7 +172,7 @@ export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy, dir:
  * Groups in display order. None: one flat list without a header. Track: every
  * track in the folder order (empty ones too, unless a search or filter is on),
  * then the sources in no track, without a header; a source in two tracks shows
- * in both. Platform: A to Z. Inside a group, `sort` in `dir` (default: worst
+ * in both. Kind (as the list's Kind column names it): A to Z. Inside a group, `sort` in `dir` (default: worst
  * status first).
  */
 export function groupSources(
@@ -182,11 +183,11 @@ export function groupSources(
 ): SourceGroup[] {
   const sorted = sortSources(rows, sort, dir);
   if (group === 'none') return [{ key: 'all', label: 'All sources', headless: true, rows: sorted }];
-  if (group === 'platform') {
+  if (group === 'kind') {
     const map = new Map<string, SourceHealthRow[]>();
-    sorted.forEach((row) => map.set(row.platform, [...(map.get(row.platform) ?? []), row]));
+    sorted.forEach((row) => { const label = kindLabel(row); map.set(label, [...(map.get(label) ?? []), row]); });
     return [...map.entries()]
-      .map(([platform, list]) => ({ key: `platform:${platform}`, label: getPlatformLabel(platform), rows: list }))
+      .map(([label, list]) => ({ key: `kind:${label}`, label, rows: list }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }
   const known = new Set(folders.map((folder) => folder.id));
@@ -257,16 +258,15 @@ export function rowFact(row: SourceHealthRow, now: Date): string {
 }
 
 /**
- * Status chips. The primary ones always show (after All): enabled, disabled,
- * failing (error + backoff, like the "N source errors" chip), unavailable. The
+ * Status chips. The primary ones always show (after All): enabled, disabled and
+ * failing (error + backoff, like the "N source errors" chip, so backoff has no chip of its own). The
  * secondary ones narrow further and show only when they have sources.
  */
 export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: boolean }[] = [
   { value: 'enabled', label: 'Enabled' },
   { value: 'disabled', label: 'Disabled' },
   { value: 'error', label: 'Failing' },
-  { value: 'unavailable', label: 'Unavailable' },
-  { value: 'backoff', label: 'Backoff', secondary: true },
+  { value: 'unavailable', label: 'Unavailable', secondary: true },
   { value: 'due', label: 'Due', secondary: true },
   { value: 'deferred', label: 'Scheduled', secondary: true },
 ];

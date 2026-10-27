@@ -41,7 +41,7 @@ import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { useNow } from '../hooks/useNow';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
-import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
+import { withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -270,26 +270,27 @@ export default function SourcesConfig() {
     const ok = await each(ids, async (id) => {
       await api.setSourceMainDigest(id, on);
       return { success: true };
-    }, on ? 'add to the main digest' : 'take out of the main digest');
+    }, on ? 'show in the Main feed' : 'leave out of the Main feed');
     void queryClient.invalidateQueries({ queryKey: [...UNREAD_COUNTS_KEY] });
-    if (ok) toast(`${plural(ids.length, 'source')} ${on ? 'in' : 'out of'} the main digest`);
+    if (ok) toast(`${plural(ids.length, 'source')} ${on ? 'shown in' : 'left out of'} the Main feed`);
   };
 
   const trackActions: TrackActions = {
     fetch: (id, name) => void runFetch({ kind: 'folder', id, name }),
     isFetching: (id) => isRunning({ kind: 'folder', id }),
     rename: (id, name) => { setRenameText(name); setRenaming({ id, name }); },
+    // From the member sources, the only place the main feed reads: mixed when they differ.
     inMainDigest: (id) => {
-      const folder = foldersQuery.data?.find((f) => f.id === id);
-      if (folder && typeof folder.exclude_from_main_digest === 'boolean') return !folder.exclude_from_main_digest;
       const members = allRows.filter((row) => row.folders.some((f) => f.id === id));
-      return members.length ? members.every((row) => row.in_main_digest) : null;
+      if (!members.length) return null;
+      const inMain = members.filter((row) => row.in_main_digest).length;
+      return inMain === members.length ? true : inMain === 0 ? false : 'mixed';
     },
     setMainDigest: (id, name, on) => {
       void (async () => {
         try {
           await api.setTrackMainDigest(id, on);
-          toast(`${name}: ${on ? 'in' : 'out of'} the main feed and digest`);
+          toast(`${name}: ${on ? 'shown in' : 'left out of'} the Main feed`);
         } catch (err) {
           setError(`Could not change ${name}: ${errorMessage(err)}`);
         }
@@ -330,7 +331,7 @@ export default function SourcesConfig() {
     invalidate();
   };
 
-  const handleAddSource = async (data: { handle_or_url: string; display_name: string; fetch_delay_seconds: number; priority: number; max_posts_per_fetch: number; state: string; page_watch?: { prefix: string } }) => {
+  const handleAddSource = async (data: { handle_or_url: string; display_name: string; fetch_delay_seconds: number; state: string; page_watch?: { prefix: string } }) => {
     const r = await api.addSource({ platform: 'rss', ...data });
     setShowAddSource(false);
     if (!r.success) setError(r.error || 'Could not add the source');
@@ -404,15 +405,11 @@ export default function SourcesConfig() {
     return () => window.clearTimeout(timer);
   }, [highlightTrack]);
 
-  const enabledCount = allRows.filter((row) => row.enabled).length;
-  const failingCount = filterHealthRows(allRows, 'error').length;
-
+  // The status chips count enabled and failing sources; the header does not repeat them.
   const meta = health.isPending
     ? 'Loading…'
     : [
       plural(allRows.length, 'source'),
-      `${enabledCount} on`,
-      failingCount ? `${failingCount} failing` : null,
       plural(folders.length, 'track'),
       health.data?.generated_at ? `as of ${formatRelativeTime(health.data.generated_at, now)}` : null,
       fixtureName ? `fixture: ${fixtureName}` : null,

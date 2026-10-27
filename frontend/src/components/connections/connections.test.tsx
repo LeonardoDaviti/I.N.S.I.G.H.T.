@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import ConnectionsPanel from './ConnectionsPanel';
 import ConnectionsLink from './ConnectionsLink';
 import AddSourceModal from '../AddSourceModal';
-import { credentials, demoCredentials, publicView, substackView, telegramView } from './fixtures';
+import { credentials, demoCredentials, substackView, telegramView } from './fixtures';
 import { cookieValue, isSubstackUrl, missingCredentialProvider, providerStatus } from './connectionStatus';
 import { healthRow } from '../ops/fixtures';
 import { makeFakeApi } from '../../test/fakeApi';
@@ -29,7 +29,6 @@ function deferred<T>() {
 
 describe('providerStatus', () => {
   it('names each state with a glyph and a word', () => {
-    expect(providerStatus(publicView('reddit'))).toEqual({ glyph: 'disabled', label: 'not needed' });
     expect(providerStatus(substackView())).toMatchObject({ glyph: 'scheduled', label: 'not set' });
     expect(providerStatus(savedSubstack())).toMatchObject({ glyph: 'ok', label: 'set · not tested' });
     expect(providerStatus({ ...savedSubstack(), test: { ok: true, message: 'ok', tested_at: null } })).toMatchObject({ label: 'working' });
@@ -58,8 +57,8 @@ describe('ConnectionsPanel', () => {
     expect(row('substack')).toHaveTextContent('working');
     expect(row('telegram')).toHaveTextContent('failing');
     expect(row('telegram')).toHaveTextContent('no longer authorised');
-    expect(row('reddit')).toHaveTextContent('not needed');
-    expect(within(row('reddit')).queryByRole('button')).not.toBeInTheDocument();
+    // Reddit and YouTube read public feeds: no row, rather than one saying so twice (issue 0027).
+    expect(document.querySelectorAll('li[data-provider]')).toHaveLength(2);
   });
 
   it('is write-only: the saved value is never rendered, only set · ••••last4 · updated', async () => {

@@ -363,7 +363,8 @@ class _FakeSourcesService:
 
 class ArchiveCatalogTests(unittest.TestCase):
     def test_entries_carry_kind_backlog_eta_and_when_measured(self):
-        service = SourceFetchService("postgresql:///unused", kinds=registry())
+        service = SourceFetchService("postgresql:///unused", kinds=registry(),
+                                     availability=lambda: Availability(ytdlp_enabled=True, telegram_credentials=True))
         service.sources_service = _FakeSourcesService([
             {"id": "a", "platform": "youtube", "handle_or_url": "@a", "enabled": True, "post_count": 10,
              "settings": {"archive": {"available_posts": 40, "stored_posts": 10, "estimated_seconds": 120,
@@ -384,6 +385,24 @@ class ArchiveCatalogTests(unittest.TestCase):
         self.assertIsNone(entries["b"]["backlog_posts"], "available unknown")
         self.assertIsNone(entries["b"]["estimated_seconds"])
         self.assertIsNone(entries["b"]["last_inspected_at"], "never measured")
+
+    def test_sources_that_cannot_archive_stay_out_of_the_catalog(self):
+        # Issue 0027: a feed that lists no more than one fetch reads, and a kind this process
+        # cannot fetch, have nothing to archive; a feed listing more than one fetch stays.
+        kinds = registry()
+        kinds.by_name("generic_rss").available_basis = "feed_window"
+        service = SourceFetchService("postgresql:///unused", kinds=kinds,
+                                     availability=lambda: Availability(ytdlp_enabled=False,
+                                                                       telegram_credentials=True))
+        service.sources_service = _FakeSourcesService([
+            {"id": "short", "platform": "rss", "handle_or_url": "https://short", "enabled": True,
+             "post_count": 20, "settings": {"max_posts_per_fetch": 20, "archive": {"available_posts": 20}}},
+            {"id": "long", "platform": "rss", "handle_or_url": "https://long", "enabled": True,
+             "post_count": 20, "settings": {"max_posts_per_fetch": 20, "archive": {"available_posts": 30}}},
+            {"id": "yt", "platform": "youtube", "handle_or_url": "@a", "enabled": True, "post_count": 1,
+             "settings": {}},
+        ])
+        self.assertEqual([e["source_id"] for e in service.archive_catalog()], ["long"])
 
 
 if __name__ == "__main__":

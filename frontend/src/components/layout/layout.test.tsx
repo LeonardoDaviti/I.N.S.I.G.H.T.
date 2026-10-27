@@ -68,7 +68,9 @@ describe('navigation model', () => {
       expect(d.to).not.toMatch(/^\/(briefing|stories|inbox|experts)/);
       expect(`${d.label} ${d.group}`.toLowerCase()).not.toMatch(/briefing|stor(y|ies)|inbox|expert/);
     }
-    expect(ids).toEqual(expect.arrayContaining(['feed-unread', 'sources', 'sources-health', 'ingestion']));
+    expect(ids).toEqual(expect.arrayContaining(['feed-main', 'sources', 'ingestion']));
+    // Source health opened the same list as Sources (issue 0027).
+    expect(ids).not.toContain('sources-health');
   });
 
   it('the switcher has one entry per track, and no tracks list', () => {
@@ -125,10 +127,13 @@ describe('navigation model', () => {
   });
 
   it('the switcher filter matches label, group and keywords, every word', () => {
-    expect(filterDestinations('health').map((d) => d.id)).toEqual(['sources-health']);
-    expect(filterDestinations('starred feed').map((d) => d.id)).toEqual(['feed-starred']);
+    expect(filterDestinations('health').map((d) => d.id)).toEqual(['sources']);
+    // One Starred, in the Show filter; one All, the same filter (issue 0027).
+    expect(filterDestinations('starred')).toEqual([]);
+    expect(filterDestinations('unread').map((d) => d.id)).toEqual(['feed-main']);
+    expect(destinations().find((d) => d.id === 'feed-main')).toMatchObject({ label: 'Main feed', to: '/' });
     expect(filterDestinations('zzz')).toEqual([]);
-    expect(filterDestinations('').length).toBeGreaterThan(5);
+    expect(filterDestinations('').length).toBeGreaterThan(4);
   });
 });
 
@@ -211,7 +216,7 @@ describe('AppShell', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByTestId('where')).toHaveTextContent('/settings/sources?tab=health');
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings\/sources$/);
   });
 
   it('arrow keys move the active option, and the switcher can toggle the theme', async () => {

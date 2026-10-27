@@ -8,8 +8,6 @@ export type { Envelope };
 export interface SourceSettings {
   display_name?: string;
   fetch_delay_seconds?: number;
-  priority?: number;
-  max_posts_per_fetch?: number;
   archive?: Record<string, unknown>;
 }
 
@@ -304,7 +302,7 @@ export interface RunReport {
 
 // ---- Connections (Mark IX §10.1): write-only secrets. No call returns a stored value. ----
 
-export type CredentialProviderId = 'substack' | 'telegram' | 'reddit' | 'youtube' | (string & {});
+export type CredentialProviderId = 'substack' | 'telegram' | (string & {});
 
 export interface CredentialField {
   key: string;
@@ -333,7 +331,6 @@ export interface CredentialProviderView {
   provider: CredentialProviderId;
   label: string;
   description: string;
-  needed: boolean;
   testable: boolean;
   sign_in: boolean;
   configured: boolean;
@@ -463,14 +460,6 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface RedditCommentsResponse extends Envelope {
-  post_id?: string;
-  comments?: RedditComment[];
-  comment_count?: number;
-  cached?: boolean;
-  fetched_at?: string | null;
-}
-
 export interface YouTubeVideoPreview {
   video_id: string;
   url: string;
@@ -515,8 +504,6 @@ export interface Folder {
   sort_order: number;
   /** "folder" = generic grouping, "track" = curated interest with its own reading view */
   kind?: 'folder' | 'track';
-  /** Hide this track's sources from the main daily/weekly digests */
-  exclude_from_main_digest?: boolean;
   /** Optional narrowing within the track's sources; empty = take everything */
   match_keywords?: string[];
   source_count?: number;
@@ -544,8 +531,6 @@ export interface NewSource {
   handle_or_url: string;
   display_name?: string;
   fetch_delay_seconds?: number;
-  priority?: number;
-  max_posts_per_fetch?: number;
   state?: string;
   /** Follow a page without a feed (issue 0028): stored as settings.page_watch. */
   page_watch?: { prefix: string };
@@ -670,15 +655,6 @@ export function createApi() {
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
-    /** Fetch a Reddit post's comments; the backend may answer 202 with a job, which is polled. */
-    fetchRedditComments: (postId: string, opts?: { limit?: number; refresh?: boolean }) => settle((async () => {
-      const response = await request<RedditCommentsResponse & Partial<JobAccepted>>(`/api/posts/item/${postId}/reddit-comments`, {
-        method: 'POST',
-        body: { limit: opts?.limit ?? 80, refresh: opts?.refresh ?? false, asyncMode: true },
-      });
-      if (!response.accepted || typeof response.job_id !== 'string') return response as RedditCommentsResponse;
-      return { success: true, ...(await waitForJob<RedditCommentsResponse>(response.job_id)) };
-    })()),
     getYouTubeWatchProgress: (videoId: string) =>
       settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`)),
     saveYouTubeWatchProgress: (videoId: string, payload: YouTubeProgressInput) =>
@@ -703,7 +679,7 @@ export function createApi() {
     /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
     setCadenceOverride: (sourceId: string, hours: number | null) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
-    /** Include/exclude one source from the main digest and the main feed. */
+    /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
         `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
@@ -719,7 +695,7 @@ export function createApi() {
     /** Rename a track. */
     renameTrack: (folderId: string, name: string) => request<Envelope>(`/api/folders/${enc(folderId)}`, { method: 'PUT', body: { name } }),
     deleteFolder: (folderId: string) => settle(request<Envelope>(`/api/folders/${folderId}`, { method: 'DELETE' })),
-    /** Every source in the track in (true) or out of (false) the main feed and digest. */
+    /** Every source in the track shown in (true) or left out of (false) the Main feed. */
     setTrackMainDigest: (folderId: string, inMainDigest: boolean) =>
       request<Envelope>(`/api/folders/${enc(folderId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } }),
     getSourceFolders: (sourceId: string) => settle(request<SourceFoldersResponse>(`/api/sources/${sourceId}/folders`)),

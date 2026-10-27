@@ -29,7 +29,6 @@ export function substackView(overrides: Partial<CredentialProviderView> = {}, si
     provider: 'substack',
     label: 'Substack',
     description: 'Full text of paid posts you subscribe to. Without it, paid posts arrive as teasers.',
-    needed: true,
     testable: true,
     sign_in: false,
     configured: sidField.set,
@@ -52,7 +51,6 @@ export function telegramView(
     provider: 'telegram',
     label: 'Telegram',
     description: 'Reads Telegram channels by handle. Create an app at my.telegram.org, then sign in.',
-    needed: true,
     testable: true,
     sign_in: true,
     configured: fields.every((f) => f.set),
@@ -63,26 +61,11 @@ export function telegramView(
   };
 }
 
-export function publicView(provider: 'reddit' | 'youtube'): CredentialProviderView {
-  return {
-    provider,
-    label: provider === 'reddit' ? 'Reddit' : 'YouTube',
-    description: 'Not needed: public feeds.',
-    needed: false,
-    testable: false,
-    sign_in: false,
-    configured: false,
-    fields: [],
-    test: null,
-    login: null,
-  };
-}
-
 export function credentials(...providers: CredentialProviderView[]): CredentialsResponse {
   return { providers };
 }
 
-/** The demo the screenshots use: substack working, telegram failing, reddit/youtube not needed. */
+/** The demo the screenshots use: substack working, telegram failing. */
 export function demoCredentials(now: Date = new Date()): CredentialsResponse {
   return credentials(
     substackView(
@@ -90,7 +73,5 @@ export function demoCredentials(now: Date = new Date()): CredentialsResponse {
       { set: true, last4: 'a3f9', source: 'db', updated_at: '2026-10-10T08:00:00Z' },
     ),
     telegramView({ apiSet: true, session: true, test: { ok: false, message: 'The Telegram session is no longer authorised; sign in again', tested_at: new Date(now.getTime() - 600_000).toISOString() } }),
-    publicView('reddit'),
-    publicView('youtube'),
   );
 }

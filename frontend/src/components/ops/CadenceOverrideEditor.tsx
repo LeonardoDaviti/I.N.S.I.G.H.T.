@@ -5,13 +5,12 @@ import { useApi } from '../../services/ApiContext';
 import type { SourceHealthRow } from '../../services/api';
 import { replaceHealthRow } from '../../hooks/useSourcesHealth';
 import { errorMessage } from '../../lib/apiError';
-import { intervalLabel, parseOverrideHours, tierLabel } from '../../lib/sourceSchedule';
-import { formatHours } from '../../lib/duration';
+import { cadenceLine, parseOverrideHours } from '../../lib/sourceSchedule';
 import { Button, Input } from '../ui';
 
 /**
- * Edit one source's fetch interval override (spec §F.4): hours in [1, 2160], or
- * empty to go back to the cadence tier. Validation happens here, before the API
+ * How often one source is fetched, and why, with "Set your own" hours (spec §F.4):
+ * hours in [1, 2160], or empty to go back to automatic. Validation happens here, before the API
  * call; the server re-validates. Saves on submit and reports the fresh row.
  */
 export default function CadenceOverrideEditor({
@@ -56,17 +55,14 @@ export default function CadenceOverrideEditor({
   };
 
   const errorText = validationError ?? (mutation.error ? errorMessage(mutation.error) : null);
-  const tierText = row.tier === 'unknown'
-    ? 'probation (daily until 3 dated posts)'
-    : `${tierLabel(row.tier).toLowerCase()} tier${row.mean_gap_hours !== null ? `, a post every ${formatHours(row.mean_gap_hours)} on average` : ''}`;
-
   return (
-    <form onSubmit={onSubmit} noValidate className={`min-w-0 ${className}`} aria-label={`Cadence override for ${row.display_name}`}>
-      <label htmlFor={inputId} className="block text-[0.8125rem] font-medium text-fg">
-        Override (hours)
+    <form onSubmit={onSubmit} noValidate className={`min-w-0 ${className}`} aria-label={`How often ${row.display_name} is fetched`}>
+      <p className="text-[0.8125rem] text-fg">{cadenceLine(row)}.</p>
+      <label htmlFor={inputId} className="mt-2 block text-[0.8125rem] font-medium text-fg">
+        Set your own (hours)
       </label>
       <p id={hintId} className="mt-0.5 text-[0.75rem] text-fg-2">
-        Now {intervalLabel(row)}; {tierText}. Leave empty to follow the tier. 1 to 2160 hours (90 days).
+        1 to 2160 hours (90 days); leave it empty to fetch it automatically.
       </p>
       <div className="mt-2 flex flex-wrap items-start gap-2">
         <Input
@@ -75,17 +71,17 @@ export default function CadenceOverrideEditor({
           autoComplete="off"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="tier"
+          placeholder="auto"
           aria-invalid={validationError ? 'true' : 'false'}
           aria-describedby={`${hintId}${errorText ? ` ${errorId}` : ''}`}
           className="w-28 tabular-nums"
         />
         <Button type="submit" variant="secondary" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Saving…' : 'Save override'}
+          {mutation.isPending ? 'Saving…' : 'Save hours'}
         </Button>
         {row.override_hours !== null ? (
           <Button variant="secondary" disabled={mutation.isPending} onClick={() => { setText(''); setSubmitted(false); save(null); }}>
-            Use tier
+            Back to automatic
           </Button>
         ) : null}
         {onCancel ? (

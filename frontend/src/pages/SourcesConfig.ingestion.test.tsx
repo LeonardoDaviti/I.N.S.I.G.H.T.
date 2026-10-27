@@ -160,6 +160,8 @@ describe('Sources → ingestion tab', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Change interval' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/briefing/i)).toBeNull();
+    // The sync toggle says what it deletes (issue 0027).
+    expect(within(dialog).getByText('The sources follow the file: a source missing from it is deleted, with its posts.')).toBeInTheDocument();
     const tick = within(dialog).getByLabelText(/check for due sources every/i);
     await userEvent.clear(tick);
     await userEvent.type(tick, '30');
@@ -273,10 +275,10 @@ describe('Sources → ingestion tab', () => {
     const mkbhd = (await within(catalog).findByText('Marques Brownlee')).closest('li') as HTMLElement;
     expect(within(mkbhd).getByText('partial')).toBeInTheDocument();
     expect(within(mkbhd).getByText(/120 of 1,722 stored/)).toBeInTheDocument();
-    expect(within(mkbhd).getByText(/1,602 in backlog · measured 3d ago/)).toBeInTheDocument();
+    expect(within(mkbhd).getByText(/1,602 older posts not archived · measured 3d ago/)).toBeInTheDocument();
     const simon = within(catalog).getByText('Simon Willison’s Weblog').closest('li') as HTMLElement;
     expect(within(simon).getByText('archived')).toBeInTheDocument();
-    expect(within(simon).getByText(/no backlog/)).toBeInTheDocument();
+    expect(within(simon).getByText(/nothing older to archive/)).toBeInTheDocument();
     const kaitchup = within(catalog).getByText('The Kaitchup').closest('li') as HTMLElement;
     expect(within(kaitchup).getByText('not archived')).toBeInTheDocument();
     expect(within(kaitchup).getByText(/0 stored · not measured yet/)).toBeInTheDocument();
@@ -284,6 +286,20 @@ describe('Sources → ingestion tab', () => {
     await userEvent.type(within(catalog).getByRole('searchbox', { name: 'Search the catalog' }), 'kait');
     expect(within(catalog).queryByText('Marques Brownlee')).toBeNull();
     expect(within(catalog).getByText('The Kaitchup')).toBeInTheDocument();
+  });
+
+  it('a URL-named source is named from its address, never by its id (issue 0027)', async () => {
+    setup({
+      overrides: {
+        getArchiveCatalog: vi.fn().mockResolvedValue({ success: true, total: 1, sources: [
+          catalogEntry({ source_id: '00000000-0000-4000-8000-000000000042', display_name: 'https://rss.arxiv.org/rss/cs.CL', platform: 'rss', kind: 'generic_rss' }),
+        ] }),
+      },
+    });
+    await userEvent.click(await screen.findByRole('link', { name: 'archive' }));
+    const catalog = await screen.findByRole('region', { name: 'Catalog' });
+    expect(await within(catalog).findByText('arXiv cs.CL')).toBeInTheDocument();
+    expect(catalog).not.toHaveTextContent('00000000-0000-4000-8000-000000000042');
   });
 
   it('a backfill runs with the chosen resume, page delay, batch size and cooldown', async () => {

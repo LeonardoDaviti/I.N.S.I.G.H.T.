@@ -39,6 +39,11 @@ JOB_LABELS: Dict[str, str] = {
 }
 
 
+# The job types INSIGHT still runs. Rows of any other type (retired analysis jobs, kept by
+# 0027_drop_analysis.sql; old safe_ingest rows) stay in job_runs but leave the job list.
+LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source", "reddit_comments_fetch")
+
+
 def job_label(job_type: Optional[str]) -> str:
     job_type = job_type or ""
     return JOB_LABELS.get(job_type) or job_type.replace("_", " ").capitalize()
@@ -500,10 +505,11 @@ class OperationsService:
                       END
                     FROM job_runs jr
                     LEFT JOIN sources s ON s.id = jr.source_id
+                    WHERE jr.job_type = ANY(%s)
                     ORDER BY jr.started_at DESC
                     LIMIT %s
                     """,
-                    (limit,),
+                    (list(LIVE_JOB_TYPES), limit),
                 )
                 rows = cur.fetchall()
 

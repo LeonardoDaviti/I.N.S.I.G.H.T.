@@ -277,7 +277,6 @@ class NewSourceRequest(BaseModel):
     display_name: str | None = None
     fetch_delay_seconds: int | None = None
     priority: int | None = None
-    max_posts_per_fetch: int | None = None
     state: str | None = "enabled"
     page_watch: Dict[str, Any] | None = None     # settings.page_watch: follow a page (issue 0028)
 
@@ -693,8 +692,7 @@ async def list_sources():
 async def add_source(request: NewSourceRequest):
     """Add one source. 400 when it is already a source or handle_or_url is empty."""
     platform = (request.platform or "rss").strip()
-    settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority",
-                                           "max_posts_per_fetch"}, exclude_none=True)
+    settings = request.model_dump(include={"display_name", "fetch_delay_seconds", "priority"}, exclude_none=True)
     if request.page_watch is not None:
         settings["page_watch"] = request.page_watch
     created = services().sources.add_with_settings(platform, request.handle_or_url, settings=settings,
@@ -731,7 +729,7 @@ async def preview_page_watch(request: PageWatchPreviewRequest):
 @app.put("/api/sources/{source_id}/settings")
 @error_detail("update the source settings")
 async def update_source_settings(source_id: str, settings: dict):
-    """Body: any of {display_name, fetch_delay_seconds, priority, max_posts_per_fetch}."""
+    """Body: any of {display_name, fetch_delay_seconds, priority}; posts per fetch is the kind's own."""
     result = services().sources.update_source_settings(source_id, settings)
     return {"success": True, "source_id": source_id, "settings": result.get("settings", {})}
 
@@ -838,11 +836,9 @@ async def remove_folder_source(folder_id: str, source_id: str):
 @error_detail("update the main-digest setting")
 async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
     """Apply the digest switch to every source in a folder/track. Sending false keeps a
-    track's sources out of the "all" feed while they are still ingested."""
-    value = request.in_main_digest
-    result = services().sources.set_folder_in_main_digest(folder_id, value)
-    # Keep the folder's declared intent in step with what was applied.
-    services().folders.update_folder(folder_id, {"exclude_from_main_digest": not value})
+    track's sources out of the "all" feed while they are still ingested. The sources hold the
+    answer; the track shows what its sources say (issue 0027)."""
+    result = services().sources.set_folder_in_main_digest(folder_id, request.in_main_digest)
     return {"success": True, **result}
 
 

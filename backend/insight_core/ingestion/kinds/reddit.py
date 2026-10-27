@@ -45,6 +45,8 @@ class RedditKind(BaseKind):
     name = "reddit_subreddit"
     available_basis = "listing_cap"
     profile = REDDIT_PROFILE
+    # Its JSON listings answer 403 (issues 0012, 0025, 0027); live fetches still work.
+    archive_refused = "Reddit refuses archive requests for now."
 
     def __init__(self, http: KindHttp) -> None:
         self.http = http

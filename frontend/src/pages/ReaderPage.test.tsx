@@ -65,6 +65,14 @@ describe('ReaderPage', () => {
     expect(screen.getByRole('radio', { name: 'Unread' })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('Show starred drops the scope’s unread count above the starred list (issue 0027)', async () => {
+    const getUnreadCounts = vi.fn().mockResolvedValue({ total: 1890, by_source: {}, by_folder: {} });
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([])), getUnreadCounts }), '/?filter=starred');
+    expect(await screen.findByText('No starred posts')).toBeInTheDocument();
+    await waitFor(() => expect(getUnreadCounts).toHaveBeenCalled());
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/unread/);
+  });
+
   it('a rising unread count shows the "N new posts" pill; the list only changes when it is clicked', async () => {
     const user = userEvent.setup();
     const getFeed = vi.fn()
@@ -206,6 +214,16 @@ describe('ReaderPage', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Posts' })).toBeNull();
     await waitFor(() => expect(getFeed).toHaveBeenCalled());
     expect(JSON.stringify(getFeed.mock.calls)).not.toContain('by_source');
+  });
+
+  it('one source’s rows do not repeat its name, which would link to the page you are on (issue 0027)', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'One post', source_id: ID(7) })])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+    }), `/read/source/${ID(7)}`);
+    const row = await screen.findByRole('article');
+    expect(within(row).queryByText('Simon Willison’s Weblog')).toBeNull();
+    expect(within(row).getAllByRole('link').map((a) => a.textContent)).toEqual(['One post']);
   });
 
   it('an empty source says there are no posts yet and links quietly to Sources', async () => {

@@ -9,6 +9,7 @@
  *   http://export.arxiv.org/api/query?search_query=cat:cs.AI -> arXiv cs.AI
  *   https://www.reddit.com/r/LocalLLaMA/.rss                 -> r/LocalLLaMA
  *   https://tg.i-c-a.su/rss/denissexy?limit=50               -> @denissexy
+ *   https://nitter.local/karpathy/rss                        -> @karpathy
  *   https://simonwillison.net/atom/everything/               -> simonwillison.net
  *   r/x, "Road to VR"                                        -> unchanged
  */
@@ -44,7 +45,10 @@ function deriveFromUrl(raw: string): string {
     return category ? `arXiv ${category}` : 'arXiv';
   }
   if (host.endsWith('reddit.com') && parts[0] === 'r' && parts[1]) return `r/${parts[1]}`;
-  if (host === 'tg.i-c-a.su' && parts[0] === 'rss' && parts[1]) return `@${parts[1]}`;
+  // Telegram RSS bridges (the Telegram RSS template's telegram.local too): <host>/rss/<channel>.
+  if ((host === 'tg.i-c-a.su' || host === 'telegram.local') && parts[0] === 'rss' && parts[1]) return `@${parts[1]}`;
+  // Nitter, any instance (the Nitter template's nitter.local): <host>/<account>/rss.
+  if (host.includes('nitter') && parts.length === 2 && parts[1] === 'rss') return `@${parts[0]}`;
   // RSSHub's Telegram bridge: rsshub.app/telegram/channel/<channel>.
   if (host.includes('rsshub') && parts[0] === 'telegram' && parts.length >= 3) return `@${parts[parts.length - 1]}`;
   if (host === 't.me' && parts[0]) return `@${parts[parts.length - 1]}`;

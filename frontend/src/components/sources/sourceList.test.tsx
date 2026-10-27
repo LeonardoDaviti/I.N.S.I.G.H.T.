@@ -22,7 +22,7 @@ const empty = { id: 'f-empty', name: 'Empty track' };
 const rows = [
   healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),
   healthRow({ source_id: 'flaky', display_name: 'Flaky Feed', status: 'backoff', folders: [ai, ar] }),
-  healthRow({ source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', status: 'unavailable', folders: [] }),
+  healthRow({ source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [] }),
   healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [ar] }),
 ];
 
@@ -40,7 +40,8 @@ describe('readSourcesView / writeSourcesView', () => {
   it('retired and unknown values fall back to the defaults', () => {
     expect(readSourcesView(new URLSearchParams('group=status&sort=success&dir=asc'))).toEqual({ ...defaults, dir: 'asc' });
     expect(readSourcesView(new URLSearchParams('group=nope&status=bogus&sort=nope&dir=up'))).toEqual(defaults);
-    expect(readSourcesView(new URLSearchParams('tab=health&group=platform')).group).toBe('platform');
+    // Group by Platform became Group by Kind (issue 0027): an old link groups by kind.
+    expect(readSourcesView(new URLSearchParams('tab=health&group=platform')).group).toBe('kind');
   });
 
   it('a column without a direction takes its own', () => {
@@ -54,8 +55,8 @@ describe('readSourcesView / writeSourcesView', () => {
     expect(next.toString()).toBe('data=worst&q=simon');
     expect(writeSourcesView(new URLSearchParams(''), { q: ' ', status: 'due', group: 'track', sort: 'added', dir: 'desc' }).toString())
       .toBe('status=due&group=track&sort=added');
-    expect(writeSourcesView(new URLSearchParams(''), { q: '', status: null, group: 'platform', sort: 'name', dir: 'desc' }).toString())
-      .toBe('group=platform&sort=name&dir=desc');
+    expect(writeSourcesView(new URLSearchParams(''), { q: '', status: null, group: 'kind', sort: 'name', dir: 'desc' }).toString())
+      .toBe('group=kind&sort=name&dir=desc');
   });
 
   it('round-trips every view', () => {
@@ -115,8 +116,10 @@ describe('groupSources', () => {
     expect(groups.map((g) => g.key)).toEqual([UNASSIGNED_KEY]);
   });
 
-  it('by platform, and none: one headless list', () => {
-    expect(groupSources(rows, 'platform').map((g) => [g.label, g.rows.length])).toEqual([['RSS', 3], ['Telegram', 1]]);
+  it('by kind (a subreddit read as a feed and one read as Reddit are apart), and none: one headless list', () => {
+    expect(groupSources(rows, 'kind').map((g) => [g.label, g.rows.length])).toEqual([['RSS', 3], ['Telegram', 1]]);
+    const reddit = healthRow({ source_id: 'r', platform: 'rss', kind: 'reddit_subreddit' });
+    expect(groupSources([...rows, reddit], 'kind').map((g) => g.label)).toEqual(['Reddit', 'RSS', 'Telegram']);
     const all = groupSources(rows, 'none');
     expect(all).toHaveLength(1);
     expect(all[0].headless).toBe(true);

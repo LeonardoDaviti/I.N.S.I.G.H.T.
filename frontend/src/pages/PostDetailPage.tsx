@@ -551,7 +551,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
               <div ref={endRef} data-stream-end className="min-h-[50vh]">
                 {caughtUp ? (
                   <div className="mt-14 border-t border-line pt-6">
-                    <p className="mb-3 text-[0.9375rem] font-medium text-fg">You’re all caught up</p>
+                    <p className="mb-3 text-[0.9375rem] font-medium text-fg">{ctx?.filter === 'unread' ? 'You’re all caught up' : 'You’ve reached the end'}</p>
                     {endNav}
                   </div>
                 ) : null}
@@ -561,7 +561,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
             )}
           </div>
         </div>
-        <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} />
+        <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} feedContext={Boolean(ctx)} />
         <DevDataSwitch options={POST_FIXTURE_NAMES} />
       </div>
     </>
@@ -590,7 +590,7 @@ interface PostArticleProps {
   current: boolean;
   /** When the open is recorded (and the post marked read): on mount, or once its end passes the top half of the screen. */
   readOn: 'mount' | 'end';
-  /** A post that follows another in the stream starts with a divider naming it. */
+  /** A post that follows another in the stream starts after a rule. */
   divider: boolean;
   keysEnabled: boolean;
 }
@@ -607,10 +607,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   const [readerState, setReaderState] = useState<ReaderState | null>(detail.reader_state || null);
   const [youtubeProgress, setYouTubeProgress] = useState<YouTubeWatchProgress | null>(null);
   const [youtubeProgressDraft, setYouTubeProgressDraft] = useState(0);
-  const [comments, setComments] = useState<RedditComment[]>(initial.comments);
-  const [commentsFetchedAt, setCommentsFetchedAt] = useState<string | null>(initial.fetchedAt);
+  // Comments stored with the post; fetching them is hidden while Reddit refuses it (issue 0012).
+  const { comments, fetchedAt: commentsFetchedAt } = initial;
   const [loadingYouTubeProgress, setLoadingYouTubeProgress] = useState(false);
-  const [loadingComments, setLoadingComments] = useState(false);
   const [savingYouTubeProgress, setSavingYouTubeProgress] = useState(false);
   const [togglingFavorite, setTogglingFavorite] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -739,21 +738,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
     };
   }, [api, current, meta, postId]);
 
-  const fetchComments = async (refresh = false) => {
-    if (!postId) return;
-    setLoadingComments(true);
-    setError(null);
-    const response = await api.fetchRedditComments(postId, { limit: 80, refresh });
-    if (!response.success) {
-      setError(response.error || 'Failed to fetch Reddit comments');
-      setLoadingComments(false);
-      return;
-    }
-    setComments(response.comments || []);
-    setCommentsFetchedAt(response.fetched_at || null);
-    setLoadingComments(false);
-  };
-
   const isRedditPost = post?.platform === 'reddit';
 
   const handleToggleFavorite = async () => {
@@ -778,7 +762,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
     setTogglingFavorite(false);
   };
 
-  const platformLabel = typeof post?.platform === 'string' ? post.platform.toLowerCase() : '';
   // A post with no HTML body renders its stored plain text, never read as HTML.
   const bodyHtml = typeof post?.content_html === 'string' ? post.content_html : null;
   const renderContent = bodyHtml ?? (typeof post?.content === 'string' ? post.content : '');
@@ -869,15 +852,10 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
 
   return (
     <>
-      {divider ? (
-        <p className="mb-10 mt-16 flex min-w-0 items-baseline gap-2 border-t border-line-strong pt-3 text-[0.8125rem] text-fg-3">
-          <span className="shrink-0 font-medium text-fg-2">{middleTruncate(sourceName, 40)}</span>
-          <span aria-hidden="true">/</span>
-          <span className="truncate">{displayTitle}</span>
-        </p>
-      ) : null}
+      {/* A plain rule: the header below already names the post's source and title. */}
+      {divider ? <hr className="mb-10 mt-16 border-0 border-t border-line-strong" /> : null}
 
-      {/* ---- Header: source / platform / date and the actions on one line, then the title ---- */}
+      {/* ---- Header: source / date and the actions on one line, then the title ---- */}
       <header className="mb-8">
         <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
@@ -904,12 +882,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
               </span>
             )}
             {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
-            {platformLabel ? (
-              <span className="whitespace-nowrap">
-                <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
-                {platformLabel}
-              </span>
-            ) : null}
             {publishedLabel ? (
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
@@ -1107,43 +1079,33 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
       <PostImageList images={moreImages} postId={postId} />
 
       {/* ---- Reddit discussion ---- */}
-      {isRedditPost && (
+      {isRedditPost && comments.length > 0 && (
         <section className="mt-14" aria-labelledby={`post-discussion-${postId}`}>
           <SectionHeading
             title="Discussion"
             meta={[
-              comments.length ? plural(comments.length, 'comment') : 'no comments loaded',
+              plural(comments.length, 'comment'),
               commentsFetchedAt ? `fetched ${formatLocalDateTime(commentsFetchedAt) ?? ''}` : null,
             ].filter(Boolean).join(' · ')}
-            actions={(
-              <Button size="sm" variant="secondary" onClick={() => void fetchComments(true)} disabled={loadingComments}>
-                <Busy when={loadingComments}>{null}</Busy>
-                {comments.length ? 'Refresh comments' : 'Fetch comments'}
-              </Button>
-            )}
           />
           <span id={`post-discussion-${postId}`} className="sr-only">Discussion</span>
-          {comments.length ? (
-            <ol className="max-h-[36rem] space-y-4 overflow-y-auto pr-1">
-              {comments.map((comment) => (
-                <li
-                  key={comment.id || `${comment.author || 'unknown'}-${comment.created_at || 'unknown'}-${safeCommentPreview(comment)}`}
-                  className="border-l border-line-strong pl-3"
-                  style={{ marginLeft: `${Math.min(Number(comment.depth) || 0, 4) * 0.75}rem` }}
-                >
-                  <div className="flex flex-wrap gap-x-3 text-[0.75rem] tabular-nums text-fg-3">
-                    <span className="font-semibold text-fg-2 [overflow-wrap:anywhere]">{comment.author || 'unknown'}</span>
-                    <span>{plural(Number(comment.score ?? 0), 'point')}</span>
-                  </div>
-                  <div className="mt-1 whitespace-pre-wrap text-[0.9375rem] leading-[1.6] text-fg [overflow-wrap:anywhere]">
-                    {typeof comment.body === 'string' ? comment.body : ''}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-[0.875rem] text-fg-3">Fetch the thread when you need the discussion around this post.</p>
-          )}
+          <ol className="max-h-[36rem] space-y-4 overflow-y-auto pr-1">
+            {comments.map((comment) => (
+              <li
+                key={comment.id || `${comment.author || 'unknown'}-${comment.created_at || 'unknown'}-${safeCommentPreview(comment)}`}
+                className="border-l border-line-strong pl-3"
+                style={{ marginLeft: `${Math.min(Number(comment.depth) || 0, 4) * 0.75}rem` }}
+              >
+                <div className="flex flex-wrap gap-x-3 text-[0.75rem] tabular-nums text-fg-3">
+                  <span className="font-semibold text-fg-2 [overflow-wrap:anywhere]">{comment.author || 'unknown'}</span>
+                  <span>{plural(Number(comment.score ?? 0), 'point')}</span>
+                </div>
+                <div className="mt-1 whitespace-pre-wrap text-[0.9375rem] leading-[1.6] text-fg [overflow-wrap:anywhere]">
+                  {typeof comment.body === 'string' ? comment.body : ''}
+                </div>
+              </li>
+            ))}
+          </ol>
         </section>
       )}
       <div ref={endRef} data-post-end={postId} aria-hidden="true" />

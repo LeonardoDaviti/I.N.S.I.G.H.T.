@@ -80,6 +80,9 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon', 'off']);
     expect(rowOf('flaky')).toHaveTextContent('retry in 3h');
     expect(within(rowOf('off')).getByRole('switch', { name: 'Enable Road to VR' })).toHaveAttribute('aria-checked', 'false');
+    // The header does not repeat the chips' counts (issue 0027).
+    const header = screen.getByText(/^4 sources · /);
+    expect(header.textContent).not.toMatch(/ on\b|failing/);
   });
 
   it('grouped by track: a source in two tracks shows in both, the untracked come last without a header', async () => {
@@ -90,11 +93,11 @@ describe('SourcesConfig', () => {
     expect(screen.queryByText(/not in a track/i)).not.toBeInTheDocument();
   });
 
-  it('the Group choices are none, track and platform; there is no Sort dropdown', async () => {
+  it('the Group choices are none, track and kind; there is no Sort dropdown', async () => {
     setup();
     await screen.findByText('Road to VR');
     const options = within(screen.getByRole('combobox', { name: 'Group' })).getAllByRole('option').map((o) => o.textContent);
-    expect(options).toEqual(['No grouping', 'Track', 'Platform']);
+    expect(options).toEqual(['No grouping', 'Track', 'Kind']);
     expect(screen.queryByRole('combobox', { name: 'Sort' })).not.toBeInTheDocument();
   });
 
@@ -133,7 +136,7 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['off']);
     await userEvent.click(screen.getByRole('button', { name: /^All/ }));
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'platform');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'kind');
     expect(groupNames()).toEqual(['RSS3', 'Telegram1']);
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Group' }), 'none');
     expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
@@ -230,8 +233,64 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.deleteSource).toHaveBeenCalledWith('simon'));
   });
 
+  it('the sheet saves its name and fetch delay only: no posts per fetch, no priority, no Cancel beside settings that save instantly', async () => {
+    const updateSourceSettings = vi.fn().mockResolvedValue({ success: true });
+    setup('/settings/sources', { updateSourceSettings });
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText(/max posts per fetch/i)).toBeNull();
+    expect(within(sheet).queryByText(/not enforced/i)).toBeNull();
+    expect(within(sheet).queryByLabelText(/priority/i)).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSourceSettings).toHaveBeenCalled());
+    const sent = updateSourceSettings.mock.calls[0][1];
+    expect(sent).not.toHaveProperty('max_posts_per_fetch');
+    expect(sent).not.toHaveProperty('priority');
+  });
+
+  it('the sheet names the source’s kind, as the list does, not its platform (issue 0027)', async () => {
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'kc', display_name: 'The Kaitchup', platform: 'rss', kind: 'substack', folders: [] }),
+    ])) });
+    await userEvent.click(await screen.findByRole('button', { name: 'The Kaitchup' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText(/^Substack ·/)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/^RSS ·/)).toBeNull();
+  });
+
+  it('the sheet names the switch "Show in Main feed", says no digest and nothing about tracks it may not have (issue 0027)', async () => {
+    setup();
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('switch', { name: 'Show in Main feed' })).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/digest/i);
+    expect(sheet).not.toHaveTextContent(/through its tracks/i);
+  });
+
   it.each([
-    ['the next check', { next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
+    ['a disabled source', healthRow({ source_id: 'off', display_name: 'Road to VR', status: 'disabled', enabled: false, folders: [] }),
+      /Off: not fetched until you switch it on/],
+    ['an unavailable source', healthRow({
+      source_id: 'tg', display_name: 'ai_newz', platform: 'telegram', kind: 'telegram_mtproto', status: 'unavailable', folders: [],
+      unavailable_reason: 'no Telegram session; sign in under Sources → Connections', decision_detail: 'Unavailable: no Telegram session',
+    }), /add in Connections/],
+  ])('%s’s sheet says why in one line, without cadence, main feed, archive or Fetch now (issue 0027)', async (_, row, line) => {
+    const name = row.display_name;
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([row])) });
+    await userEvent.click(await screen.findByRole('button', { name }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findAllByText(line)).toHaveLength(1);
+    expect(within(sheet).queryByRole('button', { name: 'Fetch now' })).toBeNull();
+    expect(within(sheet).queryByRole('textbox', { name: /override|own|hours/i })).toBeNull();
+    expect(within(sheet).queryByText(/main feed/i)).toBeNull();
+    expect(within(sheet).queryByText(/archive/i)).toBeNull();
+    // Name, fetch delay, the switch and Delete stay.
+    expect(within(sheet).getByRole('button', { name: 'Delete source…' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['the next check',{ next_tick_at: new Date(Date.now() + 37 * 60_000 + 30_000).toISOString() }, 'due · next check in 37m'],
     ['that the scheduler is not running', { next_tick_at: null }, 'due · scheduler not running'],
   ])('a due source says %s, and Fetch now reads as optional', async (_, state, label) => {
     const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
@@ -280,9 +339,17 @@ describe('SourcesConfig', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Pipecraft (Tornike Gomareli)' }));
+    // One address: no field to fill, one plain sentence, and the address stays editable.
+    expect(within(dialog).queryByText(/archive scope/i)).toBeNull();
+    expect(within(dialog).queryByRole('textbox', { name: /pipecraft/i })).toBeNull();
+    expect(within(dialog).queryByText(/adapter|sitemap/i)).toBeNull();
+    expect(within(dialog).getByLabelText('Feed URL or handle')).toBeEnabled();
+    expect(within(dialog).queryByText(/max posts per fetch|priority/i)).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(JSON.stringify(addSource.mock.calls[0])).toContain('https://www.pipecraft.me/');
+    expect(addSource.mock.calls[0][0]).not.toHaveProperty('max_posts_per_fetch');
+    expect(addSource.mock.calls[0][0]).not.toHaveProperty('priority');
   });
 
   it('the GitHub Trending template adds all languages, or the one typed', async () => {
@@ -502,13 +569,22 @@ describe('SourcesConfig', () => {
     expect(document.querySelector('kbd')).toBeNull();
   });
 
-  it('status chips: all, enabled, disabled, failing, unavailable always; backoff only with sources', async () => {
+  it('status chips: all, enabled, disabled, failing always; unavailable only with sources; no backoff, which failing counts (issue 0027)', async () => {
     setup();
     await screen.findByText('Road to VR');
     const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button').map((b) => b.textContent);
-    expect(chips).toEqual(['All4', 'Enabled3', 'Disabled1', 'Failing1', 'Unavailable1', 'Backoff1', 'Scheduled1']);
+    expect(chips).toEqual(['All4', 'Enabled3', 'Disabled1', 'Failing1', 'Unavailable1', 'Scheduled1']);
     await userEvent.click(screen.getByRole('button', { name: /^Enabled/ }));
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon']);
+  });
+
+  it('with no unavailable source there is no "Unavailable 0" chip', async () => {
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),
+    ])) });
+    await screen.findByText('Simon Willison’s Weblog');
+    const chips = within(screen.getByRole('group', { name: 'Filter by status' })).getAllByRole('button').map((b) => b.textContent);
+    expect(chips).toEqual(['All1', 'Enabled1', 'Disabled0', 'Failing0', 'Scheduled1']);
   });
 
   it('a column header sorts, a second press reverses, and the sort lives in the URL', async () => {
@@ -586,7 +662,7 @@ describe('SourcesConfig', () => {
     expect(within(rowOf('off')).getByRole('checkbox').className).not.toContain('opacity-0');
   });
 
-  it('the bulk bar removes from a track and switches the main digest', async () => {
+  it('the bulk bar removes from a track and switches Show in Main feed', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');
     await userEvent.click(within(rowOf('simon')).getByRole('checkbox'));
@@ -599,7 +675,7 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.removeSourceFromFolder).toHaveBeenCalledWith('f-ar', 'off'));
     expect(api.removeSourceFromFolder).toHaveBeenCalledTimes(1);
 
-    await userEvent.selectOptions(within(bar).getByRole('combobox', { name: 'Main digest' }), 'off');
+    await userEvent.selectOptions(within(bar).getByRole('combobox', { name: 'Show in Main feed' }), 'off');
     await waitFor(() => expect(api.setSourceMainDigest).toHaveBeenCalledTimes(2));
     expect(api.setSourceMainDigest).toHaveBeenCalledWith('simon', false);
     expect(api.setSourceMainDigest).toHaveBeenCalledWith('off', false);
@@ -607,7 +683,7 @@ describe('SourcesConfig', () => {
     expect(within(bar).getByRole('button', { name: 'Delete…' })).toBeInTheDocument();
   });
 
-  it('a track header fetches the track; its menu renames, switches the digest and deletes after a confirmation', async () => {
+  it('a track header fetches the track; its menu renames, switches Show in Main feed and deletes after a confirmation', async () => {
     const fetchFolderNow = vi.fn().mockResolvedValue(runReport());
     const { api } = setup('/settings/sources?group=track', { fetchFolderNow });
     await screen.findByText('Road to VR');
@@ -629,7 +705,7 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.renameTrack).toHaveBeenCalledWith('f-ai', 'Agents'));
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
-    const digest = screen.getByRole('menuitemcheckbox', { name: 'In main feed and digest' });
+    const digest = screen.getByRole('menuitemcheckbox', { name: 'Show in Main feed' });
     expect(digest).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(digest);
     await waitFor(() => expect(api.setTrackMainDigest).toHaveBeenCalledWith('f-ai', false));
@@ -641,6 +717,26 @@ describe('SourcesConfig', () => {
     expect(api.deleteFolder).not.toHaveBeenCalled();
     await userEvent.click(within(confirm).getByRole('button', { name: 'Delete track' }));
     await waitFor(() => expect(api.deleteFolder).toHaveBeenCalledWith('f-ai'));
+  });
+
+  it.each([
+    ['all of its sources are out', [false, false], 'false', true],
+    ['its sources differ', [true, false], 'mixed', true],
+    ['all of its sources are in', [true, true], 'true', false],
+  ])('a track’s main-feed check follows its sources, not a stored track flag: %s', async (_, inMain, checked, next) => {
+    const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'a', display_name: 'Paper A', in_main_digest: inMain[0], folders: [ai] }),
+      healthRow({ source_id: 'b', display_name: 'Paper B', in_main_digest: inMain[1], folders: [ai] }),
+    ]));
+    // The track's own stored flag says "in"; it must not decide the check.
+    const getFolders = vi.fn().mockResolvedValue({ success: true, folders: [{ ...ai, sort_order: 0, exclude_from_main_digest: false }] });
+    const { api } = setup('/settings/sources?group=track', { getSourcesHealth, getFolders });
+    await screen.findByText('Paper A');
+    await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
+    const item = screen.getByRole('menuitemcheckbox', { name: /main feed/i });
+    expect(item).toHaveAttribute('aria-checked', checked);
+    await userEvent.click(item);
+    await waitFor(() => expect(api.setTrackMainDigest).toHaveBeenCalledWith('f-ai', next));
   });
 
   it('the sheet shows the URL with a copy button and a danger delete', async () => {
@@ -662,7 +758,7 @@ describe('SourcesConfig', () => {
     expect(within(sheet).getByRole('button', { name: /Delete source/ }).querySelector('[data-danger-mark]')).not.toBeNull();
   });
 
-  it('the cadence override validates before it calls the API', async () => {
+  it('how often it is fetched: plain words, and your own hours are validated before the API (issue 0027)', async () => {
     const setCadenceOverride = vi.fn().mockResolvedValue({
       success: true,
       row: healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', override_hours: 6, interval_hours: 6, interval_basis: 'override', folders: [ai] }),
@@ -670,22 +766,24 @@ describe('SourcesConfig', () => {
     setup('/settings/sources', { setCadenceOverride });
     await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
     const sheet = await screen.findByRole('dialog');
-    const input = within(sheet).getByRole('textbox', { name: /override/i });
+    const input = within(sheet).getByRole('textbox', { name: /set your own/i });
+    expect(within(sheet).getByText(/^Fetched every /)).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent(/probation|tier|backlog guard|kind floor|override/i);
 
     await userEvent.type(input, '3000');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     expect(await within(sheet).findByText(/between 1 and 2160 hours/i)).toBeInTheDocument();
     expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(setCadenceOverride).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
     await userEvent.type(input, 'abc');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     expect(setCadenceOverride).not.toHaveBeenCalled();
 
     await userEvent.clear(input);
     await userEvent.type(input, '6');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Save override' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save hours' }));
     await waitFor(() => expect(setCadenceOverride).toHaveBeenCalledWith('simon', 6));
   });
 });

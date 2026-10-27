@@ -113,6 +113,20 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
         ops.discard_job(job_id)
         self.assertIsNone(ops.get_job(job_id))
 
+    def test_retired_analysis_jobs_leave_the_job_list(self):
+        # Issue 0027: rows of retired job types (analysis, kept by 0027_drop_analysis) are not
+        # what ingestion did; the list and the overview show only the jobs INSIGHT still runs.
+        ops = OperationsService(self.url)
+        retired = ops.start_job("analyst_inbox_rebuild", trigger="scheduler")
+        live = ops.start_job("ingestion_run", trigger="scheduler")
+        try:
+            ids = [j["id"] for j in ops.list_recent_jobs(200)]
+            self.assertIn(live, ids)
+            self.assertNotIn(retired, ids)
+        finally:
+            ops.discard_job(retired)
+            ops.discard_job(live)
+
     async def test_a_held_run_lock_skips_a_full_run(self):
         kind = FakeKind("fake_rss")
         with psycopg.connect(self.url, autocommit=True) as holder, holder.cursor() as cur:

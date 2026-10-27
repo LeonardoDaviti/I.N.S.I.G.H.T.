@@ -41,9 +41,9 @@ export function useFolders({ enabled = true }: { enabled?: boolean } = {}) {
   });
 }
 
-/** The label of a scope: "All posts", a track's name or a source's name. */
+/** The label of a scope: "Main feed", a track's name or a source's name. */
 export function scopeLabel(scope: string, folders: Folder[] | undefined, sourceNames: Map<string, string>): string {
-  if (scope === 'all') return 'All posts';
+  if (scope === 'all') return 'Main feed';
   const [kind, id] = scope.split(':');
   if (kind === 'folder') return folders?.find((folder) => folder.id === id)?.name ?? 'Track';
   const name = sourceNames.get(id);
@@ -56,7 +56,7 @@ export interface DirectorySource extends SearchableSource {
 
 /**
  * Every source the reader can open, for the rail's filter: all health rows
- * (enabled or not, in the main digest or not) with their readable label, kind
+ * (enabled or not, in the Main feed or not) with their readable label, kind
  * and, once `withUrls` is on, their feed URL. The URLs come from
  * GET /api/sources, fetched only when the owner starts filtering;
  * until then (or if it fails) a source matches on its names and kind.

@@ -26,8 +26,9 @@ export default function SchedulerDialog({
     sync_sources_each_cycle: config.sync_sources_each_cycle,
   }));
   const [saving, setSaving] = useState(false);
-  const rows: Array<[keyof typeof toggles, string]> = [
-    ['sync_sources_each_cycle', 'Sync sources.json every cycle'],
+  const rows: Array<[keyof typeof toggles, string, string]> = [
+    ['sync_sources_each_cycle', 'Sync sources.json every cycle',
+      'The sources follow the file: a source missing from it is deleted, with its posts.'],
   ];
 
   const submit = async () => {
@@ -57,9 +58,12 @@ export default function SchedulerDialog({
           </div>
           <fieldset className="divide-y divide-line rounded-md border border-line">
             <legend className="sr-only">Each cycle</legend>
-            {rows.map(([key, text]) => (
+            {rows.map(([key, text, warning]) => (
               <label key={key} className="flex min-h-[2.75rem] cursor-pointer items-center justify-between gap-3 px-3 text-[0.875rem] text-fg">
-                <span>{text}</span>
+                <span>
+                  {text}
+                  <span className="block text-[0.75rem] font-medium text-fg-2">{warning}</span>
+                </span>
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-[rgb(var(--text))]"

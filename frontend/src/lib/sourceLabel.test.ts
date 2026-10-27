@@ -22,6 +22,10 @@ const DERIVED: Array<[string, string]> = [
   ['https://t.me/s/durov', '@durov'],
   ['https://medium.com/@karpathy/feed', '@karpathy'],
   ['https://feeds.feedburner.com/oreilly/radar', 'oreilly'],
+  // The Nitter and Telegram RSS templates' addresses (issue 0027): one name per account, not the host.
+  ['https://nitter.local/karpathy/rss', '@karpathy'],
+  ['https://nitter.net/simonw/rss', '@simonw'],
+  ['https://telegram.local/rss/seeallochnaya?limit=50', '@seeallochnaya'],
 ];
 
 test('sourceLabel: a feed URL (with or without its scheme) becomes a derived name', () => {

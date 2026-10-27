@@ -47,6 +47,8 @@ export interface FeedItemProps {
   position?: number;
   setSize?: number;
   now?: Date;
+  /** False on one source's own page, where the name would only link to the page you are on. */
+  showSource?: boolean;
 }
 
 /**
@@ -58,7 +60,7 @@ export interface FeedItemProps {
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now,
+  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -134,16 +136,18 @@ function FeedItem({
         <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
-          <TextLink
-            to={sourceReadPath(item.source_id)}
-            title={item.source_display_name}
-            className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3"
-          >
-            {middleTruncate(source, compact ? 32 : 56)}
-          </TextLink>
+          {showSource ? (
+            <TextLink
+              to={sourceReadPath(item.source_id)}
+              title={item.source_display_name}
+              className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3"
+            >
+              {middleTruncate(source, compact ? 32 : 56)}
+            </TextLink>
+          ) : null}
           {length ? (
             <>
-              <span aria-hidden="true" className="shrink-0">·</span>
+              {showSource ? <span aria-hidden="true" className="shrink-0">·</span> : null}
               <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
                 {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
                 {length}
