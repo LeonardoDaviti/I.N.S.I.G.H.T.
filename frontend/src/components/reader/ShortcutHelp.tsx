@@ -7,7 +7,12 @@ import { SHORTCUT_ROWS } from '../../lib/shortcuts';
  * (WCAG 2.1.4). When off, only `?` stays bound. Built on the Dialog, Kbd and
  * Switch primitives, so it shares their scrim, surface and motion.
  */
-export default function ShortcutHelp({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export default function ShortcutHelp({ open, onOpenChange, feedContext = true }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** False on a post opened outside a feed: its post column leaves out the keys it does not bind. */
+  feedContext?: boolean;
+}) {
   const [enabled, setEnabled] = useShortcutPreference();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,7 +40,7 @@ export default function ShortcutHelp({ open, onOpenChange }: { open: boolean; on
                   <span className="inline-flex gap-1">{row.keys.map((key) => <Kbd key={key}>{key}</Kbd>)}</span>
                 </td>
                 <td className="py-2 pr-3 text-fg">{row.feed}</td>
-                <td className="py-2 text-fg-2">{row.post}</td>
+                <td className="py-2 text-fg-2">{row.postNeedsFeed && !feedContext ? '—' : row.post}</td>
               </tr>
             ))}
           </tbody>

@@ -1,6 +1,7 @@
-/** The one keyboard map (spec §F.5). `/` (search) is deliberately absent: search is deferred. */
-export const SHORTCUT_ROWS: ReadonlyArray<{ keys: string[]; feed: string; post: string }> = [
-  { keys: ['j', 'k'], feed: 'Next / previous item (loads more at the end)', post: 'Next / previous post in the feed' },
+/** The one keyboard map (spec §F.5). `/` (search) is deliberately absent: search is deferred.
+ *  postNeedsFeed: the post page binds the key only when opened from a feed (`?ctx=`). */
+export const SHORTCUT_ROWS: ReadonlyArray<{ keys: string[]; feed: string; post: string; postNeedsFeed?: boolean }> = [
+  { keys: ['j', 'k'], feed: 'Next / previous item (loads more at the end)', post: 'Next / previous post in the feed', postNeedsFeed: true },
   { keys: ['o', 'Enter'], feed: 'Open the selected post (marks it read)', post: '—' },
   { keys: ['u', 'Esc'], feed: '—', post: 'Back to the feed' },
   { keys: ['m'], feed: 'Toggle read', post: 'Toggle read' },

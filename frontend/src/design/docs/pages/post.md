@@ -48,7 +48,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Interactions & keys
 
-- `j`/`k` next / previous post in the feed (with a context), `u`/Esc back, `m` toggle read, `s` star, `?` the shortcut table. In the stream, `j`/`k` (and Next / Previous) jump to a post already there, instantly (P12); past its ends they open the post, which starts a new stream at the top.
+- `j`/`k` next / previous post in the feed (with a context), `u`/Esc back, `m` toggle read, `s` star, `?` the shortcut table (without a context its post column has no `j`/`k`). In the stream, `j`/`k` (and Next / Previous) jump to a post already there, instantly (P12); past its ends they open the post, which starts a new stream at the top.
 - Prev/next and the stream replace the history entry, so Back leaves the post rather than walking every post read.
 - Star is optimistic and rolls back on failure. Copy puts the stored text (or the HTML's text) on the clipboard.
 

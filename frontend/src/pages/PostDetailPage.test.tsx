@@ -475,6 +475,16 @@ describe('PostDetailPage feed context and keys', () => {
     expect(await screen.findByTestId('feed')).toHaveTextContent('/');
   });
 
+  it('without a context the shortcut help lists no j / k for the post (issue 0027)', async () => {
+    const user = userEvent.setup();
+    renderAt(contextApi(), `/posts/${POST_ID}`);
+    await screen.findByRole('heading', { level: 1 });
+    await user.keyboard('?');
+    const dialog = await screen.findByRole('dialog', { name: /keyboard shortcuts/i });
+    expect(within(dialog).queryByText('Next / previous post in the feed')).toBeNull();
+    expect(within(dialog).getByText('Next / previous item (loads more at the end)')).toBeInTheDocument();
+  });
+
   it('repeats Back / Previous / Next after the post, and they move like the top row (issue 0010)', async () => {
     const user = userEvent.setup();
     const api = contextApi();

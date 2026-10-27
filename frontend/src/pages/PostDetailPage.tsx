@@ -561,7 +561,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
             )}
           </div>
         </div>
-        <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} />
+        <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} feedContext={Boolean(ctx)} />
         <DevDataSwitch options={POST_FIXTURE_NAMES} />
       </div>
     </>
