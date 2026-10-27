@@ -306,12 +306,6 @@ class PostOpenRequest(BaseModel):
     metadata: Dict[str, Any] | None = None
 
 
-class PostCommentsRequest(BaseModel):
-    limit: int | None = 80
-    refresh: bool | None = False
-    asyncMode: bool | None = False
-
-
 
 # ============= JOBS =============
 # Work that outlives the request runs as a background task with a job_runs row the frontend
@@ -499,27 +493,6 @@ def _unavailable(reason: str) -> JSONResponse:
     return JSONResponse(status_code=409, content={"success": False, "detail": reason, "error": reason})
 
 
-async def _fetch_reddit_comments(post_id: str, *, limit: int = 80, refresh: bool = False,
-                                 job_id: str | None = None) -> Dict[str, Any]:
-    ops = services().operations
-    job_id = job_id or ops.try_start_job(
-        "reddit_comments_fetch",
-        trigger="manual",
-        message=f"Fetch Reddit comments for {post_id}",
-        payload={"post_id": post_id, "limit": limit, "refresh": refresh},
-    )
-    try:
-        ops.try_append_job_event(job_id, message=f"Fetching Reddit comments for {post_id}", level="info")
-        comments = await services().post_detail.fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
-    except Exception as e:
-        ops.try_finish_job(job_id, status="failed", message=str(e), payload={"post_id": post_id})
-        raise
-    result = {"success": True, **comments}
-    ops.try_finish_job(job_id, status="success", message=f"Fetched {result.get('comment_count', 0)} comments",
-                       payload=result)
-    return result
-
-
 def _export_sources_json() -> None:
     """Mirror the sources to sources.json. A source change still succeeds when this fails."""
     try:
@@ -567,26 +540,6 @@ async def record_post_reading_session(post_id: str, request: PostReaderSessionRe
 @error_detail("update the star")
 async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
     return {"success": True, **services().post_detail.toggle_favorite(post_id, bool(request.favorited))}
-
-
-@app.post("/api/posts/item/{post_id}/reddit-comments")
-@error_detail("fetch the Reddit comments")
-async def fetch_reddit_comments(post_id: str, request: PostCommentsRequest, background_tasks: BackgroundTasks):
-    limit, refresh = int(request.limit or 80), bool(request.refresh)
-    if request.asyncMode:
-        job_id = services().operations.try_start_job(
-            "reddit_comments_fetch",
-            trigger="manual",
-            message=f"Fetch Reddit comments for {post_id}",
-            payload={"post_id": post_id, "limit": limit, "refresh": refresh},
-        )
-        if job_id:
-            background_tasks.add_task(
-                _run_async_job_background, "reddit_comments_fetch", _fetch_reddit_comments,
-                post_id, limit=limit, refresh=refresh, job_id=job_id,
-            )
-            return _accepted_job_response(job_id, "reddit_comments_fetch", message="Reddit comment fetch started")
-    return await _fetch_reddit_comments(post_id, limit=limit, refresh=refresh)
 
 
 # ============= READER =============

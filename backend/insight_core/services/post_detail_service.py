@@ -1,10 +1,9 @@
 """
-One post for the reader: detail, reader state (opens, reading time, favourite) and Reddit comments.
+One post for the reader: detail, reader state (opens, reading time, favourite) (stored Reddit comments come with its metadata).
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, Optional
 
 import psycopg
@@ -14,8 +13,6 @@ from insight_core.db import database as db
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_reader import ReaderRepository
-from insight_core.services.posts_service import PostsService
-from insight_core.services.source_fetch_service import SourceFetchService
 from insight_core.utils.media import post_media
 from insight_core.utils.post_fields import display_title
 
@@ -26,8 +23,6 @@ class PostDetailService:
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.logger = get_component_logger("post_detail_service")
-        self.posts_service = PostsService(db_url)
-        self.source_fetch_service = SourceFetchService(db_url)
         self.interactions = PostInteractionsRepository()
         self.reader_repo = ReaderRepository()
 
@@ -152,43 +147,4 @@ class PostDetailService:
             "favorited": state.get("is_favorited", False),
             "interaction": stored,
             "reader_state": state,
-        }
-
-    async def fetch_reddit_comments(self, post_id: str, *, limit: int = 80, refresh: bool = False) -> Dict[str, Any]:
-        post = self.get_post_by_id(post_id)
-        if not post:
-            raise LookupError(f"Post {post_id} not found")
-        if post.get("platform") != "reddit":
-            raise ValueError("Reddit comments are only available for reddit posts")
-
-        metadata = dict(post.get("metadata") or {})
-        discussion = dict(metadata.get("reddit_discussion") or {})
-        cached_comments = discussion.get("comments") if isinstance(discussion.get("comments"), list) else []
-        cached_limit = int(discussion.get("limit") or len(cached_comments) or 0)
-
-        if not refresh and cached_comments and cached_limit >= limit:
-            return {
-                "post_id": post_id,
-                "comments": cached_comments[:limit],
-                "comment_count": min(len(cached_comments), limit),
-                "cached": True,
-                "fetched_at": discussion.get("fetched_at"),
-            }
-
-        comments = await self.source_fetch_service.fetch_reddit_comments_for_post(post["url"], limit=limit)
-        updated_discussion = {
-            **discussion,
-            "comments": comments,
-            "limit": limit,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-        }
-        metadata["reddit_discussion"] = updated_discussion
-        self.posts_service.update_post_metadata(post_id, metadata)
-
-        return {
-            "post_id": post_id,
-            "comments": comments,
-            "comment_count": len(comments),
-            "cached": False,
-            "fetched_at": updated_discussion["fetched_at"],
         }

@@ -33,7 +33,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own. A post with no HTML body shows its stored plain text read as markdown only: a literal `<details>` in it is text, never an element.
 - **More images** after the body.
 - **YouTube posts:** the player, a line of duration / views / likes / transcript source, a "Watch progress" card (progress bar, position slider, Save progress, Mark complete), then the transcript in collapsed blocks with "Set progress here" and "Open at m:ss".
-- **Reddit posts:** a "Discussion" section with the stored comments, only when some are stored; there is no "Fetch comments": Reddit refuses it (issue 0012).
+- **Reddit posts:** a "Discussion" section with the stored comments, only when some are stored; there is no "Fetch comments": Reddit refuses it (issue 0012), and its backend is removed (issue 0029).
 - Column: `grid-cols-[minmax(0,42rem)]`, centred, page `max-w-6xl`, `pb-24`.
 
 ## States

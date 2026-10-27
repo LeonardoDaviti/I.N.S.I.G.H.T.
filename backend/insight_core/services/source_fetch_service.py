@@ -11,7 +11,6 @@ fetch goes through the ingestion runner (insight_core/ingestion). This service k
   kind (yt-dlp off, no Telegram session) raises KindUnavailable before any planning (the API answers 409). Both run inside the
   kind's session (B8: telegram_mtproto connects and checks authorisation; every other kind
   has a no-op session), so a session that cannot open is the same 409.
-- fetch_reddit_comments_for_post for the post detail page
 
 settings["archive"] is written by ingestion.archive_metadata.ArchiveMetadataWriter.
 """
@@ -34,7 +33,6 @@ from insight_core.ingestion.gates import FetchGates
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind, resume_counts
-from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
 from insight_core.ingestion.ports import slowed_line
 from insight_core.ingestion.schedule import (
     DEFAULT_MAX_POSTS_PER_FETCH,
@@ -447,12 +445,6 @@ class SourceFetchService:
             gates.host_limiter.succeeded(host)
             pages_fetched += 1
             yield page
-
-    # ------------------------------------------------------------------ post detail
-
-    async def fetch_reddit_comments_for_post(self, post_url: str, limit: int = 80) -> List[Dict[str, Any]]:
-        """Fetch a Reddit post discussion thread on demand via the public JSON endpoint."""
-        return await fetch_reddit_comments(self.http, post_url, limit)
 
     # ------------------------------------------------------------------ persistence
 
