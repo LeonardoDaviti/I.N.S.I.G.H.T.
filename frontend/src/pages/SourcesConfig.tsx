@@ -41,7 +41,7 @@ import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { useNow } from '../hooks/useNow';
 import { UNREAD_COUNTS_KEY } from '../hooks/useFeed';
-import { filterHealthRows, withEffectiveStatus } from '../lib/sourceSchedule';
+import { withEffectiveStatus } from '../lib/sourceSchedule';
 import { errorMessage } from '../lib/apiError';
 import { formatRelativeTime } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -405,15 +405,11 @@ export default function SourcesConfig() {
     return () => window.clearTimeout(timer);
   }, [highlightTrack]);
 
-  const enabledCount = allRows.filter((row) => row.enabled).length;
-  const failingCount = filterHealthRows(allRows, 'error').length;
-
+  // The status chips count enabled and failing sources; the header does not repeat them.
   const meta = health.isPending
     ? 'Loading…'
     : [
       plural(allRows.length, 'source'),
-      `${enabledCount} on`,
-      failingCount ? `${failingCount} failing` : null,
       plural(folders.length, 'track'),
       health.data?.generated_at ? `as of ${formatRelativeTime(health.data.generated_at, now)}` : null,
       fixtureName ? `fixture: ${fixtureName}` : null,

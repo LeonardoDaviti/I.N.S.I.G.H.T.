@@ -80,6 +80,9 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon', 'off']);
     expect(rowOf('flaky')).toHaveTextContent('retry in 3h');
     expect(within(rowOf('off')).getByRole('switch', { name: 'Enable Road to VR' })).toHaveAttribute('aria-checked', 'false');
+    // The header does not repeat the chips' counts (issue 0027).
+    const header = screen.getByText(/^4 sources · /);
+    expect(header.textContent).not.toMatch(/ on\b|failing/);
   });
 
   it('grouped by track: a source in two tracks shows in both, the untracked come last without a header', async () => {
