@@ -17,15 +17,19 @@ An article page is read with the full-text reader (extract_article_html). Its da
 page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>), else
 the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
 publication's. A page with no article body, or with neither a date nor og:type article (a
-category page), is not a post; a live fetch remembers it for the process's life. A site that
-builds its pages with JavaScript yields no bodies, so no posts (the preview says so).
+category page), is not a post. A live fetch remembers the pages it skipped for the process's
+life (one that failed, for a day) and reads at most SKIP_READS of them besides its posts, so
+they never use up its limit. A site that builds its pages with JavaScript yields no bodies,
+so no posts (the preview says so).
 """
 from __future__ import annotations
 
 import asyncio
 import html
 import logging
+import math
 import re
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -43,10 +47,16 @@ from insight_core.utils.json_safe import iso
 logger = logging.getLogger("insight.ingestion.page_watch")
 
 MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an index's children)
-EXTRA_READS = 5           # pages a live fetch may read beyond its limit, for pages that are no post
+SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
+FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
 PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
+
+# The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
+# it again. For the process's life: a run builds its own registry, so a kind's own set would
+# last one run (issue 0029).
+SKIPPED: Dict[str, float] = {}
 
 LINK_RE = re.compile(r"""(?is)<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["']""")
 JSON_LD_DATE_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
@@ -277,7 +287,6 @@ class PageWatchKind(BaseSourceAdapter):
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None) -> None:
         super().__init__(http)
         self.stored_urls = stored_urls
-        self._no_posts: set[str] = set()     # pages read that were no post (category pages)
 
     def matches(self, source: Source) -> bool:
         return isinstance((source.get("settings") or {}).get("page_watch"), dict)
@@ -299,23 +308,23 @@ class PageWatchKind(BaseSourceAdapter):
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         found = await self._discover(source)
-        candidates = [url for url in found.candidates() if url not in self._no_posts]
+        now = time.monotonic()
+        candidates = [url for url in found.candidates() if SKIPPED.get(url, now) <= now]
         stored = (await asyncio.to_thread(self.stored_urls, candidates)
                   if self.stored_urls and candidates else set())
         posts: List[Dict[str, Any]] = []
-        reads = 0
+        reads = skips = 0
         for url in (url for url in candidates if url not in stored):
-            if len(posts) >= limit or reads >= limit + EXTRA_READS:
+            if len(posts) >= limit or skips >= SKIP_READS:
                 break
             if reads:
                 await self.http.sleep(self.PAGE_DELAY_SECONDS)
             reads += 1
             page = await self._page(url)
-            if page is None:
-                continue
-            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url))
+            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url)) if page else None
             if post is None:
-                self._no_posts.add(url)
+                skips += 1
+                SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
             else:
                 posts.append(post)
         return posts

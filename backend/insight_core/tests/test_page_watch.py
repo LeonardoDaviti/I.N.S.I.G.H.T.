@@ -18,7 +18,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import main
 from insight_core.ingestion.http import HttpError
-from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.base import RateLimit
 from insight_core.ingestion.kinds.page_watch import PageWatchKind, infer_prefix, preview
 from insight_core.services import registry as services_registry
@@ -112,6 +112,10 @@ class PrefixTests(unittest.TestCase):
 
 
 class PageWatchKindTests(unittest.TestCase):
+    def setUp(self):
+        page_watch.SKIPPED.clear()
+        self.addCleanup(page_watch.SKIPPED.clear)
+
     def kind(self, responses=None, stored=()):
         self.http = FakeHttp(responses or anthropic())
         self.lookups = []
@@ -198,12 +202,35 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(posts[f"{SITE}/news/claude-2"]["date"], datetime(2026, 10, 3, tzinfo=timezone.utc))
 
     def test_a_category_page_is_no_post_and_is_not_read_again(self):
-        kind = self.kind()
-        run(kind.fetch_latest(source(), 10))
+        # A run builds its own registry, so each fetch has a fresh kind (ingestion.default_runner).
+        run(self.kind().fetch_latest(source(), 10))
         self.assertIn(f"{SITE}/news/announcements", self.http.requests)
-        self.http.requests.clear()
-        run(kind.fetch_latest(source(), 10))
+        run(self.kind().fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/announcements", self.http.requests)
+
+    def test_a_failed_page_is_read_again_only_the_next_day(self):
+        broken = anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})
+        with mock.patch.object(page_watch.time, "monotonic", return_value=1000.0):
+            run(self.kind(broken).fetch_latest(source(), 10))
+            run(self.kind(broken).fetch_latest(source(), 10))
+            self.assertNotIn(f"{SITE}/news/s1-sec", self.http.requests)
+        with mock.patch.object(page_watch.time, "monotonic", return_value=1000.0 + page_watch.FAILED_RETRY_S):
+            posts = run(self.kind().fetch_latest(source(), 10))
+        self.assertIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])
+
+    def test_pages_that_are_no_post_do_not_use_up_the_limit(self):
+        categories = [f"/news/topic-{n}" for n in range(8)]
+        listing = NEWS_PAGE.replace("<main>", "<main>" + "".join(f'<a href="{path}">Topic</a>' for path in categories))
+        responses = anthropic(**{LISTING: listing, **{f"{SITE}{path}": CATEGORY for path in categories}})
+        posts = run(self.kind(responses).fetch_latest(source(), 1))
+        self.assertEqual([p["url"] for p in posts], [f"{SITE}/news/public-benefit-fund"])
+        # Bounded all the same: at most SKIP_READS pages that are no post.
+        page_watch.SKIPPED.clear()
+        many = [f"/news/topic-{n}" for n in range(page_watch.SKIP_READS + 3)]
+        listing = NEWS_PAGE.replace("<main>", "<main>" + "".join(f'<a href="{path}">Topic</a>' for path in many))
+        responses = anthropic(**{LISTING: listing, **{f"{SITE}{path}": CATEGORY for path in many}})
+        self.assertEqual(run(self.kind(responses).fetch_latest(source(), 1)), [])
+        self.assertEqual(sum("/news/topic-" in url for url in self.http.requests), page_watch.SKIP_READS)
 
     def test_stored_urls_are_not_read_and_the_limit_counts_posts(self):
         kind = self.kind(stored=[f"{SITE}/news/public-benefit-fund", f"{SITE}/news/s1-sec"])
@@ -238,6 +265,7 @@ class PageWatchKindTests(unittest.TestCase):
     def test_a_failing_article_page_is_skipped_but_a_limiting_one_stops_the_fetch(self):
         posts = run(self.kind(anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})).fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])
+        page_watch.SKIPPED.clear()
         limited = anthropic(**{f"{SITE}/news/s1-sec": HttpError("HTTP 429", status=429)})
         with self.assertRaises(HttpError):
             run(self.kind(limited).fetch_latest(source(), 10))

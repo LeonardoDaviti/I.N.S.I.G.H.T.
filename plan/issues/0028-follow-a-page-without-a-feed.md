@@ -30,14 +30,16 @@ with no rules to write beyond one optional path.
     The listing page itself is left out; URLs lose their fragment and trailing slash; deduped.
   - Live fetch: the candidates not stored yet (the `stored_urls` lookup generic RSS uses),
     listing links first, then the sitemap's by lastmod, newest first; up to `limit` posts
-    (at most `limit + 5` pages read), 2 s between pages. A failed page is skipped; a 429 or a
-    timeout stops the fetch (the learned pace, 0016).
+    plus at most 10 pages that are no post or fail (so they never use up the limit, 0029),
+    2 s between pages. A failed page is skipped; a 429 or a timeout stops the fetch (the
+    learned pace, 0016).
   - One article: `extract_article_html` + `strip_html`; the title from `og:title`, `<title>` or
     `<h1>`, less a "| Site" suffix (the `og:site_name`'s, or any short one on a `<title>`); the
     date from the page (above, then `meta name=date`), else the lastmod, else now; `og:image`
     and the body's images.
   - Not a post: no article body, or neither a page date nor `og:type` article (category pages).
-    A live fetch remembers such a page for the process's life and does not read it again.
+    A live fetch remembers such a page for the process's life (a module-level map: each run
+    builds its own registry) and does not read it again; a failed page, for a day (0029).
   - Archive: every candidate, one article page per archive page (the host gate spaces them),
     resumable through the `site_index` checkpoint's `next_index`; `start_checkpoint` is None
     (it starts at the newest; the URL upsert absorbs what is stored). `inspect` reports the
