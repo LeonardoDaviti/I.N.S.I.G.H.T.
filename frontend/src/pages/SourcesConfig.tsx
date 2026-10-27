@@ -538,7 +538,6 @@ export default function SourcesConfig() {
 
       {showAddSource ? (
         <AddSourceModal
-          platform="rss"
           existingAddresses={sourcesQuery.data?.map((source) => source.handle_or_url)}
           onClose={() => setShowAddSource(false)}
           onAdd={handleAddSource}

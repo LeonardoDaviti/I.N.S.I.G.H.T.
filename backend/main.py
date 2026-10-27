@@ -219,11 +219,6 @@ class ArchiveRequest(BaseModel):
     background: bool = False
 
 
-class YouTubeChannelRequest(BaseModel):
-    source: str
-    limit: int | None = None
-
-
 class YouTubeProgressRequest(BaseModel):
     sourceId: str | None = None
     videoUrl: str
@@ -1118,13 +1113,6 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
 
 
 # ============= YOUTUBE ENDPOINTS =============
-
-@app.post("/api/youtube/channel/videos")
-@error_detail("list the channel's videos")
-async def list_youtube_channel_videos(request: YouTubeChannelRequest):
-    logger.info(f"📺 Listing YouTube videos for {request.source}")
-    return {"success": True, **services().youtube.list_channel_videos(request.source, limit=request.limit)}
-
 
 @app.get("/api/youtube/progress/{video_id}")
 @error_detail("load the watch progress")

@@ -448,6 +448,5 @@ the result when the job finishes.
 | POST | `/api/credentials/telegram/login/code` | Telegram sign-in: the code | `{code}` |
 | POST | `/api/credentials/telegram/login/password` | Telegram sign-in: two-step password | `{password}` |
 | POST | `/api/credentials/telegram/login/cancel` | Cancel the sign-in | |
-| POST | `/api/youtube/channel/videos` | List a channel's newest videos | `{source, limit?}` |
 | GET | `/api/youtube/progress/{video_id}` | Watch progress of a video | |
 | PUT | `/api/youtube/progress/{video_id}` | Save watch progress | `{videoUrl, title, progressSeconds, durationSeconds?, sourceId?, notesMarkdown?, completed?}` |

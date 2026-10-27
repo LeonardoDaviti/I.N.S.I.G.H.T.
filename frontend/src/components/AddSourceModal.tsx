@@ -12,7 +12,6 @@ type SourceState = 'enabled' | 'disabled' | 'error';
 interface Template {
   id: string;
   name: string;
-  platform: string;
   // None: the template always builds one address (Pipecraft, Gwern…), so there is no field.
   variableName?: string;
   // An empty variable still builds a source (GitHub Trending: all languages).
@@ -32,7 +31,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'nitter',
     name: 'Nitter',
-    platform: 'rss',
     variableName: 'username',
     variableLabel: 'Username',
     placeholder: 'Enter username...',
@@ -46,7 +44,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'telegram-rss',
     name: 'Telegram RSS',
-    platform: 'rss',
     variableName: 'username',
     variableLabel: 'Channel Username',
     placeholder: 'Enter channel username...',
@@ -60,7 +57,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'lesswrong',
     name: 'LessWrong',
-    platform: 'rss',
     helperText: 'LessWrong\'s posts; the archive reaches far back.',
     buildHandle: () => 'https://www.lesswrong.com/feed.xml',
     buildDisplayName: () => 'LessWrong',
@@ -71,7 +67,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'gwern',
     name: 'Gwern',
-    platform: 'rss',
     helperText: 'Gwern\'s essays from gwern.net; the archive reaches every page.',
     buildHandle: () => 'https://gwern.net',
     buildDisplayName: () => 'Gwern',
@@ -82,7 +77,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'dario-amodei',
     name: 'Dario Amodei Blog',
-    platform: 'rss',
     helperText: 'Dario Amodei\'s essays and posts from darioamodei.com.',
     buildHandle: () => 'https://darioamodei.com',
     buildDisplayName: () => 'Dario Amodei',
@@ -93,7 +87,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'pipecraft',
     name: 'Pipecraft (Tornike Gomareli)',
-    platform: 'rss',
     helperText: 'Tornike Gomareli\'s posts and essays from pipecraft.me, read in full.',
     buildHandle: () => 'https://www.pipecraft.me/',
     buildDisplayName: () => 'Pipecraft',
@@ -104,7 +97,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'github-trending',
     name: 'GitHub Trending',
-    platform: 'rss',
     variableName: 'language',
     variableLabel: 'Language',
     optionalVariable: true,
@@ -122,7 +114,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'deeplearning-batch',
     name: 'DeepLearning.AI The Batch',
-    platform: 'rss',
     helperText: 'Every issue of The Batch newsletter; the archive reaches its first issue.',
     buildHandle: () => 'https://www.deeplearning.ai/the-batch/',
     buildDisplayName: () => 'DeepLearning.AI The Batch',
@@ -133,7 +124,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'philschmid-cloud-attention',
     name: 'Cloud Attention',
-    platform: 'rss',
     helperText: 'Every issue of Phil Schmid\'s Cloud Attention newsletter, read in full.',
     buildHandle: () => 'https://www.philschmid.de/cloud-attention',
     buildDisplayName: () => 'Phil Schmid Cloud Attention',
@@ -144,7 +134,6 @@ const TEMPLATES: Template[] = [
   {
     id: 'ztm-ml-monthly',
     name: 'ZTM AI & ML Monthly',
-    platform: 'rss',
     helperText: 'Every issue of Zero To Mastery\'s AI & ML Monthly newsletter, read in full.',
     buildHandle: () => 'https://zerotomastery.io/newsletters/machine-learning-monthly/1/',
     buildDisplayName: () => 'Zero To Mastery AI & ML Monthly',
@@ -152,24 +141,10 @@ const TEMPLATES: Template[] = [
       fetch_delay_seconds: 1,
     },
   },
-  {
-    id: 'youtube-handle',
-    name: 'YouTube',
-    platform: 'youtube',
-    variableName: 'channel',
-    variableLabel: 'Channel Handle',
-    placeholder: 'Enter channel handle...',
-    helperText: 'Use the YouTube @handle. Example: LAWRENCESYSTEMS',
-    buildHandle: (value) => `https://www.youtube.com/@${value.replace(/^@/, '').trim()}`,
-    buildDisplayName: (value) => `@${value.replace(/^@/, '').trim()}`,
-    defaultSettings: {
-      fetch_delay_seconds: 2,
-    },
-  },
 ];
 
 /** The address a template always builds, whatever its field (Pipecraft, Gwern…); null when the
- *  field changes it (Nitter, YouTube, GitHub Trending), so it can be added once per value. */
+ *  field changes it (Nitter, GitHub Trending), so it can be added once per value. */
 function fixedHandle(template: Template): string | null {
   const handle = template.buildHandle('a');
   return handle === template.buildHandle('b') ? handle : null;
@@ -198,7 +173,6 @@ function shortAddress(address: string): string {
 }
 
 interface AddSourceModalProps {
-  platform: string;
   /** The addresses already in the sources: a one-address template among them is not offered. */
   existingAddresses?: readonly string[];
   onClose: () => void;
@@ -211,7 +185,7 @@ interface AddSourceModalProps {
   }) => void;
 }
 
-export default function AddSourceModal({ platform, existingAddresses = [], onClose, onAdd }: AddSourceModalProps) {
+export default function AddSourceModal({ existingAddresses = [], onClose, onAdd }: AddSourceModalProps) {
   const api = useApi();
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariable, setTemplateVariable] = useState('');
@@ -219,8 +193,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   const [fetchDelay, setFetchDelay] = useState(1);
-  const [isResolvingChannel, setIsResolvingChannel] = useState(false);
-  const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(null);
   // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
   const substack = isSubstackUrl(handleOrUrl);
   const connections = useConnections(substack);
@@ -229,15 +201,11 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
   const [sidError, setSidError] = useState<string | null>(null);
   const saveSid = useSaveCredential();
   
-  const youtubeLookupValue = selectedTemplate?.id === 'youtube-handle'
-    ? (templateVariable.trim() ? selectedTemplate.buildHandle(templateVariable.trim()) : '')
-    : (platform === 'youtube' ? handleOrUrl.trim() : '');
-
-  // Get templates for this platform, less the one-address ones already added (Pipecraft, Gwern…).
+  // The templates, less the one-address ones already added (Pipecraft, Gwern…).
   const added = new Set(existingAddresses.map(sameAddress));
   const availableTemplates = TEMPLATES.filter((t) => {
     const fixed = fixedHandle(t);
-    return t.platform === platform && !(fixed && added.has(sameAddress(fixed)));
+    return !(fixed && added.has(sameAddress(fixed)));
   });
 
   // Update URL when template variable changes
@@ -254,42 +222,10 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
     }
   }, [selectedTemplate, templateVariable, displayNameManuallyEdited]);
 
-  useEffect(() => {
-    if (platform !== 'youtube' || !youtubeLookupValue) {
-      setIsResolvingChannel(false);
-      setResolvedChannelName(null);
-      return;
-    }
-
-    let cancelled = false;
-    setIsResolvingChannel(true);
-
-    const timeout = window.setTimeout(async () => {
-      const preview = await api.listYouTubeChannelVideos(youtubeLookupValue, 1);
-      if (cancelled) return;
-
-      const channelTitle = preview.videos?.[0]?.channel_title?.trim();
-      if (channelTitle) {
-        setResolvedChannelName(channelTitle);
-        if (!displayNameManuallyEdited) {
-          setDisplayName(channelTitle);
-        }
-      } else {
-        setResolvedChannelName(null);
-      }
-      setIsResolvingChannel(false);
-    }, 450);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [api, platform, youtubeLookupValue, displayNameManuallyEdited]);
-
   // A typed address that is not a feed: after a pause (or on leaving the field) the finder
   // looks for the page's feed, and the field becomes it (issue 0026). Add waits meanwhile.
   const address = handleOrUrl.trim();
-  const findsFeed = platform === 'rss' && !selectedTemplate;
+  const findsFeed = !selectedTemplate;
   const [lookup, setLookup] = useState('');
   const [finding, setFinding] = useState<(FeedFinding & { for: string }) | null>(null);
   const foundFeeds = finding?.feeds ?? [];
@@ -376,8 +312,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
     setHandleOrUrl(builds ? template.buildHandle('') : '');
     setDisplayName(builds ? (template.buildDisplayName?.('') || '') : '');
     setDisplayNameManuallyEdited(false); // Reset manual edit flag
-    setIsResolvingChannel(false);
-    setResolvedChannelName(null);
   };
 
   const handleAdd = async () => {
@@ -454,15 +388,6 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
                 </>
               ) : null}
               {selectedTemplate.helperText && <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>}
-              {platform === 'youtube' && youtubeLookupValue && (
-                <p className="mt-2 text-[0.75rem] text-fg-2">
-                  {isResolvingChannel
-                    ? 'Resolving channel title…'
-                    : resolvedChannelName
-                      ? `Resolved channel: ${resolvedChannelName}`
-                      : 'Could not resolve the channel title yet. The handle still works as a source.'}
-                </p>
-              )}
             </div>
           )}
 

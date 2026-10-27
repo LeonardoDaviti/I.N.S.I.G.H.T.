@@ -216,7 +216,7 @@ describe('AddSourceModal: Substack', () => {
     const onClose = vi.fn();
     // A Substack address is read directly: the feed finder leaves it as typed.
     const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'direct', feeds: [] });
-    renderWithProviders(<AddSourceModal platform="rss" onAdd={onAdd} onClose={onClose} />, { api: makeFakeApi({ findFeed, ...methods }) });
+    renderWithProviders(<AddSourceModal onAdd={onAdd} onClose={onClose} />, { api: makeFakeApi({ findFeed, ...methods }) });
     return { onAdd, onClose };
   }
   const addWhenReady = async () => {

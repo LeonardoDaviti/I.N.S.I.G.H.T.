@@ -460,23 +460,6 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface YouTubeVideoPreview {
-  video_id: string;
-  url: string;
-  title: string;
-  description?: string;
-  published_at?: string | null;
-  channel_title?: string | null;
-  channel_id?: string | null;
-  source_handle: string;
-}
-
-export interface YouTubeChannelVideosResponse extends Envelope {
-  channel?: Record<string, unknown>;
-  total_videos?: number;
-  videos?: YouTubeVideoPreview[];
-}
-
 export interface YouTubeWatchProgress {
   video_id?: string;
   source_id?: string | null;
@@ -684,8 +667,6 @@ export function createApi() {
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
         `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
       ),
-    listYouTubeChannelVideos: (source: string, limit = 1) =>
-      settle(request<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', { method: 'POST', body: { source, limit } })),
 
     // ---- Tracks (folders) ----
 
