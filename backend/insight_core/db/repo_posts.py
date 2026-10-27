@@ -622,14 +622,15 @@ class PostsRepository:
 
     def full_text_candidates(self, cur: Cursor, *, short_chars: int, source_id: Optional[str] = None,
                              retry: bool = False, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Stored posts whose body is shorter than short_chars and never read from its page,
-        newest first, each with its source. retry includes those a repair already tried."""
+        """Stored posts whose body is shorter than short_chars, or a paid teaser of any length,
+        never read from its page, newest first, each with its source. retry includes those a
+        repair already tried."""
         cur.execute(
             f"""
             SELECT p.id, p.url, p.title, p.content, p.content_html, p.metadata,
                    s.id, s.platform, s.handle_or_url, s.settings
             FROM posts p JOIN sources s ON s.id = p.source_id
-            WHERE length(coalesce(p.content, '')) < %(short)s
+            WHERE (length(coalesce(p.content, '')) < %(short)s OR p.metadata @> '{{"paywalled": true}}')
               AND NOT p.metadata ? '{FULL_TEXT_FLAG}'
               AND (%(retry)s OR NOT p.metadata ? '{FULL_TEXT_CHECKED}')
               AND (%(source_id)s::uuid IS NULL OR s.id = %(source_id)s::uuid)

@@ -281,6 +281,16 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The whole free post.", content)
         self.assertEqual(metadata["audience"], "everyone")
 
+    async def test_a_paid_teaser_is_read_again_however_long(self):
+        # Substack's free opening of a paid post can run past SHORT_BODY_CHARS (kaitchup: 1,614).
+        teaser = "The free opening of a paid post. " * 60
+        self._upsert({"url": "https://test.invalid/p/paid", "content": teaser,
+                      "metadata": {"audience": "only_paid", "paywalled": True}}, self.substack_id)
+        self._upsert({"url": "https://test.invalid/p/free", "content": teaser,
+                      "metadata": {"audience": "everyone", "paywalled": False}}, self.substack_id)
+        summary = await self._repair(FakeHttp(), source_id=self.substack_id, dry_run=True)
+        self.assertEqual(summary["to_read"], 1)
+
 
 @requires_test_db
 class EntityRepairTests(unittest.IsolatedAsyncioTestCase):

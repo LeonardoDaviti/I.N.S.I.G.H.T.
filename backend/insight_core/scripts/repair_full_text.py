@@ -3,8 +3,8 @@
     python -m insight_core.scripts.repair_full_text [--dry-run] [--source ID] [--limit N] [--retry]
     python -m insight_core.scripts.repair_full_text --entities [--dry-run] [--source ID]
 
-Which posts: a body shorter than full_text.SHORT_BODY_CHARS that was never read from its
-page, newest first. How each is read again:
+Which posts: a body shorter than full_text.SHORT_BODY_CHARS, or a paid teaser of any length
+(metadata.paywalled), that was never read from its page, newest first. How each is read again:
   - a source of the substack kind: its post from Substack's API (free posts come in full;
     paid ones only with the Substack session in Connections);
   - a generic RSS source: the article page, as new posts are read (ingestion/full_text.py),
