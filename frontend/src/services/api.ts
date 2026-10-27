@@ -278,34 +278,27 @@ export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'f
   | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
 export type CadenceTier = 'fast' | 'medium' | 'slow' | 'unknown';
 export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
-export type SourceSelector = { kind: 'all' } | { kind: 'folder'; id: string } | { kind: 'source'; id: string };
 /** One status per health row (B6): the summary buckets plus `disabled`. */
 export type HealthStatus = 'error' | 'backoff' | 'unavailable' | 'due' | 'deferred' | 'disabled';
 export type IntervalBasis = 'override' | 'tier' | 'probation' | 'backlog_guard' | 'profile_floor';
 export type RunStatus = 'success' | 'partial' | 'failed' | 'skipped_busy' | 'nothing_due';
 
+/** The parts of a run report a reader sees (issue 0021); the payload carries more. */
 export interface RunReport {
   run_id: string | null;
-  trigger: 'scheduler' | 'manual' | 'cli';
-  selector: SourceSelector;
-  force: boolean;
   status: RunStatus;
-  /** The backend's one-line summary ("12 due, 63 deferred, 1 failed; 48 new posts"). */
-  summary?: string;
-  started_at: string;
-  finished_at: string;
   duration_s?: number;
   sources_considered: number;
   sources_fetched: number;
   sources_failed: number;
-  decisions: Partial<Record<DecisionKind, number>>;
-  posts_fetched: number;
+  /** Sources with at least one new post; absent from reports stored before issue 0021. */
+  sources_with_new?: number;
   /** THE "new posts" number. */
   posts_inserted: number;
-  posts_updated: number;
+  /** Posts that could not be saved. */
   posts_failed: number;
   failures: { source_id: string; display_name: string; stage: 'fetch' | 'save' | 'connector'; error: string }[];
-  post_failures: { url: string | null; source_id: string; stage: 'upsert' | 'discarded'; error: string }[];
+  /** At most 20, most new posts first. */
   inserted_by_source: { source_id: string; display_name: string; inserted: number }[];
 }
 

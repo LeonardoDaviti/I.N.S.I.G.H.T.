@@ -5,7 +5,7 @@ import { useOperationJob } from '../../hooks/useOperations';
 import { asRunReport } from '../../lib/runReport';
 import { plural } from '../../lib/format';
 import { jobLabel } from '../../lib/operationsOverview';
-import { formatJobDuration, jobGlyph, runProgressLine } from '../../lib/jobRuns';
+import { formatJobDuration, jobEvents, jobGlyph, jobSummary, runProgressLine } from '../../lib/jobRuns';
 import { formatLocalDateTime } from '../../lib/dates';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
@@ -15,13 +15,11 @@ import { StatusGlyph } from '../ui';
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
 
-type JobEvent = { at?: string; level?: string; message?: string };
-
-/** One job: what it was, how it went, its run report and its events. */
+/** One job: what it was, how it went, what it delivered and its per-source events. */
 function JobDetail({ job }: { job: JobRun }) {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
   const archiveResult = job.job_type === 'archive_source' && job.payload ? archiveResultLine(job.payload) : null;
-  const events: JobEvent[] = Array.isArray(job.payload?.events) ? job.payload.events : [];
+  const events = jobEvents(job);
   const facts: Array<[string, React.ReactNode]> = [
     ['Status', <StatusGlyph key="s" status={jobGlyph(job.status)} label={job.status} />],
     ['Source', job.source_display_name ? sourceLabel(job.source_display_name) : 'All sources'],
@@ -86,6 +84,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
         <ul className="divide-y divide-line border-y border-line">
           {jobs.map((job) => {
             const selected = job.id === selectedId;
+            const summary = jobSummary(job);
             const when = [formatLocalDateTime(job.started_at), formatJobDuration(job.started_at, job.finished_at)].filter(Boolean).join(' · ');
             return (
               <li key={job.id}>
@@ -108,7 +107,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
                       <span className="text-[0.75rem] tabular-nums text-fg-2">{Math.round(job.progress)}%</span>
                     </div>
                   ) : null}
-                  {job.message ? <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p> : null}
+                  {summary ? <p className="mt-0.5 line-clamp-2 text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{summary}</p> : null}
                   {when ? <p className="mt-0.5 text-[0.75rem] tabular-nums text-fg-3">{when}</p> : null}
                 </button>
               </li>
@@ -118,6 +117,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
             <li className="px-2 py-8 text-center text-[0.8125rem] text-fg-3">No jobs yet. Run due sources and the run shows up here.</li>
           ) : null}
         </ul>
+        <p className="text-[0.75rem] text-fg-3">Hourly checks that find nothing due fetch nothing and are not listed.</p>
       </section>
       <section aria-labelledby="ingestion-job-detail" className="min-w-0 space-y-4">
         <h2 id="ingestion-job-detail" className={sectionTitle}>{detail.data ? jobLabel(detail.data) : 'Job detail'}</h2>

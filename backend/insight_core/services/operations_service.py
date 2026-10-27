@@ -367,6 +367,13 @@ class OperationsService:
                 )
             conn.commit()
 
+    def discard_job(self, job_id: str) -> None:
+        """Delete a job that turned out not worth listing (a scheduler tick with nothing due)."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM job_runs WHERE id = %s", (job_id,))
+            conn.commit()
+
     def append_job_event(
         self,
         job_id: str,

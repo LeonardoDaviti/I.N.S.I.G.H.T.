@@ -89,13 +89,10 @@ class _NullProgress:
 
 NULL_PROGRESS: ProgressSink = _NullProgress()
 
-# Rough job progress per phase, so the Operations panel's bar moves. Each "source" event
-# moves it from 10 towards 80 by sources done out of due.
-_PHASE_PROGRESS = {"decided": 10.0, "saved": 100.0}
-
-
 class JobProgressSink:
-    """Appends each phase to a job_runs row. Never raises: progress is not worth a run.
+    """Appends an event per source fetched and per slow-down to a job_runs row. Never raises:
+    progress is not worth a run. The "decided" and "saved" phases add none: they repeat the
+    run's summary, which the job already shows.
 
     A "source" event (one source fetched and saved) also sets the payload's live counters,
     `sources: {done, total}` and `new_posts`, which the top bar's activity sign reads.
@@ -106,17 +103,17 @@ class JobProgressSink:
         self.job_id = job_id
 
     def event(self, phase: str, data: dict) -> None:
-        if not self.job_id:
+        if not self.job_id or phase not in ("source", "slowed"):
             return
         data = data or {}
-        progress, fields, message, level = _PHASE_PROGRESS.get(phase), None, f"Ingestion {phase}", "info"
+        progress, fields = None, None
         if phase == "source":
             sources = data["sources"]
-            progress = 10.0 + 70.0 * sources["done"] / max(1, sources["total"])
+            progress = 100.0 * sources["done"] / max(1, sources["total"])
             fields = {"sources": sources, "new_posts": data["new_posts"]}
             message = _source_line(data)
             level = "error" if data.get("status") == "error" else "info"
-        elif phase == "slowed":
+        else:
             message, level = slowed_line(data), "warning"
         try:
             self.ops.append_job_event(

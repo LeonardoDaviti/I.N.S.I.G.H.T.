@@ -181,11 +181,10 @@ const SCENARIOS: FrameScenario[] = [
 function worstSiteJobs(s: Site, now: Date): Site {
   const report = runReport({
     status: 'partial',
-    summary: '14 due, 79 deferred, 3 failed; 41 new posts',
     sources_considered: 93,
     sources_fetched: 14,
     sources_failed: 3,
-    decisions: { fetch_due: 14, skip_not_due: 76, skip_unavailable: 3 },
+    sources_with_new: 9,
     posts_inserted: 41,
     failures: [
       { source_id: sourceId('s-newz'), display_name: 'ai_newz', stage: 'connector', error: 'FloodWaitError: A wait of 1260 seconds is required (caused by GetHistoryRequest)' },

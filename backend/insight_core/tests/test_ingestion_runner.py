@@ -167,6 +167,13 @@ class IngestionRunnerDecisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rss.fetch_calls), 1)
         self.assertEqual(report.decisions, {"skip_unavailable": 1, "fetch_forced": 1})
 
+    async def test_the_report_counts_the_sources_that_delivered_new_posts(self):
+        a, b, empty = _source("https://a.test/rss"), _source("https://b.test/rss"), _source("https://empty.test/rss")
+        h = _Harness([a, b, empty], [_rss_kind(lambda s, n: _posts_for(0 if "empty" in s["handle_or_url"] else 2)(s, n))])
+        report = await h.run(force=True)
+        self.assertEqual((report.posts_inserted, report.sources_with_new), (4, 2))
+        self.assertEqual(report.to_payload()["sources_with_new"], 2)
+
     async def test_nothing_due_does_not_save(self):
         fresh = _source("https://fresh.test/rss")
         h = _Harness([fresh], [_rss_kind()], rows={fresh["id"]: _ok_row(fresh, 1)})
@@ -425,6 +432,18 @@ class JobProgressLineTests(unittest.TestCase):
         message, level = self._line(status="error", error="HTTP 403", fetched=0, new=0)
         self.assertEqual((message, level), ("r/viture: failed, HTTP 403 · 52 of 81 sources", "error"))
 
+    def test_the_decided_and_saved_phases_add_no_event(self):
+        recorded = []
+
+        class _Ops:
+            def append_job_event(self, job_id, **kwargs):
+                recorded.append(kwargs)
+
+        sink = JobProgressSink(_Ops(), "job")
+        sink.event("decided", {"sources_considered": 3, "decisions": {"skip_not_due": 3}})
+        sink.event("saved", {"inserted": 0})
+        self.assertEqual(recorded, [], "they repeat the run's summary, which the job already shows")
+
     def test_a_slow_down_says_the_host_and_its_new_gap(self):
         recorded = []
 
@@ -464,10 +483,20 @@ class RunReportTests(unittest.IsolatedAsyncioTestCase):
         base.update(fields)
         return RunReport(**base)
 
-    def test_summary_line_format_is_pinned(self):
-        report = self._report(sources_considered=75, sources_fetched=12, sources_failed=1,
-                              decisions={"fetch_due": 12, "skip_not_due": 63}, posts_inserted=48)
-        self.assertEqual(report.summary_line(), "12 due, 63 deferred, 1 failed; 48 new posts")
+    def test_the_summary_says_what_the_run_delivered(self):
+        cases = [
+            (dict(status="success", sources_fetched=5, posts_inserted=34, sources_with_new=5), "34 new posts from 5 sources"),
+            (dict(status="success", sources_fetched=1, posts_inserted=1, sources_with_new=1), "1 new post from 1 source"),
+            (dict(status="success", sources_fetched=12), "Nothing new: 12 sources checked"),
+            (dict(status="nothing_due", sources_considered=222), "Nothing was due"),
+            (dict(status="failed", sources_fetched=3, sources_failed=3), "3 sources failed"),
+            (dict(status="partial", sources_fetched=14, sources_failed=3, posts_inserted=1200, sources_with_new=11),
+             "1,200 new posts from 11 sources, 3 sources failed"),
+            (dict(status="skipped_busy"), "Skipped: another run is in progress"),
+        ]
+        for fields, line in cases:
+            self.assertEqual(self._report(**fields).summary_line(), line)
+            self.assertEqual(self._report(**fields).to_payload()["summary"], line)
 
     async def test_payload_is_compact_and_serialisable(self):
         def boom(source, limit):

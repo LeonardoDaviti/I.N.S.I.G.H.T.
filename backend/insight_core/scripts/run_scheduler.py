@@ -108,7 +108,8 @@ async def tick(
             last_daily = None
 
     # 1. The ingestion run. The job is finished in every case: a raise marks it failed
-    #    instead of leaving it "running" (E5).
+    #    instead of leaving it "running" (E5). A tick with nothing due made no request: its
+    #    job is deleted, not listed; the scheduler state below still records the tick (0021).
     request = FetchRequest(SourceSelector.all(), Trigger.SCHEDULER)
     job_id = None
     try:
@@ -116,10 +117,11 @@ async def tick(
                                payload={"selector": request.selector.as_dict(), "force": request.force})
     except Exception:  # noqa: BLE001
         logger.exception("Could not start the ingestion_run job (running untracked)")
-    status, message, payload = "failed", "Ingestion run did not finish", {}
+    status, message, payload, nothing_due = "failed", "Ingestion run did not finish", {}, False
     try:
         report = await ingest(request, progress=JobProgressSink(ops, job_id))
         status, message, payload = report.job_status, report.summary_line(), report.to_payload()
+        nothing_due = report.status == "nothing_due"
         logger.info("Ingestion tick: %s", message)
     except Exception as exc:  # noqa: BLE001
         message = f"Ingestion run failed: {exc}"
@@ -127,7 +129,10 @@ async def tick(
     finally:
         if job_id:
             try:
-                ops.finish_job(job_id, status=status, message=message, payload=payload, compact=True)
+                if nothing_due:
+                    ops.discard_job(job_id)
+                else:
+                    ops.finish_job(job_id, status=status, message=message, payload=payload, compact=True)
             except Exception:  # noqa: BLE001
                 logger.exception("Could not finish the ingestion_run job")
 

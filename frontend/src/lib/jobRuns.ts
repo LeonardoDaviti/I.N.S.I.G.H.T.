@@ -1,12 +1,15 @@
 /**
  * Job runs (job_runs rows) as the ingestion surfaces show them: a monochrome
- * glyph for the status and a short duration, for Sources → ingestion, and the
+ * glyph for the status, a short duration, a one-line summary and the events
+ * worth reading, for Sources → ingestion, and the
  * top bar's activity sign. Pure.
  */
 import type { Status } from '../components/ui/styles';
 import type { JobRun } from '../services/api';
 import { toDate } from './dates.ts';
 import { formatElapsed } from './duration.ts';
+import { asRunReport, summarizeRunReport } from './runReport.ts';
+import { isRecord } from './utils.ts';
 
 /** A job that has not finished: running, or queued to run. */
 function isActive(status?: string | null): boolean {
@@ -60,6 +63,27 @@ export function runProgressLine(job: JobRun): string | null {
   if (!counters) return null;
   const { done, total, newPosts } = counters;
   return `${done} of ${total} source${total === 1 ? '' : 's'} · ${newPosts} new post${newPosts === 1 ? '' : 's'}`;
+}
+
+/** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message. */
+export function jobSummary(job: JobRun): string | null {
+  const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
+  return report ? summarizeRunReport(report).headline : job.message || null;
+}
+
+export type JobEvent = { at?: string; level?: string; message?: string };
+
+/** Phases whose event only repeated the run's summary (stored before issue 0021). */
+const NOISE_PHASES = new Set(['decided', 'saved']);
+
+/** A job's events worth reading: the per-source lines, not the ones that repeat its summary. */
+export function jobEvents(job: JobRun): JobEvent[] {
+  const events = Array.isArray(job.payload?.events) ? job.payload.events as Array<Record<string, unknown>> : [];
+  return events.filter((event) => {
+    const phase = isRecord(event.data) ? event.data.phase : undefined;
+    if (typeof phase === 'string' && NOISE_PHASES.has(phase)) return false;
+    return !('status' in event && event.message === job.message);
+  }) as JobEvent[];
 }
 
 /** The newest ingestion run, when it failed and finished under an hour ago; else null. */

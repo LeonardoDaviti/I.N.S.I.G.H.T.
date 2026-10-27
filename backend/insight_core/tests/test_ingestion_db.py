@@ -107,6 +107,12 @@ class IngestionRunnerDbTests(unittest.IsolatedAsyncioTestCase):
                 cur.execute("DELETE FROM job_runs WHERE id = %s", (job_id,))
                 conn.commit()
 
+    def test_a_discarded_job_is_gone(self):
+        ops = OperationsService(self.url)
+        job_id = ops.start_job("ingestion_run", trigger="scheduler")
+        ops.discard_job(job_id)
+        self.assertIsNone(ops.get_job(job_id))
+
     async def test_a_held_run_lock_skips_a_full_run(self):
         kind = FakeKind("fake_rss")
         with psycopg.connect(self.url, autocommit=True) as holder, holder.cursor() as cur:

@@ -9,6 +9,7 @@ import type { FeedItem, Folder, JobRun, SchedulerConfig, SourceHealthRow } from 
 import { feedFixture, feedItem, worstFeedItems } from '../../components/reader/fixtures';
 import { healthRow, runReport, worstHealthRows, worstRunReport } from '../../components/ops/fixtures';
 import { demoCredentials } from '../../components/connections/fixtures';
+import { summarizeRunReport } from '../../lib/runReport';
 import type { Site } from './site';
 
 const MINUTE = 60_000;
@@ -184,7 +185,7 @@ export function ingestionJob(now: Date, report = runReport(), overrides: Partial
     job_label: 'Ingestion run',
     status: report.status === 'success' ? 'completed' : 'failed',
     trigger: 'scheduler',
-    message: report.summary ?? null,
+    message: summarizeRunReport(report).headline,
     payload: report as unknown as Record<string, unknown>,
     started_at: at(now, -13 * MINUTE),
     finished_at: at(now, -12 * MINUTE),
