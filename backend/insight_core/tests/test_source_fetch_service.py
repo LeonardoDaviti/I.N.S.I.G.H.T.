@@ -268,6 +268,19 @@ class ArchiveSupportTests(unittest.TestCase):
         support = self.support(kind, _SupportSources(max_posts_per_fetch=5))
         self.assertEqual(support["live_fetch_limit"], 15)
 
+    def test_a_kind_whose_host_refuses_archives_cannot_archive_and_says_why(self):
+        # Issue 0027: Reddit answers every archive listing with 403, so it offers no Plan.
+        kind = self.history_kind()
+        kind.archive_refused = "Reddit refuses archive requests for now."
+        support = self.support(kind, _SupportSources())
+        self.assertFalse(support["archivable"])
+        self.assertFalse(support["unavailable"])
+        self.assertEqual(support["reason"], "Reddit refuses archive requests for now.")
+
+    def test_the_reddit_kind_refuses_archives(self):
+        from insight_core.ingestion.kinds.reddit import RedditKind
+        self.assertTrue(RedditKind.archive_refused)
+
     def test_an_unmeasured_feed_can_be_planned(self):
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50))
         self.assertTrue(support["archivable"])

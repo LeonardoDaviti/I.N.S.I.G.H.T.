@@ -131,6 +131,17 @@ describe('PostDetailPage reading view', () => {
     expect(labels).toEqual(['Open original', 'Open discussion', 'Star', 'Copy text']);
   });
 
+  it('a Reddit post offers no Fetch comments (Reddit refuses it); comments stored with it still show', async () => {
+    const { unmount } = render(baseApi(rssPost({ platform: 'reddit' })));
+    await screen.findByRole('heading', { name: '2026 in LLMs (so far)' });
+    expect(screen.queryByRole('button', { name: /comments/i })).toBeNull();
+    expect(screen.queryByText('Discussion')).toBeNull();
+    unmount();
+    render(baseApi(rssPost({ platform: 'reddit', metadata: { reddit_discussion: { comments: [{ id: 'c1', author: 'ann', body: 'Nice post', score: 3 }] } } })));
+    expect(await screen.findByText('Nice post')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /comments/i })).toBeNull();
+  });
+
   it('shows a tooltip naming the action on hover', async () => {
     const user = userEvent.setup();
     render(baseApi(rssPost()));

@@ -461,14 +461,6 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface RedditCommentsResponse extends Envelope {
-  post_id?: string;
-  comments?: RedditComment[];
-  comment_count?: number;
-  cached?: boolean;
-  fetched_at?: string | null;
-}
-
 export interface YouTubeVideoPreview {
   video_id: string;
   url: string;
@@ -642,15 +634,6 @@ export function createApi() {
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
-    /** Fetch a Reddit post's comments; the backend may answer 202 with a job, which is polled. */
-    fetchRedditComments: (postId: string, opts?: { limit?: number; refresh?: boolean }) => settle((async () => {
-      const response = await request<RedditCommentsResponse & Partial<JobAccepted>>(`/api/posts/item/${postId}/reddit-comments`, {
-        method: 'POST',
-        body: { limit: opts?.limit ?? 80, refresh: opts?.refresh ?? false, asyncMode: true },
-      });
-      if (!response.accepted || typeof response.job_id !== 'string') return response as RedditCommentsResponse;
-      return { success: true, ...(await waitForJob<RedditCommentsResponse>(response.job_id)) };
-    })()),
     getYouTubeWatchProgress: (videoId: string) =>
       settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`)),
     saveYouTubeWatchProgress: (videoId: string, payload: YouTubeProgressInput) =>

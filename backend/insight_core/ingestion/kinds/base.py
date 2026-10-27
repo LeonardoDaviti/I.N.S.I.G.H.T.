@@ -227,6 +227,8 @@ class BaseKind:
     name: str = "base"
     profile: PolitenessProfile = PolitenessProfile(concurrency_pool="host-lock")
     available_basis: AvailableBasis = "unknown"
+    # Why this kind's host refuses every archive request (None: it can archive).
+    archive_refused: str | None = None
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError

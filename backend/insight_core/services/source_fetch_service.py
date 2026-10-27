@@ -167,6 +167,9 @@ class SourceFetchService:
         reason = unavailable_reason(kind.profile, availability)
         if reason is not None:
             return {**support, "archivable": False, "reason": reason, "unavailable": True}
+        refused = getattr(kind, "archive_refused", None)
+        if refused:
+            return {**support, "archivable": False, "reason": refused}
         if kind.available_basis == "feed_window":
             available = (settings.get("archive") or {}).get("available_posts")
             if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:
