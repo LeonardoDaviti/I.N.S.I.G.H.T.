@@ -547,6 +547,26 @@ describe('SourcesConfig', () => {
     await waitFor(() => expect(api.deleteFolder).toHaveBeenCalledWith('f-ai'));
   });
 
+  it.each([
+    ['all of its sources are out', [false, false], 'false', true],
+    ['its sources differ', [true, false], 'mixed', true],
+    ['all of its sources are in', [true, true], 'true', false],
+  ])('a track’s main-feed check follows its sources, not a stored track flag: %s', async (_, inMain, checked, next) => {
+    const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
+      healthRow({ source_id: 'a', display_name: 'Paper A', in_main_digest: inMain[0], folders: [ai] }),
+      healthRow({ source_id: 'b', display_name: 'Paper B', in_main_digest: inMain[1], folders: [ai] }),
+    ]));
+    // The track's own stored flag says "in"; it must not decide the check.
+    const getFolders = vi.fn().mockResolvedValue({ success: true, folders: [{ ...ai, sort_order: 0, exclude_from_main_digest: false }] });
+    const { api } = setup('/settings/sources?group=track', { getSourcesHealth, getFolders });
+    await screen.findByText('Paper A');
+    await userEvent.click(screen.getByRole('button', { name: 'More actions for track AI engineering' }));
+    const item = screen.getByRole('menuitemcheckbox', { name: /main feed/i });
+    expect(item).toHaveAttribute('aria-checked', checked);
+    await userEvent.click(item);
+    await waitFor(() => expect(api.setTrackMainDigest).toHaveBeenCalledWith('f-ai', next));
+  });
+
   it('the sheet shows the URL with a copy button and a danger delete', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });

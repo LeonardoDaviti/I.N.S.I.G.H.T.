@@ -513,8 +513,6 @@ export interface Folder {
   sort_order: number;
   /** "folder" = generic grouping, "track" = curated interest with its own reading view */
   kind?: 'folder' | 'track';
-  /** Hide this track's sources from the main daily/weekly digests */
-  exclude_from_main_digest?: boolean;
   /** Optional narrowing within the track's sources; empty = take everything */
   match_keywords?: string[];
   source_count?: number;

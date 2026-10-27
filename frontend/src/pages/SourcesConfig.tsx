@@ -279,11 +279,12 @@ export default function SourcesConfig() {
     fetch: (id, name) => void runFetch({ kind: 'folder', id, name }),
     isFetching: (id) => isRunning({ kind: 'folder', id }),
     rename: (id, name) => { setRenameText(name); setRenaming({ id, name }); },
+    // From the member sources, the only place the main feed reads: mixed when they differ.
     inMainDigest: (id) => {
-      const folder = foldersQuery.data?.find((f) => f.id === id);
-      if (folder && typeof folder.exclude_from_main_digest === 'boolean') return !folder.exclude_from_main_digest;
       const members = allRows.filter((row) => row.folders.some((f) => f.id === id));
-      return members.length ? members.every((row) => row.in_main_digest) : null;
+      if (!members.length) return null;
+      const inMain = members.filter((row) => row.in_main_digest).length;
+      return inMain === members.length ? true : inMain === 0 ? false : 'mixed';
     },
     setMainDigest: (id, name, on) => {
       void (async () => {

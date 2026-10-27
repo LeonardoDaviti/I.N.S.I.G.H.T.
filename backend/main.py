@@ -797,11 +797,9 @@ async def remove_folder_source(folder_id: str, source_id: str):
 @error_detail("update the main-digest setting")
 async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
     """Apply the digest switch to every source in a folder/track. Sending false keeps a
-    track's sources out of the "all" feed while they are still ingested."""
-    value = request.in_main_digest
-    result = services().sources.set_folder_in_main_digest(folder_id, value)
-    # Keep the folder's declared intent in step with what was applied.
-    services().folders.update_folder(folder_id, {"exclude_from_main_digest": not value})
+    track's sources out of the "all" feed while they are still ingested. The sources hold the
+    answer; the track shows what its sources say (issue 0027)."""
+    result = services().sources.set_folder_in_main_digest(folder_id, request.in_main_digest)
     return {"success": True, **result}
 
 

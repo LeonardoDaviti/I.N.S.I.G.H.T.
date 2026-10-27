@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { Check, MoreHorizontal } from 'lucide-react';
+import { Check, Minus, MoreHorizontal } from 'lucide-react';
 import { Button } from '../ui';
 
 const ITEM =
@@ -21,8 +21,8 @@ export default function TrackMenu({
   onDelete,
 }: {
   name: string;
-  /** null while unknown: the switch item is disabled. */
-  inMainDigest: boolean | null;
+  /** From the track's sources: all in, none, or mixed (a press puts them all in); null while unknown: the item is disabled. */
+  inMainDigest: boolean | 'mixed' | null;
   /** Phones only: the header has no room for its own fetch button there. */
   onFetch?: () => void;
   onRename: () => void;
@@ -102,11 +102,11 @@ export default function TrackMenu({
             role="menuitemcheckbox"
             aria-checked={inMainDigest ?? false}
             disabled={inMainDigest === null}
-            onClick={pick(() => onMainDigest(!inMainDigest))}
+            onClick={pick(() => onMainDigest(inMainDigest !== true))}
             className={`${ITEM} disabled:text-fg-3`}
           >
             <span aria-hidden="true" className="inline-flex w-3 justify-center">
-              {inMainDigest ? <Check className="h-3.5 w-3.5" /> : null}
+              {inMainDigest === 'mixed' ? <Minus className="h-3.5 w-3.5" /> : inMainDigest ? <Check className="h-3.5 w-3.5" /> : null}
             </span>
             In main feed and digest
           </button>
