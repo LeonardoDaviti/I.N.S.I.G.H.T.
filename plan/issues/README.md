@@ -31,6 +31,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
 | [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |
 | [0026](0026-feed-finder.md) | Find a site's feed from any page URL | ready-for-agent |
+| [0027](0027-illogicalities.md) | Illogicalities: controls and words that contradict their place | discussion |
 
 ## Analysis archive
 
