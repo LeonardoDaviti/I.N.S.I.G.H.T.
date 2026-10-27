@@ -125,7 +125,10 @@ class TestSourceSettings(unittest.TestCase):
     def test_a_sent_max_posts_per_fetch_does_not_override_the_kinds_number(self):
         """Issue 0027: posts per fetch is INSIGHT's per-kind number, not a user setting."""
         result = self.service.update_source_settings(self.test_source_id, {"max_posts_per_fetch": 50})
-        self.assertEqual(result["settings"]["max_posts_per_fetch"], 20, "the RSS default")
+        self.assertNotIn("max_posts_per_fetch", result["settings"], "not stored")
+        with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+            self.assertEqual(self.repo.get_source_settings(cur, self.test_source_id)["max_posts_per_fetch"], 20,
+                             "the RSS default")
 
     def test_get_all_sources_with_settings(self):
         """Test getting all sources with their merged settings."""
