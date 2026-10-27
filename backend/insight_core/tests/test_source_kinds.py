@@ -274,6 +274,16 @@ class FullTextTests(unittest.TestCase):
         self.assertEqual(posts["Summary only"]["content"], "Only a summary here.")
         self.assertEqual(posts["Empty full text"]["content"], "The real body is in the description.")
 
+    def test_an_items_discussion_link_is_kept(self):
+        # RSS 2.0 <comments>: Hacker News (hnrss.org) puts the HN thread there, the article in <link>.
+        feed = ('<rss version="2.0"><channel><item><title>Story</title><link>https://a.example.com/story</link>'
+                "<comments>https://news.ycombinator.com/item?id=1</comments></item>"
+                "<item><title>Plain</title><link>https://a.example.com/plain</link></item></channel></rss>")
+        posts = {post["title"]: post for post in parsing.parse_feed_posts(feed, "https://hnrss.org/frontpage")}
+        self.assertEqual(posts["Story"]["url"], "https://a.example.com/story")
+        self.assertEqual(posts["Story"]["metadata"], {"comments_url": "https://news.ycombinator.com/item?id=1"})
+        self.assertEqual(posts["Plain"]["metadata"], {})
+
 
 class RedditKindTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_fetch_reads_the_new_rss_endpoint_not_json(self):

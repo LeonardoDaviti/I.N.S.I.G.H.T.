@@ -122,6 +122,15 @@ describe('PostDetailPage reading view', () => {
     expect(screen.queryByText('Open original')).toBeNull();
   });
 
+  it('links the discussion when the feed names one (Hacker News)', async () => {
+    render(baseApi(rssPost({ metadata: { comments_url: 'https://news.ycombinator.com/item?id=1' } })));
+    const link = await screen.findByRole('link', { name: 'Open discussion' });
+    expect(link).toHaveAttribute('href', 'https://news.ycombinator.com/item?id=1');
+    const actions = screen.getByRole('group', { name: 'Post actions' });
+    const labels = Array.from(actions.querySelectorAll('a, button')).map((control) => control.getAttribute('aria-label'));
+    expect(labels).toEqual(['Open original', 'Open discussion', 'Star', 'Copy text']);
+  });
+
   it('shows a tooltip naming the action on hover', async () => {
     const user = userEvent.setup();
     render(baseApi(rssPost()));

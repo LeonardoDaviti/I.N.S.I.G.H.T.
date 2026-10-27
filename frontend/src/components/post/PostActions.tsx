@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ArrowUpRight, Check, Copy, Star } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, MessageSquare, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
 
 /**
- * The post's three actions, icon-only, in the top-right corner of the title
- * block: open the original, star, copy the text. Each has a tooltip and an
+ * The post's actions, icon-only, in the top-right corner of the title block:
+ * open the original, open its discussion (when the feed names one, e.g. the
+ * Hacker News thread), star, copy the text. Each has a tooltip and an
  * aria-label. Press feedback is the shared `scale(0.97)`, but only for a pointer
  * press: a key press (`:focus-visible`) does not move the button.
  */
@@ -39,6 +40,7 @@ function Action({ tip, children }: { tip: string; children: ReactNode }) {
 
 export interface PostActionsProps {
   url?: string | null;
+  discussionUrl?: string | null;
   starred: boolean;
   starring: boolean;
   onStar: () => void;
@@ -46,7 +48,7 @@ export interface PostActionsProps {
   onCopy: () => void;
 }
 
-export default function PostActions({ url, starred, starring, onStar, copied, onCopy }: PostActionsProps) {
+export default function PostActions({ url, discussionUrl, starred, starring, onStar, copied, onCopy }: PostActionsProps) {
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={400}>
       <div role="group" aria-label="Post actions" className="-mr-2 -mt-1.5 flex shrink-0 items-center">
@@ -54,6 +56,13 @@ export default function PostActions({ url, starred, starring, onStar, copied, on
           <Action tip="Open original">
             <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open original" className={ICON_ACTION}>
               <ArrowUpRight aria-hidden="true" />
+            </a>
+          </Action>
+        ) : null}
+        {discussionUrl ? (
+          <Action tip="Open discussion">
+            <a href={discussionUrl} target="_blank" rel="noopener noreferrer" aria-label="Open discussion" className={ICON_ACTION}>
+              <MessageSquare aria-hidden="true" />
             </a>
           </Action>
         ) : null}

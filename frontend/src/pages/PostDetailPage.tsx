@@ -919,6 +919,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
           </p>
           <PostActions
             url={post.url}
+            discussionUrl={typeof post.metadata?.comments_url === 'string' ? post.metadata.comments_url : null}
             starred={isFavorited}
             starring={togglingFavorite}
             onStar={() => void handleToggleFavorite()}

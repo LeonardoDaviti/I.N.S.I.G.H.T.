@@ -283,7 +283,8 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "date": parse_datetime_value(child_text(item, "pubDate") or child_text(item, "updated")),
                 "media_urls": _extract_xml_media_urls(item, content_html),
                 "categories": _extract_xml_categories(item),
-                "metadata": {},
+                # <comments>: the item's discussion page (on Hacker News, the HN thread).
+                "metadata": {"comments_url": comments} if (comments := child_text(item, "comments")) else {},
             })
     elif local_name(root.tag) == "feed":
         entries = [child for child in root if local_name(child.tag) == "entry"]
