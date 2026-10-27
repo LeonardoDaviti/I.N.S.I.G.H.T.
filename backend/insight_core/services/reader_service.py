@@ -36,10 +36,13 @@ class ReaderService:
             return self.repo.unread_counts(cur)
 
     def set_read(self, post_ids: Sequence[str], read: bool) -> Dict[str, Any]:
-        """Mark these posts read or unread. `ids` are the ones that changed."""
+        """Mark these posts read or unread. `ids` are the ones that changed. Marked read, a
+        post is done with: where it was left is cleared (issue 0030)."""
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 ids = self.repo.set_read(cur, post_ids, read)
+                if read:
+                    self.repo.clear_positions(cur, post_ids)
             conn.commit()
         return _read_state_result(ids)
 
@@ -48,5 +51,6 @@ class ReaderService:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 ids = self.repo.mark_read_through(cur, scope, through, newest=newest, now=self.clock())
+                self.repo.clear_positions(cur, ids)
             conn.commit()
         return _read_state_result(ids)
