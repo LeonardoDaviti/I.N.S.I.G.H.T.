@@ -39,6 +39,7 @@ function setup(methods: Partial<Record<keyof Api, unknown>> = {}, props: Partial
       <Routes>
         <Route path="/" element={<FeedList scope="all" filter="unread" view="stream" density="comfortable" {...props} />} />
         <Route path="/posts/:postId" element={<LocationProbe />} />
+        <Route path="/read/:scopeKind/:scopeId" element={<LocationProbe />} />
       </Routes>
     </LiveRegionProvider>,
     { api },
@@ -111,11 +112,34 @@ describe('FeedList', () => {
     expect(document.activeElement).toBe(articles[1]);
   });
 
-  it('renders one article per item with exactly one link each', async () => {
+  it('renders one article per item with two links each: the title and the source', async () => {
     setup();
     const articles = await screen.findAllByRole('article');
     expect(articles).toHaveLength(3);
-    for (const article of articles) expect(within(article).getAllByRole('link')).toHaveLength(1);
+    for (const article of articles) expect(within(article).getAllByRole('link')).toHaveLength(2);
+  });
+
+  it('the source name opens the reader on that source, without opening or marking the post (issue 0019)', async () => {
+    const user = userEvent.setup();
+    const setPostsRead = vi.fn().mockResolvedValue({ success: true });
+    setup({ setPostsRead });
+    const [first] = await screen.findAllByRole('article');
+    const sourceId = items()[0].source_id;
+    const source = within(first).getByRole('link', { name: 'Simon Willison’s Weblog' });
+    expect(source).toHaveAttribute('href', `/read/source/${sourceId}`);
+    await user.click(source);
+    expect((await screen.findByTestId('location')).textContent).toBe(`/read/source/${sourceId}`);
+    expect(setPostsRead).not.toHaveBeenCalled();
+  });
+
+  it('a row has one read toggle, the circle, and the star, also when selected (issue 0019)', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findAllByRole('article');
+    await user.keyboard('j');
+    const first = screen.getAllByRole('article')[0];
+    expect(first).toHaveAttribute('aria-current', 'true');
+    expect(within(first).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Mark read', 'Star']);
   });
 
   it('an item the API gives no title reads "Untitled post"; thumbnails load lazily', async () => {

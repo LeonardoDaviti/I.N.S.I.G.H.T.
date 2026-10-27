@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCheck, Circle, CircleCheck, PlayCircle, Star } from 'lucide-react';
+import { Circle, CircleCheck, PlayCircle, Star } from 'lucide-react';
 
 import type { FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
@@ -12,6 +12,8 @@ import { formatClock } from '../../lib/duration';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
+import { sourceReadPath } from '../../lib/feedContext';
+import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatClock(item.duration_seconds);
@@ -33,8 +35,6 @@ export interface FeedItemProps {
   onOpen: (item: FeedItemData) => void;
   onToggleRead: (item: FeedItemData) => void;
   onToggleStar: (item: FeedItemData) => void;
-  /** Shown on the selected row only: mark read from the top down to here. */
-  onMarkThrough?: (item: FeedItemData) => void;
   /**
    * What the left column shows. `date` ("Sep 29", relative inside 24h) when the
    * row stands alone; `time` ("14:05") when it already sits under a day header,
@@ -50,14 +50,15 @@ export interface FeedItemProps {
 }
 
 /**
- * One feed row (spec §F.6): an `<article>` whose only link is the title, with the
- * read and star toggles as sibling buttons (32px, 44px on touch). Laid out like
+ * One feed row (spec §F.6): an `<article>` whose links are the title and the
+ * source name (which reads that source, issue 0019), with the read circle and the
+ * star as sibling buttons (32px, 44px on touch). Laid out like
  * the news.smol.ai list: a hairline-bordered row, a muted date column ("Sep 29",
  * relative only inside 24h), a bold title when unread. Selection is a roving
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onMarkThrough, dateColumn = 'date', dayLabel, position, setSize, now,
+  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -133,9 +134,13 @@ function FeedItem({
         <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
-          <span className="min-w-0 truncate" title={item.source_display_name}>
+          <TextLink
+            to={sourceReadPath(item.source_id)}
+            title={item.source_display_name}
+            className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3"
+          >
             {middleTruncate(source, compact ? 32 : 56)}
-          </span>
+          </TextLink>
           {length ? (
             <>
               <span aria-hidden="true" className="shrink-0">·</span>
@@ -167,17 +172,6 @@ function FeedItem({
         </div>
       ) : null}
       <div className={`flex shrink-0 items-center gap-0.5 coarse:-my-2.5 ${actionsReveal}`}>
-        {selected && onMarkThrough ? (
-          <button
-            type="button"
-            aria-label="Mark read up to here"
-            title="Mark read up to here (Shift+A)"
-            onClick={() => onMarkThrough(item)}
-            className={ICON_BUTTON}
-          >
-            <CheckCheck aria-hidden="true" className="h-4 w-4" />
-          </button>
-        ) : null}
         <button
           type="button"
           aria-label={isRead ? 'Mark unread' : 'Mark read'}

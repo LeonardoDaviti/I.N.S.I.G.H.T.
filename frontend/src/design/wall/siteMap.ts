@@ -70,7 +70,7 @@ export const SITE_EDGES: readonly SiteEdge[] = [
   { id: 'feed-post', from: 'feed', to: 'post', label: 'click a title', href: '/posts/p-article' },
   { id: 'post-feed', from: 'post', to: 'feed', label: 'back / esc' },
   { id: 'feed-help', from: 'feed', to: 'help', label: '?' },
-  { id: 'feed-source', from: 'feed', to: 'source-feed', label: 'source in the rail', href: scopePath(`source:${SOURCE}`) },
+  { id: 'feed-source', from: 'feed', to: 'source-feed', label: 'source in the rail or a row', href: scopePath(`source:${SOURCE}`) },
   { id: 'feed-track', from: 'feed', to: 'track-feed', label: 'track in the rail', href: folderReadPath(TRACK) },
   { id: 'feed-switcher', from: 'feed', to: 'switcher', label: '⌘K' },
   { id: 'switcher-track', from: 'switcher', to: 'track-feed', label: 'a track', href: folderReadPath(TRACK) },
