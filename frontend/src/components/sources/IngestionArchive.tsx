@@ -19,7 +19,7 @@ function archiveGlyph(status?: string | null): { status: Status; label: string }
   return { status: 'scheduled', label: 'not archived' };
 }
 
-/** "youtube · 120 of 1,722 stored · 1,602 in backlog · measured 3d ago · checkpoint saved". */
+/** "youtube · 120 of 1,722 stored · 1,602 older posts not archived · measured 3d ago · checkpoint saved". */
 function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
   const stored = formatCount(entry.stored_posts ?? 0);
   const parts = [
@@ -27,7 +27,7 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
     typeof entry.available_posts === 'number' ? `${stored} of ${formatCount(entry.available_posts)} stored` : `${stored} stored`,
   ];
   if (typeof entry.backlog_posts === 'number') {
-    parts.push(entry.backlog_posts === 0 ? 'no backlog' : `${formatCount(entry.backlog_posts)} in backlog`);
+    parts.push(entry.backlog_posts === 0 ? 'nothing older to archive' : `${plural(entry.backlog_posts, 'older post')} not archived`);
   }
   parts.push(entry.last_inspected_at ? `measured ${formatRelativeTime(entry.last_inspected_at, now)}` : 'not measured yet');
   if (entry.resume_ready) parts.push('checkpoint saved');
@@ -36,7 +36,7 @@ function entryLine(entry: ArchiveCatalogEntry, now: Date): string {
 
 /**
  * Sources → ingestion → archive: every enabled source with what it stores, what
- * it has and its backlog; the one picked (`?source=`) gets the sheet's archive
+ * it has and how many older posts are not archived; the one picked (`?source=`) gets the sheet's archive
  * controls plus the pacing a long backfill needs.
  */
 export default function IngestionArchive() {
@@ -71,7 +71,7 @@ export default function IngestionArchive() {
   const now = new Date();
   const meta = catalog.isPending
     ? 'Loading…'
-    : [plural(entries.length, 'source'), backlog ? `${formatCount(backlog)} in backlog` : null].filter(Boolean).join(' · ');
+    : [plural(entries.length, 'source'), backlog ? `${plural(backlog, 'older post')} not archived` : null].filter(Boolean).join(' · ');
 
   return (
     <div className="grid gap-8 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">

@@ -273,10 +273,10 @@ describe('Sources → ingestion tab', () => {
     const mkbhd = (await within(catalog).findByText('Marques Brownlee')).closest('li') as HTMLElement;
     expect(within(mkbhd).getByText('partial')).toBeInTheDocument();
     expect(within(mkbhd).getByText(/120 of 1,722 stored/)).toBeInTheDocument();
-    expect(within(mkbhd).getByText(/1,602 in backlog · measured 3d ago/)).toBeInTheDocument();
+    expect(within(mkbhd).getByText(/1,602 older posts not archived · measured 3d ago/)).toBeInTheDocument();
     const simon = within(catalog).getByText('Simon Willison’s Weblog').closest('li') as HTMLElement;
     expect(within(simon).getByText('archived')).toBeInTheDocument();
-    expect(within(simon).getByText(/no backlog/)).toBeInTheDocument();
+    expect(within(simon).getByText(/nothing older to archive/)).toBeInTheDocument();
     const kaitchup = within(catalog).getByText('The Kaitchup').closest('li') as HTMLElement;
     expect(within(kaitchup).getByText('not archived')).toBeInTheDocument();
     expect(within(kaitchup).getByText(/0 stored · not measured yet/)).toBeInTheDocument();

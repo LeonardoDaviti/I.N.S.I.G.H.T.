@@ -12,7 +12,7 @@ import { dueLabel } from '../lib/schedulerStatus';
 import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperations';
 import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
-import { formatCount, plural } from '../lib/format';
+import { plural } from '../lib/format';
 import { STATUS_GLYPH, kindLabel } from './sources/sourceList';
 import { Button, FilterChip, Input, Sheet, SheetContent, StatusGlyph, Switch, TextLink } from './ui';
 import { Notice } from './states';
@@ -82,7 +82,7 @@ function HealthSummary({ row, now, scheduler }: { row: SourceHealthRow; now: Dat
     backoff ? `${backoff} · ${plural(row.consecutive_failures, 'failure')}` : null,
     row.last_success_at ? `fetched ${formatRelativeTime(row.last_success_at, now)}` : 'never fetched',
     plural(row.stored_posts, 'post'),
-    row.backlog_posts ? `${formatCount(row.backlog_posts)} in backlog` : null,
+    row.backlog_posts ? `${plural(row.backlog_posts, 'older post')} not archived` : null,
   ].filter(Boolean);
   return (
     <div className="space-y-1.5">
