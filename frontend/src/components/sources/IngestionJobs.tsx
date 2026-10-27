@@ -117,7 +117,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
             <li className="px-2 py-8 text-center text-[0.8125rem] text-fg-3">No jobs yet. Run due sources and the run shows up here.</li>
           ) : null}
         </ul>
-        <p className="text-[0.75rem] text-fg-3">Hourly checks that find nothing due fetch nothing and are not listed.</p>
+        <p className="text-[0.75rem] text-fg-3">Scheduler checks that find nothing due fetch nothing and are not listed.</p>
       </section>
       <section aria-labelledby="ingestion-job-detail" className="min-w-0 space-y-4">
         <h2 id="ingestion-job-detail" className={sectionTitle}>{detail.data ? jobLabel(detail.data) : 'Job detail'}</h2>
