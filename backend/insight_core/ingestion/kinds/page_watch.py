@@ -14,7 +14,7 @@ first, then the sitemap's by lastmod (newest first); an archive reads them all, 
 page per archive page so the host gate spaces them.
 
 An article page is read with the full-text reader (extract_article_html). Its date is the
-page's own (article:published_time, JSON-LD datePublished, meta date, <time datetime>), else
+page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>), else
 the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
 publication's. A page with no article body, or with neither a date nor og:type article (a
 category page), is not a post; a live fetch remembers it for the process's life. A site that
@@ -170,11 +170,12 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
 
 def page_date(page: str) -> Optional[datetime]:
     """The page's own publication date: meta article:published_time, JSON-LD datePublished,
-    meta date, the first <time datetime>, then a date written on the page when it has only one
-    (a category page lists many)."""
-    json_ld, time_tag = JSON_LD_DATE_RE.search(page), TIME_RE.search(page)
+    meta date, then a <time datetime> or a date written on the page, each only when the page
+    has one (a tag or category page lists many)."""
+    json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
+    one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
-              *(parsing.meta_content(page, name) for name in META_DATES), time_tag and time_tag.group(1))
+              *(parsing.meta_content(page, name) for name in META_DATES), one_time)
     for value in values:
         if value and (date := parsing.parse_datetime_value(value.strip())) is not None:
             return date

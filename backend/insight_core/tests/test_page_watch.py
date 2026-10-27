@@ -185,6 +185,18 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(posts[f"{SITE}/news/public-benefit-fund"]["date"], datetime(2026, 6, 29, tzinfo=timezone.utc))
         self.assertNotIn(f"{SITE}/news/s1-sec", posts)
 
+    def test_a_tag_page_of_dated_cards_is_no_post_but_one_time_tag_dates_one(self):
+        cards = "".join(f'<div><time datetime="2026-10-{n + 10}">Oct {n + 10}</time>{PARAGRAPH}</div>' for n in range(8))
+        tag_page = f"<html><head><title>Agents | Blog</title></head><body><main>{cards}</main></body></html>"
+        one = f'<html><head><title>One</title></head><body><article><time datetime="2026-10-03">x</time>{PARAGRAPH}</article></body></html>'
+        same = one.replace("</article>", '<time datetime="2026-10-03">again</time></article>')
+        kind = self.kind(anthropic(**{f"{SITE}/news/public-benefit-fund": tag_page, f"{SITE}/news/s1-sec": one,
+                                      f"{SITE}/news/claude-2": same}))
+        posts = {post["url"]: post for post in run(kind.fetch_latest(source(prefix="/news/"), 10))}
+        self.assertNotIn(f"{SITE}/news/public-benefit-fund", posts)
+        self.assertEqual(posts[f"{SITE}/news/s1-sec"]["date"], datetime(2026, 10, 3, tzinfo=timezone.utc))
+        self.assertEqual(posts[f"{SITE}/news/claude-2"]["date"], datetime(2026, 10, 3, tzinfo=timezone.utc))
+
     def test_a_category_page_is_no_post_and_is_not_read_again(self):
         kind = self.kind()
         run(kind.fetch_latest(source(), 10))
