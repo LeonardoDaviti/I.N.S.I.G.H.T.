@@ -21,6 +21,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **Flow** (`insight.reader.flow`, chosen in the reader toolbar, `continuous` by default): continuous needs a `?ctx=`; without one a post stands alone.
 - **Read:** one at a time, opening a post marks it read. Continuous, a post is read once its end has passed the top half of the screen (an end already above the midline counts at once), the first post too. The feed's cached rows and counts follow.
 - **Reading time** runs while the post is current and the tab is visible, and is sent when it stops being current (1 s or more).
+- **Where you stopped** (issue 0030): a long post (4,500 characters or more, about three screens; not a video) stores the index of the top text block in view of its body and the body's block count, on the server with its read state. A block, not a scroll offset, so images and widths do not move it. Saved 3 s after scrolling stops and at once when the tab hides or the post leaves; nothing before you scroll. Cleared once the end passes the top half of the screen (when the stream counts it read) and by marking it read. In the stream each post keeps its own.
 
 ## Anatomy
 
@@ -29,6 +30,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **The stream** (continuous): near the end of the last post the feed's next post joins below (newest first, the same scope and filter, as Next), after a plain `border-strong` rule (its own header names its source and title). The post crossing the screen's midline is current: the URL follows it (replaced), and the sticky navigation, `m`, `s` and the tab title act on it. At most three posts are mounted (previous, current, next); one further away keeps its height. Room of half a screen under the last post lets it reach the midline. Images load lazily as they come near.
 - **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to its feed, `/read/source/<id>`), ` / settings` in `text-3` (a quiet link to `/settings/sources?source=<id>`, P8), ` / date` (no platform: the source says it, P6) (each "/ part" wraps as one). At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), 💬 open discussion (when the feed names one, e.g. the Hacker News thread), ☆ star, ⧉ copy text (✓ "Copied" for a moment).
 - **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. It is the API's short title, as given: the first line of the title (or of the body, when the title is empty or the body's start cut with "…"), cut over 120 characters at the first sentence end, else at a word with "…". The feed rows show the same title. The tab reads `<title> · INSIGHT`.
+- **Continue line** (only the post opened, not one joining the stream): between 5% and 90%, under the header, a quiet `text-link` button in `small` `text-2`: "Continue from where you stopped (40%)". It scrolls to that block and moves focus there; reading past the old place (or the end) removes it. Nothing scrolls by itself.
 - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
 - **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own. A post with no HTML body shows its stored plain text read as markdown only: a literal `<details>` in it is text, never an element.
 - **More images** after the body.
@@ -68,7 +70,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Decisions
 
-- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources, 020 the byline's source name reads the source and the navigation sticks, 021 continuous reading (`../decisions.md`).
+- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources, 020 the byline's source name reads the source and the navigation sticks, 021 continuous reading, 025 continue where you stopped (`../decisions.md`).
 
 ## Open issues
 
