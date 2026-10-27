@@ -225,24 +225,15 @@ export function healthFixture(name: HealthFixtureName, now: Date = new Date()): 
 export function runReport(overrides: Partial<RunReport> = {}): RunReport {
   return {
     run_id: 'job-1',
-    trigger: 'manual',
-    selector: { kind: 'all' },
-    force: false,
     status: 'success',
-    summary: '12 due, 66 deferred, 0 failed; 48 new posts',
-    started_at: '2026-10-09T10:00:00+00:00',
-    finished_at: '2026-10-09T10:01:05+00:00',
     duration_s: 65.2,
     sources_considered: 78,
     sources_fetched: 12,
     sources_failed: 0,
-    decisions: { fetch_due: 12, skip_not_due: 63, skip_unavailable: 3 },
-    posts_fetched: 240,
+    sources_with_new: 2,
     posts_inserted: 48,
-    posts_updated: 9,
     posts_failed: 0,
     failures: [],
-    post_failures: [],
     inserted_by_source: [
       { source_id: 's1', display_name: 'Simon Willison’s Weblog', inserted: 30 },
       { source_id: 's2', display_name: 'Two Minute Papers', inserted: 18 },
@@ -255,22 +246,16 @@ export function runReport(overrides: Partial<RunReport> = {}): RunReport {
 export function worstRunReport(): RunReport {
   return runReport({
     status: 'partial',
-    force: true,
     sources_considered: 12847,
     sources_fetched: 12847,
     sources_failed: 3,
-    decisions: { fetch_forced: 12847 },
+    sources_with_new: 1,
     posts_inserted: 1,
-    posts_updated: 0,
     posts_failed: 2,
     failures: [
       { source_id: 'a', display_name: 'Bundesministerium für Wirtschaftsförderungsangelegenheiten und Digitalisierungsstrategie', stage: 'fetch', error: LONG_ERROR },
       { source_id: 'b', display_name: 'الجزيرة نت — أخبار التكنولوجيا', stage: 'save', error: 'deadlock detected' },
       { source_id: 'c', display_name: '🚀🤖 r/LocalLLaMA 🦙', stage: 'connector', error: '' },
-    ],
-    post_failures: [
-      { url: 'https://example.com/a/very/long/path/that/never/breaks/'.repeat(4), source_id: 'a', stage: 'upsert', error: 'value too long for type character varying(2048)' },
-      { url: null, source_id: 'b', stage: 'discarded', error: 'no url' },
     ],
     inserted_by_source: [{ source_id: 'b', display_name: 'الجزيرة نت — أخبار التكنولوجيا', inserted: 1 }],
   });

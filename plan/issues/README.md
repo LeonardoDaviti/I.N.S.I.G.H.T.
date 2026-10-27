@@ -24,6 +24,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0017](0017-hacker-news.md) | Hacker News: the article and its discussion | first version built (hnrss.org); kind and comments future |
 | [0018](0018-pipecraft-blog.md) | pipecraft.me: a blog with no feed, read from its own JSON API | built, not deployed |
 | [0019](0019-feed-row-read-and-source.md) | Feed rows: one read button, the source name reads the source | built |
+| [0021](0021-useful-ingestion-logs.md) | Ingestion jobs that say what they delivered | built |
 
 ## Analysis archive
 

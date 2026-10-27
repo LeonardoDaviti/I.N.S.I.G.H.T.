@@ -20,7 +20,7 @@ describe('RunCycleButton', () => {
   });
 
   it('a forced run needs a confirmation; cancel runs nothing', async () => {
-    const runIngestionCycle = vi.fn().mockResolvedValue(runReport({ force: true }));
+    const runIngestionCycle = vi.fn().mockResolvedValue(runReport());
     renderWithProviders(<RunCycleButton />, { api: makeFakeApi({ runIngestionCycle }) });
 
     await userEvent.click(screen.getByRole('checkbox', { name: /force all/i }));

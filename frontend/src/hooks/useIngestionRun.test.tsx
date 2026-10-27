@@ -41,7 +41,7 @@ function setup(api: Api) {
 
 describe('useIngestionRun', () => {
   it('on success invalidates unread counts and source health, never the feed', async () => {
-    const fetchSourceNow = vi.fn().mockResolvedValue(runReport({ posts_inserted: 3, selector: { kind: 'source', id: 's1' } }));
+    const fetchSourceNow = vi.fn().mockResolvedValue(runReport({ posts_inserted: 3, sources_with_new: 1 }));
     const { result, invalidatedKeys } = setup(makeFakeApi({ fetchSourceNow }));
 
     let report: unknown;
@@ -55,12 +55,12 @@ describe('useIngestionRun', () => {
     expect(keys).toContain(JSON.stringify(['unread-counts']));
     expect(keys).toContain(JSON.stringify(['sources-health']));
     expect(keys.some((key) => key.startsWith('["feed"'))).toBe(false);
-    expect(await screen.findByText('3 new posts')).toBeInTheDocument();
+    expect(await screen.findByText('3 new posts from 1 source')).toBeInTheDocument();
   });
 
   it('routes each target to its API method', async () => {
     const runIngestionCycle = vi.fn().mockResolvedValue(runReport());
-    const fetchFolderNow = vi.fn().mockResolvedValue(runReport({ selector: { kind: 'folder', id: 'f1' } }));
+    const fetchFolderNow = vi.fn().mockResolvedValue(runReport());
     const { result } = setup(makeFakeApi({ runIngestionCycle, fetchFolderNow }));
 
     await act(async () => { await result.current.run({ kind: 'all', force: true }); });
@@ -86,7 +86,7 @@ describe('useIngestionRun', () => {
   it('the toast\'s View job opens the job in Sources → ingestion → jobs', async () => {
     const fetchSourceNow = vi.fn().mockImplementation(async (_id, { onAccepted }) => {
       onAccepted({ job_id: 'job-9' });
-      return runReport({ run_id: 'run-9', selector: { kind: 'source', id: 's1' } });
+      return runReport({ run_id: 'run-9' });
     });
     const { result } = setup(makeFakeApi({ fetchSourceNow }));
     await act(async () => { await result.current.run({ kind: 'source', id: 's1', name: 'Job nine feed' }); });

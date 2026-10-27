@@ -57,6 +57,10 @@ class FetchOutcome:
         return FetchOutcome(source_id, status, fetched, None, duration_s)
 
 
+def _plural(count: int, noun: str) -> str:
+    return f"{count:,} {noun}{'' if count == 1 else 's'}"
+
+
 def _cap(text: Any) -> str:
     text = str(text)
     return text if len(text) <= ERROR_CAP else text[:ERROR_CAP] + "..."
@@ -130,6 +134,7 @@ class RunReport:
     decisions: dict[str, int] = field(default_factory=dict)   # DecisionKind.value -> count
     posts_fetched: int = 0
     posts_inserted: int = 0           # THE "new posts" number
+    sources_with_new: int = 0         # sources with >= 1 new post (inserted_by_source is capped)
     posts_updated: int = 0
     posts_failed: int = 0
     failures: list[SourceFailure] = field(default_factory=list)
@@ -137,22 +142,23 @@ class RunReport:
     inserted_by_source: list[InsertedBySource] = field(default_factory=list)
 
     @property
-    def deferred(self) -> int:
-        return max(0, self.sources_considered - self.sources_fetched)
-
-    @property
     def job_status(self) -> str:
         """The job_runs status: a run with any failure is a failed job (Mark VIII semantics)."""
         return "success" if self.status in ("success", "nothing_due", "skipped_busy") else "failed"
 
     def summary_line(self) -> str:
-        """One line per run, e.g. "12 due, 63 deferred, 1 failed; 48 new posts"."""
+        """What the run delivered: "34 new posts from 5 sources", "Nothing new: 12 sources checked",
+        "Nothing was due", "3 sources failed". The same words as the frontend's lib/runReport."""
         if self.status == "skipped_busy":
-            return "Skipped: another full ingestion run is in progress"
-        return (
-            f"{self.sources_fetched} due, {self.deferred} deferred, {self.sources_failed} failed; "
-            f"{self.posts_inserted} new posts"
-        )
+            return "Skipped: another run is in progress"
+        if self.status == "nothing_due":
+            return "Nothing was due"
+        parts = []
+        if self.posts_inserted:
+            parts.append(f"{_plural(self.posts_inserted, 'new post')} from {_plural(self.sources_with_new, 'source')}")
+        if self.sources_failed:
+            parts.append(f"{_plural(self.sources_failed, 'source')} failed")
+        return ", ".join(parts) or f"Nothing new: {_plural(self.sources_fetched, 'source')} checked"
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -171,6 +177,7 @@ class RunReport:
             "decisions": dict(self.decisions),
             "posts_fetched": self.posts_fetched,
             "posts_inserted": self.posts_inserted,
+            "sources_with_new": self.sources_with_new,
             "posts_updated": self.posts_updated,
             "posts_failed": self.posts_failed,
             "failures": [f.as_dict() for f in self.failures[:LIST_CAP]],

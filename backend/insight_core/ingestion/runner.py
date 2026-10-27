@@ -274,7 +274,7 @@ class IngestionRunner:
             (InsertedBySource(sid, _display_name(by_id[sid][0]), c.get("inserted", 0))
              for sid, c in saved.by_source.items() if c.get("inserted")),
             key=lambda i: (-i.inserted, i.display_name),
-        )[:LIST_CAP]
+        )
         return self._report(
             request, started, run_id=run_id, status=status,
             sources_considered=len(sources), sources_fetched=len(fetched),
@@ -282,7 +282,7 @@ class IngestionRunner:
             posts_fetched=posts_fetched, posts_inserted=saved.inserted, posts_updated=saved.updated,
             posts_failed=saved.failed, failures=failures[:LIST_CAP],
             post_failures=saved.failures[:LIST_CAP],
-            inserted_by_source=inserted_by_source,
+            sources_with_new=len(inserted_by_source), inserted_by_source=inserted_by_source[:LIST_CAP],
         )
 
     async def _save(self, f: _Fetched, saved: SaveBatchResult) -> Optional[str]:

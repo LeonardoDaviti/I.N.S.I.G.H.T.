@@ -1,106 +1,67 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  DECISION_KINDS,
-  DECISION_LABELS,
-  asRunReport,
-  summarizeRunReport,
-} from './runReport.ts';
+import { asRunReport, summarizeRunReport } from './runReport.ts';
 import type { RunReport } from '../services/api';
 
 function report(overrides: Partial<RunReport> = {}): RunReport {
   return {
     run_id: 'job-1',
-    trigger: 'manual',
-    selector: { kind: 'all' },
-    force: false,
     status: 'success',
-    started_at: '2026-10-09T10:00:00+00:00',
-    finished_at: '2026-10-09T10:01:05+00:00',
     sources_considered: 78,
     sources_fetched: 12,
     sources_failed: 0,
-    decisions: { fetch_due: 12, skip_not_due: 63, skip_unavailable: 3 },
-    posts_fetched: 240,
-    posts_inserted: 48,
-    posts_updated: 9,
+    sources_with_new: 5,
+    posts_inserted: 34,
     posts_failed: 0,
     failures: [],
-    post_failures: [],
     inserted_by_source: [],
     ...overrides,
   };
 }
 
-test('DECISION_LABELS covers every DecisionKind with a human label', () => {
-  assert.deepEqual(
-    [...DECISION_KINDS].sort(),
-    [
-      'fetch_due', 'fetch_forced', 'fetch_new_source', 'fetch_retry',
-      'skip_backoff', 'skip_disabled', 'skip_not_due', 'skip_unavailable',
-    ],
-  );
-  for (const kind of DECISION_KINDS) {
-    const label = DECISION_LABELS[kind];
-    assert.equal(typeof label, 'string');
-    assert.ok(label.length > 0, kind);
-    assert.ok(!label.includes('_'), `${kind} label is not a raw enum: ${label}`);
-  }
-});
+const headline = (overrides: Partial<RunReport>) => summarizeRunReport(report(overrides)).headline;
 
-test('success: the headline is the new-post count; lines say what was fetched and deferred', () => {
+test('the headline says what the run delivered: new posts and from how many sources', () => {
   const summary = summarizeRunReport(report());
   assert.equal(summary.tone, 'completion');
-  assert.equal(summary.headline, '48 new posts');
-  assert.ok(summary.lines.some((line) => line === 'Fetched 12 of 78 sources'), summary.lines.join(' | '));
-  assert.ok(summary.lines.some((line) => line.includes('63 not due yet')), summary.lines.join(' | '));
-  assert.ok(summary.lines.some((line) => line.includes('3 unavailable')), summary.lines.join(' | '));
+  assert.equal(summary.headline, '34 new posts from 5 sources');
+  assert.deepEqual(summary.lines, [], 'no zero or bookkeeping lines');
+  assert.equal(headline({ posts_inserted: 1, sources_with_new: 1 }), '1 new post from 1 source');
+  assert.equal(headline({ posts_inserted: 12847, sources_with_new: 1200 }), '12,847 new posts from 1,200 sources');
 });
 
-test('success: pluralisation and thousands separators (1 new post, 12,847 new posts)', () => {
-  assert.equal(summarizeRunReport(report({ posts_inserted: 1 })).headline, '1 new post');
-  assert.equal(summarizeRunReport(report({ posts_inserted: 12847 })).headline, '12,847 new posts');
-  assert.equal(summarizeRunReport(report({ posts_inserted: 0 })).headline, 'No new posts');
+test('an old stored report without sources_with_new counts its per-source list', () => {
+  const inserted_by_source = [
+    { source_id: 'a', display_name: 'A', inserted: 3 },
+    { source_id: 'b', display_name: 'B', inserted: 1 },
+  ];
+  assert.equal(headline({ sources_with_new: undefined, posts_inserted: 4, inserted_by_source }), '4 new posts from 2 sources');
 });
 
-test('partial: a warning that names the failure count next to the new posts', () => {
-  const summary = summarizeRunReport(report({
-    status: 'partial',
-    sources_failed: 2,
-    failures: [
-      { source_id: 'a', display_name: 'A', stage: 'fetch', error: 'HTTP 503' },
-      { source_id: 'b', display_name: 'B', stage: 'save', error: 'deadlock' },
-    ],
-  }));
-  assert.equal(summary.tone, 'warning');
-  assert.equal(summary.headline, '48 new posts, 2 sources failed');
+test('a run that fetched but found nothing new says how many sources it checked', () => {
+  assert.equal(headline({ posts_inserted: 0, sources_with_new: 0 }), 'Nothing new: 12 sources checked');
+  assert.equal(headline({ posts_inserted: 0, sources_with_new: 0, sources_fetched: 1 }), 'Nothing new: 1 source checked');
 });
 
-test('failed: an error headline', () => {
-  const summary = summarizeRunReport(report({ status: 'failed', sources_fetched: 1, sources_failed: 1, posts_inserted: 0 }));
-  assert.equal(summary.tone, 'error');
-  assert.equal(summary.headline, 'Fetch failed');
+test('failures: the count of failed sources, after the new posts when there are any', () => {
+  const partial = summarizeRunReport(report({ status: 'partial', sources_failed: 3 }));
+  assert.equal(partial.tone, 'warning');
+  assert.equal(partial.headline, '34 new posts from 5 sources, 3 sources failed');
+  const failed = summarizeRunReport(report({ status: 'failed', sources_fetched: 3, sources_failed: 3, posts_inserted: 0, sources_with_new: 0 }));
+  assert.equal(failed.tone, 'error');
+  assert.equal(failed.headline, '3 sources failed');
 });
 
-test('nothing_due: says nothing was due, not "0 new posts"', () => {
-  const summary = summarizeRunReport(report({
-    status: 'nothing_due', sources_fetched: 0, posts_inserted: 0, decisions: { skip_not_due: 78 },
-  }));
-  assert.equal(summary.tone, 'completion');
-  assert.equal(summary.headline, 'Nothing was due');
-  assert.ok(summary.lines.some((line) => line.includes('78 not due yet')));
+test('posts that could not be saved are the one line under the headline', () => {
+  assert.deepEqual(summarizeRunReport(report({ status: 'partial', posts_failed: 2 })).lines, ['2 posts could not be saved']);
 });
 
-test('skipped_busy: another run holds the run lock', () => {
-  const summary = summarizeRunReport(report({ status: 'skipped_busy', sources_considered: 0, sources_fetched: 0, posts_inserted: 0, decisions: {} }));
-  assert.equal(summary.tone, 'warning');
-  assert.equal(summary.headline, 'Skipped: another run is in progress');
-});
-
-test('a forced run says so', () => {
-  const summary = summarizeRunReport(report({ force: true, decisions: { fetch_forced: 78 }, sources_fetched: 78 }));
-  assert.ok(summary.lines.some((line) => line.includes('forced')), summary.lines.join(' | '));
+test('nothing due and a busy run have their own headlines', () => {
+  assert.equal(headline({ status: 'nothing_due', sources_fetched: 0, posts_inserted: 0 }), 'Nothing was due');
+  const busy = summarizeRunReport(report({ status: 'skipped_busy' }));
+  assert.equal(busy.tone, 'warning');
+  assert.equal(busy.headline, 'Skipped: another run is in progress');
 });
 
 test('asRunReport accepts a job payload and drops the compaction sentinels from its lists', () => {
@@ -115,7 +76,7 @@ test('asRunReport accepts a job payload and drops the compaction sentinels from 
   const parsed = asRunReport(payload);
   assert.ok(parsed);
   assert.equal(parsed?.failures.length, 1);
-  assert.equal(parsed?.posts_inserted, 48);
+  assert.equal(parsed?.posts_inserted, 34);
 });
 
 test('asRunReport rejects payloads that are not run reports', () => {
@@ -130,12 +91,16 @@ test('asRunReport fills missing optional lists so the UI never reads undefined',
   assert.ok(parsed);
   assert.deepEqual(parsed?.failures, []);
   assert.deepEqual(parsed?.inserted_by_source, []);
-  assert.deepEqual(parsed?.decisions, {});
-  assert.equal(parsed?.posts_updated, 0);
+  assert.equal(parsed?.posts_failed, 0);
 });
 
-test('asRunReport ignores the enrichment field of an old stored report', () => {
-  const parsed = asRunReport({ run_id: 'r', status: 'success', posts_inserted: 0, sources_considered: 1, enrichment: { skipped: 'analysis off' } });
+test('asRunReport keeps only what the report shows: an old report\'s enrichment and decisions are dropped', () => {
+  const parsed = asRunReport({
+    run_id: 'r', status: 'nothing_due', posts_inserted: 0, sources_considered: 222,
+    decisions: { skip_not_due: 213, skip_backoff: 9 }, enrichment: { skipped: 'analysis off' },
+    summary: '0 due, 222 deferred, 0 failed; 0 new posts',
+  });
   assert.ok(parsed);
-  assert.equal('enrichment' in parsed, false);
+  for (const key of ['enrichment', 'decisions', 'summary']) assert.equal(key in parsed, false, key);
+  assert.equal(summarizeRunReport(parsed).headline, 'Nothing was due');
 });

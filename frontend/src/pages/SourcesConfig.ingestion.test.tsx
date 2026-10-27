@@ -77,7 +77,7 @@ function setup({
     getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [job()], alerts: [] }),
     getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: scheduler() }),
     getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: { ...runReport() } }) }),
-    runIngestionCycle: vi.fn().mockResolvedValue(runReport({ summary: '3 due, 75 deferred, 0 failed; 7 new posts', posts_inserted: 7 })),
+    runIngestionCycle: vi.fn().mockResolvedValue(runReport({ posts_inserted: 7 })),
     ...overrides,
   };
   const utils = renderWithProviders(<SourcesConfig />, { api: makeFakeApi(methods), route });
@@ -104,7 +104,7 @@ describe('Sources → ingestion tab', () => {
           alerts: [],
           jobs: [
             job({ id: 'b1', job_type: 'daily_briefing', job_label: 'Daily briefing', message: 'Briefing written' }),
-            job({ id: 'r1', payload: { ...runReport({ summary: '5 due, 70 deferred, 1 failed; 21 new posts', posts_inserted: 21 }) } }),
+            job({ id: 'r1', payload: { ...runReport({ posts_inserted: 21 }) } }),
           ],
         }),
       },
@@ -167,29 +167,48 @@ describe('Sources → ingestion tab', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('jobs lists the history; a job opens its report and events', async () => {
-    const getOperationJob = vi.fn().mockResolvedValue({
-      success: true,
-      job: job({ id: 'r1', payload: { ...runReport({ summary: '2 due, 76 deferred, 0 failed; 9 new posts', posts_inserted: 9 }), events: [{ at: '2026-10-09T10:00:01+00:00', level: 'info', message: 'Fetched Simon' }] } }),
+  it('jobs lists the history; a job opens with what it delivered, then its per-source events', async () => {
+    // A job stored before issue 0021: the old summary, and the events that only repeated it.
+    const stored = job({
+      id: 'r1',
+      payload: {
+        ...runReport({ posts_inserted: 9, sources_with_new: undefined, inserted_by_source: [{ source_id: 'simon', display_name: 'Simon Willison’s Weblog', inserted: 9 }] }),
+        summary: '2 due, 76 deferred, 0 failed; 9 new posts',
+        enrichment: { skipped: 'analysis off' },
+        events: [
+          { at: '2026-10-09T10:00:00+00:00', level: 'info', message: 'Ingestion decided', data: { phase: 'decided' } },
+          { at: '2026-10-09T10:00:01+00:00', level: 'info', message: 'Simon Willison’s Weblog: 9 new of 20 · 1 of 2 sources', data: { phase: 'source' } },
+          { at: '2026-10-09T10:00:02+00:00', level: 'info', message: 'Ingestion saved', data: { phase: 'saved' } },
+          { at: '2026-10-09T10:00:03+00:00', level: 'success', message: '12 due, 66 deferred, 0 failed; 48 new posts', status: 'success' },
+        ],
+      },
     });
+    const getOperationJob = vi.fn().mockResolvedValue({ success: true, job: stored });
     setup({
       overrides: {
         getOperationJob,
         getOperationsOverview: vi.fn().mockResolvedValue({
           success: true,
           alerts: [],
-          jobs: [job({ id: 'r1' }), job({ id: 'b1', job_type: 'daily_briefing', job_label: 'Daily briefing', message: 'Briefing written' })],
+          jobs: [stored, job({ id: 'b1', job_type: 'daily_briefing', job_label: 'Daily briefing', message: 'Briefing written' })],
         }),
       },
     });
     await userEvent.click(await screen.findByRole('link', { name: 'jobs' }));
     const history = await screen.findByRole('region', { name: 'Recent jobs' });
     expect(await within(history).findByText('Briefing written')).toBeInTheDocument();
+    expect(within(history).getByText('9 new posts from 1 source')).toBeInTheDocument();
+    expect(within(history).queryByText(/deferred/)).toBeNull();
     await userEvent.click(within(history).getAllByRole('button')[0]);
     await waitFor(() => expect(getOperationJob).toHaveBeenCalledWith('r1'));
     const detail = screen.getByRole('region', { name: 'Ingestion run' });
-    expect((await within(detail).findAllByText(/9 new posts/)).length).toBeGreaterThan(0);
-    expect(within(detail).getByText('Fetched Simon')).toBeInTheDocument();
+    expect(await within(detail).findByRole('heading', { name: '9 new posts from 1 source' })).toBeInTheDocument();
+    expect(within(detail).getByRole('link', { name: /Simon Willison’s Weblog/ })).toHaveAttribute('href', '/read/source/simon');
+    const events = within(detail).getByRole('list', { name: 'Events' });
+    expect(within(events).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Simon Willison’s Weblog: 9 new of 20 · 1 of 2 sources'),
+    ]);
+    expect(within(detail).queryByText(/deferred|enrich|Ingestion decided/i)).toBeNull();
   });
 
   it('a running run says how many sources are left and how many posts are new', async () => {

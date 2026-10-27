@@ -25,6 +25,7 @@ class FakeOps:
         self.finished: list[tuple[str, dict]] = []
         self.events: list[tuple[str, dict]] = []
         self.states: list[dict] = []
+        self.discarded: list[str] = []
 
     def start_job(self, job_type, **kwargs):
         self.started.append((job_type, kwargs))
@@ -35,6 +36,9 @@ class FakeOps:
 
     def append_job_event(self, job_id, **kwargs):
         self.events.append((job_id, kwargs))
+
+    def discard_job(self, job_id):
+        self.discarded.append(job_id)
 
     def latest_successful_job_finished_at(self, job_type):
         assert job_type == "scheduler_cycle"
@@ -48,8 +52,9 @@ class FakeOps:
 
 
 class FakeIngest:
-    def __init__(self, raises: Exception | None = None):
+    def __init__(self, raises: Exception | None = None, status: str = "success"):
         self.raises = raises
+        self.status = status
         self.requests: list[FetchRequest] = []
 
     async def __call__(self, request, *, progress=None):
@@ -59,8 +64,9 @@ class FakeIngest:
         if self.raises:
             raise self.raises
         return RunReport(run_id="r1", trigger=request.trigger, selector=request.selector, force=request.force,
-                         status="success", started_at=NOW, finished_at=NOW, sources_considered=3,
-                         sources_fetched=1, decisions={"fetch_due": 1, "skip_not_due": 2}, posts_inserted=4)
+                         status=self.status, started_at=NOW, finished_at=NOW, sources_considered=3,
+                         sources_fetched=1, decisions={"fetch_due": 1, "skip_not_due": 2}, posts_inserted=4,
+                         sources_with_new=1)
 
 
 class FakeDailyWork:
@@ -87,9 +93,17 @@ class TickTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ops.job_types(), ["ingestion_run"])
         job_id, finished = self.ops.finished[0]
         self.assertEqual(finished["status"], "success")
-        self.assertEqual(finished["message"], "1 due, 2 deferred, 0 failed; 4 new posts")
+        self.assertEqual(finished["message"], "4 new posts from 1 source")
         self.assertEqual(finished["payload"]["posts_inserted"], 4)
-        self.assertTrue(self.ops.events, "progress goes to the job")
+        self.assertEqual(self.ops.discarded, [])
+
+    async def test_a_tick_with_nothing_due_leaves_no_job_but_still_records_the_tick(self):
+        state = await self._tick(SchedulerState(last_daily_work_at=NOW - timedelta(hours=1)),
+                                 ingest=FakeIngest(status="nothing_due"))
+        self.assertEqual(self.ops.discarded, ["job-1"])
+        self.assertEqual(self.ops.finished, [], "a no-network check is not a job worth listing")
+        self.assertEqual(self.ops.states[-1]["last_tick_at"], NOW.isoformat(), "the Scheduler region still sees the tick")
+        self.assertEqual(state.last_tick_at, NOW)
 
     async def test_daily_work_waits_for_the_interval(self):
         await self._tick(SchedulerState(last_daily_work_at=NOW - timedelta(hours=19)))

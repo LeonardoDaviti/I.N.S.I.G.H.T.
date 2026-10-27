@@ -217,7 +217,7 @@ describe('SourcesConfig', () => {
   });
 
   it('the sheet fetches now and deletes after a confirmation', async () => {
-    const fetchSourceNow = vi.fn().mockResolvedValue(runReport({ posts_inserted: 3, selector: { kind: 'source', id: 'simon' } }));
+    const fetchSourceNow = vi.fn().mockResolvedValue(runReport({ posts_inserted: 3, sources_with_new: 1 }));
     const { api } = setup('/settings/sources', { fetchSourceNow });
     await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
     const sheet = await screen.findByRole('dialog');
@@ -267,8 +267,8 @@ describe('SourcesConfig', () => {
 
     await waitFor(() => expect(fetchSourceNow).toHaveBeenCalledWith('new-1', expect.any(Object)));
     expect(await screen.findByText('Added — fetching now')).toBeInTheDocument();
-    await act(async () => { finish(runReport({ posts_inserted: 4, selector: { kind: 'source', id: 'new-1' } })); });
-    expect(await screen.findByText('4 new posts')).toBeInTheDocument();
+    await act(async () => { finish(runReport({ posts_inserted: 4, sources_with_new: 1 })); });
+    expect(await screen.findByText('4 new posts from 1 source')).toBeInTheDocument();
   });
 
   it('the row switch toggles one source', async () => {
@@ -440,7 +440,7 @@ describe('SourcesConfig', () => {
   });
 
   it('a track header fetches the track; its menu renames, switches the digest and deletes after a confirmation', async () => {
-    const fetchFolderNow = vi.fn().mockResolvedValue(runReport({ selector: { kind: 'folder', id: 'f-ai' } }));
+    const fetchFolderNow = vi.fn().mockResolvedValue(runReport());
     const { api } = setup('/settings/sources?group=track', { fetchFolderNow });
     await screen.findByText('Road to VR');
     await userEvent.click(screen.getByRole('button', { name: 'Fetch track AI engineering' }));

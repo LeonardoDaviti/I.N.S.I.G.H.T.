@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { JobRun } from '../services/api';
-import { formatJobDuration, jobGlyph, runningFetchJob, runProgressLine } from './jobRuns.ts';
+import { formatJobDuration, jobEvents, jobGlyph, jobSummary, runningFetchJob, runProgressLine } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -45,4 +45,27 @@ test('runProgressLine: sources done of total and new posts, or null before the f
   assert.equal(runProgressLine(run({ sources: { done: 52, total: 81 }, new_posts: 334 })), '52 of 81 sources · 334 new posts');
   assert.equal(runProgressLine(run({ sources: { done: 1, total: 1 }, new_posts: 1 })), '1 of 1 source · 1 new post');
   assert.equal(runProgressLine(run({})), null);
+});
+
+test('jobSummary: an ingestion run reads as what it delivered, other jobs keep their message', () => {
+  const run = { id: 'r', status: 'success', job_type: 'ingestion_run', message: '2 due, 76 deferred, 0 failed; 9 new posts',
+    payload: { status: 'success', sources_considered: 78, sources_fetched: 2, posts_inserted: 9, sources_with_new: 2 } } as unknown as JobRun;
+  assert.equal(jobSummary(run), '9 new posts from 2 sources');
+  assert.equal(jobSummary({ ...run, status: 'running', payload: { selector: { kind: 'all' } } }), '2 due, 76 deferred, 0 failed; 9 new posts');
+  assert.equal(jobSummary({ id: 'a', status: 'success', job_type: 'archive_source', message: 'Archived 40 posts' } as JobRun), 'Archived 40 posts');
+  assert.equal(jobSummary({ id: 'a', status: 'success', job_type: 'archive_source' } as JobRun), null);
+});
+
+test('jobEvents: the per-source lines, without the lines that repeat the summary', () => {
+  const events = [
+    { at: '1', level: 'info', message: 'Ingestion decided', data: { phase: 'decided' } },
+    { at: '2', level: 'info', message: 'r/viture: 3 new of 25 · 1 of 2 sources', data: { phase: 'source' } },
+    { at: '3', level: 'warning', message: 'reddit.com: too many requests, slowing to 16 s', data: { phase: 'slowed' } },
+    { at: '4', level: 'error', message: 'HN: failed, HTTP 503 · 2 of 2 sources', data: { phase: 'source' } },
+    { at: '5', level: 'info', message: 'Ingestion saved', data: { phase: 'saved' } },
+    { at: '6', level: 'error', message: '0 due, 222 deferred, 1 failed; 3 new posts', status: 'failed' },
+  ];
+  const run = { id: 'r', status: 'failed', job_type: 'ingestion_run', message: '0 due, 222 deferred, 1 failed; 3 new posts', payload: { events } } as unknown as JobRun;
+  assert.deepEqual(jobEvents(run).map((event) => event.at), ['2', '3', '4']);
+  assert.deepEqual(jobEvents({ id: 'a', status: 'success', job_type: 'archive_source' } as JobRun), []);
 });
