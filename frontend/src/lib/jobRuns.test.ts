@@ -33,6 +33,13 @@ test('runningFetchJob: the newest fetch job not yet finished, queued ones too', 
   assert.equal(runningFetchJob(undefined), null);
 });
 
+test('runningFetchJob with a source: only a fetch job of that source', () => {
+  const job = (id: string, source_id: string | null, status = 'running') => ({ id, status, job_type: 'ingestion_run', source_id }) as JobRun;
+  assert.equal(runningFetchJob([job('all', null), job('mine', 'src-1')], 'src-1')?.id, 'mine');
+  assert.equal(runningFetchJob([job('all', null), job('other', 'src-2')], 'src-1'), null);
+  assert.equal(runningFetchJob([job('done', 'src-1', 'success')], 'src-1'), null);
+});
+
 test('runProgressLine: sources done of total and new posts, or null before the first source', () => {
   const run = (payload: Record<string, unknown>) => ({ id: 'r', status: 'running', job_type: 'ingestion_run', payload }) as unknown as JobRun;
   assert.equal(runProgressLine(run({ sources: { done: 52, total: 81 }, new_posts: 334 })), '52 of 81 sources · 334 new posts');

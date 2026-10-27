@@ -9,7 +9,8 @@ import CadenceOverrideEditor from './ops/CadenceOverrideEditor';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { HEALTH_STATUS_LABELS, backoffLabel, formatDue } from '../lib/sourceSchedule';
 import { dueLabel } from '../lib/schedulerStatus';
-import { useSchedulerConfig } from '../hooks/useOperations';
+import { useOperationsOverview, useSchedulerConfig } from '../hooks/useOperations';
+import { runningFetchJob } from '../lib/jobRuns';
 import { formatRelativeTime } from '../lib/dates';
 import { formatCount, plural } from '../lib/format';
 import { STATUS_GLYPH } from './sources/sourceList';
@@ -124,7 +125,9 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const { run, isRunning } = useIngestionRun();
   const scheduler = useSchedulerConfig();
   const fetchTarget = { kind: 'source' as const, id: source.id, name: sourceLabel(source.settings.display_name, source.handle_or_url) };
-  const fetching = isRunning(fetchTarget);
+  // The server's jobs too: a fetch started before this sheet opened (or elsewhere) still shows.
+  const jobs = useOperationsOverview().data?.jobs;
+  const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
   const [inMainDigest, setInMainDigest] = useState<boolean | null>(null);
   const mainDigest = inMainDigest ?? healthRow?.in_main_digest ?? null;

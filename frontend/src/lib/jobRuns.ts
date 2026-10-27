@@ -32,9 +32,11 @@ export function formatJobDuration(startedAt?: string | null, finishedAt?: string
 const FETCH_JOB_TYPES = new Set(['ingestion_run', 'archive_source']);
 const FAILURE_NOTE_MS = 60 * 60_000;
 
-/** The newest running (or queued) ingestion run or archive job (jobs come newest first), or null. */
-export function runningFetchJob(jobs: readonly JobRun[] | undefined): JobRun | null {
-  return jobs?.find((job) => isActive(job.status) && FETCH_JOB_TYPES.has(job.job_type)) ?? null;
+/** The newest running (or queued) ingestion run or archive job (jobs come newest first), or
+ *  null; with a source id, only one of that source's. */
+export function runningFetchJob(jobs: readonly JobRun[] | undefined, sourceId?: string): JobRun | null {
+  return jobs?.find((job) => isActive(job.status) && FETCH_JOB_TYPES.has(job.job_type)
+    && (sourceId === undefined || job.source_id === sourceId)) ?? null;
 }
 
 /** A run's live counters (payload `sources` and `new_posts`), or null before the first source. */

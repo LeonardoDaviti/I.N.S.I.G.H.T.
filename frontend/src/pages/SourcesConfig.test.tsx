@@ -245,6 +245,16 @@ describe('SourcesConfig', () => {
     expect(within(sheet).getByRole('button', { name: 'Fetch now' })).toHaveAttribute('title', expect.stringMatching(/^Optional/));
   });
 
+  it('a sheet opened while its source fetches says Fetching…, though another sheet started it', async () => {
+    const getOperationsOverview = vi.fn().mockResolvedValue({ success: true, alerts: [], jobs: [
+      { id: 'j1', job_type: 'ingestion_run', status: 'running', trigger: 'manual', source_id: 'simon' },
+    ] });
+    setup('/settings/sources', { getOperationsOverview });
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByRole('button', { name: 'Fetching…' })).toBeDisabled();
+  });
+
   it('adding a source fetches it straight away, and the toast says so', async () => {
     let finish: (value: unknown) => void = () => {};
     const fetchSourceNow = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
