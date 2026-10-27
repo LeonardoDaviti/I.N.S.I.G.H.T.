@@ -55,6 +55,10 @@ TITLE_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 H1_RE = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
 SITE_SUFFIX_RE = re.compile(r"\s+[|\\·–—-]\s+([^|\\·–—-]{1,40})$")    # "Title \ Anthropic"
 META_DATES = ("date", "dc.date", "pubdate")       # <meta name> dates, after the two above
+LISTING_MAX_BYTES = 4_000_000                     # a listing page is read up to this (groq.com's: 0.9 MB)
+# A date written on the page ("June 29, 2026", "Jun 29, 2026"): ai.meta.com's articles have no other.
+TEXT_DATE_RE = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}, (?:19|20)\d\d\b")
+SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
 EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
@@ -106,9 +110,11 @@ class Discovery:
 async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None) -> Discovery:
     """The articles of a listing page. Raises when the listing page cannot be read; a missing
     or broken sitemap is just no sitemap."""
-    page, _ = await http.get_text(listing_url)
-    listing = _clean(listing_url) or listing_url
-    links = [url for href in LINK_RE.findall(page) if (url := _clean(href, listing_url))]
+    # Where the listing landed, not the address given: deepmind.google/discover/blog/ is /blog/.
+    body, landed = await http.get_start(listing_url, LISTING_MAX_BYTES)
+    page = body.decode("utf-8", "replace")
+    listing = _clean(landed) or landed
+    links = [url for href in LINK_RE.findall(page) if (url := _clean(href, landed))]
     prefix = normalise_prefix(prefix) if prefix else infer_prefix(listing, links)
     site = _site(listing)
 
@@ -160,14 +166,25 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
 
 def page_date(page: str) -> Optional[datetime]:
     """The page's own publication date: meta article:published_time, JSON-LD datePublished,
-    meta date, then the first <time datetime>."""
+    meta date, the first <time datetime>, then a date written on the page when it has only one
+    (a category page lists many)."""
     json_ld, time_tag = JSON_LD_DATE_RE.search(page), TIME_RE.search(page)
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
               *(parsing.meta_content(page, name) for name in META_DATES), time_tag and time_tag.group(1))
     for value in values:
         if value and (date := parsing.parse_datetime_value(value.strip())) is not None:
             return date
-    return None
+    written = set(TEXT_DATE_RE.findall(parsing.strip_html(SCRIPT_STYLE_RE.sub(" ", page))))
+    return _written_date(written.pop()) if len(written) == 1 else None
+
+
+def _written_date(text: str) -> Optional[datetime]:
+    """"June 29, 2026" or "Sept. 3, 2025" -> that day, UTC."""
+    month, rest = text.split(" ", 1)
+    try:
+        return datetime.strptime(f"{month[:3]} {rest}", "%b %d, %Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _title(page: str, url: str) -> str:

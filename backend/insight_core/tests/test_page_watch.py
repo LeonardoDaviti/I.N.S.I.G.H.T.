@@ -175,6 +175,16 @@ class PageWatchKindTests(unittest.TestCase):
         undated = next(p for p in posts if p["url"].endswith("100k-context-windows"))
         self.assertEqual(undated["date"], datetime(2026, 10, 14, tzinfo=timezone.utc))
 
+    def test_a_page_dated_only_in_its_text_is_an_article_and_two_dates_are_not(self):
+        # ai.meta.com's articles have no date metadata and no og:type, only "June 29, 2026" on the page.
+        plain = ('<html><head><title>Brain2Qwerty | Meta AI</title></head><body><p>June 29, 2026</p>'
+                 f'<article><h1>Brain2Qwerty</h1>{PARAGRAPH}</article></body></html>')
+        listing = plain.replace("June 29, 2026", "June 29, 2026</p><p>May 2, 2026")
+        kind = self.kind(anthropic(**{f"{SITE}/news/public-benefit-fund": plain, f"{SITE}/news/s1-sec": listing}))
+        posts = {post["url"]: post for post in run(kind.fetch_latest(source(prefix="/news/"), 10))}
+        self.assertEqual(posts[f"{SITE}/news/public-benefit-fund"]["date"], datetime(2026, 6, 29, tzinfo=timezone.utc))
+        self.assertNotIn(f"{SITE}/news/s1-sec", posts)
+
     def test_a_category_page_is_no_post_and_is_not_read_again(self):
         kind = self.kind()
         run(kind.fetch_latest(source(), 10))
@@ -250,6 +260,17 @@ class PreviewTests(unittest.TestCase):
         ])
         self.assertEqual(result["items"][0], {"url": f"{SITE}/news/public-benefit-fund", "title": "Public benefit fund",
                                               "published_at": "2026-10-22T00:00:00+00:00"})
+
+    def test_a_redirected_listing_takes_the_prefix_of_where_it_landed(self):
+        # deepmind.google/discover/blog/ -> /blog/, groq.com/news -> /blog (2026-10-27).
+        moved = NEWS_PAGE.replace('href="/news/', 'href="/blog/').replace(f"{SITE}/news/s1-sec/", f"{SITE}/blog/s1-sec/")
+        responses = {f"{SITE}/blog": moved, f"{SITE}/robots.txt": "",
+                     f"{SITE}/blog/public-benefit-fund": article("Public benefit fund", "2026-10-22T00:00:00.000Z")}
+        http = FakeHttp(responses, redirects={LISTING: f"{SITE}/blog"})
+        http.responses[LISTING] = moved
+        result = run(preview(http, LISTING))
+        self.assertEqual(result["prefix"], "/blog/")
+        self.assertIn("Public benefit fund", [item["title"] for item in result["items"]])
 
     def test_a_prefix_override_narrows_the_section(self):
         result = run(preview(FakeHttp(anthropic()), LISTING, "news/claude"))
