@@ -590,7 +590,7 @@ interface PostArticleProps {
   current: boolean;
   /** When the open is recorded (and the post marked read): on mount, or once its end passes the top half of the screen. */
   readOn: 'mount' | 'end';
-  /** A post that follows another in the stream starts with a divider naming it. */
+  /** A post that follows another in the stream starts after a rule. */
   divider: boolean;
   keysEnabled: boolean;
 }
@@ -852,13 +852,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
 
   return (
     <>
-      {divider ? (
-        <p className="mb-10 mt-16 flex min-w-0 items-baseline gap-2 border-t border-line-strong pt-3 text-[0.8125rem] text-fg-3">
-          <span className="shrink-0 font-medium text-fg-2">{middleTruncate(sourceName, 40)}</span>
-          <span aria-hidden="true">/</span>
-          <span className="truncate">{displayTitle}</span>
-        </p>
-      ) : null}
+      {/* A plain rule: the header below already names the post's source and title. */}
+      {divider ? <hr className="mb-10 mt-16 border-0 border-t border-line-strong" /> : null}
 
       {/* ---- Header: source / date and the actions on one line, then the title ---- */}
       <header className="mb-8">

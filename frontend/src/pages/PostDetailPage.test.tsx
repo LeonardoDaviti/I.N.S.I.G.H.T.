@@ -616,6 +616,15 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await waitFor(() => expect(api.recordPostOpen).toHaveBeenLastCalledWith(NEXT_ID, expect.anything()));
   });
 
+  it('the next post starts after a plain rule: its header already names its source and title (issue 0027)', async () => {
+    renderStream(contextApi());
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(screen.getAllByText('The older post')).toHaveLength(1);
+  });
+
   it('j and k move between the posts in the stream', async () => {
     const user = userEvent.setup();
     renderStream(contextApi());
