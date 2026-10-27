@@ -193,10 +193,14 @@ def extract_article_html(html_text: str) -> str:
     ]
 
     # The first candidate long enough to be the article: a page's first <article> can be a
-    # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27).
-    body_match = re.search(r"(?is)<body\b[^>]*>(.*?)</body>", cleaned)
+    # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The
+    # whole body only when no candidate matched: a short <article> is no article, not a reason
+    # to read the page's other lists as one (issue 0029).
     candidates = [match.group(1) for pattern in candidate_patterns if (match := re.search(pattern, cleaned))]
-    for candidate in [*candidates, body_match.group(1) if body_match else cleaned]:
+    if not candidates:
+        body_match = re.search(r"(?is)<body\b[^>]*>(.*?)</body>", cleaned)
+        candidates = [body_match.group(1) if body_match else cleaned]
+    for candidate in candidates:
         # \b: "<li" must not match "<link", nor "<p" "<path".
         blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b[^>]*>.*?</(?:{TEXT_BLOCKS}|li)>", candidate)
         if not blocks:  # list items count only inside the chosen candidate
