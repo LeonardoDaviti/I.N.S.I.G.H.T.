@@ -22,6 +22,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | built, not deployed |
 | [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, not deployed |
 | [0017](0017-hacker-news.md) | Hacker News: the article and its discussion | first version built (hnrss.org); kind and comments future |
+| [0018](0018-pipecraft-blog.md) | pipecraft.me: a blog with no feed, read from its own JSON API | built, not deployed |
 
 ## Analysis archive
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -12,9 +13,47 @@ from insight_core.adapters.deeplearning_batch_adapter import DeepLearningBatchAd
 from insight_core.adapters.gwern_adapter import GwernAdapter
 from insight_core.adapters.lesswrong_adapter import LessWrongAdapter
 from insight_core.adapters.philschmid_adapter import PhilSchmidCloudAttentionAdapter
+from insight_core.adapters.pipecraft_adapter import PipecraftAdapter
 from insight_core.adapters.zerotomastery_adapter import ZeroToMasteryMonthlyAdapter
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.tests._kind_fakes import FakeHttp
+
+# Trimmed from https://www.pipecraft.me/api/posts and /api/posts/<section>/<slug> (2026-10-27).
+PIPECRAFT_INDEX = {
+    "posts": [
+        {"slug": "mobile-engineerind-teams", "title": "The foundational elements of scalability in mobile engineering teams",
+         "date": "2024-04-26", "spoiler": "Scaling mobile teams is not funny though", "section": "posts",
+         "readingTime": 7, "youtubeId": "SxdOUGdseq4"},
+    ],
+    "essays": [
+        {"slug": "the-part-that-cant-be-cloned", "title": "The part of Software which can't be cloned",
+         "date": "2026-10-11", "spoiler": "If software becomes increasingly easy to copy...", "section": "essays",
+         "readingTime": 5},
+        {"slug": "cost-of-thinking", "title": "Cost of Thinking", "date": "2025-11-16",
+         "spoiler": "Why most programmers avoid thinking and how this shapes software culture.",
+         "section": "essays", "readingTime": 3},
+    ],
+    "projects": [
+        {"slug": "talkify", "title": "Talkify", "date": "2026-08-18", "spoiler": "Voice dictation for macOS",
+         "section": "projects", "readingTime": 1},
+    ],
+    "talks": [
+        {"slug": "local-first-mobile", "title": "Local First Mobile", "date": "2025-12-13",
+         "spoiler": "Exploring local-first architecture", "section": "talks", "readingTime": 1,
+         "youtubeId": "mSNS7CgMMKw"},
+    ],
+}
+PIPECRAFT_IMAGE = "https://miro.medium.com/v2/resize:fit:1400/format:webp/1*3KUxMR1t.jpeg"
+
+
+def _pipecraft_http():
+    responses = {"https://www.pipecraft.me/api/posts": json.dumps(PIPECRAFT_INDEX)}
+    for section in ("posts", "essays"):
+        for entry in PIPECRAFT_INDEX[section]:
+            body = f'<p>{entry["title"]}: the whole text.</p><img src="{PIPECRAFT_IMAGE}" alt="captionless image">'
+            url = f"https://www.pipecraft.me/api/posts/{section}/{entry['slug']}"
+            responses[url] = json.dumps({**entry, "content": body})
+    return FakeHttp(responses)
 
 
 class SourceAdapterTests(unittest.TestCase):
@@ -326,6 +365,54 @@ class SourceAdapterTests(unittest.TestCase):
         )
         self.assertEqual(entries[0]["hero_image"], "https://images.example.com/hero.webp")
         self.assertEqual(entries[0]["categories"], ["A.I. & ML Monthly"])
+
+
+class PipecraftAdapterTests(unittest.IsolatedAsyncioTestCase):
+    """pipecraft.me is a client-rendered site: its posts come from its own JSON API."""
+
+    SOURCE = {"platform": "rss", "handle_or_url": "https://www.pipecraft.me/"}
+
+    def test_any_pipecraft_url_is_the_blog(self):
+        kinds = KindRegistry.default(FakeHttp(), object())
+        for url in ("https://www.pipecraft.me/", "https://pipecraft.me", "https://www.pipecraft.me/essays/cost-of-thinking"):
+            with self.subTest(url=url):
+                self.assertEqual(kinds.resolve({"platform": "rss", "handle_or_url": url}).name, "pipecraft_site")
+
+    async def test_fetch_latest_reads_posts_and_essays_newest_first_in_full(self):
+        http = _pipecraft_http()
+        posts = await PipecraftAdapter(http).fetch_latest(self.SOURCE, 2)
+        self.assertEqual([p["url"] for p in posts], [
+            "https://www.pipecraft.me/essays/the-part-that-cant-be-cloned",
+            "https://www.pipecraft.me/essays/cost-of-thinking",
+        ])
+        post = posts[1]
+        self.assertEqual(post["title"], "Cost of Thinking")
+        self.assertEqual(post["date"], datetime(2025, 11, 16, tzinfo=timezone.utc))
+        self.assertTrue(post["content_html"].startswith("<p>Cost of Thinking: the whole text.</p>"))
+        self.assertEqual(post["content"], "Cost of Thinking: the whole text.")
+        self.assertEqual(post["media_urls"], [PIPECRAFT_IMAGE])
+        self.assertEqual(post["categories"], ["essays"])
+        self.assertEqual(post["external_id"], "essays/cost-of-thinking")
+        self.assertNotIn("https://www.pipecraft.me/api/posts/posts/mobile-engineerind-teams", http.requests,
+                         "only the posts asked for are read")
+
+    async def test_projects_and_talks_are_not_posts(self):
+        posts = await PipecraftAdapter(_pipecraft_http()).fetch_latest(self.SOURCE, 10)
+        self.assertEqual([p["categories"] for p in posts], [["essays"], ["essays"], ["posts"]])
+
+    async def test_inspect_counts_the_index_without_reading_a_post(self):
+        http = _pipecraft_http()
+        inspection = await PipecraftAdapter(http).inspect(self.SOURCE)
+        self.assertEqual(inspection.available_posts, 3)
+        self.assertEqual(inspection.first_post_date, "2024-04-26T00:00:00+00:00")
+        self.assertEqual(http.requests, ["https://www.pipecraft.me/api/posts"])
+
+    async def test_archive_pages_resume_through_the_index(self):
+        adapter = PipecraftAdapter(_pipecraft_http())
+        pages = [page async for page in adapter.archive_pages(self.SOURCE, 3, None, adapter.profile.rate_limit())]
+        self.assertEqual(sum(len(p.posts) for p in pages), 3)
+        self.assertEqual(pages[-1].checkpoint["next_index"], 3)
+        self.assertTrue(adapter.checkpoint_resumable(pages[-1].checkpoint))
 
 
 if __name__ == "__main__":

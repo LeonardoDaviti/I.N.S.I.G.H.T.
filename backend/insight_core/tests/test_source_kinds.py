@@ -89,6 +89,7 @@ PARITY_ROWS = [
     ("rss", "https://www.lesswrong.com/feed.xml", "lesswrong_graphql"),
     ("rss", "https://gwern.net", "gwern_site"),
     ("rss", "https://darioamodei.com", "dario_site"),
+    ("rss", "https://www.pipecraft.me/", "pipecraft_site"),
     ("rss", "https://www.deeplearning.ai/the-batch/", "deeplearning_batch_site"),
     ("rss", "https://www.philschmid.de/cloud-attention", "philschmid_cloud_attention"),
     ("rss", "https://zerotomastery.io/newsletters/machine-learning-monthly/1/", "zerotomastery_ml_monthly"),
@@ -113,7 +114,7 @@ class KindResolutionTests(unittest.TestCase):
     def test_every_kind_is_registered_once(self):
         names = [kind.name for kind in _registry().kinds]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(len(names), 13, "6 sites + substack, reddit, youtube, telegram_rss, nitter, mtproto, generic")
+        self.assertEqual(len(names), 14, "7 sites + substack, reddit, youtube, telegram_rss, nitter, mtproto, generic")
         self.assertEqual(names[-1], "generic_rss", "generic_rss is the fallback")
 
     def test_resolution_is_cached_per_platform_and_handle(self):
@@ -755,6 +756,7 @@ class AvailableBasisTests(unittest.TestCase):
         "lesswrong_graphql": "exact",          # counted through the GraphQL API
         "gwern_site": "estimate",              # candidate pages discovered on the index
         "dario_site": "exact",
+        "pipecraft_site": "exact",             # the site's own post index
         "deeplearning_batch_site": "exact",
         "philschmid_cloud_attention": "exact",
         "zerotomastery_ml_monthly": "exact",
