@@ -216,6 +216,16 @@ describe('ReaderPage', () => {
     expect(JSON.stringify(getFeed.mock.calls)).not.toContain('by_source');
   });
 
+  it('one source’s rows do not repeat its name, which would link to the page you are on (issue 0027)', async () => {
+    render(base({
+      getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'One post', source_id: ID(7) })])),
+      getUnreadCounts: vi.fn().mockResolvedValue({ total: 1, by_source: {}, by_folder: {} }),
+    }), `/read/source/${ID(7)}`);
+    const row = await screen.findByRole('article');
+    expect(within(row).queryByText('Simon Willison’s Weblog')).toBeNull();
+    expect(within(row).getAllByRole('link').map((a) => a.textContent)).toEqual(['One post']);
+  });
+
   it('an empty source says there are no posts yet and links quietly to Sources', async () => {
     render(base({
       getFeed: vi.fn().mockResolvedValue(feedPage([])),
