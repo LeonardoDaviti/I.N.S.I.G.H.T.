@@ -65,6 +65,14 @@ describe('ReaderPage', () => {
     expect(screen.getByRole('radio', { name: 'Unread' })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('Show starred drops the scope’s unread count above the starred list (issue 0027)', async () => {
+    const getUnreadCounts = vi.fn().mockResolvedValue({ total: 1890, by_source: {}, by_folder: {} });
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([])), getUnreadCounts }), '/?filter=starred');
+    expect(await screen.findByText('No starred posts')).toBeInTheDocument();
+    await waitFor(() => expect(getUnreadCounts).toHaveBeenCalled());
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/unread/);
+  });
+
   it('a rising unread count shows the "N new posts" pill; the list only changes when it is clicked', async () => {
     const user = userEvent.setup();
     const getFeed = vi.fn()

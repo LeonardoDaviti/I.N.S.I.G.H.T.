@@ -161,7 +161,8 @@ function Reader({ scope }: { scope: string }) {
     };
   }, [filter, scope, showAll, stopped]);
 
-  const subtitle = scopeCount !== null ? `${formatCount(scopeCount)} unread` : null;
+  // The unread count says nothing about the starred list, so Show starred leaves it out.
+  const subtitle = scopeCount !== null && filter !== 'starred' ? `${formatCount(scopeCount)} unread` : null;
 
   return (
     <LiveRegionProvider>
