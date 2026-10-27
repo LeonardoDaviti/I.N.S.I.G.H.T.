@@ -34,7 +34,6 @@ function row(overrides: Partial<SourceHealthRow> = {}): SourceHealthRow {
     last_post_at: null,
     created_at: iso(-40 * 24 * HOUR),
     backlog_posts: null,
-    tier: 'medium',
     mean_gap_hours: 30,
     interval_hours: 12,
     interval_basis: 'tier',

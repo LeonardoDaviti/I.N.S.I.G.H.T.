@@ -41,7 +41,7 @@ JOB_LABELS: Dict[str, str] = {
 
 # The job types INSIGHT still runs. Rows of any other type (retired analysis jobs, kept by
 # 0027_drop_analysis.sql; old safe_ingest rows) stay in job_runs but leave the job list.
-LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source", "reddit_comments_fetch")
+LIVE_JOB_TYPES = ("ingestion_run", "scheduler_cycle", "archive_source")
 
 
 def job_label(job_type: Optional[str]) -> str:

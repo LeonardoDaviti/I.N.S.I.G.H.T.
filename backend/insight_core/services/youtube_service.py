@@ -119,16 +119,6 @@ class YouTubeService:
             "pages_fetched": max(1, math.ceil(len(entries) / self.DEFAULT_PAGE_SIZE)) if entries else 0,
         }
 
-    def list_channel_videos(self, source_handle: str, limit: Optional[int] = None) -> Dict[str, Any]:
-        channel_ref = self._normalize_channel_ref(source_handle)
-        entries = self._list_channel_entries(channel_ref["channel_url"], limit=limit)
-        videos = [self._entry_to_video_dict(entry, source_handle) for entry in entries]
-        return {
-            "channel": channel_ref,
-            "total_videos": len(videos),
-            "videos": videos,
-        }
-
     def get_watch_progress(self, video_id: str) -> Optional[Dict[str, Any]]:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -292,12 +282,10 @@ class YouTubeService:
             args.extend(["--playlist-end", str(start + limit - 1)])
 
         if timeout is None:
-            # No --playlist-end means a full channel scan, not a page fetch, whoever asked for
-            # it: list_channel_videos(limit=None) - and build_channel_roadmap / build_playlists
-            # through it - dumps every video exactly as inspect_channel does, and the archive
-            # video list, roadmap and playlist views are all reachable with limit optional.
-            # Charging that the 180s page budget breaks precisely the largest channels, which
-            # is the regression the channel-scan budget was introduced to prevent.
+            # No --playlist-end means a full channel scan, not a page fetch (the archive dumps
+            # every video from `start`, as inspect_channel does). Charging that the 180s page
+            # budget breaks precisely the largest channels, which is the regression the
+            # channel-scan budget was introduced to prevent.
             timeout = (
                 self.ytdlp_playlist_timeout_seconds
                 if limit
@@ -566,20 +554,6 @@ class YouTubeService:
             if text:
                 texts.append(text)
         return "\n".join(texts).strip()
-
-    def _entry_to_video_dict(self, entry: Dict[str, Any], source_handle: str) -> Dict[str, Any]:
-        video_id = entry["id"]
-        published_at = self._parse_upload_date(entry.get("upload_date"))
-        return {
-            "video_id": video_id,
-            "url": entry.get("url") or f"https://www.youtube.com/watch?v={video_id}",
-            "title": entry.get("title") or video_id,
-            "description": entry.get("description") or "",
-            "published_at": published_at.isoformat() if published_at else None,
-            "channel_title": entry.get("channel") or entry.get("uploader"),
-            "channel_id": entry.get("channel_id") or entry.get("uploader_id"),
-            "source_handle": source_handle,
-        }
 
     def _escape_html(self, value: str) -> str:
         return (

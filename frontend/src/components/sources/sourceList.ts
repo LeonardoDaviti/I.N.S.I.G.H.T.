@@ -77,8 +77,8 @@ export interface SourceGroup {
 }
 
 export function readSourcesView(params: URLSearchParams): SourcesView {
-  const status = params.get('status');
-  // ?group=platform is the old name of Group by Kind.
+  // ?status=backoff is now part of Failing; ?group=platform is the old name of Group by Kind.
+  const status = params.get('status') === 'backoff' ? 'error' : params.get('status');
   const group = params.get('group') === 'platform' ? 'kind' : params.get('group');
   const sort = SORT_BY.includes(params.get('sort') as SortBy) ? (params.get('sort') as SortBy) : 'status';
   const dir = params.get('dir');

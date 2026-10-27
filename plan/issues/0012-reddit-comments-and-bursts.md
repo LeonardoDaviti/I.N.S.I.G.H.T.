@@ -1,6 +1,6 @@
 # 0012 — Reddit: comments that load, and posts that don't flood the top
 
-Status: **bursts half built** 2026-10-16, not deployed; **comments half waits for the owner**: Reddit reportedly now requires approval for new API apps, so first confirm a "script" app can be created (owner observations on the server, 2026-10-16).
+Status: **bursts half built** 2026-10-16, not deployed; **comments half waits for the owner**: Reddit reportedly now requires approval for new API apps, so first confirm a "script" app can be created (owner observations on the server, 2026-10-16). The old `.json` comments fetch (route, job, scraper) was removed in issue 0029; stored comments still show. Removed, restore from git (before issue 0029) if needed.
 
 ## Problem Statement
 - **Comments never load.** "That did not work — HTTP 403 while fetching https://www.reddit.com/r/LocalLLaMA/comments/…json". Reddit answers 403 to every unauthenticated JSON request from the server, whatever the User-Agent (already measured 2026-08-14; that is why post ingestion moved to `.rss`). Comments still use `.json`. Reddit is the only platform with comments, so "no comment fetching works".

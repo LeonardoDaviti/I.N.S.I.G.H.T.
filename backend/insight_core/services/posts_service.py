@@ -12,7 +12,7 @@ from insight_core.logs.core.logger_config import get_component_logger
 
 class PostsService:
     """
-    Post storage stats and metadata. Listing posts is the reader's job (reader_service).
+    Post storage stats. Listing posts is the reader's job (reader_service).
     """
 
     def __init__(self, db_url: str):
@@ -25,11 +25,3 @@ class PostsService:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 return self.repo.get_source_post_stats(cur, source_id)
-
-    def update_post_metadata(self, post_id: str, metadata: Dict[str, Any]) -> bool:
-        """Update the stored metadata for a post."""
-        with db.connection(self.db_url) as conn:
-            with conn.cursor() as cur:
-                updated = self.repo.update_post_metadata(cur, post_id, metadata)
-                conn.commit()
-                return updated

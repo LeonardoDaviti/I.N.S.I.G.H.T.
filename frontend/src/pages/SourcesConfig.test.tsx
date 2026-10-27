@@ -124,6 +124,13 @@ describe('SourcesConfig', () => {
     expect(screen.getByRole('button', { name: /Failing/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('the old ?status=backoff opens Failing, its chip shown (issue 0029)', async () => {
+    setup('/settings/sources?status=backoff');
+    await screen.findByText('Flaky Feed');
+    expect(rowIds()).toEqual(['flaky']);
+    expect(screen.getByRole('button', { name: /Failing/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('search, status chips and group-by filter and regroup the list', async () => {
     setup('/settings/sources?group=track');
     await screen.findByText('Road to VR');
@@ -421,6 +428,19 @@ describe('SourcesConfig', () => {
       await userEvent.click(add);
       await waitFor(() => expect(addSource).toHaveBeenCalled());
       expect(addSource.mock.calls[0][0]).toMatchObject({ handle_or_url: 'https://borretti.me/feed.xml', display_name: 'Fernando Borretti' });
+    });
+
+    it('an answer for an address since typed over is dropped: the field keeps the typing (issue 0029)', async () => {
+      let answer: (value: unknown) => void = () => {};
+      const findFeed = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+      const { dialog, field, add } = await typePage(findFeed);
+      await waitFor(() => expect(findFeed).toHaveBeenCalledWith('borretti.me/article/no-man-is-an-island'));
+      await userEvent.type(field, '-2');
+      await act(async () => { answer({ success: true, status: 'found', feeds: [feed('https://borretti.me/feed.xml', 'Fernando Borretti')] }); });
+
+      expect(field).toHaveValue('borretti.me/article/no-man-is-an-island-2');
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('');
+      expect(add).toBeDisabled();
     });
 
     it('several feeds: a choice list, the first chosen; another can be picked', async () => {

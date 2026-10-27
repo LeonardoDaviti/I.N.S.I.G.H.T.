@@ -274,7 +274,6 @@ export interface JobRun {
 
 export type DecisionKind = 'fetch_new_source' | 'fetch_due' | 'fetch_retry' | 'fetch_forced'
   | 'skip_not_due' | 'skip_backoff' | 'skip_unavailable' | 'skip_disabled';
-export type CadenceTier = 'fast' | 'medium' | 'slow' | 'unknown';
 export type OutcomeStatus = 'healthy' | 'empty' | 'error' | 'unavailable';
 /** One status per health row (B6): the summary buckets plus `disabled`. */
 export type HealthStatus = 'error' | 'backoff' | 'unavailable' | 'due' | 'deferred' | 'disabled';
@@ -359,7 +358,6 @@ export interface SourceHealthRow {
   /** When the source was added. */
   created_at: string;
   backlog_posts: number | null;
-  tier: CadenceTier;
   mean_gap_hours: number | null;
   interval_hours: number;
   interval_basis: IntervalBasis;
@@ -460,23 +458,6 @@ export interface RedditComment {
   permalink?: string | null;
 }
 
-export interface YouTubeVideoPreview {
-  video_id: string;
-  url: string;
-  title: string;
-  description?: string;
-  published_at?: string | null;
-  channel_title?: string | null;
-  channel_id?: string | null;
-  source_handle: string;
-}
-
-export interface YouTubeChannelVideosResponse extends Envelope {
-  channel?: Record<string, unknown>;
-  total_videos?: number;
-  videos?: YouTubeVideoPreview[];
-}
-
 export interface YouTubeWatchProgress {
   video_id?: string;
   source_id?: string | null;
@@ -531,7 +512,6 @@ export interface NewSource {
   handle_or_url: string;
   display_name?: string;
   fetch_delay_seconds?: number;
-  state?: string;
   /** Follow a page without a feed (issue 0028): stored as settings.page_watch. */
   page_watch?: { prefix: string };
 }
@@ -684,8 +664,6 @@ export function createApi() {
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
         `/api/sources/${enc(sourceId)}/main-digest`, { method: 'PUT', body: { in_main_digest: inMainDigest } },
       ),
-    listYouTubeChannelVideos: (source: string, limit = 1) =>
-      settle(request<YouTubeChannelVideosResponse>('/api/youtube/channel/videos', { method: 'POST', body: { source, limit } })),
 
     // ---- Tracks (folders) ----
 

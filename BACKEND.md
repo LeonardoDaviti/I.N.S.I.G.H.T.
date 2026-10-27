@@ -410,7 +410,6 @@ the result when the job finishes.
 | POST | `/api/posts/item/{post_id}/opened` | Record an open (marks it read) | `{metadata?}` |
 | POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
 | POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
-| POST | `/api/posts/item/{post_id}/reddit-comments` | Fetch a Reddit post's comments | `{limit?, refresh?, asyncMode?}` |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
 | POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, max_posts_per_fetch?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
 | POST | `/api/sources/find-feed` | The feeds for any page address (`ingestion/feed_finder.py`, under 10 s): `{status: feed\|found\|direct\|none, feeds: [{url, title}]}` | `{url}` (no scheme: https) |
@@ -449,6 +448,5 @@ the result when the job finishes.
 | POST | `/api/credentials/telegram/login/code` | Telegram sign-in: the code | `{code}` |
 | POST | `/api/credentials/telegram/login/password` | Telegram sign-in: two-step password | `{password}` |
 | POST | `/api/credentials/telegram/login/cancel` | Cancel the sign-in | |
-| POST | `/api/youtube/channel/videos` | List a channel's newest videos | `{source, limit?}` |
 | GET | `/api/youtube/progress/{video_id}` | Watch progress of a video | |
 | PUT | `/api/youtube/progress/{video_id}` | Save watch progress | `{videoUrl, title, progressSeconds, durationSeconds?, sourceId?, notesMarkdown?, completed?}` |

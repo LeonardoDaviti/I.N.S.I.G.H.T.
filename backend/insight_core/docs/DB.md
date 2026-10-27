@@ -66,8 +66,8 @@ The secrets added under Sources → Connections, one row per `(provider, key)`: 
 (`INSIGHT_SECRET_KEY` or the `insight_secrets` volume).
 
 ### job_runs
-One row per background job (`ingestion_run`, `scheduler_cycle`, `archive_source`,
-`reddit_comments_fetch`): status, trigger, message and a jsonb `payload` with progress events
+One row per background job (`ingestion_run`, `scheduler_cycle`, `archive_source`; old rows
+may be `reddit_comments_fetch`): status, trigger, message and a jsonb `payload` with progress events
 and the run report. Pruned after 30 days by the daily work.
 
 ### system_settings

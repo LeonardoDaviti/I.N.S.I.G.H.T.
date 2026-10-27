@@ -169,6 +169,7 @@ class SourceKind(Protocol):
     name: str                                # persisted as settings.archive.source_type
     profile: PolitenessProfile
     available_basis: AvailableBasis          # what inspect()'s available_posts means
+    archive_refused: str | None              # why the host refuses every archive (None: it archives)
 
     def matches(self, source: Source) -> bool: ...
 
