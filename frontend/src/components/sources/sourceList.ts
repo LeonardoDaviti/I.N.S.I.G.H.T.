@@ -249,6 +249,7 @@ export const STATUS_GLYPH: Record<HealthStatus, Status> = {
 /** The one fact a row shows on the right: what happens next, or what went wrong. */
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
+  if (row.kind === 'saved') return 'pages you save';
   if (row.status === 'unavailable') return 'unavailable';
   const backoff = backoffLabel(row, now);
   if (backoff) return backoff;
@@ -279,6 +280,7 @@ const KIND_LABELS: Record<string, string> = {
   telegram_rss: 'Telegram RSS',
   reddit_subreddit: 'Reddit',
   substack: 'Substack',
+  saved: 'Saved pages',
 };
 
 export function kindLabel(row: Pick<SourceHealthRow, 'kind' | 'platform'>): string {

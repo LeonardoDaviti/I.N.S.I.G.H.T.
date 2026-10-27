@@ -30,6 +30,7 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 | `/settings/sources` (tabs sources · connections · ingestion) | `pages/sources.md` |
 | `/blog`, `/blog/:slug` | `pages/blog.md` |
 | `/design/*` (the Design Studio, described in `system/studio.md`) | `pages/shell.md` |
+| `/save` (save any page: the bookmarklet and ⌘K, issue 0031) | `pages/shell.md` |
 
 **Redirects** (claimed in this doc's meta block):
 - `/hub` → `/` (the Mark VIII hub is deleted, P1).

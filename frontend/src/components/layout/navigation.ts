@@ -52,6 +52,8 @@ export const DESTINATIONS: readonly Destination[] = [
   { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source health cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },
   { id: 'blog', label: 'Blog', group: 'blog', to: '/blog', keywords: 'posts articles engineering learning' },
+  // Save any page (issue 0031): the save page with a field for the address.
+  { id: 'save-page', label: 'Save a page…', group: 'save', to: '/save', keywords: 'save page url link bookmark bookmarklet keep saved paste' },
 ];
 
 /**

@@ -13,6 +13,7 @@ const ReaderPage = lazy(() => import('./pages/ReaderPage'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const BlogPage = lazy(() => import('./pages/BlogPage'));
+const SavePage = lazy(() => import('./pages/SavePage'));
 // Its own chunk: the reader's initial JS must not grow for it (Design Studio D8, scripts/bundle-check.mjs).
 const DesignStudio = lazy(() => import('./design/DesignStudio'));
 const DesignFrame = lazy(() => import('./design/frame/FrameApp'));
@@ -68,7 +69,7 @@ function TrackRedirect() {
  * The app is feed / sources / post. `/tracks/:id` redirects to the reader
  * scoped to the track (Design Studio D5). The retired analysis paths (briefings,
  * stories, inbox, experts, the tracks list; issue 0005) land on the feed, replacing
- * the history entry. `/blog` is the engineering blog. `/design/*` is the Design
+ * the history entry. `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/design/*` is the Design
  * Studio, reached from ⌘K only.
  */
 export function AppRoutes() {
@@ -82,6 +83,7 @@ export function AppRoutes() {
       <Route path="/posts/:postId" element={<PostDetailPage />} />
       <Route path="/settings/sources" element={<SourcesConfig />} />
       <Route path="/tracks/:trackId" element={<TrackRedirect />} />
+      <Route path="/save" element={<SavePage />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogPage />} />
       <Route path="/design/*" element={<DesignStudio />} />

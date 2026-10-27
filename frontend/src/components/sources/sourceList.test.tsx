@@ -9,6 +9,7 @@ import {
   nextSort,
   rangeIds,
   readSourcesView,
+  rowFact,
   sortSources,
   stepActive,
   visibleRowKeys,
@@ -167,6 +168,12 @@ describe('row columns', () => {
     expect(kindLabel({ kind: 'youtube_channel', platform: 'youtube' })).toBe('YouTube');
     expect(kindLabel({ kind: 'telegram_rss', platform: 'rss' })).toBe('Telegram RSS');
     expect(kindLabel({ kind: 'something_new', platform: 'telegram' })).toBe('Telegram');
+  });
+
+  it('the Saved source (issue 0031) is never fetched, so it never says "never fetched"', () => {
+    const saved = healthRow({ source_id: 's', display_name: 'Saved', platform: 'saved', kind: 'saved', status: 'deferred', next_due_at: null });
+    expect(kindLabel(saved)).toBe('Saved pages');
+    expect(rowFact(saved, new Date())).toBe('pages you save');
   });
 });
 
