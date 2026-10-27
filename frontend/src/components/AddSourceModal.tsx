@@ -111,6 +111,23 @@ const TEMPLATES: Template[] = [
     },
   },
   {
+    id: 'pipecraft',
+    name: 'Pipecraft (Tornike Gomareli)',
+    platform: 'rss',
+    variableName: 'site',
+    defaultVariableValue: 'pipecraft',
+    variableLabel: 'Archive Scope',
+    placeholder: 'Tornike Gomareli personal site',
+    helperText: 'Uses the custom Pipecraft adapter for posts and essays from pipecraft.me, read in full from its own API.',
+    buildHandle: () => 'https://www.pipecraft.me/',
+    buildDisplayName: () => 'Pipecraft',
+    defaultSettings: {
+      fetch_delay_seconds: 1,
+      priority: 999,
+      max_posts_per_fetch: 5,
+    },
+  },
+  {
     id: 'deeplearning-batch',
     name: 'DeepLearning.AI The Batch',
     platform: 'rss',

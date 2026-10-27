@@ -271,6 +271,17 @@ describe('SourcesConfig', () => {
     expect(await screen.findByText('4 new posts')).toBeInTheDocument();
   });
 
+  it('the Pipecraft template adds pipecraft.me, read by its adapter', async () => {
+    const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'pc-1' });
+    setup('/settings/sources', { addSource });
+    await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Pipecraft (Tornike Gomareli)' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add source' }));
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(JSON.stringify(addSource.mock.calls[0])).toContain('https://www.pipecraft.me/');
+  });
+
   it('the row switch toggles one source', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');
