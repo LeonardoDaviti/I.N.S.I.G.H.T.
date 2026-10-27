@@ -5,6 +5,7 @@ import os
 import asyncio
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -702,8 +703,9 @@ async def add_source(request: NewSourceRequest):
             "handle_or_url": created["handle"]}
 
 
-# The Add source dialog's own client (the feed finder, the page-watch preview): a short socket timeout.
-FEED_FINDER_HTTP = KindHttp(timeout=5)
+# The Add source dialog's own client (the feed finder, the page-watch preview): a short timeout,
+# and its own few threads, so slow sites asked about never take ingestion's.
+FEED_FINDER_HTTP = KindHttp(timeout=5, executor=ThreadPoolExecutor(max_workers=8, thread_name_prefix="add-source-http"))
 
 
 @app.post("/api/sources/find-feed")
