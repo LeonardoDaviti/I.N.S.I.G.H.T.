@@ -551,7 +551,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
               <div ref={endRef} data-stream-end className="min-h-[50vh]">
                 {caughtUp ? (
                   <div className="mt-14 border-t border-line pt-6">
-                    <p className="mb-3 text-[0.9375rem] font-medium text-fg">You’re all caught up</p>
+                    <p className="mb-3 text-[0.9375rem] font-medium text-fg">{ctx?.filter === 'unread' ? 'You’re all caught up' : 'You’ve reached the end'}</p>
                     {endNav}
                   </div>
                 ) : null}

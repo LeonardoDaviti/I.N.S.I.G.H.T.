@@ -543,7 +543,7 @@ function LocationProbe() {
 }
 
 /** The feed, then the post opened from it: Back from the post returns to the feed. */
-function renderStream(api: Api, postId = POST_ID) {
+function renderStream(api: Api, postId = POST_ID, ctx = CTX) {
   return renderWithProviders(
     <>
       <Routes>
@@ -552,7 +552,7 @@ function renderStream(api: Api, postId = POST_ID) {
       </Routes>
       <LocationProbe />
     </>,
-    { api, route: ['/', `/posts/${postId}?ctx=${encodeURIComponent(CTX)}`] },
+    { api, route: ['/', `/posts/${postId}?ctx=${encodeURIComponent(ctx)}`] },
   );
 }
 
@@ -636,6 +636,13 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await screen.findByRole('heading', { level: 1, name: 'The older post' });
     expect(await screen.findByText('You’re all caught up')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'After the post' })).toBeInTheDocument();
+  });
+
+  it.each(['all:starred:', 'all:all:'])('under %s the stream ends with "You’ve reached the end", as the list does (issue 0027)', async (ctx) => {
+    renderStream(contextApi(), NEXT_ID, ctx);
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(await screen.findByText('You’ve reached the end')).toBeInTheDocument();
+    expect(screen.queryByText('You’re all caught up')).toBeNull();
   });
 
   it('one post at a time renders a single article and records the open at once', async () => {
