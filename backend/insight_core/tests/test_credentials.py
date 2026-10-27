@@ -185,18 +185,18 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message, EXPIRED_REASON)
 
     async def test_without_a_source_the_subscriptions_api_answers(self):
-        url = "https://substack.com/api/v1/subscriptions"
+        url = "https://substack.com/api/v1/subscriptions?tvOnly=false"
         ok, message = await SubstackKind(FakeHttp({url: json.dumps({"subscriptions": [{}, {}]})}),
                                          sid=SID).check_session(None)
         self.assertTrue(ok)
-        self.assertIn("2 subscriptions", message)
+        self.assertEqual(message, "Signed in to Substack")
         ok, message = await SubstackKind(FakeHttp({url: ValueError(f"HTTP 403 while fetching {url}")}),
                                          sid=SID).check_session(None)
         self.assertEqual((ok, message), (False, EXPIRED_REASON))
 
     async def test_no_cookie_and_errors_never_leak_it(self):
         self.assertEqual(await SubstackKind(FakeHttp(), sid="").check_session(None), (False, "No Substack session set"))
-        url = "https://substack.com/api/v1/subscriptions"
+        url = "https://substack.com/api/v1/subscriptions?tvOnly=false"
         ok, message = await SubstackKind(FakeHttp({url: RuntimeError(f"boom {SID}")}), sid=SID).check_session(None)
         self.assertFalse(ok)
         self.assertNotIn(SID, message)

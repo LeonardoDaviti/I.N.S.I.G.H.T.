@@ -44,7 +44,8 @@ SUBSTACK_PROFILE = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=
 ARCHIVE_PAGE_SIZE = 12
 EXPIRED_REASON = "Substack session expired — update it in Sources → Connections"
 MISSING_NOTICE = "Paid posts arrive as teasers. Add your Substack session in Sources → Connections"
-SUBSCRIPTIONS_URL = "https://substack.com/api/v1/subscriptions"
+# Without tvOnly Substack answers 400 (seen 2026-10-27); its list can be empty when signed in.
+SUBSCRIPTIONS_URL = "https://substack.com/api/v1/subscriptions?tvOnly=false"
 PAID_AUDIENCES = frozenset({"only_paid", "founding"})
 # A paid body with fewer words than this share of the post's wordcount is the teaser.
 TRUNCATED_RATIO = 0.6
@@ -178,8 +179,7 @@ class SubstackKind(BaseKind):
                     return True, f"Full text readable: “{post['title'] or paid['slug']}”"
             data = await self._get_json(SUBSCRIPTIONS_URL)
             if isinstance(data, dict) and data.get("subscriptions") is not None:
-                count = len(data.get("subscriptions") or [])
-                return True, f"Signed in to Substack ({count} subscription{'s' if count != 1 else ''})"
+                return True, "Signed in to Substack"
             return False, EXPIRED_REASON
         except KindUnavailable as exc:
             return False, exc.reason
