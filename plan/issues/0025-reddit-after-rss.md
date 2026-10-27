@@ -1,6 +1,6 @@
 # 0025 — Reddit after its RSS ends (13 Nov 2026)
 
-Status: **discussion**, urgent (owner, 2026-10-27). Related: 0012 (Reddit comments).
+Status: **decided: no change** (owner, 2026-10-27): keep reading Reddit as today; when its feeds stop, they stop. Related: 0012 (Reddit comments).
 
 ## What Reddit announced (30 Sep 2026; TechCrunch, TechRepublic, r/redditdev, checked 2026-10-27)
 - **31 Oct 2026:** new API access requests end.

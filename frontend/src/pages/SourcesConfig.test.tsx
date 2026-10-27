@@ -305,6 +305,20 @@ describe('SourcesConfig', () => {
     });
   });
 
+  it('a one-address template already in the sources is not offered again', async () => {
+    const getSources = vi.fn().mockResolvedValue({ success: true, total: 1, sources: [
+      { id: 'pc', platform: 'rss', handle_or_url: 'https://pipecraft.me', enabled: true, settings: {} },
+    ] });
+    setup('/settings/sources', { getSources });
+    await waitFor(() => expect(getSources).toHaveBeenCalled());
+    await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: 'Pipecraft (Tornike Gomareli)' })).toBeNull();
+    // Others stay, and so do templates with a field (one source per value).
+    expect(within(dialog).getByRole('button', { name: 'Gwern' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'GitHub Trending' })).toBeInTheDocument();
+  });
+
   it('the row switch toggles one source', async () => {
     const { api } = setup();
     await screen.findByText('Road to VR');

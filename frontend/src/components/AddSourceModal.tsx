@@ -218,8 +218,22 @@ const TEMPLATES: Template[] = [
   },
 ];
 
+/** The address a template always builds, whatever its field (Pipecraft, Gwern…); null when the
+ *  field changes it (Nitter, YouTube, GitHub Trending), so it can be added once per value. */
+function fixedHandle(template: Template): string | null {
+  const handle = template.buildHandle('a');
+  return handle === template.buildHandle('b') ? handle : null;
+}
+
+/** An address compared loosely: no scheme, www. or trailing slash, any case. */
+function sameAddress(address: string): string {
+  return address.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '');
+}
+
 interface AddSourceModalProps {
   platform: string;
+  /** The addresses already in the sources: a one-address template among them is not offered. */
+  existingAddresses?: readonly string[];
   onClose: () => void;
   onAdd: (source: {
     handle_or_url: string;
@@ -231,7 +245,7 @@ interface AddSourceModalProps {
   }) => void;
 }
 
-export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceModalProps) {
+export default function AddSourceModal({ platform, existingAddresses = [], onClose, onAdd }: AddSourceModalProps) {
   const api = useApi();
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariable, setTemplateVariable] = useState('');
@@ -255,8 +269,12 @@ export default function AddSourceModal({ platform, onClose, onAdd }: AddSourceMo
     ? (templateVariable.trim() ? selectedTemplate.buildHandle(templateVariable.trim()) : '')
     : (platform === 'youtube' ? handleOrUrl.trim() : '');
 
-  // Get templates for this platform
-  const availableTemplates = TEMPLATES.filter(t => t.platform === platform);
+  // Get templates for this platform, less the one-address ones already added (Pipecraft, Gwern…).
+  const added = new Set(existingAddresses.map(sameAddress));
+  const availableTemplates = TEMPLATES.filter((t) => {
+    const fixed = fixedHandle(t);
+    return t.platform === platform && !(fixed && added.has(sameAddress(fixed)));
+  });
 
   // Update URL when template variable changes
   useEffect(() => {

@@ -540,7 +540,12 @@ export default function SourcesConfig() {
       /> : null}
 
       {showAddSource ? (
-        <AddSourceModal platform="rss" onClose={() => setShowAddSource(false)} onAdd={handleAddSource} />
+        <AddSourceModal
+          platform="rss"
+          existingAddresses={sourcesQuery.data?.map((source) => source.handle_or_url)}
+          onClose={() => setShowAddSource(false)}
+          onAdd={handleAddSource}
+        />
       ) : null}
 
       <Dialog open={newTrackOpen} onOpenChange={setNewTrackOpen}>

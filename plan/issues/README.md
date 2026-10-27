@@ -29,7 +29,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | discussion |
 | [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | Trending built (RSS feed); Following later |
 | [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
-| [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | discussion, urgent |
+| [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |
 
 ## Analysis archive
 
