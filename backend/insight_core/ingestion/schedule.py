@@ -281,7 +281,7 @@ def decide_fetch(
     availability: Availability,
     requested_limit: int | None = None,
 ) -> FetchDecision:
-    """Rules, in order: unavailable, force, error state, new source, due check (§C.2)."""
+    """Rules, in order: unavailable, never fetches, force, error state, new source, due check (§C.2)."""
     interval, basis = fetch_interval(stats, profile)
     post_limit = max(requested_limit or stats.max_posts_per_fetch, profile.min_posts_per_fetch)
     retry_at = stats.next_retry_at
@@ -302,6 +302,10 @@ def decide_fetch(
     reason = unavailable_reason(profile, availability)
     if reason is not None:
         return decision(DecisionKind.SKIP_UNAVAILABLE, None, f"Unavailable: {reason}")
+
+    # 1b. A kind that never fetches (the Saved pages, issue 0031): nothing is ever due, even forced.
+    if not profile.fetches:
+        return decision(DecisionKind.SKIP_NOT_DUE, None, "Pages saved by hand; never fetched")
 
     # 2. Force ignores cadence and backoff.
     if force:

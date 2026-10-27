@@ -286,6 +286,11 @@ class PageWatchPreviewRequest(BaseModel):
     prefix: str | None = None
 
 
+class SavePageRequest(BaseModel):
+    url: str = ""
+    title: str | None = None     # the page's title as the bookmarklet read it
+
+
 class SourceEnabledRequest(BaseModel):
     enabled: bool
 
@@ -674,6 +679,19 @@ async def preview_page_watch(request: PageWatchPreviewRequest):
     No items: the page's articles cannot be read (built with JavaScript). 400 when url is empty
     or the page cannot be read."""
     return {"success": True, **await page_watch.preview(FEED_FINDER_HTTP, request.url, request.prefix)}
+
+
+@app.post("/api/saved")
+@error_detail("save the page")
+async def save_page(request: SavePageRequest):
+    """Save any page (issue 0031) as an unread post of the Saved source, created by the first
+    save. {status: saved, post_id, title, source_id, readable, reason, feed} or, for a page
+    already stored, {status: already, post_id, title}. readable false: the page could not be
+    read as an article and was saved with its title and address (reason says why, never the
+    site's answer). feed: a feed of the site that is not a source yet ({url, title}), or null.
+    400 when url is empty or not http(s). A POST from INSIGHT's own save page: a website cannot
+    save silently."""
+    return await services().saved.save(FEED_FINDER_HTTP, request.url, request.title)
 
 
 @app.put("/api/sources/{source_id}/settings")

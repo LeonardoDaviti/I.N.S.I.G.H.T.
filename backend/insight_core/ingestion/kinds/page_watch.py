@@ -220,7 +220,7 @@ def _written_date(text: str) -> Optional[datetime]:
         return None
 
 
-def _title(page: str, url: str) -> str:
+def page_title(page: str, url: str) -> str:
     """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's,
     or any short one on a <title>."""
     site = html.unescape(parsing.meta_content(page, "og:site_name")).strip()
@@ -239,26 +239,35 @@ def _title(page: str, url: str) -> str:
 
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
     """The post the page at url is, or None when it is no article (see the module docstring)."""
+    date = page_date(page)
+    if date is None and parsing.meta_content(page, "og:type").lower() != "article":
+        return None
+    return article_post(page, source_url, url, date or lastmod, adapter=PageWatchKind.adapter_type)
+
+
+def article_post(page: str, source_url: str, url: str, date: Optional[datetime], *,
+                 adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
+    """The post any article page is: its body (the full-text reader), title, date (else now) and
+    images; None when the page has no article body. Page watch and a saved page (issue 0031)."""
     content_html = parsing.extract_article_html(page)
     content = parsing.strip_html(content_html)
-    date = page_date(page)
-    if not content or (date is None and parsing.meta_content(page, "og:type").lower() != "article"):
+    if not content:
         return None
     image = parsing.normalize_media_url(parsing.meta_content(page, "og:image"))
     media_urls = list(dict.fromkeys([*([image] if image else []), *parsing.extract_html_image_urls(content_html)]))
     return {
-        "platform": "rss",
+        "platform": platform,
         "source": source_url,
         "url": url,
         "external_id": urllib.parse.urlparse(url).path,
         "guid": url,
-        "title": _title(page, url),
+        "title": page_title(page, url),
         "content": content,
         "content_html": content_html,
-        "date": date or lastmod or datetime.now(timezone.utc),
+        "date": date or datetime.now(timezone.utc),
         "media_urls": media_urls,
         "categories": [],
-        "metadata": {"adapter": PageWatchKind.adapter_type},
+        "metadata": {"adapter": adapter},
     }
 
 
@@ -364,4 +373,5 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "discover", "infer_prefix", "normalise_prefix", "preview"]
+__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "infer_prefix", "normalise_prefix",
+           "page_date", "page_title", "preview"]
