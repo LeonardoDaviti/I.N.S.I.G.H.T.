@@ -303,8 +303,10 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
     return () => window.clearTimeout(timeout);
   }, [findsFeed, address]);
 
+  // Typing on drops the lookup in flight: its answer would replace what is typed now.
   useEffect(() => {
-    if (!lookup || (finding && (finding.for === lookup || (finding.feeds ?? []).some((feed) => feed.url === lookup)))) return;
+    if (!lookup || address !== lookup
+      || (finding && (finding.for === lookup || (finding.feeds ?? []).some((feed) => feed.url === lookup)))) return;
     let cancelled = false;
     void api.findFeed(lookup).then((result) => {
       if (cancelled) return;
@@ -316,7 +318,7 @@ export default function AddSourceModal({ platform, existingAddresses = [], onClo
       }
     });
     return () => { cancelled = true; };
-  }, [api, lookup, finding, displayNameManuallyEdited]);
+  }, [api, lookup, address, finding, displayNameManuallyEdited]);
 
   const chooseFeed = (feed: FoundFeed) => {
     setHandleOrUrl(feed.url);
