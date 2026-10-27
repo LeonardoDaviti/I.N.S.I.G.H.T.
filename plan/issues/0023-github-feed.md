@@ -1,6 +1,6 @@
 # 0023 — A GitHub feed in INSIGHT, without scrolling github.com
 
-Status: **discussion** (owner, 2026-10-27).
+Status: **in progress** (owner, 2026-10-27): **Trending first**, added from an Add source template. Following later, if at all; releases are issue 0024.
 
 ## The owner's observation
 "I like the GitHub feed, I found so many new things on it, but I don't want to scroll GitHub for that, so we need to build the GitHub feed ourselves."

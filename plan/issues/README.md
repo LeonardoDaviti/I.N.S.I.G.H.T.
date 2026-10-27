@@ -27,7 +27,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0020](0020-version-display.md) | The running version on the Ingestion tab, in the Mark scheme | built |
 | [0021](0021-useful-ingestion-logs.md) | Ingestion jobs that say what they delivered | built |
 | [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | discussion |
-| [0023](0023-github-feed.md) | A GitHub feed in INSIGHT, without scrolling github.com | discussion |
+| [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | in progress |
+| [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
 
 ## Analysis archive
 
