@@ -198,8 +198,13 @@ class _SupportSources(_Sources):
         self.current = {} if available is None else {"available_posts": available}
 
     def get_source_by_id(self, source_id):
+        # The raw row: a setting the user never set is absent (issue 0027: it was read as 50).
+        return {"id": source_id, "platform": "rss", "handle_or_url": "https://example.com/feed", "settings": {}}
+
+    def get_source_with_settings(self, source_id):
+        # Merged with the kind's defaults, as every fetch reads them.
         return {"id": source_id, "platform": "rss", "handle_or_url": "https://example.com/feed",
-                "settings": {"max_posts_per_fetch": self.max_posts_per_fetch}}
+                "settings": {"max_posts_per_fetch": self.max_posts_per_fetch, "archive": self.current}}
 
 
 class ArchiveSupportTests(unittest.TestCase):
@@ -247,6 +252,21 @@ class ArchiveSupportTests(unittest.TestCase):
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50, available=503))
         self.assertTrue(support["archivable"])
         self.assertIsNone(support["reason"])
+
+    def test_the_limit_is_what_a_fetch_reads_not_a_made_up_50(self):
+        # Issue 0027: an RSS feed fetches 20 (its merged default); a feed listing 30 has 10 older
+        # posts to archive, so it must not be refused as "every fetch already reads up to 50".
+        support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=30))
+        self.assertTrue(support["archivable"])
+        self.assertEqual(support["live_fetch_limit"], 20)
+        refused = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=20, available=20))
+        self.assertEqual(refused["reason"],
+                         "This feed only lists its latest 20 posts, and every fetch already reads up to 20.")
+
+    def test_the_limit_is_floored_by_the_kinds_minimum_like_a_fetch(self):
+        kind = self.history_kind(PolitenessProfile(concurrency_pool="host-lock", min_posts_per_fetch=15))
+        support = self.support(kind, _SupportSources(max_posts_per_fetch=5))
+        self.assertEqual(support["live_fetch_limit"], 15)
 
     def test_an_unmeasured_feed_can_be_planned(self):
         support = self.support(self.feed_kind(), _SupportSources(max_posts_per_fetch=50))

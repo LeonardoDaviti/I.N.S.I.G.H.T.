@@ -36,7 +36,12 @@ from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import ArchivePage, KindUnavailable, RateLimit, SourceKind, resume_counts
 from insight_core.ingestion.kinds.reddit import fetch_reddit_comments
 from insight_core.ingestion.ports import slowed_line
-from insight_core.ingestion.schedule import Availability, availability_from_env, unavailable_reason
+from insight_core.ingestion.schedule import (
+    DEFAULT_MAX_POSTS_PER_FETCH,
+    Availability,
+    availability_from_env,
+    unavailable_reason,
+)
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.operations_service import backlog_posts
 from insight_core.services.posts_service import PostsService
@@ -90,12 +95,16 @@ class SourceFetchService:
     # ------------------------------------------------------------------ archive
 
     def archive_catalog(self) -> List[Dict[str, Any]]:
-        """Every enabled source with its persisted archive status; unfinished archives first."""
+        """Every enabled source that can archive, with its persisted archive status; unfinished
+        archives first. A source that cannot archive (see archive_support) is left out."""
         catalog = []
+        availability = self.availability()
         for source in self.sources_service.get_all_sources_with_settings():
             if not source.get("enabled"):
                 continue
             settings = source.get("settings") or {}
+            if not self._support(self.kinds.resolve(source), settings, availability)["archivable"]:
+                continue
             archive = settings.get("archive", {})
             stored = int(archive.get("stored_posts") or source.get("post_count") or 0)
             catalog.append(
@@ -134,11 +143,19 @@ class SourceFetchService:
         now, so archiving only adds anything when the feed lists more than one live fetch
         reads; an unmeasured feed stays archivable so a plan can measure it.
         """
-        source = self.sources_service.get_source_by_id(source_id)
-        if not source:
-            raise LookupError(f"Source {source_id} not found")
-        kind = self.kinds.resolve(source)
-        live_fetch_limit = int((source.get("settings") or {}).get("max_posts_per_fetch") or 50)
+        # Merged settings (the kind's defaults under the user's), as every fetch reads them.
+        source = self.sources_service.get_source_with_settings(source_id)
+        return self._support(self.kinds.resolve(source), source.get("settings") or {}, self.availability())
+
+    @staticmethod
+    def _support(kind: SourceKind, settings: Dict[str, Any], availability: Availability) -> Dict[str, Any]:
+        """archive_support from a source's merged settings."""
+        try:
+            limit = int(settings.get("max_posts_per_fetch") or DEFAULT_MAX_POSTS_PER_FETCH)
+        except (TypeError, ValueError):
+            limit = DEFAULT_MAX_POSTS_PER_FETCH
+        # The floor decide_fetch applies too: what one live fetch really reads.
+        live_fetch_limit = max(limit, kind.profile.min_posts_per_fetch)
         support: Dict[str, Any] = {
             "kind": kind.name,
             "available_basis": kind.available_basis,
@@ -147,12 +164,11 @@ class SourceFetchService:
             "unavailable": False,
             "live_fetch_limit": live_fetch_limit,
         }
-        reason = unavailable_reason(kind.profile, self.availability())
+        reason = unavailable_reason(kind.profile, availability)
         if reason is not None:
             return {**support, "archivable": False, "reason": reason, "unavailable": True}
         if kind.available_basis == "feed_window":
-            archive = (self.sources_service.get_source_with_settings(source_id).get("settings") or {}).get("archive") or {}
-            available = archive.get("available_posts")
+            available = (settings.get("archive") or {}).get("available_posts")
             if isinstance(available, int) and not isinstance(available, bool) and available <= live_fetch_limit:
                 return {**support, "archivable": False, "reason": (
                     f"This feed only lists its latest {available} post{'' if available == 1 else 's'}, "
