@@ -9,7 +9,7 @@ import PostNav from '../components/post/PostNav';
 import { PostFigure, PostImageList } from '../components/post/PostImages';
 import { postMedia } from '../components/post/media';
 import { Button, Skeleton } from '../components/ui';
-import { EmptyState, Notice } from '../components/states';
+import { EmptyState, FOCUS_RING, Notice } from '../components/states';
 import { useDevFixtureApi } from '../hooks/useDevFixtureApi';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import ShortcutHelp from '../components/reader/ShortcutHelp';
@@ -17,6 +17,7 @@ import { postQueryOptions, usePost, usePrefetchPost } from '../hooks/usePost';
 import { usePostNeighbors } from '../hooks/usePostNeighbors';
 import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { LONG_POST_CHARS, useReadingPosition } from '../hooks/useReadingPosition';
 import { useFlowPreference, useShortcutPreference } from '../hooks/useShortcutPreference';
 import {
   decodeFeedContext, postHref, scopePath, sourceReadPath, sourceSettingsHref, type ContextEntry, type FeedContext,
@@ -274,7 +275,7 @@ const GRID_CLASS = 'grid grid-cols-[minmax(0,42rem)] justify-center';
 /** The sticky band under the top bar that holds the post navigation, over the reading column. */
 function NavBand({ children }: { children?: ReactNode }) {
   return (
-    <div className="reader-material reader-edge sticky top-topbar z-30 px-4 py-1 sm:px-6">
+    <div data-nav-band className="reader-material reader-edge sticky top-topbar z-30 px-4 py-1 sm:px-6">
       <div className={GRID_CLASS}>
         <div className="min-h-[2rem] min-w-0">{children}</div>
       </div>
@@ -536,6 +537,7 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
                       current={entry === currentEntry}
                       readOn={continuous ? 'end' : 'mount'}
                       divider={index > 0}
+                      offerResume={index === 0}
                       keysEnabled={entry === currentEntry && !helpOpen}
                     />
                   ) : query.isError ? (
@@ -592,6 +594,8 @@ interface PostArticleProps {
   readOn: 'mount' | 'end';
   /** A post that follows another in the stream starts after a rule. */
   divider: boolean;
+  /** The post opened (the stream's first) offers to continue where you stopped; one joining below does not. */
+  offerResume: boolean;
   keysEnabled: boolean;
 }
 
@@ -600,7 +604,7 @@ interface PostArticleProps {
  * open and reading time). Keyed by the post id, so nothing of another post
  * carries over.
  */
-function PostArticle({ postId, detail, api, fixture, current, readOn, divider, keysEnabled }: PostArticleProps) {
+function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled }: PostArticleProps) {
   const queryClient = useQueryClient();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
   const post = detail.post as Post;
@@ -617,6 +621,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   const [announcement, setAnnouncement] = useState('');
   const openRecordedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLElement>(null);
   const mutations = useReaderMutations({ dryRun: Boolean(fixture) });
   const [shortcutsOn] = useShortcutPreference();
 
@@ -769,6 +774,12 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   // title, the others after the text. A video post shows its player instead.
   const media = useMemo(() => postMedia(post, `${renderContent}\n${post.content || ''}`), [post, renderContent]);
   const bodyImageSrc = useCallback((src: string) => proxiedImage(postId, src), [postId]);
+  // The same element while the body is the same: the renderer's blocks are not rebuilt on
+  // every state change (a star, an announcement), so a block keeps its focus (issue 0030).
+  const markdownBody = useMemo(
+    () => <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} />,
+    [renderContent, bodyImageSrc, bodyHtml],
+  );
   const isYouTubePost = post?.platform === 'youtube';
   // A blog post that carries a YouTube video: the player stands in for the hero.
   const embeddedVideoId = !isYouTubePost ? media.video?.id ?? null : null;
@@ -805,6 +816,12 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   // title shows it once, as the heading.
   const displayTitle = post.title || 'Untitled post';
   const bodyIsTitle = useMemo(() => postPlainText(post).replace(/\s+/g, ' ') === displayTitle, [post, displayTitle]);
+  // Continue where I stopped (issue 0030): long text posts only, never a fixture.
+  const longPost = useMemo(() => postPlainText(post).length >= LONG_POST_CHARS, [post]);
+  const position = useReadingPosition({
+    postId, api, body: bodyRef, end: endRef, saved: detail.reader_state ?? null,
+    enabled: longPost && !fixture && !isYouTubePost, offer: offerResume,
+  });
   const publishedLabel = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
 
@@ -904,6 +921,14 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
         </h1>
         <span aria-live="polite" className="sr-only">{announcement}</span>
       </header>
+
+      {position.offerPercent !== null ? (
+        <p className="-mt-4 mb-8">
+          <button type="button" onClick={position.resume} className={`text-link rounded-sm text-[0.8125rem] text-fg-2 ${FOCUS_RING}`}>
+            Continue from where you stopped ({position.offerPercent}%)
+          </button>
+        </p>
+      ) : null}
 
       {heroImage ? <PostFigure image={heroImage} postId={postId} className="mb-10" /> : null}
       {embeddedVideoId ? <VideoPlayer videoId={embeddedVideoId} title={displayTitle} className="mb-10" /> : null}
@@ -1017,7 +1042,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
       )}
 
       {/* ---- The article ---- */}
-      <article aria-label={isYouTubePost ? 'Transcript' : 'Post content'} className="min-w-0">
+      <article ref={bodyRef} aria-label={isYouTubePost ? 'Transcript' : 'Post content'} className="min-w-0">
         {isYouTubePost && youtubeTranscriptBlocks.length ? (
           <p className="mb-5 flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem] tabular-nums text-fg-3">
             <span>{plural(youtubeTranscriptBlocks.length, 'transcript section')}</span>
@@ -1071,7 +1096,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
               )}
             </div>
           ) : bodyIsTitle ? null : (
-            <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} />
+            markdownBody
           )}
         </div>
       </article>

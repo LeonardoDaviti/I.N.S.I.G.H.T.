@@ -104,6 +104,22 @@ describe('FeedList', () => {
     expect(read.querySelector('[data-glyph="unread"]')).toBeNull();
   });
 
+  it('a post started but not finished shows a thin progress line, and says how far (issue 0030)', async () => {
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Started', resume_block: 16, resume_blocks: 40 }),
+      feedItem({ id: ID(2), title: 'Barely started', resume_block: 1, resume_blocks: 40 }),
+      feedItem({ id: ID(3), title: 'Not started' }),
+    ])) });
+    const [started, barely, untouched] = await screen.findAllByRole('article');
+    const line = started.querySelector<HTMLElement>('[data-reading-progress]');
+    expect(line).not.toBeNull();
+    expect(line).toHaveAttribute('aria-hidden', 'true');
+    expect(line!.firstElementChild).toHaveStyle({ width: '40%' });
+    expect(within(started).getByText('40% read')).toHaveClass('sr-only');
+    expect(barely.querySelector('[data-reading-progress]')).toBeNull();
+    expect(untouched.querySelector('[data-reading-progress]')).toBeNull();
+  });
+
   it('coming back from a post selects and focuses the post read last', async () => {
     rememberSelection(ID(2));
     setup();

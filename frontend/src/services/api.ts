@@ -70,6 +70,9 @@ export interface ReaderState {
   /** Mark IX projection (post_reader_state): set on first open or mark read. */
   read_at?: string | null;
   starred_at?: string | null;
+  /** Where a long post was left (issue 0030): the top text block in view, of the body's blocks. */
+  resume_block?: number | null;
+  resume_blocks?: number | null;
 }
 
 // ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
@@ -83,6 +86,8 @@ export interface FeedItem {
   sort_at: string; published_at: string | null; read_at: string | null; starred_at: string | null;
   reading_minutes: number | null; duration_seconds: number | null;
   media_thumb: string | null;
+  /** Where the post was left (issue 0030), as on the post's reader state. */
+  resume_block?: number | null; resume_blocks?: number | null;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
 export interface FeedGroup {
@@ -635,6 +640,9 @@ export function createApi() {
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/reading-session`, { method: 'POST', body: { durationSeconds, metadata } })),
     togglePostFavorite: (postId: string, favorited: boolean) =>
       settle(request<PostInteractionResponse>(`/api/posts/item/${postId}/favorite`, { method: 'POST', body: { favorited } })),
+    /** Where a long post was left (issue 0030); `null` clears it (the post was finished). */
+    savePostPosition: (postId: string, block: number | null, blocks: number | null) =>
+      settle(request<Envelope>(`/api/posts/item/${enc(postId)}/position`, { method: 'PUT', body: { block, blocks } })),
     getYouTubeWatchProgress: (videoId: string) =>
       settle(request<YouTubeWatchProgressResponse>(`/api/youtube/progress/${videoId}`)),
     saveYouTubeWatchProgress: (videoId: string, payload: YouTubeProgressInput) =>
