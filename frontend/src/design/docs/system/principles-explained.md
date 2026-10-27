@@ -64,10 +64,10 @@ Reading views never start a fetch, ingest or hold secrets; jobs live in Sources 
 
 ## P8 One click to where it's managed
 
-A source or track name in a reading view links to its place in Sources; in a post's byline it reads the source, with `settings` beside it.
+A source or track name in a reading view links to its place in Sources; in a feed row and in a post's byline it reads the source, with `settings` beside it in the byline.
 
 - *Why:* removing a noisy source should not start with a search.
-- *Do:* a track name opens `/settings/sources?track=<id>`; a post's byline reads `source / settings` (decision 020).
+- *Do:* a track name opens `/settings/sources?track=<id>`; a post's byline reads `source / settings` (decision 020); a feed row's source name opens `/read/source/<id>` (decision 022).
 - *Don't:* a source name as plain text.
 
 ## P9 One place per job

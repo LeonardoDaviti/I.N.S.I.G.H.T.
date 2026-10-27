@@ -312,7 +312,6 @@ function FeedList({
                   selected={item.id === selectedId}
                   tabbable={item.id === tabbableId}
                   href={itemHref(item)}
-                  onMarkThrough={askMarkThrough}
                   dateColumn="time"
                   dayLabel={days[index].label}
                   position={index + 1}
