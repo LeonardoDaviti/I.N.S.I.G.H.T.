@@ -286,6 +286,20 @@ describe('Sources → ingestion tab', () => {
     expect(within(catalog).getByText('The Kaitchup')).toBeInTheDocument();
   });
 
+  it('a URL-named source is named from its address, never by its id (issue 0027)', async () => {
+    setup({
+      overrides: {
+        getArchiveCatalog: vi.fn().mockResolvedValue({ success: true, total: 1, sources: [
+          catalogEntry({ source_id: '00000000-0000-4000-8000-000000000042', display_name: 'https://rss.arxiv.org/rss/cs.CL', platform: 'rss', kind: 'generic_rss' }),
+        ] }),
+      },
+    });
+    await userEvent.click(await screen.findByRole('link', { name: 'archive' }));
+    const catalog = await screen.findByRole('region', { name: 'Catalog' });
+    expect(await within(catalog).findByText('arXiv cs.CL')).toBeInTheDocument();
+    expect(catalog).not.toHaveTextContent('00000000-0000-4000-8000-000000000042');
+  });
+
   it('a backfill runs with the chosen resume, page delay, batch size and cooldown', async () => {
     const planSourceArchive = vi.fn().mockResolvedValue({
       available_posts: 1722, available_basis: 'exact', older_posts: 1602, estimated_pages: 21,

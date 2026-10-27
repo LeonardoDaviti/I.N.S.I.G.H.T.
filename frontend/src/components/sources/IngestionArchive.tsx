@@ -94,7 +94,8 @@ export default function IngestionArchive() {
         ) : (
           <ul className="max-h-[36rem] divide-y divide-line overflow-y-auto border-y border-line">
             {shown.map((entry) => {
-              const name = sourceLabel(entry.display_name, entry.source_id);
+              // The id only when there is no name at all: it is never a URL, so it would win over a derived one.
+              const name = sourceLabel(entry.display_name || entry.source_id);
               const glyph = archiveGlyph(entry.archive_status);
               const isSelected = entry.source_id === selectedId;
               return (
@@ -123,7 +124,7 @@ export default function IngestionArchive() {
         )}
       </section>
       <section aria-labelledby="archive-backfill" className="min-w-0 space-y-4">
-        <h2 id="archive-backfill" className={sectionTitle}>{selected ? sourceLabel(selected.display_name, selected.source_id) : 'Backfill'}</h2>
+        <h2 id="archive-backfill" className={sectionTitle}>{selected ? sourceLabel(selected.display_name || selected.source_id) : 'Backfill'}</h2>
         {selected ? <ArchiveSection key={selected.source_id} sourceId={selected.source_id} pacing /> : (
           <p className="text-[0.8125rem] text-fg-3">
             {catalog.isPending ? 'Loading…' : 'Choose a source to plan its backfill: where it continues from, how fast, and whether to resume the last run.'}
