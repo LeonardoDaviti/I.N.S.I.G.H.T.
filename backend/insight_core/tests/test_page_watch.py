@@ -18,7 +18,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import main
 from insight_core.ingestion.http import HttpError
-from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.base import RateLimit
 from insight_core.ingestion.kinds.page_watch import PageWatchKind, infer_prefix, preview
 from insight_core.services import registry as services_registry
@@ -112,6 +112,10 @@ class PrefixTests(unittest.TestCase):
 
 
 class PageWatchKindTests(unittest.TestCase):
+    def setUp(self):
+        page_watch.SKIPPED.clear()
+        self.addCleanup(page_watch.SKIPPED.clear)
+
     def kind(self, responses=None, stored=()):
         self.http = FakeHttp(responses or anthropic())
         self.lookups = []
@@ -185,13 +189,48 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(posts[f"{SITE}/news/public-benefit-fund"]["date"], datetime(2026, 6, 29, tzinfo=timezone.utc))
         self.assertNotIn(f"{SITE}/news/s1-sec", posts)
 
+    def test_a_tag_page_of_dated_cards_is_no_post_but_one_time_tag_dates_one(self):
+        cards = "".join(f'<div><time datetime="2026-10-{n + 10}">Oct {n + 10}</time>{PARAGRAPH}</div>' for n in range(8))
+        tag_page = f"<html><head><title>Agents | Blog</title></head><body><main>{cards}</main></body></html>"
+        one = f'<html><head><title>One</title></head><body><article><time datetime="2026-10-03">x</time>{PARAGRAPH}</article></body></html>'
+        same = one.replace("</article>", '<time datetime="2026-10-03">again</time></article>')
+        kind = self.kind(anthropic(**{f"{SITE}/news/public-benefit-fund": tag_page, f"{SITE}/news/s1-sec": one,
+                                      f"{SITE}/news/claude-2": same}))
+        posts = {post["url"]: post for post in run(kind.fetch_latest(source(prefix="/news/"), 10))}
+        self.assertNotIn(f"{SITE}/news/public-benefit-fund", posts)
+        self.assertEqual(posts[f"{SITE}/news/s1-sec"]["date"], datetime(2026, 10, 3, tzinfo=timezone.utc))
+        self.assertEqual(posts[f"{SITE}/news/claude-2"]["date"], datetime(2026, 10, 3, tzinfo=timezone.utc))
+
     def test_a_category_page_is_no_post_and_is_not_read_again(self):
-        kind = self.kind()
-        run(kind.fetch_latest(source(), 10))
+        # A run builds its own registry, so each fetch has a fresh kind (ingestion.default_runner).
+        run(self.kind().fetch_latest(source(), 10))
         self.assertIn(f"{SITE}/news/announcements", self.http.requests)
-        self.http.requests.clear()
-        run(kind.fetch_latest(source(), 10))
+        run(self.kind().fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/announcements", self.http.requests)
+
+    def test_a_failed_page_is_read_again_only_the_next_day(self):
+        broken = anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})
+        with mock.patch.object(page_watch.time, "monotonic", return_value=1000.0):
+            run(self.kind(broken).fetch_latest(source(), 10))
+            run(self.kind(broken).fetch_latest(source(), 10))
+            self.assertNotIn(f"{SITE}/news/s1-sec", self.http.requests)
+        with mock.patch.object(page_watch.time, "monotonic", return_value=1000.0 + page_watch.FAILED_RETRY_S):
+            posts = run(self.kind().fetch_latest(source(), 10))
+        self.assertIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])
+
+    def test_pages_that_are_no_post_do_not_use_up_the_limit(self):
+        categories = [f"/news/topic-{n}" for n in range(8)]
+        listing = NEWS_PAGE.replace("<main>", "<main>" + "".join(f'<a href="{path}">Topic</a>' for path in categories))
+        responses = anthropic(**{LISTING: listing, **{f"{SITE}{path}": CATEGORY for path in categories}})
+        posts = run(self.kind(responses).fetch_latest(source(), 1))
+        self.assertEqual([p["url"] for p in posts], [f"{SITE}/news/public-benefit-fund"])
+        # Bounded all the same: at most SKIP_READS pages that are no post.
+        page_watch.SKIPPED.clear()
+        many = [f"/news/topic-{n}" for n in range(page_watch.SKIP_READS + 3)]
+        listing = NEWS_PAGE.replace("<main>", "<main>" + "".join(f'<a href="{path}">Topic</a>' for path in many))
+        responses = anthropic(**{LISTING: listing, **{f"{SITE}{path}": CATEGORY for path in many}})
+        self.assertEqual(run(self.kind(responses).fetch_latest(source(), 1)), [])
+        self.assertEqual(sum("/news/topic-" in url for url in self.http.requests), page_watch.SKIP_READS)
 
     def test_stored_urls_are_not_read_and_the_limit_counts_posts(self):
         kind = self.kind(stored=[f"{SITE}/news/public-benefit-fund", f"{SITE}/news/s1-sec"])
@@ -215,9 +254,25 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertIn(f"{SITE}/news/claude-2", [p["url"] for p in posts])
         self.assertNotIn(f"{SITE}/sitemap-old.xml.gz", self.http.requests)
 
+    def test_a_malformed_link_is_skipped(self):
+        listing = NEWS_PAGE.replace("<main>", '<main><a href="http://[x/">Broken</a>')
+        robots = ROBOTS + "Sitemap: http://[x/sitemap.xml\n"
+        sitemap = SITEMAP.replace("</urlset>", "<url><loc>http://[x/news/y</loc></url></urlset>")
+        posts = run(self.kind(anthropic(**{LISTING: listing, f"{SITE}/robots.txt": robots,
+                                           f"{SITE}/sitemap.xml": sitemap})).fetch_latest(source(), 10))
+        self.assertEqual(len(posts), 5)
+
+    def test_a_sitemap_is_read_up_to_its_cap_and_a_cut_off_one_keeps_its_first_entries(self):
+        cap = SITEMAP.index("/news/claude-2") + 80      # cut inside the next <url>
+        with mock.patch.object(page_watch, "SITEMAP_MAX_BYTES", cap):
+            inspection = run(self.kind().inspect(source()))
+        self.assertEqual(self.http.byte_caps[f"{SITE}/sitemap.xml"], cap)
+        self.assertEqual(inspection.raw["sitemap_urls"], 3)     # 100k-context-windows, announcements, claude-2
+
     def test_a_failing_article_page_is_skipped_but_a_limiting_one_stops_the_fetch(self):
         posts = run(self.kind(anthropic(**{f"{SITE}/news/s1-sec": ValueError("HTTP 404")})).fetch_latest(source(), 10))
         self.assertNotIn(f"{SITE}/news/s1-sec", [p["url"] for p in posts])
+        page_watch.SKIPPED.clear()
         limited = anthropic(**{f"{SITE}/news/s1-sec": HttpError("HTTP 429", status=429)})
         with self.assertRaises(HttpError):
             run(self.kind(limited).fetch_latest(source(), 10))
@@ -302,6 +357,21 @@ class PreviewRouteTests(unittest.TestCase):
                                json_body={"url": "https://nothing.example/"})
         self.assertGreaterEqual(status, 400)
         self.assertFalse(body.get("success", False))
+
+    def test_the_sites_answer_stays_out_of_the_error(self):
+        self.http.responses["https://secret.example/"] = HttpError(
+            "HTTP 500 while fetching https://secret.example/: internal token abc123", status=500)
+        status, _, body = call(main.app, "POST", "/api/sources/page-watch/preview",
+                               json_body={"url": "https://secret.example/"})
+        self.assertEqual(status, 400)
+        self.assertNotIn("abc123", str(body))
+        self.assertIn("HTTP 500", str(body))
+
+    def test_only_http_and_https_pages_are_previewed(self):
+        status, _, body = call(main.app, "POST", "/api/sources/page-watch/preview",
+                               json_body={"url": "file:///etc/hostname"})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.http.requests, [])
 
 
 class AddPageWatchSourceTests(unittest.TestCase):

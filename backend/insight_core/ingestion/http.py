@@ -4,9 +4,11 @@ It owns the User-Agent and TLS-skip policy and the politeness sleep, so tests sw
 whole network edge with one fake (tests/_kind_fakes.FakeHttp) and record every delay a
 kind asks for through the injected sleeper instead of waiting it out.
 
-urllib is blocking, so every request runs in a worker thread (asyncio.to_thread).
+urllib is blocking, so every request runs in a worker thread: the loop's default executor,
+or the executor given (the Add source dialog's client has its own few threads, so a slow
+site it is asked about never holds up ingestion's).
 
-It only classifies failures: every one is an HttpError (a ValueError), carrying the status,
+It requests only http and https addresses, and only classifies failures: every one (a dropped connection or a truncated body too) is an HttpError (a ValueError), carrying the status,
 the Retry-After seconds and whether it timed out. Retrying and slowing down are the
 caller's, where the host is known (issue 0016).
 """
@@ -14,16 +16,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import functools
+import http.client
 import json
 import os
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple
+from concurrent.futures import Executor
+from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple, TypeVar
 
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_USER_AGENT = "INSIGHT Archive Fetcher/1.0"
+READ_CHUNK = 64 * 1024    # get_start reads its body in pieces of at most this, checking its deadline
+
+T = TypeVar("T")
 
 
 class HttpError(ValueError):
@@ -62,6 +72,14 @@ def _classified(action: str, url: str) -> Iterator[None]:
                         timed_out=isinstance(exc.reason, TimeoutError)) from exc
     except TimeoutError as exc:   # a read timeout escapes urllib unwrapped
         raise HttpError(f"Timed out {action} {url}", timed_out=True) from exc
+    except (OSError, http.client.HTTPException) as exc:   # a dropped connection, a truncated body
+        raise HttpError(f"Failed {action} {url}: {type(exc).__name__}") from exc
+
+
+def _web(url: str) -> None:
+    """Only http and https are requested: a file:// or ftp:// address is an HttpError."""
+    if urllib.parse.urlparse(url).scheme.lower() not in ("http", "https"):
+        raise HttpError(f"Not a web address: {url}")
 
 
 def _env_hosts(name: str, default: str = "") -> set[str]:
@@ -77,6 +95,7 @@ class KindHttp:
         reddit_user_agent: Optional[str] = None,
         insecure_tls_hosts: Optional[set[str]] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        executor: Optional[Executor] = None,
     ) -> None:
         self.timeout = timeout if timeout is not None else int(
             os.getenv("RSS_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
@@ -87,6 +106,7 @@ class KindHttp:
             insecure_tls_hosts if insecure_tls_hosts is not None else _env_hosts("RSS_SKIP_TLS_VERIFY_HOSTS")
         )
         self._sleep = sleep
+        self._executor = executor
 
     # ------------------------------------------------------------------ requests
 
@@ -97,12 +117,14 @@ class KindHttp:
 
         headers are extra request headers (e.g. a Cookie); they never appear in errors or logs.
         """
-        return await asyncio.to_thread(self._get_text_sync, url, user_agent, headers)
+        return await self._in_thread(self._get_text_sync, url, user_agent, headers)
 
     async def get_start(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
         """GET url, reading at most max_bytes of the body: (those bytes, the final URL after
-        redirects). For a quick look at a page or a feed (the feed finder). Raises HttpError."""
-        return await asyncio.to_thread(self._get_start_sync, url, max_bytes)
+        redirects). For a quick look at a page or a feed (the feed finder). The body is read
+        within the timeout overall, not per read, so a server dripping it slowly is a timeout
+        (HttpError, timed_out) and its connection is closed. Raises HttpError."""
+        return await self._in_thread(self._get_start_sync, url, max_bytes)
 
     async def get_json(self, url: str, *, user_agent: Optional[str] = None) -> Any:
         body, _ = await self.get_text(url, user_agent=user_agent)
@@ -116,7 +138,7 @@ class KindHttp:
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._post_json_sync, url, payload, user_agent, extra_headers)
+        return await self._in_thread(self._post_json_sync, url, payload, user_agent, extra_headers)
 
     async def sleep(self, seconds: float) -> None:
         """A politeness delay. Zero or negative is not a sleep (and is not recorded)."""
@@ -133,6 +155,11 @@ class KindHttp:
 
     # ------------------------------------------------------------------ blocking halves
 
+    async def _in_thread(self, fn: Callable[..., T], *args: Any) -> T:
+        """asyncio.to_thread on this client's executor."""
+        call = functools.partial(contextvars.copy_context().run, fn, *args)
+        return await asyncio.get_running_loop().run_in_executor(self._executor, call)
+
     def _context_for(self, url: str):
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme == "https" and self.should_skip_tls_verify(parsed.hostname):
@@ -142,6 +169,7 @@ class KindHttp:
     def _get_text_sync(
         self, url: str, user_agent: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None
     ) -> Tuple[str, Dict[str, str]]:
+        _web(url)
         request = urllib.request.Request(
             url,
             headers={"User-Agent": user_agent or self.user_agent, "Accept": "*/*", **(extra_headers or {})},
@@ -153,10 +181,21 @@ class KindHttp:
                 return body, headers
 
     def _get_start_sync(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
+        _web(url)
+        deadline = time.monotonic() + self.timeout
         request = urllib.request.Request(url, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
         with _classified("fetching", url):
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
-                return response.read(max_bytes), response.geturl()
+                chunks, size = [], 0
+                while size < max_bytes:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError   # leaving the with closes the connection
+                    chunk = response.read1(min(READ_CHUNK, max_bytes - size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                return b"".join(chunks), response.geturl()
 
     def _post_json_sync(
         self,
@@ -165,6 +204,7 @@ class KindHttp:
         user_agent: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        _web(url)
         body = json.dumps(payload).encode("utf-8")
         headers = {
             "User-Agent": user_agent or self.user_agent,

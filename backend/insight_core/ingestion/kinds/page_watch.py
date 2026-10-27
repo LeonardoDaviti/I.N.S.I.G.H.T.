@@ -8,24 +8,29 @@ home page the most common first segment of its deeper links.
 The articles are the union of
   - the listing page's same-host links under the prefix, in page order (newest first), and
   - the sitemap's URLs under the prefix (robots.txt's Sitemap: lines, else /sitemap.xml; an
-    index is followed to at most MAX_SITEMAPS files; .gz files are skipped),
+    index is followed to at most MAX_SITEMAPS files, each read up to SITEMAP_MAX_BYTES; .gz
+    files are skipped),
 the listing page itself left out. A live fetch reads the ones not stored yet, listing links
 first, then the sitemap's by lastmod (newest first); an archive reads them all, one article
 page per archive page so the host gate spaces them.
 
 An article page is read with the full-text reader (extract_article_html). Its date is the
-page's own (article:published_time, JSON-LD datePublished, meta date, <time datetime>), else
+page's own (article:published_time, JSON-LD datePublished, meta date, its one <time datetime>), else
 the sitemap's lastmod, else now: a sitemap's lastmod is often a redeploy date, not the
 publication's. A page with no article body, or with neither a date nor og:type article (a
-category page), is not a post; a live fetch remembers it for the process's life. A site that
-builds its pages with JavaScript yields no bodies, so no posts (the preview says so).
+category page), is not a post. A live fetch remembers the pages it skipped for the process's
+life (one that failed, for a day) and reads at most SKIP_READS of them besides its posts, so
+they never use up its limit. A site that builds its pages with JavaScript yields no bodies,
+so no posts (the preview says so).
 """
 from __future__ import annotations
 
 import asyncio
 import html
 import logging
+import math
 import re
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -43,10 +48,17 @@ from insight_core.utils.json_safe import iso
 logger = logging.getLogger("insight.ingestion.page_watch")
 
 MAX_SITEMAPS = 5          # sitemap files read per discovery (robots' ones, an index's children)
-EXTRA_READS = 5           # pages a live fetch may read beyond its limit, for pages that are no post
+SITEMAP_MAX_BYTES = 5_000_000   # a sitemap is read up to this; a longer one keeps its first entries
+SKIP_READS = 10           # pages a live fetch may read that are no post or fail, besides its posts
+FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one that is no post, never
 PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
+
+# The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
+# it again. For the process's life: a run builds its own registry, so a kind's own set would
+# last one run (issue 0029).
+SKIPPED: Dict[str, float] = {}
 
 LINK_RE = re.compile(r"""(?is)<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["']""")
 JSON_LD_DATE_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
@@ -69,9 +81,13 @@ def normalise_prefix(value: Any) -> str:
 
 
 def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
-    """An absolute http(s) URL without its fragment or trailing slash; None for anything else."""
-    absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base or url, html.unescape(url.strip())))[0]
-    parsed = urllib.parse.urlparse(absolute)
+    """An absolute http(s) URL without its fragment or trailing slash; None for anything else
+    (a malformed one, "http://[x/", too)."""
+    try:
+        absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base or url, html.unescape(url.strip())))[0]
+        parsed = urllib.parse.urlparse(absolute)
+    except ValueError:
+        return None
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None
     return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/") or "/"))
@@ -132,7 +148,7 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
 
 
 async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tuple[str, Optional[str]]]:
-    origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlparse(listing))
+    origin = parsing.origin_from_source(listing, "")
     try:
         robots, _ = await http.get_text(f"{origin}/robots.txt")
     except Exception:  # noqa: BLE001 - no robots.txt: the usual address
@@ -143,19 +159,17 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
     entries: List[Tuple[str, Optional[str]]] = []
     read = 0
     while queue and read < MAX_SITEMAPS:
-        url = queue.pop(0)
-        if urllib.parse.urlparse(url).path.endswith(".gz"):
+        url = _clean(queue.pop(0))
+        if url is None or urllib.parse.urlparse(url).path.endswith(".gz"):
             continue
         read += 1
         try:
-            body, _ = await http.get_text(url)
-            root = ET.fromstring(body.encode("utf-8"))
-        except Exception as exc:  # noqa: BLE001 - a broken sitemap is no sitemap
+            body, _ = await http.get_start(url, SITEMAP_MAX_BYTES)
+        except Exception as exc:  # noqa: BLE001 - a missing sitemap is no sitemap
             logger.debug("Page watch: sitemap %s skipped (%s)", url, exc)
             continue
-        locs = [(parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")) for node in root
-                if parsing.local_name(node.tag) in ("url", "sitemap")]
-        if parsing.local_name(root.tag) == "sitemapindex":
+        root, locs = _sitemap_locs(body)
+        if root == "sitemapindex":
             # An index's children that name the section (or posts) first.
             children = [loc for loc, _ in locs if loc]
             queue.extend(sorted(children, key=lambda child: not (section and section in child or "post" in child)))
@@ -164,13 +178,32 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
     return entries
 
 
+def _sitemap_locs(body: bytes) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
+    """(the root's name, the (loc, lastmod) of each <url> or <sitemap>), as far as the file is
+    readable: a sitemap cut at SITEMAP_MAX_BYTES or broken halfway keeps the entries before."""
+    parser = ET.XMLPullParser(events=("start", "end"))
+    root, locs = "", []
+    try:
+        parser.feed(body)
+    except ET.ParseError:
+        pass
+    for event, node in parser.read_events():
+        name = parsing.local_name(node.tag)
+        if not root:
+            root = name
+        elif event == "end" and name in ("url", "sitemap"):
+            locs.append((parsing.child_text(node, "loc") or "", parsing.child_text(node, "lastmod")))
+    return root, locs
+
+
 def page_date(page: str) -> Optional[datetime]:
     """The page's own publication date: meta article:published_time, JSON-LD datePublished,
-    meta date, the first <time datetime>, then a date written on the page when it has only one
-    (a category page lists many)."""
-    json_ld, time_tag = JSON_LD_DATE_RE.search(page), TIME_RE.search(page)
+    meta date, then a <time datetime> or a date written on the page, each only when the page
+    has one (a tag or category page lists many)."""
+    json_ld, times = JSON_LD_DATE_RE.search(page), {value.strip() for value in TIME_RE.findall(page)}
+    one_time = times.pop() if len(times) == 1 else None
     values = (parsing.meta_content(page, "article:published_time"), json_ld and json_ld.group(1),
-              *(parsing.meta_content(page, name) for name in META_DATES), time_tag and time_tag.group(1))
+              *(parsing.meta_content(page, name) for name in META_DATES), one_time)
     for value in values:
         if value and (date := parsing.parse_datetime_value(value.strip())) is not None:
             return date
@@ -204,13 +237,8 @@ def _title(page: str, url: str) -> str:
     return title or url
 
 
-async def read_page(http: KindHttp, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
-    """The post at url, or None when the page is no article (see the module docstring)."""
-    page, _ = await http.get_text(url)
-    return post_from(page, source_url, url, lastmod)
-
-
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
+    """The post the page at url is, or None when it is no article (see the module docstring)."""
     content_html = parsing.extract_article_html(page)
     content = parsing.strip_html(content_html)
     date = page_date(page)
@@ -237,18 +265,24 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime])
 async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dict[str, Any]:
     """What following the page would give: {prefix, found, sitemap, items[{url, title, published_at}]},
     items the first PREVIEW_ITEMS posts (read PREVIEW_FAN_OUT at a time)."""
-    address = (url or "").strip()
-    if not address:
-        raise ValueError("An address is needed to follow a page")
-    address = address if "://" in address else f"https://{address}"
-    found = await discover(http, address, prefix)
+    address = parsing.web_address(url, "An address is needed to follow a page")
+    if urllib.parse.urlparse(address).scheme.lower() not in ("http", "https"):
+        raise ValueError("Only an http or https page can be followed")
+    try:
+        found = await discover(http, address, prefix)
+    except HttpError as exc:
+        # The detail goes back to the caller: the status, never the site's answer.
+        logger.info("Page watch preview: %s could not be read (%s)", address, str(exc)[:300])
+        reason = f"HTTP {exc.status}" if exc.status else "no answer in time" if exc.timed_out else "no connection"
+        raise ValueError(f"The page could not be read ({reason})") from None
     candidates = found.candidates()
     fan_out = asyncio.Semaphore(PREVIEW_FAN_OUT)
 
     async def one(candidate: str) -> Optional[Dict[str, Any]]:
         async with fan_out:
             try:
-                return await read_page(http, address, candidate, found.sitemap.get(candidate))
+                page, _ = await http.get_text(candidate)
+                return post_from(page, address, candidate, found.sitemap.get(candidate))
             except Exception as exc:  # noqa: BLE001 - an unreadable page is just not shown
                 logger.debug("Page watch preview: %s skipped (%s)", candidate, exc)
                 return None
@@ -272,7 +306,6 @@ class PageWatchKind(BaseSourceAdapter):
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None) -> None:
         super().__init__(http)
         self.stored_urls = stored_urls
-        self._no_posts: set[str] = set()     # pages read that were no post (category pages)
 
     def matches(self, source: Source) -> bool:
         return isinstance((source.get("settings") or {}).get("page_watch"), dict)
@@ -294,23 +327,23 @@ class PageWatchKind(BaseSourceAdapter):
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         found = await self._discover(source)
-        candidates = [url for url in found.candidates() if url not in self._no_posts]
+        now = time.monotonic()
+        candidates = [url for url in found.candidates() if SKIPPED.get(url, now) <= now]
         stored = (await asyncio.to_thread(self.stored_urls, candidates)
                   if self.stored_urls and candidates else set())
         posts: List[Dict[str, Any]] = []
-        reads = 0
+        reads = skips = 0
         for url in (url for url in candidates if url not in stored):
-            if len(posts) >= limit or reads >= limit + EXTRA_READS:
+            if len(posts) >= limit or skips >= SKIP_READS:
                 break
             if reads:
                 await self.http.sleep(self.PAGE_DELAY_SECONDS)
             reads += 1
             page = await self._page(url)
-            if page is None:
-                continue
-            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url))
+            post = post_from(page, str(source["handle_or_url"]), url, found.sitemap.get(url)) if page else None
             if post is None:
-                self._no_posts.add(url)
+                skips += 1
+                SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
             else:
                 posts.append(post)
         return posts

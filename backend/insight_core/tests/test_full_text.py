@@ -97,6 +97,16 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertIn("Paragraph 11 of the real post", text)
         self.assertNotIn("Related post", text)
 
+    def test_a_short_article_is_not_replaced_by_the_whole_page(self):
+        # A matched candidate too short to be the article is no article: the body (here a long
+        # list of other posts) is read only when no candidate matched at all.
+        short = "<p>" + ("A short post of a few words. " * 9)[:254] + "</p>"
+        others = "".join(f"<li><a href='/p/{n}'>Another post of this site, number {n}, worth reading</a></li>"
+                         for n in range(20))
+        page = f"<html><body><article><h1>Short</h1>{short}</article><section><h2>More</h2><ul>{others}</ul></section></body></html>"
+        self.assertEqual(parsing.extract_article_html(page), "")
+        self.assertIn("Paragraph 11", _text(f"<html><body><section>{PARAGRAPHS}</section></body></html>"))
+
     def test_a_themes_tag_list_goes_but_wordpress_article_classes_stay(self):
         # The NVIDIA blog's shape: WordPress classes on <article>, a plugin wrapper, a tag list.
         page = ('<article class="post category-ai tag-agents"><div class="has-highlight-and-share">'

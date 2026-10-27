@@ -118,6 +118,16 @@ class FeedFinderTests(unittest.TestCase):
                           "https://x.example/a")
         self.assertEqual(finding, found(("https://cdn.example/site/rss.xml", "Site")))
 
+    def test_a_malformed_link_is_skipped(self):
+        head = ('<link rel="alternate" type="application/rss+xml" href="http://[x/">'
+                '<link rel="alternate" type="application/rss+xml" href="/feed">')
+        finding, _ = find({"https://x.example/": page(head, '<a href="http://[y/rss">RSS</a>'),
+                           "https://x.example/feed": rss("Site")}, "https://x.example/")
+        self.assertEqual(finding, found(("https://x.example/feed", "Site")))
+        finding, _ = find({"https://x.example/a": page('<base href="http://[x/">'),
+                           "https://x.example/feed": rss("Site")}, "https://x.example/a")
+        self.assertEqual(finding, found(("https://x.example/feed", "Site")))
+
     def test_the_same_feed_under_two_addresses_is_kept_once(self):
         head = ('<link rel="alternate" type="application/rss+xml" href="/rss">'
                 '<link rel="alternate" type="application/rss+xml" href="/feed.xml">')

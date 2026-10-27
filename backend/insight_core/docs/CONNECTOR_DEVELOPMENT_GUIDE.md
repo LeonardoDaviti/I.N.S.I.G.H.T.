@@ -17,9 +17,11 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/page_watch.py` (issue 0028): a page with no feed, followed. It matches
   `settings.page_watch = {"prefix"?: "/news/"}` and reads the listing page's same-host links
   under the prefix (page order) plus the sitemap's URLs under it (robots.txt `Sitemap:`, else
-  `/sitemap.xml`), each article page through `extract_article_html`, dated from the page's own
-  meta (the sitemap's lastmod is a fallback: it is often a redeploy date). A page with no body,
-  or with neither a date nor `og:type` article (a category page), is no post. It extends
+  `/sitemap.xml`, each up to 5 MB), each article page through `extract_article_html`, dated
+  from the page's own meta or its one `<time datetime>` (the sitemap's lastmod is a fallback:
+  it is often a redeploy date). A page with no body, or with neither a date nor `og:type`
+  article (a category page), is no post; a live fetch remembers such pages for the process's
+  life (failed ones for a day) and reads at most 10 of them besides its posts. It extends
   `BaseSourceAdapter` for `index_pages`, one article per archive page. `preview()` is behind
   `POST /api/sources/page-watch/preview`. Before writing a site adapter, try it.
 - `adapters/*.py`: the seven site kinds for sites with no usable feed (LessWrong, Gwern,
@@ -28,8 +30,11 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/parsing.py`: pure helpers (feed parsing, `strip_html`, dates, article
   extraction, image URLs).
 - `ingestion/http.py`: `KindHttp`, the one HTTP client every kind uses. It owns the
-  User-Agent, the TLS-skip hosts and the politeness sleep, and raises every failure as an
-  `HttpError` (status, Retry-After, timed out).
+  User-Agent, the TLS-skip hosts and the politeness sleep, requests only http and https, and
+  raises every failure (a dropped connection or a truncated body too) as an `HttpError`
+  (status, Retry-After, timed out). `get_start` reads within its timeout overall, so a
+  server dripping its answer is a timeout. The Add source dialog's client runs on its own
+  threads (`executor`), not the loop's default ones.
 - `ingestion/feed_finder.py`: `find_feeds(http, registry, url)`, behind Add source
   (`POST /api/sources/find-feed`). It turns a page address into its feeds: an address a
   kind other than `generic_rss` matches is left alone (`direct`), so a new kind's `matches()`

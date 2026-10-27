@@ -348,5 +348,29 @@ class MediaUrlEntitiesMigrationTests(unittest.TestCase):
             conn.close()
 
 
+
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class StalePostLimitMigrationTests(unittest.TestCase):
+    """0029 drops the stored max_posts_per_fetch nothing shows or edits any more (issue 0029)."""
+
+    @requires_test_db
+    def test_0029_drops_stored_post_limits(self):
+        sql = (MIGRATIONS_DIR / "0029_drop_stored_post_limits.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            stale = insert_scratch_source(cur, settings_json=json.dumps(
+                {"max_posts_per_fetch": 3, "display_name": "Kept", "page_watch": {"prefix": "/news/"}}))
+            plain = insert_scratch_source(cur, settings_json=json.dumps({"priority": 5}))
+            cur.execute(sql)
+            cur.execute(sql)  # idempotent
+            cur.execute("SELECT id::text, settings FROM sources WHERE id = ANY(%s::uuid[])", ([stale, plain],))
+            got = dict(cur.fetchall())
+            self.assertEqual(got[stale], {"display_name": "Kept", "page_watch": {"prefix": "/news/"}})
+            self.assertEqual(got[plain], {"priority": 5})
+        finally:
+            conn.rollback()
+            conn.close()
+
 if __name__ == "__main__":
     unittest.main()
