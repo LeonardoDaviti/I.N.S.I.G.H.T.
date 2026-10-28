@@ -216,7 +216,7 @@ describe('AppShell', () => {
     const input = await screen.findByRole('combobox', { name: 'Go to' });
     await user.type(input, 'health');
     const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(1);
+    expect(options.map((option) => option.textContent)).toEqual([expect.stringMatching(/^Sources/), expect.stringMatching(/^Search posts for “health”/)]);
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -239,16 +239,24 @@ describe('AppShell', () => {
     renderShell('/');
     await user.keyboard('{Control>}k{/Control}');
     await user.type(await screen.findByRole('combobox'), 'design');
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([expect.stringMatching(/^Design studio/)]);
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      expect.stringMatching(/^Design studio/), expect.stringMatching(/^Search posts for “design”/),
+    ]);
     await user.keyboard('{Enter}');
     expect(screen.getByTestId('where')).toHaveTextContent('/design');
   });
 
-  it('shows an empty message when nothing matches', async () => {
+  it('⌘K searches posts for what was typed (issue 0040)', async () => {
     const user = userEvent.setup();
     renderShell('/');
     await user.keyboard('{Control>}k{/Control}');
-    await user.type(await screen.findByRole('combobox'), 'qwerty');
-    expect(screen.getByText(/No page matches/)).toBeInTheDocument();
+    const input = await screen.findByRole('combobox');
+    expect(screen.getAllByRole('option').at(-1)).toHaveTextContent(/^Search posts…/);
+    await user.type(input, ' tailscale outage ');
+    const options = screen.getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([expect.stringMatching(/^Search posts for “tailscale outage”search/)]);
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('where')).toHaveTextContent('/search?q=tailscale+outage');
   });
 });

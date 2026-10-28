@@ -3,7 +3,8 @@
  * sources and their health, the connections, the ingestion jobs and the posts.
  * `siteRoutes` turns one into the fixture transport's routes, so a frame can
  * open any page (and, in walk mode, move between them) on the same sample data.
- * The feed honours scope, filter, view and paging like the backend does.
+ * The feed honours scope, filter, view and paging like the backend does; search
+ * (issue 0040) matches every word in a row's title, excerpt or source, by prefix.
  */
 import type {
   ArchiveCatalogEntry, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
@@ -75,6 +76,26 @@ function feed({ query }: FixtureRequest, site: Site) {
   }
   const { slice, next_cursor } = page(items, query);
   return { success: true, items: slice, next_cursor };
+}
+
+/** GET /api/search: rows holding every word, newest first, each with its excerpt as the line, the words marked. */
+function search({ query }: FixtureRequest, site: Site) {
+  const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  const scope = query.get('scope');
+  const filter = query.get('filter');
+  const matches = site.items
+    .filter(scope ? inScope(site, scope) : () => true)
+    .filter((item) => filter !== 'starred' || item.starred_at !== null)
+    .filter((item) => filter !== 'later' || Boolean(item.later_at))
+    .filter((item) => words.every((word) => `${item.title} ${item.excerpt} ${item.source_display_name}`.toLowerCase().includes(word)))
+    .map((item) => ({ ...item, snippet: markWords(item.excerpt, words) }));
+  const { slice, next_cursor } = page(matches, query);
+  return { success: true, items: slice, next_cursor };
+}
+
+function markWords(text: string, words: string[]): FeedItem['snippet'] {
+  const parts = text.split(/(\s+)/).map((piece) => ({ text: piece, mark: words.some((word) => piece.toLowerCase().startsWith(word)) }));
+  return parts.some((part) => part.mark) ? parts : null;
 }
 
 export function unreadCounts(site: Site): UnreadCounts {
@@ -216,6 +237,7 @@ function logTail({ query }: FixtureRequest, site: Site) {
 export function siteRoutes(site: Site): FixtureRoute[] {
   return [
     { path: '/api/feed', respond: (request) => feed(request, site) },
+    { path: '/api/search', respond: (request) => search(request, site) },
     { path: '/api/feed/unread-counts', respond: () => unreadCounts(site) },
     { path: '/api/folders', respond: () => ({ success: true, folders: site.folders }) },
     { path: '/api/sources/health', respond: () => healthResponse(site.health) },

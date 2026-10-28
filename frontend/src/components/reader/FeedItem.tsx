@@ -1,8 +1,8 @@
-import { memo, useMemo, useState, type MouseEvent } from 'react';
+import { Fragment, memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
-import type { FeedItem as FeedItemData } from '../../services/api';
+import type { FeedItem as FeedItemData, SnippetPart } from '../../services/api';
 import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
@@ -49,6 +49,8 @@ export interface FeedItemProps {
   now?: Date;
   /** False on one source's own page, where the name would only link to the page you are on. */
   showSource?: boolean;
+  /** A search result's matching line (issue 0040), shown instead of the excerpt, its words in bold. */
+  snippet?: SnippetPart[] | null;
 }
 
 /**
@@ -63,6 +65,7 @@ export interface FeedItemProps {
  */
 function FeedItem({
   item, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onToggleLater, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
+  snippet,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -176,7 +179,14 @@ function FeedItem({
           {isLater ? <span className="sr-only">In Later</span> : null}
           {isStarred ? <span className="sr-only">Kept</span> : null}
         </p>
-        {showExcerpt ? (
+        {snippet?.length ? (
+          // The words that matched carry weight and the full tone, never a fill (P2, P3).
+          <p dir="auto" data-snippet className="mt-0.5 line-clamp-2 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
+            {snippet.map((part, index) => (part.mark
+              ? <mark key={index} className="bg-transparent font-semibold text-fg">{part.text}</mark>
+              : <Fragment key={index}>{part.text}</Fragment>))}
+          </p>
+        ) : showExcerpt ? (
           <p dir="auto" className="mt-0.5 line-clamp-1 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
             {excerpt}
           </p>

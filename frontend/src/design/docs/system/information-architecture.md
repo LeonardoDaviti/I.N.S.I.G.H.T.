@@ -17,7 +17,7 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 
 | Nav word | Route | Active on |
 | --- | --- | --- |
-| feed | `/` | `/`, `/read/*`, `/posts/*`, `/tracks/*` |
+| feed | `/` | `/`, `/read/*`, `/posts/*`, `/tracks/*`, `/search` |
 | sources | `/settings/sources` | `/settings/*` |
 | blog | `/blog` | `/blog*` |
 
@@ -25,7 +25,7 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 
 | Route | Doc |
 | --- | --- |
-| `/`, `/read/:scopeKind/:scopeId?` | `pages/reader.md` |
+| `/`, `/read/:scopeKind/:scopeId?`, `/search` (search every post, issue 0040) | `pages/reader.md` |
 | `/posts/:postId` | `pages/post.md` |
 | `/settings/sources` (tabs sources · connections · ingestion) | `pages/sources.md` |
 | `/blog`, `/blog/:slug` | `pages/blog.md` |
@@ -47,4 +47,4 @@ INSIGHT is a reader: three places, **feed / sources / post**, plus the **blog**.
 
 ## ⌘K quick switcher
 
-Navigation only, it never searches posts; the studio is in no nav word, only here. Its entries, keys and the narrow `menu` button: `pages/shell.md`.
+The places to go, then "Search posts…", which opens `/search` on what was typed (issue 0040); the studio is in no nav word, only here. Its entries, keys and the narrow `menu` button: `pages/shell.md`.

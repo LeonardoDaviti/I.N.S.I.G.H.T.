@@ -10,6 +10,7 @@ import { sourcesIngestionHref } from './lib/ingestionNavigation';
 
 const queryClient = new QueryClient();
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
+const SearchPage = lazy(() => import('./pages/SearchPage'));
 const PostDetailPage = lazy(() => import('./pages/PostDetailPage'));
 const SourcesConfig = lazy(() => import('./pages/SourcesConfig'));
 const BlogPage = lazy(() => import('./pages/BlogPage'));
@@ -69,7 +70,7 @@ function TrackRedirect() {
  * The app is feed / sources / post. `/tracks/:id` redirects to the reader
  * scoped to the track (Design Studio D5). The retired analysis paths (briefings,
  * stories, inbox, experts, the tracks list; issue 0005) land on the feed, replacing
- * the history entry. `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/design/*` is the Design
+ * the history entry. `/search` searches every post (issue 0040). `/save` saves any page (the bookmarklet's and ⌘K's, issue 0031). `/blog` is the engineering blog. `/design/*` is the Design
  * Studio, reached from ⌘K only.
  */
 export function AppRoutes() {
@@ -77,6 +78,7 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<ReaderPage />} />
       <Route path="/read/:scopeKind/:scopeId?" element={<ReaderPage />} />
+      <Route path="/search" element={<SearchPage />} />
       <Route path="/hub" element={<Navigate to="/" replace />} />
       <Route path="/ingestion" element={<IngestionRedirect />} />
       <Route path="/ingestion/:tab" element={<IngestionRedirect />} />

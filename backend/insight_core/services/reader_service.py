@@ -1,4 +1,5 @@
-"""Reader: the post listing, read state, Later (issue 0022) and unread counts (Mark IX, B7).
+"""Reader: the post listing, search (issue 0040), read state, Later (issue 0022) and unread
+counts (Mark IX, B7).
 
 Owns the connection and transaction lifecycle around ReaderRepository and turns its
 results into the API shapes (FeedPage, FeedGroupsPage, ReadStateResult, UnreadCounts).
@@ -11,6 +12,7 @@ from typing import Any, Callable, Dict, List, Sequence
 from insight_core.db import database as db
 
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope, ReaderRepository
+from insight_core.db.repo_search import SearchQuery, SearchRepository
 
 
 def _read_state_result(ids: List[str]) -> Dict[str, Any]:
@@ -22,6 +24,7 @@ class ReaderService:
                  clock: Callable[[], datetime] | None = None):
         self.db_url = db_url
         self.repo = repo or ReaderRepository()
+        self.search_repo = SearchRepository()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def list_posts(self, query: FeedQuery) -> Dict[str, Any]:
@@ -30,6 +33,23 @@ class ReaderService:
             rows, next_cursor = self.repo.list_posts(cur, query, now=self.clock())
         key = "groups" if query.view == "by_source" else "items"
         return {"success": True, key: rows, "next_cursor": next_cursor.encode() if next_cursor else None}
+
+    def search(self, query: SearchQuery) -> Dict[str, Any]:
+        """SearchPage {items (each with its snippet), next_cursor}."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            items, next_cursor = self.search_repo.search(cur, query, now=self.clock())
+        return {"success": True, "items": items, "next_cursor": next_cursor}
+
+    def fill_search_vectors(self) -> int:
+        """Give every post stored before search (0033) its search vector, FILL_BATCH posts a
+        transaction, so no write waits on a long one. Returns how many were filled."""
+        filled = 0
+        while True:
+            with db.transaction(self.db_url) as cur:
+                batch = self.search_repo.fill_missing_vectors(cur)
+            filled += batch
+            if not batch:
+                return filled
 
     def unread_counts(self) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:

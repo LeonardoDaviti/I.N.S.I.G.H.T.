@@ -72,6 +72,8 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'reader', state: 'loading', label: 'Skeleton rows; the rail says Loading…', url: '/', routes: loading, documented: true },
   { page: 'reader', state: 'error', label: 'Could not load the feed, with Retry', url: '/', routes: failing, documented: true },
   { page: 'reader', state: 'worst', label: 'Long, unbroken, RTL and CJK titles; 1,000+ items', url: '/', routes: site(worstSite), documented: true },
+  { page: 'reader', state: 'search', label: 'Search results in the Main feed, the words marked', url: '/search?q=prompt&scope=all', routes: site(normalSite), documented: true },
+  { page: 'reader', state: 'search-empty', label: 'No posts match, narrowed: Search everything', url: '/search?q=quantum%20knitting&scope=all&days=7', routes: site(normalSite), documented: true },
   { page: 'reader', state: 'track', label: 'Scoped to one track', url: `/read/folder/${TRACKS.ai.id}`, routes: site(normalSite), documented: false },
   { page: 'reader', state: 'source', label: 'Scoped to one source', url: `/read/source/${sourceId('s-simon')}`, routes: site(normalSite), documented: false },
 

@@ -4,6 +4,7 @@ import math
 import os
 import asyncio
 import re
+import threading
 import uuid
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from insight_core.db import database
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
+from insight_core.db.repo_search import SearchQuery
 from insight_core.ingestion import run_ingestion
 from insight_core.ingestion.feed_finder import find_feeds
 from insight_core.ingestion.http import KindHttp
@@ -44,9 +46,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def fill_search_vectors() -> None:
+    """The posts stored before search (issue 0040) become searchable, in the background."""
+    try:
+        filled = services().reader.fill_search_vectors()
+        if filled:
+            logger.info("Search: indexed %s posts stored before search", filled)
+    except Exception:
+        logger.exception("Search: could not index the posts stored before search")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
+    threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     yield
     database.close_all()
 
@@ -571,8 +584,8 @@ async def save_post_position(post_id: str, request: PostPositionRequest):
 
 
 # ============= READER =============
-# One listing (GET /api/feed) and one read-state route (PUT /api/feed/read). A ValueError
-# (a bad scope, cursor, filter, date or id) is the 400.
+# One listing (GET /api/feed), search (GET /api/search) and one read-state route
+# (PUT /api/feed/read). A ValueError (a bad scope, cursor, filter, date, query or id) is the 400.
 
 MAX_READ_BATCH = 500
 
@@ -600,6 +613,19 @@ async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream"
     query = FeedQuery.parse(scope=scope, filter=filter, view=view, cursor=cursor, limit=limit,
                             days=days, date=date)
     return services().reader.list_posts(query)
+
+
+@app.get("/api/search")
+@error_detail("search")
+async def search_posts(q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
+                       order: str = "newest", cursor: str | None = None, limit: int = 30):
+    """Search every post (issue 0040): title, source name and full text, word forms in English
+    and Russian, "phrases", -word. scope: none (every post) | all (the Main feed) | source:<uuid>
+    | folder:<uuid>; filter: all | later | starred; days: the last N days;
+    order: newest (keyset cursor) | best (offset cursor). Items carry `snippet`."""
+    query = SearchQuery.parse(q=q, scope=scope, filter=filter, days=days, order=order, cursor=cursor,
+                              limit=limit)
+    return services().reader.search(query)
 
 
 @app.get("/api/feed/unread-counts")

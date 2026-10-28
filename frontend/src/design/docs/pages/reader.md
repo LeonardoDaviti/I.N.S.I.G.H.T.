@@ -1,16 +1,16 @@
 ```meta
 kind: page
-routes: /, /read/:scopeKind/:scopeId?
-states: normal, empty, empty-scope, loading, error, worst
+routes: /, /read/:scopeKind/:scopeId?, /search
+states: normal, empty, empty-scope, loading, error, worst, search, search-empty
 ```
 
 # Reader
 
-Code: `pages/ReaderPage.tsx`, `components/reader/*` (`ReaderNavRail`, `FeedToolbar`, `FeedList`, `FeedItem`, `FeedGroup`, `NewPostsPill`, `ShortcutHelp`).
+Code: `pages/ReaderPage.tsx`, `pages/SearchPage.tsx`, `components/reader/*` (`ReaderNavRail`, `FeedToolbar`, `SearchField`, `FeedList`, `FeedItem`, `FeedGroup`, `NewPostsPill`, `ShortcutHelp`), `lib/search.ts`.
 
 ## Purpose
 
-The home of INSIGHT (P1): the posts to read, newest first, scoped to everything, one track or one source. It reads; it never fetches (P7).
+The home of INSIGHT (P1): the posts to read, newest first, scoped to everything, one track or one source, and search, the way into every post already stored. It reads; it never fetches (P7).
 
 ## Entry & URL
 
@@ -18,11 +18,12 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - `/tracks/:id` redirects (replace) to `/read/folder/:id` (decision 010).
 - Query: `?filter=unread|later|starred|all` (unread is the default and stays out of the URL; `starred` is Kept), `?view=stream|by_source`, dev-only `?data=worst|empty|one|huge`.
 - Reached from the wordmark, the `feed` nav word, the rail, ⌘K (Main feed, By source, one entry per track) and Back from a post. ⌘K also reaches Later. Old links keep working: `/?filter=starred` opens the main feed with Show kept.
+- `/search?q=…` is the one results view (issue 0040): `scope=all|folder:<id>|source:<id>` (none searches every post), `filter=later|starred`, `days=7|30|365`, `order=best`. New words push a history entry; a chip or the order replaces it. Reached from the toolbar's field (scoped to what is on screen: the scope, and Later or Kept when that is the list shown) and from ⌘K "Search posts…" (every post).
 
 ## Anatomy
 
 - **Rail** (md and up, sticky under the top bar, 15–16rem): Main feed with its icon (the sources in the main feed; Later, Kept and All are Show choices, not places); `tracks` with unread counts; `sources with unread` (top 12, most unread first) with a filter field over every source and "Show all N sources". Below md the same content is a drawer opened from the scope title.
-- **Toolbar** (sticky material): the scope title (`Main feed`, a track or a source; `display`-ish, truncates) and its unread count in `text-3` (not under Show later or kept, where it says nothing; the Main feed's Later says what it costs instead: `Later · 6 posts · 52 min`); a `shortcuts ?` text action. With a track or source scope, the title is a quiet link to that track or source in Sources (P8). Below it, slash-separated words: `Show unread / later / kept / all`, `View stream / by source`, `Posts continuous / one at a time` (every width; stored as `insight.reader.flow`, it sets how the post page goes on after a post, `pages/post.md`), and the "N new posts" pill at the right when posts arrived. One source shows neither View (it has nothing to group by source; `?view=by_source` is ignored) nor Posts.
+- **Toolbar** (sticky material): the scope title (`Main feed`, a track or a source; `display`-ish, truncates) and its unread count in `text-3` (not under Show later or kept, where it says nothing; the Main feed's Later says what it costs instead: `Later · 6 posts · 52 min`); a search field (placeholder `search`, labelled "Search <scope>", 8–14rem; Enter opens `/search`) and a `shortcuts ?` text action. With a track or source scope, the title is a quiet link to that track or source in Sources (P8). Below it, slash-separated words: `Show unread / later / kept / all`, `View stream / by source`, `Posts continuous / one at a time` (every width; stored as `insight.reader.flow`, it sets how the post page goes on after a post, `pages/post.md`), and the "N new posts" pill at the right when posts arrived. One source shows neither View (it has nothing to group by source; `?view=by_source` is ignored) nor Posts.
 - **Stopped notice** above the list when no enabled source was fetched for a day (P11).
 - **Later line** (Main feed only, not under Show later): while Later holds anything, one quiet `small` `text-2` link at the top of the list, `Later · 6 posts · 52 min` (the posts' `N min read` and video lengths added up), to `/?filter=later`. Nothing when Later is empty (decision 029).
 - **List**, stream view: day headers, then bordered rows. A row: time column (`14:05`, under its day header) in `text-3` tabular nums; title (2 lines max, weight 600 unread, 400 and `text-2` read); one meta line (unread dot, a small clock if in Later, ★ if kept, source name via `sourceLabel()`, never a URL, a quiet link that reads that source at `/read/source/<id>`, left out on that source's own page, and the length: `4 min read` or a video duration; a post started and not finished, 5% to 90%, then a 2.5rem hairline track filled in `text-3` as far as read, read out as "40% read", issue 0030); one excerpt line; a greyscale thumbnail at sm and up; two icon actions, the read circle ○/✓ and one save: 🕓 Read later on an unread row, ☆ Keep on a read one; a save already on keeps its button (pressed), so it can be undone by hand (decision 029). Mark read up to here is `Shift+A` only (decision 022).
@@ -30,6 +31,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - **List**, by-source view: one section per source, its name linking to that source's scope, up to 3 rows, then "N more from <source> →".
 - **Foot:** an infinite-scroll sentinel, a visible "Load more" button, or "You've reached the end."
 - The list column is `max-w-5xl`, left-aligned next to the rail.
+- **Search page** (`/search`): the same rail, where each link narrows the search to that scope (the current one marked), and the toolbar titled `Search` with, below it, the field holding the words (20rem, full width on a phone), then chips beside it: the scope searched from, pressed with a ×, which pressing takes off (every post); `Later`, `Kept` (one at a time); `Last week`, `Last month`, `Last year` (none pressed is any time). Below, `Order newest / best match`. The results are list rows, newest first, with no day headers (each row shows its date) and the matching line in place of the excerpt, up to 2 lines, its words in weight 600 and `text` (never a fill); a row that matched only by its title or source shows its excerpt. 20 a page. Before any words: one `text-2` line saying what search reads and that word forms (English and Russian), "phrases" and -word work.
 
 ## States
 
@@ -39,6 +41,8 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - **loading:** a six-row skeleton in the list column; rail lines read "Loading…".
 - **error:** `ErrorState` "Could not load the feed" with Retry; a failed next page is an inline error `Notice` with Retry, keeping the loaded rows. Tracks that fail in the rail say "× Could not load tracks."
 - **worst:** long and unbroken titles, non-Latin and RTL text, missing titles ("Untitled post" when the API has no text to make one from), 1,000+ unread counts, huge source names (dev `?data=worst` / `huge`).
+- **search:** results under the field and chips, the matched words marked. Loading is the skeleton ("Searching"), a failure "Could not search" with Retry.
+- **search-empty:** "No posts match “xyz”" with the active chips (`In Main feed · Last week`) and the one inverted button "Search everything", which takes every chip off; with no chip on, "Try other words, or fewer of them." and no button.
 
 ## Interactions & keys
 
@@ -48,6 +52,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - New posts never reorder the loaded list; the pill reloads and scrolls to the top. The unread counts (pill and rail) are checked every 10 seconds while a fetch job runs and every 60 otherwise, never in a hidden tab, and a run saves each source as it is fetched, so the pill appears while posts arrive.
 - Hovering a row reveals its actions instantly with a mouse; on touch and on the selected row they always show.
 - Back from a post selects and scrolls to the post read last.
+- On the search page `j`/`k`, `o`, `m`, `l` and `s` work on the results as on the feed; a result opens as a post on its own (no feed context), so the post page's `j`/`k` are off. `Shift+A` says it does not work in search results.
 - Rail links keep `view` and a non-default `filter`.
 
 ## Worst cases
@@ -67,7 +72,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 
 ## Decisions
 
-- 002 hub deleted, 003 reading-only, 007 fetching out of the reader, 010 track page into the reader, 011 names link into Sources, 022 a row's source name reads the source and its one read button is the circle, 025 a started post's row shows how far, 026 one reading density, 029 read later and keep (`../decisions.md`).
+- 002 hub deleted, 003 reading-only, 007 fetching out of the reader, 010 track page into the reader, 011 names link into Sources, 022 a row's source name reads the source and its one read button is the circle, 025 a started post's row shows how far, 026 one reading density, 029 read later and keep, 030 search (`../decisions.md`).
 
 ## Open issues
 

@@ -469,6 +469,7 @@ the result when the job finishes.
 | GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
 | GET | `/api/feed` | Every post list, newest first (Later: oldest saved first), one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|later\|starred` (starred is Keep, "Kept"; later on `all` holds every source), `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
 | GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder; `later: {count, minutes}` | |
+| GET | `/api/search` | Search every post (issue 0040): title, source name and full text, word forms in English and Russian, `"phrases"`, `-word`; feed rows plus `snippet` (the matching line as `[{text, mark}]`, null when only the title or source matched) | `q` (1-500 chars), `scope` (none: every post; `all` is the Main feed, `source:<id>`, `folder:<id>`), `filter=all\|later\|starred`, `days=N`, `order=newest\|best` (best ranks the newest 5,000 matches), `cursor` (the page's `next_cursor`), `limit` (1-100) |
 | PUT | `/api/feed/read` | Read state, answers `{updated, ids}`; marking read by ids also takes the posts out of Later | `{ids, read, keep_later?}` (1-500 ids; `keep_later`: the read is only an open), or `{scope, through_cursor, newest_cursor}` to mark read through a cursor |
 | GET | `/api/media` | One image of one post, through the 24-hour cache | `post`, `url` |
 | GET | `/api/posts/item/{post_id}` | One post with its reader state | |

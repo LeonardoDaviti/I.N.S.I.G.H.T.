@@ -2,8 +2,8 @@ import { folderReadPath } from '../../lib/feedContext';
 
 /**
  * The information architecture (design docs system/information-architecture.md): the nav words in the top bar,
- * and the destinations the ⌘K quick switcher can jump to. Navigation only:
- * search over posts stays deferred (spec §F.2).
+ * and the destinations the ⌘K quick switcher can jump to, and its "Search posts…"
+ * (issue 0040).
  *
  * The app has three places, feed / sources / post (reading-finish R3 and
  * Decision 2). The top bar is `feed / sources / blog`; tracks are read from the
@@ -25,11 +25,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
 ];
 
 /** Which nav word is current for a pathname; null when none is (an unknown route).
- *  A track page belongs to the feed: tracks live in the reader rail. */
+ *  A track page and search belong to the feed: tracks live in the reader rail. */
 export function activeNavKey(pathname: string): NavKey | null {
   const path = pathname.replace(/\/+$/, '') || '/';
   const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
-  if (path === '/' || under('/read') || under('/posts') || under('/tracks')) return 'feed';
+  if (path === '/' || under('/read') || under('/posts') || under('/tracks') || under('/search')) return 'feed';
   if (under('/settings')) return 'sources';
   if (under('/blog')) return 'blog';
   return null;
