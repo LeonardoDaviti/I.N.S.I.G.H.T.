@@ -14,3 +14,19 @@ Status: **ready-for-agent** (owner, 2026-10-28: "our checker of sources should c
   - **Nothing found:** "Broken: no replacement found", plainly, not only "HTTP 404" in backoff.
 - Posts match by URL, so a switch never duplicates what is stored; an archive after a switch brings the older ones.
 - Rate: the doctor runs at most once a day per source.
+
+## Dry run on the server's 7 failing sources (2026-10-28, before release)
+| Source | Error | Doctor |
+|---|---|---|
+| joanwestenberg.com/rss | 404 | auto-switch → www.joanwestenberg.com/feed (same site, gone) |
+| incompleteideas.net (Rich Sutton) | not a feed | suggest: follow the page (12 articles) |
+| tedunangst.com/flak/rss | DNS | no replacement |
+| dfarq.homeip.net/feed/ | garbled | no replacement |
+| rachelbythebay.com/w/atom.xml | 404 | no replacement |
+| devblogs.microsoft.com/oldnewthing/feed | SSL (temporary on the server) | **wrong:** suggested devblogs.microsoft.com/landing (all Microsoft blogs) |
+| r/MachineLearning | 429 | skipped (Reddit kind) |
+
+**Fix before release (v9.3):**
+1. Check the old address first: if it reads as a feed now, record "temporary error, working again" and look no further.
+2. A replacement must stay within the source's section (`/oldnewthing/…`); a home-page feed is offered only when the source was the whole site.
+3. Tests from these three real cases.
