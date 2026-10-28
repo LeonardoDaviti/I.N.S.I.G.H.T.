@@ -46,7 +46,7 @@ from insight_core.tests._ingestion_fakes import (
     SpyFetchGates,
 )
 from insight_core.tests._kind_fakes import FakeHttp, FakeKind
-from insight_core.tests.test_feed_finder import page, rss
+from insight_core.tests.test_feed_finder import dated_section, page, rss
 from insight_core.tests.test_page_watch import LISTING, SITE, anthropic
 from insight_core.tests.test_page_watch import article as anthropic_article
 from insight_core.ingestion.schedule import Availability
@@ -220,6 +220,27 @@ class ActTests(unittest.TestCase):
                          {"kind": "page_watch", "url": f"{SITE}/news/", "title": "anthropic.com/news",
                           "prefix": "/news/"})
         self.assertGreater(replacement["found"], 0)
+
+    def test_a_root_source_is_offered_the_sites_blog_with_the_most_articles_not_its_home_page(self):
+        # Issue 0041: the whole site is a root source's section; its home page mixes everything.
+        old, home = "https://shop.example/rss", "https://shop.example/"
+        responses = {old: GONE, home: page(body='<a href="/press">Press</a><a href="/blog">Blog</a>'
+                                                + "".join(f'<a href="/customers/{n}/x">Customer</a>' for n in range(9))),
+                     **dated_section("/press", 2), **dated_section("/blog", 5)}
+        store, _, _ = look(responses, source={"id": "s1", "platform": "rss", "handle_or_url": old, "settings": {}})
+        replacement = store.records[0][2]["replacement"]
+        self.assertEqual({k: replacement[k] for k in ("kind", "url", "title", "found", "prefix")},
+                         {"kind": "page_watch", "url": "https://shop.example/blog", "title": "shop.example/blog",
+                          "found": 5, "prefix": "/blog/"})
+
+    def test_a_section_source_keeps_its_section_not_the_sites_blog(self):
+        # The same-section rule: /news/rss gone is followed as /news/, never the site's /blog.
+        old = "https://shop.example/news/rss"
+        responses = {old: GONE, "https://shop.example/": page(body='<a href="/blog">Blog</a>'),
+                     "https://shop.example/news/": dated_section("/news", 3)["https://shop.example/news"],
+                     **dated_section("/news", 3), **dated_section("/blog", 9)}
+        store, _, _ = look(responses, source={"id": "s1", "platform": "rss", "handle_or_url": old, "settings": {}})
+        self.assertEqual(store.records[0][2]["replacement"]["url"], "https://shop.example/news/")
 
     def test_nothing_found_is_recorded_as_nothing(self):
         store, _, _ = look({OLD: GONE, BLOG: page(), "https://arena.ai/": page()})

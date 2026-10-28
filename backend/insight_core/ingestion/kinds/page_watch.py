@@ -55,6 +55,7 @@ FAILED_RETRY_S = 24 * 3600   # a page that failed is read again after this; one 
 PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
+OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once (issue 0041)
 
 # The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
 # it again. For the process's life: a run builds its own registry, so a kind's own set would
@@ -309,6 +310,32 @@ async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dic
     }
 
 
+def is_home(url: str) -> bool:
+    """Whether the address is a site's home page (no path): a poor page to follow (issue 0041)."""
+    return not parsing.path_segments(parsing.web_address(url, "An address is needed"))
+
+
+async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
+    """The pages that can be followed instead of a home page (issue 0041), each {url, **preview},
+    the most articles first: the preview's count, among the pages it read an article from. The
+    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out."""
+    tasks = {asyncio.create_task(preview(http, page)): page for page in dict.fromkeys(pages)}
+    if not tasks:
+        return []
+    done, pending = await asyncio.wait(tasks, timeout=OFFER_BUDGET_S)
+    for task in pending:
+        task.cancel()
+    found = []
+    for task, page in tasks.items():
+        if task not in done:
+            logger.info("Page watch: %s not offered (no preview in %.0fs)", page, OFFER_BUDGET_S)
+        elif task.exception() is not None:
+            logger.info("Page watch: %s not offered (%s)", page, task.exception())
+        elif task.result()["items"]:
+            found.append({"url": page, **task.result()})
+    return sorted(found, key=lambda offer: -offer["found"])
+
+
 class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
     available_basis = "estimate"        # discovered candidate pages; some may be no post
@@ -376,5 +403,5 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "infer_prefix", "normalise_prefix",
-           "page_date", "page_title", "preview"]
+__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "infer_prefix", "is_home", "normalise_prefix",
+           "offers", "page_date", "page_title", "preview"]

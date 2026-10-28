@@ -22,6 +22,7 @@ from insight_core.ingestion.kinds import KindRegistry
 from insight_core.services import registry as services_registry
 from insight_core.tests._asgi import call
 from insight_core.tests._kind_fakes import FakeHttp
+from insight_core.tests.test_page_watch import article
 
 
 def rss(title: str, items: int = 1, padding: str = "") -> str:
@@ -297,12 +298,101 @@ class FindFeedRouteTests(unittest.TestCase):
     def test_returns_the_status_and_the_feeds(self):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": "x.example"})
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"success": True, "status": "found", "feeds": [{"url": "https://x.example/feed", "title": "X"}]})
+        self.assertEqual(body, {"success": True, "status": "found", "feeds": [{"url": "https://x.example/feed", "title": "X"}],
+                                "homepage": False, "pages": []})
 
     def test_an_empty_address_is_a_400(self):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": " "})
         self.assertEqual(status, 400)
         self.assertIn("An address is needed", str(body))
+
+
+SHOP = "https://shop.example"
+
+
+def dated_section(path: str, count: int, site: str = SHOP) -> dict:
+    """A section page of `count` dated articles (no sitemap), and the articles."""
+    links = "".join(f'<a href="{path}/post-{n}">Post {n}</a>' for n in range(count))
+    return {f"{site}{path}": page(body=f"<main>{links}</main>"),
+            **{f"{site}{path}/post-{n}": article(f"Post {n}", "2026-10-01T00:00:00Z") for n in range(count)}}
+
+
+class FollowTheBlogTests(unittest.TestCase):
+    """Issue 0041: a home page with no feed offers its own blog or news page to follow, the one
+    with the most articles first. stripe.com's home page would follow /customers/ (557 links,
+    0 articles); its /blog had 269 dated articles (2026-10-28)."""
+
+    def ask(self, responses, url: str, **fake) -> dict:
+        http = FakeHttp(responses, **fake)
+        kinds = KindRegistry.default(http, None)
+        self.addCleanup(services_registry.use, services_registry.use(SimpleNamespace(source_fetch=SimpleNamespace(kinds=kinds))))
+        with mock.patch.object(main, "FEED_FINDER_HTTP", http):
+            status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": url})
+        self.assertEqual(status, 200)
+        return body
+
+    def test_a_home_page_with_a_feedless_blog_offers_the_blog_with_its_count(self):
+        body = self.ask({f"{SHOP}/": page(body='<a href="/customers/a/b">A customer</a><a href="/blog">Blog</a>'),
+                         **dated_section("/blog", 3)}, "shop.example")
+        self.assertEqual((body["status"], body["homepage"]), ("none", True))
+        [offer] = body["pages"]
+        self.assertEqual((offer["url"], offer["prefix"], offer["found"], len(offer["items"])),
+                         (f"{SHOP}/blog", "/blog/", 3, 3))
+
+    def test_the_page_with_the_most_articles_comes_first_whatever_its_order(self):
+        body = self.ask({f"{SHOP}/": page(body='<a href="/press">Press</a><a href="/news">News</a>'),
+                         **dated_section("/press", 2), **dated_section("/news", 6)}, "https://shop.example/")
+        self.assertEqual([(offer["url"], offer["found"]) for offer in body["pages"]],
+                         [(f"{SHOP}/news", 6), (f"{SHOP}/press", 2)])
+
+    def test_a_page_without_articles_is_not_offered(self):
+        body = self.ask({f"{SHOP}/": page(body='<a href="/blog">Blog</a><a href="/news">News</a>'),
+                         f"{SHOP}/news": page(body="<p>No links here</p>"), **dated_section("/blog", 1)}, SHOP)
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/blog"])
+
+    def test_another_sites_blog_is_never_followed(self):
+        # A link to another site's blog, and the site's own "News" that lands on another site.
+        other = "https://other.example"
+        body = self.ask({f"{SHOP}/": page(body=f'<a href="{other}/blog">Blog</a><a href="/news">News</a>'),
+                         **dated_section("/blog", 4, other), f"{SHOP}/news": dated_section("/news", 4, other)[f"{other}/news"]},
+                        SHOP, redirects={f"{SHOP}/news": f"{other}/news"})
+        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", True, []))
+
+    def test_a_home_page_with_no_blog_link_is_the_last_resort(self):
+        body = self.ask({f"{SHOP}/": page(body='<a href="/customers/a/b">A customer</a>')}, SHOP)
+        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", True, []))
+
+    def test_a_section_address_is_followed_as_it_is(self):
+        responses = {**dated_section("/blog", 2), f"{SHOP}/": page(body='<a href="/news">News</a>'), **dated_section("/news", 5)}
+        responses[f"{SHOP}/blog"] = responses[f"{SHOP}/blog"].replace("<main>", '<main><a href="/news">News</a>')
+        body = self.ask(responses, f"{SHOP}/blog")
+        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", False, []))
+
+    def test_a_feed_found_is_unchanged(self):
+        body = self.ask({f"{SHOP}/": page(body='<a href="/blog">Blog</a>'), f"{SHOP}/blog": page(),
+                         f"{SHOP}/blog/feed": rss("Shop blog")}, SHOP)
+        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("found", False, []))
+
+    def test_the_finder_reports_the_blog_pages_it_read(self):
+        finding, _ = find({f"{SHOP}/": page(body='<a href="/blog/tag/launches">Blog</a><a href="/news">News</a>'
+                                                 '<a href="/blog">Blog</a>'),
+                           f"{SHOP}/news": page(), f"{SHOP}/blog": page()}, SHOP)
+        # The section before a page within it (cohere.com's "Blog" links /blog/tag/research first).
+        self.assertEqual(finding, FeedFinding("none", pages=(f"{SHOP}/news", f"{SHOP}/blog")))
+
+    def test_a_menu_item_named_blog_with_a_description_counts(self):
+        # harvey.ai's menu: "Blog →" over "Product updates, insights, …" in one link (2026-10-28).
+        finding, _ = find({f"{SHOP}/": page(body='<a href="/blog"><span>Blog</span><svg></svg>'
+                                                 '<p>Product updates, insights and stories</p></a>'
+                                                 '<a href="/pricing"><span>Pricing</span><p>Our blog plans</p></a>'),
+                           f"{SHOP}/blog": page()}, SHOP)
+        self.assertEqual(finding.pages, (f"{SHOP}/blog",))
+
+    def test_an_address_that_cannot_be_read_takes_the_home_pages_blog(self):
+        # A source's gone feed at the root (the source doctor): its home page's blog stands in.
+        finding, _ = find({f"{SHOP}/": page(body='<a href="/blog">Blog</a>'), f"{SHOP}/blog": page()},
+                          f"{SHOP}/rss")
+        self.assertEqual(finding, FeedFinding("none", pages=(f"{SHOP}/blog",)))
 
 
 if __name__ == "__main__":
