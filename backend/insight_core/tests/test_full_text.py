@@ -155,6 +155,99 @@ class ArticleExtractionTests(unittest.TestCase):
                 '<div class="nvidia-categories"><p>Categories: AI</p></div></article>')
         self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
 
+    def test_a_chrome_name_never_drops_most_of_the_page_text(self):
+        # devblogs.microsoft.com: the post sits in "entry-content sharepostcontent" (issue 0032).
+        page = ('<html><body><aside class="post-sidebar"><p>Contents</p></aside><article>'
+                f'<div class="entry-content sharepostcontent">{PARAGRAPHS}'
+                '<ul class="share-buttons"><li>Share on Facebook</li></ul></div>'
+                '<div class="share-list"><p>Share this post</p></div></article></body></html>')
+        text = _text(page)
+        self.assertEqual(text, parsing.strip_html(PARAGRAPHS))
+
+    def test_a_tag_whose_attribute_holds_a_closing_bracket_is_one_tag(self):
+        # huggingface.co: Tailwind's class="max-md:[&>a]:hidden" on the <h1>.
+        page = (f'<article><h1 class="group max-md:[&>a]:hidden">The title</h1>{PARAGRAPHS}'
+                '<img class="[&>b]:x" src="https://cdn.example/figure.png" alt="A figure"></article>')
+        html = parsing.extract_article_html(page)
+        self.assertTrue(parsing.strip_html(html).startswith("The title"), html[:80])
+        self.assertNotIn('hidden">', parsing.strip_html(html))
+        self.assertIn('<img src="https://cdn.example/figure.png" alt="A figure">', html)
+
+    def test_code_blocks_and_captions_are_kept(self):
+        # fastapi.tiangolo.com and huggingface.co code; theguardian.com galleries are captions.
+        page = (f"<article>{PARAGRAPHS}<pre><code>from fastapi import FastAPI</code></pre>"
+                '<figure><img src="https://cdn.example/a.jpg" alt=""><figcaption>The captain bats.</figcaption></figure>'
+                "</article>")
+        text = _text(page)
+        for kept in ("from fastapi import FastAPI", "The captain bats."):
+            self.assertIn(kept, text)
+
+    def test_avatars_icons_empty_and_dark_mode_images_are_not_the_articles(self):
+        page = (f"<article>{PARAGRAPHS}"
+                "<img class='avatar avatar-30 photo' src='https://secure.gravatar.com/avatar/x?s=30' width='30' height='30'>"
+                '<img src="https://cdn.example/icon.png" width="32">'
+                '<img src="" alt="">'
+                '<picture class="light-mode"><img src="https://cdn.example/chart-light.png" alt="Chart"></picture>'
+                '<picture class="dark-mode-alternative"><img src="https://cdn.example/chart-dark.png" alt="Chart"></picture>'
+                '<img class="poster dark-mode-alternative" src="https://cdn.example/poster-dark.jpg">'
+                "</article>")
+        html = parsing.extract_article_html(page, base_url="https://blog.example/post")
+        self.assertEqual(['<img src="https://cdn.example/chart-light.png" alt="Chart">'],
+                         [tag for tag in html.split("\n") if tag.startswith("<img")])
+
+    def test_comments_ads_newsletter_boxes_and_player_fallbacks_go(self):
+        page = (f'<article><audio controls><p>Your browser does not support the audio element.</p></audio>{PARAGRAPHS}'
+                '<div class="ad-disclaimer-container"><p>FTC: We use affiliate links.</p></div>'
+                '<section class="uni-article-newsletter"><h2>Get the latest news in your inbox</h2></section>'
+                '<section id="newsletter" class="newsletter"><h2>We do newsletters, too</h2></section>'
+                '<section id="comments"><h2>Comments</h2><p>Join the discussion.</p></section>'
+                '<div class="comment-respond"><p>Leave a comment</p></div></article>')
+        self.assertEqual(_text(page), parsing.strip_html(PARAGRAPHS))
+
+    def test_an_articles_header_keeps_its_cover_and_an_author_box_goes(self):
+        # anthropic.com and blogs.nvidia.com put the cover in the article's <header>; Ars Technica
+        # ends with an "author-mini-bio" box, 9to5google and GitHub with an "author-bio".
+        page = ('<html><body><header><img src="https://cdn.example/logo.png" alt="Logo"></header><article>'
+                '<header><h1>Title</h1><p>Published Oct 14</p><img src="https://cdn.example/cover.jpg" alt="Cover"></header>'
+                f'{PARAGRAPHS}<div class="author-mini-bio"><img src="https://cdn.example/headshot.jpg" alt="">'
+                '<p>Stephen writes about space.</p></div></article></body></html>')
+        html = parsing.extract_article_html(page)
+        self.assertEqual(['<img src="https://cdn.example/cover.jpg" alt="Cover">'],
+                         [tag for tag in html.split("\n") if tag.startswith("<img")])
+        self.assertEqual(parsing.strip_html(html).strip(), parsing.strip_html(PARAGRAPHS))
+
+    def test_a_lazy_image_known_only_by_its_srcset_is_kept(self):
+        page = (f'<article>{PARAGRAPHS}<img src="data:image/gif;base64,R0lG" '
+                'data-srcset="https://cdn.example/lazy-800.jpg 800w, https://cdn.example/lazy-1600.jpg 1600w" alt="Lazy">'
+                '<img class="placeholder" src="data:image/gif;base64,R0lG" alt=""></article>')
+        self.assertIn('<img src="https://cdn.example/lazy-800.jpg" alt="Lazy">', parsing.extract_article_html(page))
+
+    def test_the_reading_fidelity_counts_the_articles_images_and_what_was_kept(self):
+        # Related cards dropped as chrome never count (blogs.nvidia.com); an image with an
+        # address the reader can't fetch (relative, with no base) counts as lost; a data:
+        # placeholder with no address is no image.
+        page = (f'<article><p>Share:</p>{PARAGRAPHS}<img src="/a.jpg"><img src="/b.jpg"><img src="/c.jpg">'
+                '<img src="https://cdn.example/d.jpg"><img src="data:image/gif;base64,R0lG">'
+                '<div class="related-news-section"><img src="https://cdn.example/card.jpg"></div></article>')
+        html, fidelity = parsing.read_article_page(page)
+        self.assertEqual(fidelity, {"page_images": 4, "kept_images": 1, "text_chars": len(parsing.strip_html(html)),
+                                    "short_opening": True})
+        self.assertTrue(parsing.lost_most_images(fidelity))
+        _, read_with_base = parsing.read_article_page(page, base_url="https://blog.example/post")
+        self.assertEqual((read_with_base["page_images"], read_with_base["kept_images"]), (4, 4))
+        self.assertFalse(parsing.lost_most_images(read_with_base))
+        self.assertFalse(parsing.lost_most_images({"page_images": 2, "kept_images": 0}))   # too few to tell
+        self.assertEqual(parsing.read_article_page("<p>Nothing</p>"), ("", {}))
+
+    def test_without_an_article_element_the_block_with_the_paragraphs_is_read(self):
+        # ai.meta.com: no <article> or <main>; menus, the post and a footer in plain <div>s.
+        page = ("<html><body><div><ul><li>Products</li><li>AI Research</li><li>Try Muse</li></ul></div>"
+                f'<div class="x1"><div class="_a5"><h1>From brain waves to words</h1>{PARAGRAPHS}</div></div>'
+                "<div><p>Resources</p><p>Meta © 2026</p></div></body></html>")
+        text = _text(page)
+        self.assertTrue(text.startswith("From brain waves to words"), text[:60])
+        self.assertTrue(text.endswith(parsing.strip_html(PARAGRAPHS)[-40:]), text[-60:])
+
     def test_the_miessler_page_is_only_its_article(self):
         text = _text(MIESSLER_PAGE)
         self.assertTrue(text.startswith("Custom Content for Everyone People are starting"), text[:80])

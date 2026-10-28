@@ -115,21 +115,48 @@ def extract_html_image_urls(html_text: str) -> List[str]:
     return media_urls
 
 
-# Page chrome, dropped with everything inside it before the article is chosen: these
-# elements, and any element (but <html> and <body>) whose class or id token starts with
-# one of the prefixes, or ends in "-tags" / "-categories" after a theme prefix
-# ("nvidia-tags"). Only that ending is matched inside a token: a plugin wraps whole
-# articles in "has-highlight-and-share", and WordPress gives <article> itself
-# "category-ai tag-agents".
+# ---------------------------------------------------------------- the article reader
+#
+# extract_article_html / read_article_page: a page's article, as its text blocks and images
+# in page order. Shared by full text, page watch, saved pages and five site adapters, and
+# checked against a corpus of real pages (tests/fixtures/pages, issue 0032): every change
+# here runs against every page there.
+#
+# 1. <script>, <style>, <noscript>, <iframe>, <svg>, <audio> and <video> go, with their
+#    fallback text ("Your browser does not support the audio element").
+# 2. Chrome goes, with everything inside it (_ChromeStripper): the CHROME_TAGS, and any
+#    element (but <html> and <body>) with a class or id token that starts with one of the
+#    prefixes, is one of the tokens, holds one of the parts (a table of contents, a badge),
+#    names an author's box ("author-bio", "author-mini-bio"), or ends in "-tags",
+#    "-categories" or "-newsletter" after a theme prefix ("nvidia-tags",
+#    "uni-article-newsletter"). Only those endings are matched inside a token: a plugin wraps
+#    whole articles in "has-highlight-and-share", WordPress gives <article> itself
+#    "category-ai tag-agents", Substack's article is "newsletter-post". A component part
+#    ("block__element") is judged on its own. A picture's dark-mode copy goes too; an
+#    article's own <header> goes but keeps its images (the cover).
+#    No rule drops an element holding more than half of the page's paragraph text: the Old
+#    New Thing's posts are in "entry-content sharepostcontent".
+# 3. The article is the first candidate long enough (<article>, <main>, a content class),
+#    each read whole; with none, the smallest element holding most of the paragraph text
+#    (ai.meta.com). Its text blocks (TEXT_BLOCKS and list items) and images are kept in page
+#    order; an image keeps only its address and alt (_article_image), and pixels, icons,
+#    badges and avatars go.
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
-CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar")
-CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories")
+CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar",
+                   "comments", "comment-", "ad-", "advert")
+CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories", "-newsletter", "_newsletter")
 # A table of contents is a menu too (anthropic.com's "StickyTableOfContents-module__Trigger").
-CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents")
-CHROME_TOKENS = frozenset({"toc"})
+CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents", "badge")
+CHROME_TOKENS = frozenset({"toc", "newsletter", "ad", "ads"})
+DARK_COPY_PREFIX = "dark-mode"     # deepmind.google's <picture class="dark-mode-alternative">
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
-TEXT_BLOCKS = "h1|h2|h3|p|blockquote"
+TEXT_BLOCKS = "h1|h2|h3|p|blockquote|pre|figcaption"
+# A tag's attributes, quoted values and all: huggingface.co's class="max-md:[&>a]:hidden".
+ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
+MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
+FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
+ARTICLE_MIN_CHARS = 500
 
 
 def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
@@ -138,12 +165,17 @@ def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
     if tag in ("html", "body"):
         return False
     tokens = " ".join(value or "" for name, value in attrs if name in ("class", "id")).lower().split()
+    if tag in ("picture", "img") and any(token.startswith(DARK_COPY_PREFIX) for token in tokens):
+        return True
     return any(_chrome_token(token) for token in tokens)
 
 
 def _chrome_token(token: str) -> bool:
     if (token.startswith(CHROME_PREFIXES) or token.endswith(CHROME_ENDINGS) or token in CHROME_TOKENS
             or any(part in token for part in CHROME_PARTS)):
+        return True
+    # An author's box under the post: "author-bio" (9to5google, GitHub), "author-mini-bio" (Ars).
+    if token.startswith("author") and token.endswith(("bio", "box")):
         return True
     # A component part ("block__element"): each part is judged on its own, so blog.google's
     # "article-share__title" and 9to5google's "article__meta-guides" go, while a whole-article
@@ -153,31 +185,107 @@ def _chrome_token(token: str) -> bool:
                                   for part in parts)
 
 
+class _ParagraphText(HTMLParser):
+    """The page's elements and how much paragraph (<p>) text each holds. For the i-th non-void
+    start tag, elements[i] is (tag, id, class), sizes[i] its paragraph characters and spans[i]
+    its content's offsets in the page, nesting respected; total is the page's."""
+
+    def __init__(self, html_text: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.line_starts = [0] + [match.end() for match in re.finditer("\n", html_text)]
+        self.elements: List[Tuple[str, str, str]] = []
+        self.sizes: List[int] = []
+        self.spans: List[Tuple[int, int]] = []
+        self.open: List[Tuple[str, int, int]] = []     # (tag, index, paragraph chars before it)
+        self.in_paragraph = 0
+        self.total = 0
+        self.feed(html_text)
+        self.close()
+        while self.open:                               # never closed: open to the end
+            self._close_last(len(html_text))
+
+    def _offset(self) -> int:
+        line, column = self.getpos()
+        return self.line_starts[line - 1] + column
+
+    def _close_last(self, end: int) -> str:
+        tag, index, before = self.open.pop()
+        self.sizes[index] = self.total - before
+        self.spans[index] = (self.spans[index][0], end)
+        self.in_paragraph -= tag == "p"
+        return tag
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag in VOID_TAGS:
+            return
+        self.open.append((tag, len(self.sizes), self.total))
+        names = dict(attrs)
+        self.elements.append((tag, (names.get("id") or "").strip(), (names.get("class") or "").lower()))
+        self.sizes.append(0)
+        self.spans.append((self._offset() + len(self.get_starttag_text() or ""), 0))
+        self.in_paragraph += tag == "p"
+
+    def handle_endtag(self, tag: str) -> None:
+        if any(open_tag == tag for open_tag, _, _ in self.open):
+            end = self._offset()
+            while self._close_last(end) != tag:  # closes it and whatever was left open inside it
+                pass
+
+    def handle_data(self, data: str) -> None:
+        if self.in_paragraph:
+            self.total += len(data.strip())
+
+
 class _ChromeStripper(HTMLParser):
     """Re-emits the page without its chrome. Regex can't find where a nested element ends:
-    `dropping` is the stack of elements open inside the dropped one."""
+    `dropping` is the stack of elements open inside the dropped one. `protected` are the
+    start tags (by order) of the elements holding most of the paragraph text. An article's
+    own <header> goes but keeps its images: the cover of anthropic.com's and NVIDIA's posts."""
 
-    def __init__(self) -> None:
+    def __init__(self, protected: frozenset) -> None:
         super().__init__(convert_charrefs=False)
         self.kept: List[str] = []
         self.dropping: List[str] = []
+        self.protected = protected
+        self.started = 0
+        self.articles = 0               # <article> elements open (and kept)
+        self.dropping_keeps_images = False
 
     def _keep(self, text: str) -> None:
         if not self.dropping:
             self.kept.append(text)
 
+    def _image(self, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if not _is_chrome("img", attrs) and (not self.dropping or self.dropping_keeps_images):
+            self.kept.append(self.get_starttag_text() or "")
+
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
-        if tag not in VOID_TAGS and (self.dropping or _is_chrome(tag, attrs)):
+        if tag in VOID_TAGS:
+            if tag == "img":
+                self._image(attrs)
+            else:
+                self._keep(self.get_starttag_text() or "")
+            return
+        index, self.started = self.started, self.started + 1
+        if self.dropping:
             self.dropping.append(tag)
+        elif _is_chrome(tag, attrs) and index not in self.protected:
+            self.dropping.append(tag)
+            self.dropping_keeps_images = tag == "header" and self.articles > 0
         else:
+            self.articles += tag == "article"
             self._keep(self.get_starttag_text() or "")
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
-        self._keep(self.get_starttag_text() or "")
+        if tag == "img":
+            self._image(attrs)
+        else:
+            self._keep(self.get_starttag_text() or "")
 
     def handle_endtag(self, tag: str) -> None:
         if not self.dropping:
             self.kept.append(f"</{tag}>")
+            self.articles -= tag == "article" and self.articles > 0
         elif tag in self.dropping:  # closes it and whatever was left open inside it
             del self.dropping[len(self.dropping) - 1 - self.dropping[::-1].index(tag):]
 
@@ -192,25 +300,85 @@ class _ChromeStripper(HTMLParser):
 
 
 def _without_chrome(html_text: str) -> str:
-    stripper = _ChromeStripper()
+    text = _ParagraphText(html_text)
+    protected = frozenset(index for index, size in enumerate(text.sizes) if size > text.total * MAIN_TEXT_SHARE)
+    stripper = _ChromeStripper(protected)
     stripper.feed(html_text)
     stripper.close()
     return "".join(stripper.kept)
 
 
-IMG_TAG_RE = re.compile(r"(?is)<img\b[^>]*>")
-IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|alt|width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+CONTENT_CLASSES = ("entry-content", "post-content", "article-content", "content-body", "prose", "single-post-content")
+CANDIDATES = (
+    lambda tag, id_, classes: tag == "article",
+    lambda tag, id_, classes: tag == "main",
+    lambda tag, id_, classes: tag == "div" and id_ == "markdownBody",
+    lambda tag, id_, classes: tag == "div" and any(name in classes for name in CONTENT_CLASSES),
+)
+
+
+def _candidates(html_text: str) -> List[str]:
+    """What may be the article, in this order: the page's first <article>, its first <main>,
+    #markdownBody, the first <div> with a CONTENT_CLASSES class, each whole (a card nested in
+    the post no longer ends it). With none, the smallest element holding FALLBACK_TEXT_SHARE
+    of the paragraph text (the whole page when it has none)."""
+    page = _ParagraphText(html_text)
+    found = [next((i for i, element in enumerate(page.elements) if test(*element)), None) for test in CANDIDATES]
+    if any(index is not None for index in found):
+        return [html_text[slice(*page.spans[index])] for index in found if index is not None]
+    spans = [span for size, span in zip(page.sizes, page.spans)
+             if page.total and size >= page.total * FALLBACK_TEXT_SHARE]
+    start, end = min(spans, key=lambda span: span[1] - span[0], default=(0, len(html_text)))
+    return [html_text[start:end]]
+
+
+IMG_TAG_RE = re.compile(rf"(?is)<img\b{ATTRS}>")
+IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|srcset|data-srcset|alt|width|height|class)"""
+                         r"""\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+# Where an <img> keeps its address, in this order: a lazy image's real one first; a srcset's
+# first candidate last (an image known only by its srcset).
+IMAGE_ADDRESSES = ("data-src", "data-lazy-src", "data-original", "src", "srcset", "data-srcset")
+ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge
+
+
+def _px(value: Optional[str]) -> Optional[int]:
+    match = re.match(r"\s*(\d+)", value or "")
+    return int(match.group(1)) if match else None
+
+
+def _image_attrs(tag: str) -> Dict[str, str]:
+    return {name.lower(): html_lib.unescape(dq or sq or bare) for name, dq, sq, bare in IMG_ATTR_RE.findall(tag)}
+
+
+def _is_article_image(attrs: Dict[str, str]) -> bool:
+    """Not a tracking pixel, an icon, a badge or an avatar."""
+    sizes = [px for px in (_px(attrs.get("width")), _px(attrs.get("height"))) if px is not None]
+    if any(px <= ICON_MAX_PX for px in sizes):
+        return False
+    return not (any(token.startswith("avatar") for token in attrs.get("class", "").lower().split())
+                or attrs.get("alt", "").lower().endswith("avatar"))
+
+
+def _image_address(attrs: Dict[str, str]) -> str:
+    """The image's address (IMAGE_ADDRESSES), '' when it has none but a data: placeholder."""
+    for name in IMAGE_ADDRESSES:
+        value = (attrs.get(name) or "").strip()
+        if name.endswith("srcset"):
+            value = value.split(",")[0].strip().split(" ")[0]
+        if value and not value.startswith("data:"):
+            return value
+    return ""
 
 
 def _article_image(tag: str, base_url: str) -> str:
-    """An <img> as an article keeps it: its real address (a lazy image's data-src; Next.js's
-    /_next/image?url= unwrapped; made absolute against base_url) and its alt. '' for a
-    tracking pixel or an address that can't be fetched."""
-    attrs = {name.lower(): html_lib.unescape(dq or sq) for name, dq, sq in IMG_ATTR_RE.findall(tag)}
-    if "1" in (attrs.get("width"), attrs.get("height")):
+    """An <img> as an article keeps it: its real address (_image_address; Next.js's
+    /_next/image?url= unwrapped; made absolute against base_url) and its alt. '' for an image
+    that is no article image (_is_article_image) or whose address can't be fetched."""
+    attrs = _image_attrs(tag)
+    if not _is_article_image(attrs):
         return ""
-    src = attrs.get("data-src") or attrs.get("src") or ""
-    if src.startswith("data:"):
+    src = _image_address(attrs)
+    if not src:
         return ""
     if urllib.parse.urlparse(src).path.endswith("/_next/image"):
         src = (urllib.parse.parse_qs(urllib.parse.urlparse(src).query).get("url") or [src])[0]
@@ -220,34 +388,78 @@ def _article_image(tag: str, base_url: str) -> str:
     return f'<img src="{html_lib.escape(src)}" alt="{html_lib.escape(attrs.get("alt", ""))}">'
 
 
+# \b: "<li" must not match "<link", nor "<p" "<path".
+BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b{ATTRS}>")
+PAGE_BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS})\b{ATTRS}>.*?</(?:{TEXT_BLOCKS})>")
+TAG_RE = re.compile(rf"<[a-zA-Z]{ATTRS}>")
+QUOTED_RE = re.compile(r""""[^"]*"|'[^']*'""")
+SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:")
+
+
+def _escaped_attributes(html: str) -> str:
+    """A "<" or ">" inside an attribute value as an entity, so no later reader takes it for
+    the tag's end (strip_html, the post's text)."""
+    return TAG_RE.sub(lambda tag: QUOTED_RE.sub(
+        lambda value: value.group(0).replace("<", "&lt;").replace(">", "&gt;"), tag.group(0)), html)
+
+
+def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str, Any]]:
+    """(the article's html, its reading fidelity). The html is extract_article_html's; the
+    fidelity (read_fidelity) is {} when no article was found."""
+    cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg|audio|video)\b.*?</\1>", "", html_text or "")
+    cleaned = _without_chrome(cleaned)
+    # The first candidate long enough to be the article: a page's first <article> can be a
+    # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The
+    # main block only when no candidate matched: a short <article> is no article, not a reason
+    # to read the page's other lists as one (issue 0029).
+    for candidate in _candidates(cleaned):
+        blocks = BLOCK_RE.findall(candidate)
+        if not blocks:  # list items count only inside the chosen candidate
+            blocks = PAGE_BLOCK_RE.findall(cleaned)
+        if len(strip_html(" ".join(blocks))) >= ARTICLE_MIN_CHARS:
+            html = IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url), "\n".join(blocks))
+            html = _escaped_attributes(html)
+            return html, read_fidelity(blocks, html)
+    return "", {}
+
+
 def extract_article_html(html_text: str, base_url: str = "") -> str:
     """The article's text blocks and images, in page order. base_url (the page's address)
     makes relative image addresses absolute; without it they are left out."""
-    cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg).*?</\1>", "", html_text or "")
-    cleaned = _without_chrome(cleaned)
-    candidate_patterns = [
-        r"(?is)<article\b[^>]*>(.*?)</article>",
-        r"(?is)<main\b[^>]*>(.*?)</main>",
-        r'(?is)<div\b[^>]+id="markdownBody"[^>]*>(.*?)</div>\s*(?:</main>|<footer\b|</body>|$)',
-        r'(?is)<div\b[^>]+class="[^"]*(?:entry-content|post-content|article-content|content-body|prose|single-post-content)[^"]*"[^>]*>(.*?)</div>',
-    ]
+    return read_article_page(html_text, base_url)[0]
 
-    # The first candidate long enough to be the article: a page's first <article> can be a
-    # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The
-    # whole body only when no candidate matched: a short <article> is no article, not a reason
-    # to read the page's other lists as one (issue 0029).
-    candidates = [match.group(1) for pattern in candidate_patterns if (match := re.search(pattern, cleaned))]
-    if not candidates:
-        body_match = re.search(r"(?is)<body\b[^>]*>(.*?)</body>", cleaned)
-        candidates = [body_match.group(1) if body_match else cleaned]
-    for candidate in candidates:
-        # \b: "<li" must not match "<link", nor "<p" "<path".
-        blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b[^>]*>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b[^>]*>", candidate)
-        if not blocks:  # list items count only inside the chosen candidate
-            blocks = re.findall(rf"(?is)<(?:{TEXT_BLOCKS})\b[^>]*>.*?</(?:{TEXT_BLOCKS})>", cleaned)
-        if len(strip_html(" ".join(blocks))) >= 500:
-            return IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url), "\n".join(blocks))
-    return ""
+
+def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
+    """How well a page was read, kept in a post's metadata (FIDELITY_KEY):
+      page_images    the article images in the chosen article block (no pixel, icon or
+                     avatar): an estimate of what the site shows, from the block the reader
+                     chose, so related cards and sidebars it dropped never count
+      kept_images    the images kept: the others had no address the reader could fetch
+                     (a lazy image's placeholder, an image known only by its srcset)
+      text_chars     the kept text's length
+      short_opening  the first block after the title is under SHORT_OPENING_CHARS: a hint of
+                     chrome left in ("Share:", "Category")."""
+    page_images = sum(1 for tag in IMG_TAG_RE.findall("\n".join(blocks))
+                      if _is_article_image(attrs := _image_attrs(tag)) and _image_address(attrs))
+    texts = [text for block in blocks if block[:4].lower() != "<img" and not re.match(r"(?is)<h1\b", block)
+             if (text := " ".join(strip_html(block).split()))]
+    return {
+        "page_images": page_images,
+        "kept_images": len(re.findall(r"<img\b", html)),
+        "text_chars": len(strip_html(html)),
+        "short_opening": bool(texts) and len(texts[0]) < SHORT_OPENING_CHARS,
+    }
+
+
+FIDELITY_KEY = "page_read"
+LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept
+
+
+def lost_most_images(fidelity: Any) -> bool:
+    if not isinstance(fidelity, dict):
+        return False
+    page, kept = int(fidelity.get("page_images") or 0), int(fidelity.get("kept_images") or 0)
+    return page >= LOST_IMAGES_MIN and kept * 2 < page
 
 
 def web_address(value: Any, needed: str) -> str:

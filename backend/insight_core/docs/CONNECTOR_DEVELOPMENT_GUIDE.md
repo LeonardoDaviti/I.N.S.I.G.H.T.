@@ -28,7 +28,11 @@ so a new kind needs no change anywhere else.
   Dario Amodei, The Batch, Phil Schmid, Zero to Mastery, pipecraft.me). They extend `BaseSourceAdapter`,
   which is a `BaseKind`.
 - `ingestion/kinds/parsing.py`: pure helpers (feed parsing, `strip_html`, dates, article
-  extraction, image URLs).
+  extraction, image URLs). The article reader (`read_article_page` / `extract_article_html`)
+  is shared by full text, page watch and the site adapters, and tested on a corpus of real
+  pages (`tests/fixtures/pages`, `test_page_corpus`): an adapter that reads article pages
+  should use it rather than its own regexes, and a site it reads badly is added to the corpus
+  with the fix (see `BACKEND.md`, "Reading an article page").
 - `ingestion/http.py`: `KindHttp`, the one HTTP client every kind uses. It owns the
   User-Agent, the TLS-skip hosts and the politeness sleep, requests only http and https, and
   raises every failure (a dropped connection or a truncated body too) as an `HttpError`

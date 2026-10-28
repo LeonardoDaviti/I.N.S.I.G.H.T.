@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en-US" theme="light">
+
+<head>
+	<meta charset="UTF-8">
+	
+	
+	
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+			<meta name="awa-pageType" content="post" />
+				<meta name="awa-product" content="The Old New Thing" />
+				<meta name="awa-asst" content="https://devblogs.microsoft.com/oldnewthing/?p=112800" />
+				<meta name="awa-xtag" content="Other">
+		
+			<meta name="awa-xtopic" content="Old New Thing">	
+		
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+	<title>Why don&#039;t we run the taskbar and Task Manager at high priority, so they can remain responsive? - The Old New Thing</title>
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="color-scheme" content="dark light">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-title" content="The Old New Thing - Practical development throughout the evolution of Windows.">
+	<link rel="profile" href="http://gmpg.org/xfn/11">
+	<link rel="pingback" href="https://devblogs.microsoft.com/oldnewthing/xmlrpc.php">
+		<!-- [Begin] JSLL SHIM (1DS) domain prefetch  -->
+	<link rel="preconnect" href="//js.monitor.azure.com" crossorigin>
+	<link rel="preconnect" href="//browser.events.data.microsoft.com" crossorigin>
+	<!-- [END] JSLL SHIM (1DS) domain prefetch  -->
+	<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />
+
+	<!-- This site is optimized with the Yoast SEO Premium plugin v28.6 (Yoast SEO v28.7) - https://yoast.com/product/yoast-seo-premium-wordpress/ -->
+	<meta name="description" content="Hurry up and wait." />
+	<link rel="canonical" href="https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" />
+	<meta property="og:locale" content="en_US" />
+	<meta property="og:type" content="article" />
+	<meta property="og:title" content="Why don&#039;t we run the taskbar and Task Manager at high priority, so they can remain responsive? - The Old New Thing" />
+	<meta property="og:description" content="Hurry up and wait." />
+	<meta property="og:url" content="https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" />
+	<meta property="og:site_name" content="The Old New Thing" />
+	<meta property="article:published_time" content="2026-10-27T14:00:00+00:00" />
+	<meta property="article:modified_time" content="2026-10-28T02:46:19+00:00" />
+	<meta property="og:image" content="https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/2019/02/ShowCover.jpg" />
+	<meta property="og:image:width" content="110" />
+	<meta property="og:image:height" content="145" />
+	<meta property="og:image:type" content="image/jpeg" />
+	<meta name="author" content="Raymond Chen" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:creator" content="@https://twitter.com/ChenCravat" />
+	
+	<!-- / Yoast SEO Premium plugin. -->
+
+
+	<link rel="icon" href="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/favicon/favicon.ico?ver=1789493481" sizes="any">
+	<link rel="icon" type="image/png" sizes="48x48" href="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/favicon/favicon-48.png?ver=1789493481">
+	<link rel="icon" type="image/png" sizes="192x192" href="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/favicon/favicon-192.png?ver=1789493481">
+	<link rel="icon" type="image/png" sizes="512x512" href="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/favicon/favicon-512.png?ver=1789493481">
+	<link rel="apple-touch-icon" sizes="180x180" href="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/favicon/apple-touch-icon-180.png?ver=1789493481">
+<link rel="alternate" type="application/rss+xml" title="The Old New Thing &raquo; Why don&#8217;t we run the taskbar and Task Manager at high priority, so they can remain responsive? Comments Feed" href="https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/feed/" />
+<link rel="alternate" title="oEmbed (JSON)" type="application/json+oembed" href="https://devblogs.microsoft.com/oldnewthing/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F" />
+<link rel="alternate" title="oEmbed (XML)" type="text/xml+oembed" href="https://devblogs.microsoft.com/oldnewthing/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F&#038;format=xml" />
+
+
+
+
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='mpp_gutenberg-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/metronet-profile-picture/dist/blocks.style.build.css?ver=2.6.4' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='devblogs-lightbox-css-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/devblogs-lightbox/assets/css/lightbox.min.css?ver=1770924660' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='newsletter-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/newsletter/style.css?ver=9.4.9' media='all' />
+<link rel='stylesheet' id='newsletter-country-sync-css-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/newsletter-country-sync/css/newsletter-style.css?ver=1770924660' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='devblogs-evo-styles-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/css/theme.min.css?ver=1.4.0.1793135740' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='lite-yt-embed-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/css/lite-yt-embed.css?ver=0.3.8' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='fabric-icons-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/fabric-icon-manager/assets/css/fabric-icons.css?ver=1699358813' media='all' />
+<link rel='stylesheet' id='dev-comments-evo-style-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/devblogs-comments-evo/admin/css/simplecomments.min.css?ver=1783529315' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='dashicons-css' href='https://devblogs.microsoft.com/oldnewthing/wp-includes/css/dashicons.min.css' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='editor-buttons-css' href='https://devblogs.microsoft.com/oldnewthing/wp-includes/css/editor.min.css' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='block-custom-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/devblogs-blocks/assets/block-custom.css' media='all' />
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'"id='highlight-css-css' href='https://devblogs.microsoft.com/oldnewthing/wp-content/plugins/devblogs-blocks/assets/highlight.min.css' media='all' />
+
+<link rel="https://api.w.org/" href="https://devblogs.microsoft.com/oldnewthing/wp-json/" /><link rel="alternate" title="JSON" type="application/json" href="https://devblogs.microsoft.com/oldnewthing/wp-json/wp/v2/posts/112800" /><link rel="EditURI" type="application/rsd+xml" title="RSD" href="https://devblogs.microsoft.com/oldnewthing/xmlrpc.php?rsd" />
+<link rel='shortlink' href='https://devblogs.microsoft.com/oldnewthing/?p=112800' />
+<meta name="generator" content="performance-lab 4.2.0; plugins: webp-uploads">
+<!-- start Simple Custom CSS and JS -->
+
+<!-- end Simple Custom CSS and JS -->
+<meta name="generator" content="webp-uploads 2.7.1">
+	<!-- Start JSLL SHIM(1DS) Tags -->
+	
+	
+	<!-- END JSLL SHIM(1DS) Integration -->
+	
+	<div id="sr-announcer" class="visually-hidden" role="status" aria-live="polite"></div>
+
+<link rel='preload' as='style' onload="this.onload=null;this.rel='stylesheet'" id='buttons-css' href='https://devblogs.microsoft.com/oldnewthing/wp-includes/css/buttons.min.css' media='all' />
+
+</head>
+
+<body class="wp-singular post-template-default single single-post postid-112800 single-format-standard wp-theme-devblogs-evo">
+	<!-- Star cookies banner  -->
+	
+
+	<div id="cookie-banner"></div>
+	
+	<!-- end cookies banner  -->
+		<!-- UHF header -->
+	<uhf-header locale="en-us" partnerId="DEV_Blogs" headerId="Dev_header-main" theme="light">
+        <a slot="skip-link" class="uhf-skip-link" href="#main" data-m='{"compnm": "UHF", "view": "UHF", "pa": "UniversalHeader", "hn": "SkipToMain", "cN": "Skip to content_nonnav", "ecn": "Skip to content_nonnav", "ehn": "SkipToMain"}'>Skip to main content</a>
+    
+<uhf-brand slot="brand">
+        <a href="https://www.microsoft.com" class="uhf-microsoft-logo" slot="microsoft-logo" aria-label="Microsoft" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Anchor&quot;, &quot;cN&quot;: &quot;GlobalNav_Logo_cont&quot;, &quot;ecn&quot;: &quot;GlobalNav_Logo_cont&quot;, &quot;ehn&quot;: &quot;Anchor&quot;}">
+            <img src="https://uhf.microsoft.com/images/microsoft/RE1Mu3b.png" alt="Microsoft" />
+        </a>
+            <a href="https://devblogs.microsoft.com" class="uhf-site-logo" slot="brand-logo" aria-label="Dev Blogs" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Anchor&quot;, &quot;cN&quot;: &quot;CatNav_Dev Blogs_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Dev Blogs_nav&quot;, &quot;ehn&quot;: &quot;Anchor&quot;}">
+ <span>Dev Blogs</span>             </a>
+</uhf-brand>
+
+
+<uhf-contextual-nav 
+    slot="contextual-nav" 
+    overflowText="More" 
+    brand="Dev Blogs" 
+    homeUrl="https://devblogs.microsoft.com" 
+    homeText="Home"
+    data-nav-label="Contextual menu"
+    theme=cat-theme-blue
+    >
+
+
+    <a class="uhf-nav-item uhf-nav-link" href="https://devblogs.microsoft.com/ai" id="AI" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;AI&quot;, &quot;cN&quot;: &quot;CatNav_AI_nav&quot;, &quot;ecn&quot;: &quot;CatNav_AI_nav&quot;, &quot;ehn&quot;: &quot;AI&quot;}">AI</a>
+
+
+
+<uhf-dropdown 
+    text=".NET" 
+        id="dot-net"
+    data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}"
+>
+    
+
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/" id="all-dot-net-posts" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_All .NET posts_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_All .NET posts_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">All .NET posts</a>
+
+<uhf-flyout text="Frameworks" id="Frameworks" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Frameworks_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Frameworks_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/maui/" id="dot-net-maui" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Frameworks_.NET MAUI_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Frameworks_.NET MAUI_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">.NET MAUI</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/dotnet-aspire/" id="asp-net-core" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Frameworks_ASP.NET Core_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Frameworks_ASP.NET Core_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">ASP.NET Core</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/blazor/" id="Blazor" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Frameworks_Blazor_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Frameworks_Blazor_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">Blazor</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/entity-framework/" id="entity-framework" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Frameworks_Entity Framework_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Frameworks_Entity Framework_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">Entity Framework</a>
+</uhf-flyout>
+<uhf-flyout text="Languages" id="Languages" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Languages_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Languages_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/cppblog/" id="cpp" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Languages_C&#x2B;&#x2B;_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Languages_C&#x2B;&#x2B;_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">C&#x2B;&#x2B;</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/csharp/" id="C#" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Languages_C#_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Languages_C#_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">C#</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/fsharp/" id="F#" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Languages_F#_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Languages_F#_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">F#</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/typescript/" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Languages_TypeScript_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Languages_TypeScript_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">TypeScript</a>
+</uhf-flyout>
+<uhf-flyout text="Tools" id="Tools" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Tools_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Tools_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/nuget/" id="NuGet" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Tools_NuGet_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Tools_NuGet_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">NuGet</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet/category/maintenance-and-updates/" id="Servicing" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_Tools_Servicing_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_Tools_Servicing_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">Servicing</a>
+</uhf-flyout>            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/dotnet-ch/" id="dot-net-blog-in-chinese" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;.NET&quot;, &quot;cN&quot;: &quot;CatNav_.NET_.NET Blog in Chinese_nav&quot;, &quot;ecn&quot;: &quot;CatNav_.NET_.NET Blog in Chinese_nav&quot;, &quot;ehn&quot;: &quot;.NET&quot;}">.NET Blog in Chinese</a>
+
+
+</uhf-dropdown>
+
+
+<uhf-dropdown 
+    text="Developer" 
+        id="Developer"
+    data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}"
+>
+    
+
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://developer.microsoft.com/blog/" id="microsoft-for-developers" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Microsoft for Developers_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Microsoft for Developers_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Microsoft for Developers</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/agent-framework/" id="agent-framework" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Agent Framework_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Agent Framework_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Agent Framework</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/develop-from-the-cloud/" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Develop from the cloud_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Develop from the cloud_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Develop from the cloud</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/xcode/" id="Xcode" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Xcode_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Xcode_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Xcode</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/ise/" id="ise-developer" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_ISE Developer_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_ISE Developer_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">ISE Developer</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/typescript/" id="TypeScript" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_TypeScript_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_TypeScript_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">TypeScript</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/powershell/" id="PowerShell" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_PowerShell_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_PowerShell_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">PowerShell</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/python/" id="Python" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Python_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Python_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Python</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/java/" id="java" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Java_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Java_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Java</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/java-ch/" id="java-blog-in-chinese" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Java Blog in Chinese_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Java Blog in Chinese_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Java Blog in Chinese</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/go/" id="go" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Go_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Go_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Go</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://blogs.windows.com/msedgedev/" id="microsoft-edge-dev" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Microsoft Edge Dev_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Microsoft Edge Dev_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Microsoft Edge Dev</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/microsoft365dev/" id="microsoft-365-developer" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Microsoft 365 Developer_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Microsoft 365 Developer_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Microsoft 365 Developer</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/identity/" id="microsoft-entra-identity-developer" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Microsoft Entra Identity Developer_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Microsoft Entra Identity Developer_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Microsoft Entra Identity Developer</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/entrapowershell/" id="microsoft-entra-powershell" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Developer&quot;, &quot;cN&quot;: &quot;CatNav_Developer_Microsoft Entra PowerShell_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Developer_Microsoft Entra PowerShell_nav&quot;, &quot;ehn&quot;: &quot;Developer&quot;}">Microsoft Entra PowerShell</a>
+
+
+</uhf-dropdown>
+
+
+<uhf-dropdown 
+    text="Platform and Tools" 
+        id="platform-development"
+    data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}"
+>
+    
+
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/visualstudio/" id="visual-studio" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Visual Studio_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Visual Studio_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Visual Studio</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/vscode-blog" id="visual-studio-code" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Visual Studio Code_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Visual Studio Code_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Visual Studio Code</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/aspire/" id="aspire" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Aspire_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Aspire_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Aspire</a>
+
+<uhf-flyout text="Azure" id="azure" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/all-things-azure/" id="all-things-azure-1" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_All things Azure_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_All things Azure_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">All things Azure</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/azure-sdk/" id="azure-sdk" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure SDK_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure SDK_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure SDK</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/azure-vm-runtime/" id="azure-vm-runtime" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure VM Runtime Team_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure VM Runtime Team_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure VM Runtime Team</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://azure.microsoft.com/blog/" id="microsoft-azure" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Microsoft Azure_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Microsoft Azure_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Microsoft Azure</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/cosmosdb/" id="azure-cosmos-db" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure Cosmos DB_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure Cosmos DB_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure Cosmos DB</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/documentdb/" id="azure-document-db" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure DocumentDB_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure DocumentDB_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure DocumentDB</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://cloudblogs.microsoft.com/sqlserver/?product=azure-data-studio" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure Data Studio_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure Data Studio_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure Data Studio</a>
+                <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/azure-sql/" id="azure-sql" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Azure_Azure SQL_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Azure_Azure SQL_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Azure SQL</a>
+</uhf-flyout>            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/devops/" id="devops" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_DevOps_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_DevOps_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">DevOps</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/directx/" id="directx" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_DirectX_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_DirectX_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">DirectX</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/foundry/" id="azure-aI-foundry" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Microsoft Foundry_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Microsoft Foundry_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Microsoft Foundry</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/powerplatform/" id="power-platform" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Platform and Tools&quot;, &quot;cN&quot;: &quot;CatNav_Platform and Tools_Power Platform_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Platform and Tools_Power Platform_nav&quot;, &quot;ehn&quot;: &quot;Platform and Tools&quot;}">Power Platform</a>
+
+
+</uhf-dropdown>
+
+
+<uhf-dropdown 
+    text="Data" 
+        id="data-development"
+    data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Data&quot;, &quot;cN&quot;: &quot;CatNav_Data_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Date_nav&quot;, &quot;ehn&quot;: &quot;Date&quot;}"
+>
+    
+
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/odata/" id="OData" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Data&quot;, &quot;cN&quot;: &quot;CatNav_Data_OData_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Date_OData_nav&quot;, &quot;ehn&quot;: &quot;Date&quot;}">OData</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/udm/" id="udm" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Data&quot;, &quot;cN&quot;: &quot;CatNav_Data_Unified Data Model (IDEAs)_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Date_Unified Data Model (IDEAs)_nav&quot;, &quot;ehn&quot;: &quot;Date&quot;}">Unified Data Model (IDEAs)</a>
+
+
+</uhf-dropdown>
+
+
+<uhf-dropdown 
+    text="Windows" 
+        id="windows"
+    data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}"
+>
+    
+
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/commandline/" id="windows-command-line" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_Windows Command Line_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_Windows Command Line_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">Windows Command Line</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/ifdef-windows/" id="pax-windows" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_#ifdef Windows_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_#ifdef Windows_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">#ifdef Windows</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/insidemsix/" id="inside-msix" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_Inside MSIX_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_Inside MSIX_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">Inside MSIX</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/windows-music-dev/" id="midi-music" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_MIDI and music_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_MIDI and music_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">MIDI and music</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/react-native/" id="react-native-for-windows" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_React Native_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_React Native_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">React Native</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/oldnewthing/" id="old-new-thing" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_The Old New Thing_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_The Old New Thing_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">The Old New Thing</a>
+            <a class="uhf-nav-item uhf-dropdown-link" href="https://devblogs.microsoft.com/foundry-on-windows/" id="foundry-on-windows" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_Foundry on Windows_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_Foundry on Windows_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">Foundry on Windows</a> <a class="uhf-nav-item uhf-dropdown-link" href="https://blogs.windows.com/windowsdeveloper/" id="windows-developer" data-m="{&quot;compnm&quot;: &quot;UHF&quot;, &quot;view&quot;: &quot;UHF&quot;, &quot;pa&quot;: &quot;UniversalHeader&quot;, &quot;hn&quot;: &quot;Windows&quot;, &quot;cN&quot;: &quot;CatNav_Windows_Windows Developer_nav&quot;, &quot;ecn&quot;: &quot;CatNav_Windows_Windows Developer_nav&quot;, &quot;ehn&quot;: &quot;Windows&quot;}">Windows Developer</a>
+
+
+</uhf-dropdown></uhf-contextual-nav>    <uhf-actions slot="actions">
+        
+
+            <uhf-search 
+                slot="search" 
+                placeholder="Search"
+                search-label="Search"
+                cancel-label="Cancel"
+                suggestions-available-text="{0} suggestions available"
+                searchUrl="/search"
+                autoSuggestUrl=""
+                queryParameterName="query"
+                            >
+            </uhf-search>
+    </uhf-actions>
+</uhf-header>
+<link rel="stylesheet" href="https://uhf.microsoft.com/statics/20261015.09.43/css/style-PF2pqjN1.css" />
+    	<!--/ UHF header -->
+	
+	<main class="devblogs-main" id="main" role="main">
+							<div class="wrapper">
+									<div class="container-evo pt-24">
+
+													<div class="breadcrumbs-wrapper" data-bi-area="breadcrumb" data-bi-id="breadcrumb">
+								<nav aria-label="breadcrumb"><ul class="breadcrumb d-flex flex-wrap p-0 m-0" style="list-style-type: none;"><li><a href="https://devblogs.microsoft.com/">Dev Blogs</a><span class="breadcrumb-icon px-6"></span></li><li><a href="https://devblogs.microsoft.com/oldnewthing/">The Old New Thing</a><span class="breadcrumb-icon px-6"></span></li><li><span class="ebc-current-readmore fw-600" aria-current="page">Why don&#8217;t we run the taskbar and Task Manager at high priority, so they can remain responsive?</span></li></ul></nav>							</div>
+						
+												
+							<!-- alert-banner-starts -->
+														<!-- alert-banner-ends -->
+											</div>
+							
+<div class="container-evo mt-56"> <!-- page container -->
+  <div class="container-three-column-post"><!-- container-sidebar-left-post - top heading -->
+    <div></div>
+    <div class="pe-xl-198">
+        <header class="ms-md-111 mb-40">
+            <div class="d-inline-flex mb-8 gap-24">
+                <div class="d-flex align-items-center">
+                    <span>October 27th, 2026</span>
+                                    </div>
+                <div id="reactionsMini" class="d-flex align-items-center bg-white border-r-24" style="padding:2px 12px;">
+                    <span class="d-flex align-items-center reacts-icons mr-6" style="display:none;"></span><span class="reacts-count">0 reactions</span>                </div>
+            </div>
+            <h1>Why don&#8217;t we run the taskbar and Task Manager at high priority, so they can remain responsive?</h1>        </header><!-- .entry-header -->
+                <div class="d-flex justify-content-between flex-column flex-lg-row align-items-center gap-24 mb-40"
+            style="align-items: start;">
+                            <div class="d-flex gap-10 align-items-center">
+                    <div class="avatar-parent">
+                        <img class="avatar-40" src="https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/2019/02/RaymondChen_5in-150x150.jpg"
+                            alt="" style="width: 40px; height: 40px;">
+                    </div>
+                    <div class="d-flex flex-column">
+                                                <div class="fs-16 fw-600">
+                            <a class="read-more" href="https://devblogs.microsoft.com/oldnewthing/author/oldnewthing" aria-label="View Raymond Chen Author page" data-bi-area="body_author_top"
+                                data-bi-id="post_page_body_author_top_name"
+                                data-bi-name="Raymond Chen">Raymond Chen</a>
+                        </div>
+
+                                            </div>
+                </div>
+                    </div>
+    </div>
+    <div></div>
+</div><!-- container-sidebar-left-post - top heading -->
+<div class="container-three-column-post mb-40" id="single-wrapper">
+    <aside class="post-sidebar sticky scroll-bar pe-12">
+        <div id="get-height">
+            <div class="border-bottom pb-32 mb-32 evo-dropdown-menu" data-mobile-dropdown="true" id="toc-sidebar"
+                data-bi-id="post_page_sidebar_right_table_of_contents" data-bi-area="sidebar_right_table_of_contents">
+                <button
+                    class="evo-dropdown-button mobile-toc btn-no-styles align-items-center justify-content-between mobile-only"
+                    style="width: 100%;" aria-expanded="false" aria-controls="#tocBody" data-bi-id="post_page_sidebar_right_table_of_contents_dropdown">
+                    <h2 class="fs-20 lh-28 toc-title"></h2>
+                    <span class="evo-dropdown-icon d-flex"></span>
+                </button>
+                <h2 class="fs-20 lh-28 toc-title desktop-only"></h2>
+                <nav id="tocBody" class="evo-dropdown-content mobile-toc-content" data-bi-id="post_page_sidebar_right_table_of_contents">
+                    <ul id="toc"></ul>
+                    <a href="javascript:" class="fw-600 lh-28" id="showMoreBtn"
+                        data-bi-id="post_page_sidebar_right_table_of_contents_show_more" data-bi-name="Show more">Show more</a>
+                </nav>
+            </div>
+            <div class="read-next-mobile"></div>
+                    </div><!-- #get-height -->
+    </aside>
+    <article data-clarity-region="article" class="middle-column pe-xl-198" id="post-112800">
+        <div class="entry-content sharepostcontent  remove_dcss"
+            data-bi-area="body_article" data-bi-id="post_page_body_article">
+            <p>If a system becomes CPU-starved, all processes begin to suffer. This includes the taskbar and Task Manager, even though they are often the tools you want to use to stop whatever it is that&#8217;s making your system suffer. Why can&#8217;t we run the taskbar and Task Manager at high priority?</p>
+<p>The catch with running anything at high priority is that unless you have been very careful to avoid it, you will eventually run into a shared resource that you will have to wait for, and you are now stuck. Your priority checkout pass gets you to the front of the line, but if the person at the register has a large shopping cart full of groceries, you just have to wait until they are done before you get your chance.</p>
+<p>Even if the code that protects the shared resource is careful to avoid priority inversion by transferring the priority of the waiter to the thread that owns the resource, you are still stuck waiting, and that owning thread might be doing something that takes a long time, like, say, accessing a file over the network.</p>
+<p>For UI code, this problem is particularly acute because you will eventually have to call into the UI system, and now you&#8217;re duking it out with all the other UI threads in the system.</p>
+<p>The problem is that it&#8217;s hard to fix a runaway system from within that same system. The tools which you can use to try to fix the system may already have been compromised. And it&#8217;s definitely hard to fix a runaway system if your tools have to share critical resources with the thing that is out of control. <a href="https://learn.microsoft.com/en-us/windows/win32/procthread/quality-of-service"> Windows already gives preferential treatment to the program that is in focus</a>, so if you can get focus onto the taskbar or Task Manager, you are doing about as well as you can. But that preferential treatment takes you only so far if those preferred threads find themselves blocked on things that are controlled by non-preferred threads.</p>
+        </div><!-- .entry-content -->
+
+        <!-- AI Disclaimer -->
+            </article>
+    
+<div class="left-sidebar">
+    <nav class="evo-social-sidebar sticky d-flex position-relative" data-bi-area="sidebar_left_social" aria-label="Share">
+        <div class="social-panel bg-white d-inline-flex p-8 border-r-8 border-2">
+            <div style="width: 60px; height: 64px;">
+                                <div id="likesMenu" class="position-relative d-flex flex-column evo-dropdown-menu horizontal-dropdown">
+                    <div id="reaction-feedback" class="visually-hidden" role="alert" aria-atomic="true"></div>
+                    <span  class="post-like" id="postLike-112800"><span class="icon-like-dislike1 d-flex flex-column"><a class='d-flex flex-column align-items-center p-8 btn-outline-secondary border-0 rounded' data-toggle='tooltip' aria-label='Sign in to react, vote count 0' title='Sign in to react' href='https://devblogs.microsoft.com/oldnewthing/wp-login.php?redirect_to=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F' data-bi-id='post_page_sidebar_left_social_Sign in to react' data-bi-name='Sign in to react'><span class='votes-count fw-600'> 0</span></a><div id="like-announcement" class="visually-hidden" role="status" aria-live="polite"></div></span></span>                    <nav id="emoji-reactions" class="evo-dropdown-content" style="display: none;">
+                        <ul class="sharing-btns rounded bg-white d-flex flex-row m-0 p-8" role="menu" aria-label="Reactions">
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_like" data-bi-name="" data-post-id="112800" data-react="like" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="like" onclick="post_like_vote_add(112800,'a69157d369',0,38,'like');">
+                                    
+                                </button>
+                            </li>
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_heart" data-bi-name="" data-post-id="112800" data-react="heart" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="heart" onclick="post_like_vote_add(112800,'a69157d369',0,38,'heart');">
+                                    
+                                </button>
+                            </li>
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_celebrate" data-bi-name="" data-post-id="112800" data-react="celebrate" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="celebrate" onclick="post_like_vote_add(112800,'a69157d369',0,38,'celebrate');">
+                                    
+                                </button>
+                            </li>
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_mind-blown" data-bi-name="" data-post-id="112800" data-react="mind-blown" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="mind blown" onclick="post_like_vote_add(112800,'a69157d369',0,38,'mind-blown');">
+                                    
+                                </button>
+                            </li>
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_intriguing" data-bi-name="" data-post-id="112800" data-react="intriguing" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="intriguing" onclick="post_like_vote_add(112800,'a69157d369',0,38,'intriguing');">
+                                    
+                                </button>
+                            </li>
+                            <li role="none">
+                                <button data-bi-id="post_page_sidebar_left_social_compelling" data-bi-name="" data-post-id="112800" data-react="compelling" role="menuitem" class="d-flex flex-row align-items-center evo-dropdown-item btn-outline-secondary border-0 rounded p-8 gap-8 " title="" aria-label="compelling" onclick="post_like_vote_add(112800,'a69157d369',0,38,'compelling');">
+                                    
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+                            <div class="d-flex flex-column" style="width: 60px; height: 64px;">
+                    <a class="d-flex flex-column align-items-center p-8 btn-outline-secondary border-0 rounded" data-toggle="tooltip" title="Go to comments section" aria-label="Jump to comments, 1 total comments" href="#comments" data-bi-id="post_page_sidebar_left_social_comment" data-bi-name="comment">
+                        
+                        <span class="votes-count fw-600"> 1</span>
+                    </a>
+                </div>
+                        <div class="d-flex flex-column" style="width: 60px; height: 64px;">
+                <div class="position-relative d-flex flex-column evo-dropdown-menu">
+                                        <button data-bi-id="post_page_sidebar_left_social_share" data-bi-name="click to open" data-toggle="tooltip" title="Share this post" class="evo-dropdown-button d-flex flex-column align-items-center p-8 btn-outline-secondary border-0 rounded" type="button" aria-expanded="false" aria-controls="#social-sharing-buttons" aria-label="Share on social media, 0 total shares">
+                        
+                        <div data-post-id="112800" class="evo-count-shares votes-count fw-600 d-flex p-6 align-items-center border-r-40 clr-neutral clr-brand-bg" style="position:relative;">
+                            0                        </div>
+                    </button>
+                    <nav id="social-sharing-buttons" class="evo-dropdown-content" style="display: none;">
+                        <ul class="sharing-btns rounded bg-white d-flex flex-column m-0 p-8" role="menu">
+                            <li role="presentation">
+                                <a data-bi-id="post_page_sidebar_left_social_share" data-bi-name="Share on Facebook" role="menuitem" data-post-id="112800" class="share-post d-flex flex-row align-items-center evo-dropdown-item facebook btn-outline-secondary border-0 rounded p-8 gap-8" href="https://www.facebook.com/sharer/sharer.php?u=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" title="Share on Facebook" aria-label="Share on Facebook" target="_blank" rel="noopener noreferrer nofollow" tabindex="-1">
+                                    <img style="max-width: unset;" src="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/social-icons/facebook.svg" alt="Facebook">
+                                    <span class="text-nowrap fs-16">Share on Facebook</span>
+                                </a>
+                            </li>
+                            <li role="presentation">
+                                <a data-bi-id="post_page_sidebar_left_social_share" data-bi-name="Share on X" role="menuitem" data-post-id="112800" class="share-post d-flex flex-row align-items-center evo-dropdown-item twitter btn-outline-secondary border-0 rounded p-8 gap-8" href="https://twitter.com/intent/tweet?url=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/&text=Why don&#039;t we run the taskbar and Task Manager at high priority, so they can remain responsive?" title="Share on X" aria-label="Share on X" target="_blank" rel="noopener noreferrer nofollow" tabindex="-1">
+                                    
+                                    <span class="text-nowrap fs-16">Share on X</span>
+                                </a>
+                            </li>
+                            <li role="presentation">
+                                <a data-bi-id="post_page_sidebar_left_social_share" data-bi-name="Share on LinkedIn" role="menuitem" data-post-id="112800" class="share-post d-flex flex-row align-items-center evo-dropdown-item linkedin btn-outline-secondary border-0 rounded p-8 gap-8" href="https://www.linkedin.com/shareArticle?mini=true&amp;url=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" title="Share on LinkedIn" aria-label="Share on LinkedIn" target="_blank" rel="noopener noreferrer nofollow" tabindex="-1">
+                                    <img style="max-width: unset;" src="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/social-icons/linkedin.svg" alt="LinkedIn">
+                                    <span class="text-nowrap fs-16">Share on Linkedin</span>
+                                </a>
+                            </li>
+                            <!--    <li role="presentation">
+                                <button role="menuitem"
+                                    class="d-flex flex-row align-items-center evo-dropdown-item copy-url-button btn-outline-secondary border-0 rounded p-8 gap-8"
+                                    type="button" tabindex="-1" style="width: 100%;">
+                                    
+                                    <span class="text-nowrap fs-16">Copy Link</span>
+                                </button>
+                            </li> -->
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </nav>
+</div></div><!-- This is the end of main section three column -->
+<div class="container-three-column-post mb-40">
+    <div></div>
+    <div>
+        <div class="border-bottom pb-40 mb-64"><div class="mb-24"><h3 class="fs-16 fw-600 mb-16">Category</h3><ul class="ul-no-style d-flex justify-content-start flex-wrap gap-12 post-topics"><li><a data-bi-area="body_category" data-bi-id="post_page_body_category" data-bi-name="Old New Thing Category" class="d-flex align-items-center btn-outline-secondary px-8" href="https://devblogs.microsoft.com/oldnewthing/category/oldnewthing/"
+                            aria-label="Old New Thing Category">Old New Thing</a></li></ul></div><div class="mb-24"><h3 class="fs-16 fw-600 mb-16">Topics</h3><ul class="ul-no-style d-flex justify-content-start flex-wrap gap-12 post-topics"><li><a data-bi-area="body_topics" data-bi-id="post_page_body_topics" data-bi-name="Other tag" class="d-flex align-items-center btn-outline-secondary px-8" href="https://devblogs.microsoft.com/oldnewthing/tag/other/"
+							aria-label="Other tag">Other</a></li></ul></div><div class="post-detail-share social-panel" data-bi-area="body_share post">
+					<h3 class="fs-16 fw-600 mb-16 x-hidden-focus">Share</h3>
+					<ul class="ul-no-style d-flex social-share-list gap-24 pl-0">
+						<li class="social-share-item">
+							<a href="https://www.facebook.com/sharer/sharer.php?u=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" data-bi-id="post_page_body_share post" data-post-id=112800 data-bi-name="Share on Facebook" aria-label="Share on Facebook" rel="noopener noreferrer nofollow" target="_blank" class="d-flex share-post">
+								<span aria-hidden="true" class="msx-svg"></a>
+						</li>
+						<li class="social-share-item">
+							<a href="https://twitter.com/intent/tweet?url=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/&text=Why don&#8217;t we run the taskbar and Task Manager at high priority, so they can remain responsive?" data-bi-id="post_page_body_share post" data-post-id=112800 data-bi-name="Share on X" aria-label="Share on X" target="_blank" rel="noreferrer noopener" class="d-flex share-post">
+								<span aria-hidden="true" class="msx-svg"></span></a>
+						</li>
+						<li class="list-inline-item social-share-item">
+							<a href="https://www.linkedin.com/shareArticle?mini=true&amp;url=https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/" data-bi-id="post_page_body_share post" data-post-id=112800 data-bi-name="Share on LinkedIn" aria-label="Share on LinkedIn" target="_blank" rel="noreferrer noopener" class="d-flex share-post"><span aria-hidden="true" class="msx-svg"></span></a>
+						</li>
+					</ul>
+				</div></div>        <div><!-- Author section -->
+            <h2 class="fs-20 mb-24">Author</h2>
+            <div class="d-flex gap-24 flex-column flex-lg-row"><div style="flex: 0 0 100%"><div class="d-flex gap-12 align-items-start"><div class="avatar-parent" style="flex:0 0 auto;"><img class="avatar-40" src="https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/2019/02/RaymondChen_5in-150x150.jpg" alt="Raymond Chen" style="width: 64px; height: 64px;"></div><div style="flex: 1 0;"><div class="fs-16 fw-600"><a data-bi-area="body_author_bottom" data-bi-id="post_page_body_author_bottom_name" data-bi-name="Raymond Chen"  class="read-more" href="https://devblogs.microsoft.com/oldnewthing/author/oldnewthing">Raymond Chen</a></div></div></div><p class="pt-20 fs-14">Raymond has been involved in the evolution of Windows for more than 30 years. In 2003, he began a Web site known as The Old New Thing which has grown in popularity far beyond his wildest imagination, a development which still gives him the heebie-jeebies. The Web site spawned a book, coincidentally also titled The Old New Thing (Addison Wesley 2007). He occasionally appears on the Windows Dev Docs Twitter account to tell stories which convey no useful information.</p></div></div>        </div>
+    </div>
+    <div></div>
+</div>  <div class="container-three-column-even"><!-- start comments bottom full-width section -->
+    <div></div><!-- Place holder for left sidebar -->
+    <div class="mb-80" style="max-width: 1324px;"><!-- start max-width bottom section -->
+      <!-- Comments section -->
+      <div id="comments" class="mb-40" data-bi-area="body_comments" data-bi-id="post_page_body_comments">
+        
+
+    <div id="comments" class="comments-area" data-bi-id="post_page_body_comments">
+    				<h2 class="comments-title">
+            1 comment		</h2>
+		
+	<p class="must-log-in"><span class="login-text"> Join the discussion.</span></p>	<div id="respond" class="comment-respond">
+		<h3 id="reply-title" class="comment-reply-title"><a href="javascript:void(0)" title="Leave a comment" class="btn btn-primary">Leave a comment</a><span class="screen-reader-only"><a rel="nofollow" id="cancel-comment-reply-link" href="/oldnewthing/20261027-00/?p=112800%2F#respond" style="display:none;">Cancel reply</a></span></h3><p class="must-log-in"><a href='https://devblogs.microsoft.com/oldnewthing/wp-login.php?redirect_to=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F%23comments' class='btn btn-primary'>Sign in</a></p>	</div><!-- #respond -->
+	<div class="comment-reply-respond" id="comment-reply-respond">
+	<form method="post" action="https://devblogs.microsoft.com/oldnewthing/wp-comments-post.php" id="commentform" class="wp-core-ui">
+		<div id="editor-container-0">
+			<div id="wp-comment_reply_content-wrap" class="wp-core-ui wp-editor-wrap html-active"><div id="wp-comment_reply_content-editor-container" class="wp-editor-container"><div id="qt_comment_reply_content_toolbar" class="quicktags-toolbar hide-if-no-js"></div><textarea class="wp-editor-area" style="height: 200px" cols="40" name="comment_reply_content" id="comment_reply_content"></textarea></div>
+</div>
+
+			<div class="vote">
+				<span class="form-submit">
+					<input name="submit" type="submit" id="submit" class="btn btn-primary" value="Reply">
+					<input type="button" value="Cancel" id="cancel-reply-comment-form" name="Cancel" class="btn btn-secondary">
+					<input type="hidden" name="comment_post_ID" value="112800" id="comment_post_ID">
+					<input type="hidden" name="comment_parent" id="comment_parent" value="0">
+				</span>
+				<span class="code-of-conduct"><a href="https://aka.ms/msftqacodeconduct">Code of Conduct</a></span>
+			</div>
+			<input type="hidden" id="_wp_unfiltered_html_comment_disabled" name="_wp_unfiltered_html_comment" value="ad7af05511">
+		</div><!-- editor-container -->
+	</form>
+</div>
+					<div class="cm-top-section">
+				<div class="column center">
+						<span class="solid border-bottom"></span>
+				</div>
+				<div class="column right">
+					<div class="dev_order_list">
+						<span id="sort-filter-label" class="">Sort by :</span>
+						<div class="sel" id="sort-dropdown">
+							<div role="combobox" aria-labelledby="sort-filter-label" aria-controls="sort-filter-options" aria-expanded="false" aria-haspopup="listbox" class="label" tabindex="0">Newest</div>
+							<div role="listbox" aria-labelledby="sort-filter-label" id="sort-filter-options" class="options sort-comment" data-bi-area="body_comments" >
+								<a role="option" aria-selected="true" aria-posinset="1" aria-setsize="3" selected href="javascript:void(0)" value="latest" data-bi-id="post_page_body_comments" aria-label="Newest" data-bi-name="comments_sort_Newest" class="selected">Newest</a>
+								<a role="option" aria-selected="false" aria-posinset="2" aria-setsize="3" href="javascript:void(0)" value="voted" data-bi-id="post_page_body_comments" aria-label="Popular" data-bi-name="comments_sort_Popular" >Popular</a>
+								<a role="option" aria-selected="false" aria-posinset="3" aria-setsize="3" href="javascript:void(0)" value="old" data-bi-id="post_page_body_comments" aria-label="Oldest" data-bi-name="comments_sort_Oldest">Oldest</a>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+				<ul class="commentlist">
+								
+    <li class="comment byuser comment-author-georggeorg-rottensteiner-de even thread-even depth-1 comment-show" id="li-comment-144877">
+    	<article id="comment-144877" class="comment ">
+						<div class="comment-author vcard">
+				<img alt='' data-src='https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/letter-avatar/7c16bb6e93ad32657861866f552f1220.svg' src="data:,"  data-srcset='https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/letter-avatar/64e2217b4778ec6bcf892f0189946841.svg 2x' class="avatar avatar-40 photo lazyload" height='40' width='40' decoding='async'/>			</div><!-- .comment-author .vcard -->
+        <header>
+			
+					<!-- <span class="author-name" <cite class="fn">Georg Rottensteiner</cite> 					</span> -->
+					<span class="author-name fs-16 fw-600">
+												Georg Rottensteiner											</span>
+					
+					<span class="comment-date fs-14">
+						<!-- <time pubdate datetime="2026-10-27T22:27:16-07:00">
+							          	</time> -->
+				
+					<time pubdate datetime="2026-10-27T22:27:16-07:00">
+							October 27, 2026          	</time> 
+				<span class="cm_edited"><span class="dot-darker">&#183;</span> Edited</span>				 	</span>
+					
+					 <span class="voting"><span id="loggedoutvotes144877"><span class="icon-like-dislike"><button class='btn-no-styles comment-reply-login x-hidden-focus' title='Login to vote' data-toggle='tooltip'
+				onclick='window.location="https://devblogs.microsoft.com/oldnewthing/wp-login.php?redirect_to=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F%3Fcommentid%3D144877%2F%23comments"' data-bi-id='post_page_body_comments' data-bi-name='Login to vote' aria-label='Login to vote, 0 total votes'><span class='vote_counts'> 0</span></button></span></span>				</span>
+				
+					<div class="comment-meta commentmetadata">
+						
+						
+						<span class="copy-link">
+							<button class="copy-link-anchor btn" title="Copy link" data-toggle="tooltip" data-clipboard-text="https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/&commentid=144877#comment-144877" targetUri="https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800/&commentid=144877#comment-144877">
+								<span class="sr-only">Copy link to comment by Georg Rottensteiner</span>
+								
+							</button>
+							<div class="copy-link-live visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+						</span>
+
+						<span class="collapse-comment" id="collapse-comment-144877" data-toggle="collapse">
+							<!-- <a href="javascript:void(0)" title="Collapse this comment"> -->
+							<button class="btn" title="Collapse this comment" data-toggle="tooltip" aria-expanded="true" aria-controls="comment-text-144877">
+							<span class="sr-only">Collapse comment by Georg Rottensteiner</span>	
+							<span class="svg-icon">						
+								
+							</span>
+							</button>
+							<!-- </a> -->
+						</span>
+
+											</div><!-- .comment-meta .commentmetadata -->
+				</header>
+																		<div class="comment-content default-cm-content" id="comment-text-144877">
+									<p>What I always wanted to know about Task Manager behaviour:</p>
+<p>The &#8220;End Task&#8221; option only asks nicely whether the target process might consider closing if it feels like it. There&#8217;s no &#8220;Kill it right now&#8221; option as far as I can see.<br />
+I understand that ending nicely is the preferred option for the common user, as the chance of half-released resources decreases. But couldn&#8217;t there be a kill it now option anyway; may it be hidden behind a Shift-Click or something?</p>
+									</div>
+
+				
+							
+					<footer><div class="reply fs-14">
+						 <a class='comment-reply-login x-hidden-focus' href='https://devblogs.microsoft.com/oldnewthing/wp-login.php?redirect_to=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F%23comments'>Log in to Vote or Reply</a></div></footer>				
+			        
+      </article><!-- #comment-## -->
+    </li><!-- #comment-## -->
+					</ul><!-- .commentlist -->
+			</div><!-- #comments .comments-area -->
+      </div>
+      <div class="read-next-desktop">
+        <div class="read-next">
+          <!-- Read Next Section -->
+    <h2 class="fs-20 mb-24">Read next</h2>
+    <div>
+        <article>
+  <div class="box bg-white p-12 rounded shadow mb-24 position-relative border-1" style="max-width: 334px;">
+      <div class="fs-14 mb-16 fw-light">October 26, 2026</div>
+      <h3 class="fs-16 mb-16"><a class="single-click" data-bi-area="sidebar_right_read_next" data-bi-id="post_page_sidebar_right_read_next_singleclick" data-bi-name="Puzzling out why a program doesn&#8217;t work when run from a batch file, but works when double-clicked from Explorer" href="https://devblogs.microsoft.com/oldnewthing/20261026-00/?p=112797/">Puzzling out why a program doesn&#8217;t work when run from a batch file, but works when double-clicked from Explorer</a></h3>
+      <div class="d-flex gap-6 align-items-center"><div class="d-flex gap-6 align-items-center">
+            <div class="avatar-parent">
+                        <img src="https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/2019/02/RaymondChen_5in-150x150.jpg" style="width: 20px; height: 20px;"
+            class="avatar-20 rounded-pill a" alt="">
+        </div>
+        <span class="fs-14">Raymond Chen</span>
+    </div></div>
+</div>
+</article><article>
+  <div class="box bg-white p-12 rounded shadow mb-24 position-relative border-1" style="max-width: 334px;">
+      <div class="fs-14 mb-16 fw-light">October 20, 2026</div>
+      <h3 class="fs-16 mb-16"><a class="single-click" data-bi-area="sidebar_right_read_next" data-bi-id="post_page_sidebar_right_read_next_singleclick" data-bi-name="Microspeak: Drain the slide, back-up slides" href="https://devblogs.microsoft.com/oldnewthing/20261020-00/?p=112784/">Microspeak: Drain the slide, back-up slides</a></h3>
+      <div class="d-flex gap-6 align-items-center"><div class="d-flex gap-6 align-items-center">
+            <div class="avatar-parent">
+                        <img src="https://devblogs.microsoft.com/oldnewthing/wp-content/uploads/sites/38/2019/02/RaymondChen_5in-150x150.jpg" style="width: 20px; height: 20px;"
+            class="avatar-20 rounded-pill a" alt="">
+        </div>
+        <span class="fs-14">Raymond Chen</span>
+    </div></div>
+</div>
+</article>    </div>
+            </div>
+      </div>
+      <!-- Stay Informed Section -->
+      
+<div class="stay-informed d-flex align-items-stretch flex-column flex-lg-row border-2 border-r-8 p-16">
+    <div class="newsletter-form w-100" id="subscribe_form" data-bi-area="body_newsletter" data-bi-id="post_page_body_newsletter">
+        <h2 id="stayInformed" class="fs-20 fw-600 mb-8">Stay informed</h2>
+        <div class="fs-14 pb-16">Get notified when new posts are published.</div>
+            <form method="post" action="https://devblogs.microsoft.com/oldnewthing?na=s" onsubmit="return newsletter_check(this)">
+                <input type="hidden" name="nlang" value="">
+                <div class="d-flex flex-column gap-12 mb-12">
+                    <label for="ne">Email <span>*</span></label>
+                    <div class="d-flex align-items-center justify-content-start flex-md-grow-1 bg-white" style="align-self: stretch; height: 32px; border-radius: 4px; overflow: hidden; border: 1px solid var(--clr-border); width: 90%;"> <input class="x-hidden-focus bg-white" style="flex: 1 1 0; align-self: stretch; border: none; padding: 4px 10px; font-family: Segoe UI; color: var(--clr-body);" type="email" name="ne" placeholder="Enter your email" required="" aria-required="true" autocomplete="email">
+                    </div><div class="tnp-field tnp-field-profile"><label for="tnp-profile_1">Country/Region <span>*</span></label>
+                        <select class="tnp-profile tnp-profile-1 mt-8" id="tnp-profile_1" name="np1" aria-label="Select Country/Region" autocomplete="country-name" required aria-required="true"><option value="" selected disabled>Select...</option><option>United States</option><option>Afghanistan</option><option>Åland Islands</option><option>Albania</option><option>Algeria</option><option>American Samoa</option><option>Andorra</option><option>Angola</option><option>Anguilla</option><option>Antarctica</option><option>Antigua and Barbuda</option><option>Argentina</option><option>Armenia</option><option>Aruba</option><option>Australia</option><option>Austria</option><option>Azerbaijan</option><option>Bahamas</option><option>Bahrain</option><option>Bangladesh</option><option>Barbados</option><option>Belarus</option><option>Belgium</option><option>Belize</option><option>Benin</option><option>Bermuda</option><option>Bhutan</option><option>Bolivia</option><option>Bonaire</option><option>Bosnia and Herzegovina</option><option>Botswana</option><option>Bouvet Island</option><option>Brazil</option><option>British Indian Ocean Territory</option><option>British Virgin Islands</option><option>Brunei</option><option>Bulgaria</option><option>Burkina Faso</option><option>Burundi</option><option>Cabo Verde</option><option>Cambodia</option><option>Cameroon</option><option>Canada</option><option>Cayman Islands</option><option>Central African Republic</option><option>Chad</option><option>Chile</option><option>China</option><option>Christmas Island</option><option>Cocos (Keeling) Islands</option><option>Colombia</option><option>Comoros</option><option>Congo</option><option>Congo (DRC)</option><option>Cook Islands</option><option>Costa Rica</option><option>Côte dIvoire</option><option>Croatia</option><option>Curaçao</option><option>Cyprus</option><option>Czechia</option><option>Denmark</option><option>Djibouti</option><option>Dominica</option><option>Dominican Republic</option><option>Ecuador</option><option>Egypt</option><option>El Salvador</option><option>Equatorial Guinea</option><option>Eritrea</option><option>Estonia</option><option>Eswatini</option><option>Ethiopia</option><option>Falkland Islands</option><option>Faroe Islands</option><option>Fiji</option><option>Finland</option><option>France</option><option>French Guiana</option><option>French Polynesia</option><option>French Southern Territories</option><option>Gabon</option><option>Gambia</option><option>Georgia</option><option>Germany</option><option>Ghana</option><option>Gibraltar</option><option>Greece</option><option>Greenland</option><option>Grenada</option><option>Guadeloupe</option><option>Guam</option><option>Guatemala</option><option>Guernsey</option><option>Guinea</option><option>Guinea-Bissau</option><option>Guyana</option><option>Haiti</option><option>Heard Island and McDonald Islands</option><option>Honduras</option><option>Hong Kong SAR</option><option>Hungary</option><option>Iceland</option><option>India</option><option>Indonesia</option><option>Iraq</option><option>Ireland</option><option>Isle of Man</option><option>Israel</option><option>Italy</option><option>Jamaica</option><option>Jan Mayen</option><option>Japan</option><option>Jersey</option><option>Jordan</option><option>Kazakhstan</option><option>Kenya</option><option>Kiribati</option><option>Korea</option><option>Kosovo</option><option>Kuwait</option><option>Kyrgyzstan</option><option>Laos</option><option>Latvia</option><option>Lebanon</option><option>Lesotho</option><option>Liberia</option><option>Libya</option><option>Liechtenstein</option><option>Lithuania</option><option>Luxembourg</option><option>Macau SAR</option><option>Madagascar</option><option>Malawi</option><option>Malaysia</option><option>Maldives</option><option>Mali</option><option>Malta</option><option>Marshall Islands</option><option>Martinique</option><option>Mauritania</option><option>Mauritius</option><option>Mayotte</option><option>Mexico</option><option>Micronesia</option><option>Moldova</option><option>Monaco</option><option>Mongolia</option><option>Montenegro</option><option>Montserrat</option><option>Morocco</option><option>Mozambique</option><option>Myanmar</option><option>Namibia</option><option>Nauru</option><option>Nepal</option><option>Netherlands</option><option>New Caledonia</option><option>New Zealand</option><option>Nicaragua</option><option>Niger</option><option>Nigeria</option><option>Niue</option><option>Norfolk Island</option><option>North Macedonia</option><option>Northern Mariana Islands</option><option>Norway</option><option>Oman</option><option>Pakistan</option><option>Palau</option><option>Palestinian Authority</option><option>Panama</option><option>Papua New Guinea</option><option>Paraguay</option><option>Peru</option><option>Philippines</option><option>Pitcairn Islands</option><option>Poland</option><option>Portugal</option><option>Puerto Rico</option><option>Qatar</option><option>Réunion</option><option>Romania</option><option>Rwanda</option><option>Saba</option><option>Saint Barthélemy</option><option>Saint Kitts and Nevis</option><option>Saint Lucia</option><option>Saint Martin</option><option>Saint Pierre and Miquelon</option><option>Saint Vincent and the Grenadines</option><option>Samoa</option><option>San Marino</option><option>São Tomé and Príncipe</option><option>Saudi Arabia</option><option>Senegal</option><option>Serbia</option><option>Seychelles</option><option>Sierra Leone</option><option>Singapore</option><option>Sint Eustatius</option><option>Sint Maarten</option><option>Slovakia</option><option>Slovenia</option><option>Solomon Islands</option><option>Somalia</option><option>South Africa</option><option>South Georgia and South Sandwich Islands</option><option>South Sudan</option><option>Spain</option><option>Sri Lanka</option><option>St Helena</option><option>Ascension</option><option>Tristan da Cunha</option><option>Suriname</option><option>Svalbard</option><option>Sweden</option><option>Switzerland</option><option>Taiwan</option><option>Tajikistan</option><option>Tanzania</option><option>Thailand</option><option>Timor-Leste</option><option>Togo</option><option>Tokelau</option><option>Tonga</option><option>Trinidad and Tobago</option><option>Tunisia</option><option>Turkey</option><option>Turkmenistan</option><option>Turks and Caicos Islands</option><option>Tuvalu</option><option>U.S. Outlying Islands</option><option>U.S. Virgin Islands</option><option>Uganda</option><option>Ukraine</option><option>United Arab Emirates</option><option>United Kingdom</option><option>Uruguay</option><option>Uzbekistan</option><option>Vanuatu</option><option>Vatican City</option><option>Venezuela</option><option>Vietnam</option><option>Wallis and Futuna</option><option>Yemen</option><option>Zambia</option><option>Zimbabwe</option></select>
+                        </div><div id="privacyField" class="tnp-field tnp-privacy-field">
+                        <label>I would like to receive the The Old New Thing Newsletter. <a style="color: var(--clr-body-link); text-decoration: underline;" target="_blank" href="https://go.microsoft.com/fwlink/?LinkId=521839">Privacy Statement.</a></label>
+                    </div>
+                    <div id="consentContainer"></div>
+                    <div class="d-flex">
+                        <button class="tnp-submit btn-primary" type="submit" value="Subscribe">Subscribe</button>
+                    </div>
+                </div>
+            </form>
+        </div>        <div class="follow-blog w-100">
+        <div class="fs-20 fw-600 mb-16">Follow this blog</div>
+        <ul class="ul-no-style d-inline-flex justify-content-start align-items-center flex-wrap gap-24" data-bi-area="body_blog_follow">
+            <li><a style="width: 24px; height: 24px; position: relative;" title="twitter" data-bi-id="post_page_body_blog_follow" data-bi-name="The Old New Thing-twitter" aria-label="Follow Us on Twitter" target="_blank" rel="noopener noreferrer" href="https://twitter.com/ChenCravat"></a></li><li><a style="width: 24px; height: 24px; position: relative;" title="youtube" data-bi-id="post_page_body_blog_follow" data-bi-name="The Old New Thing-youtube" aria-label="Follow Us on YouTube" target="_blank" rel="noopener noreferrer" href="https://www.youtube.com/playlist?list=PLlrxD0HtieHge3_8Dm48C0Ns61I6bHThc"><img src="https://devblogs.microsoft.com/oldnewthing/wp-content/themes/devblogs-evo/images/social-icons/youtube.svg" alt="youtube" /></a></li><li><a style="width: 24px; height: 24px; position: relative;" title="GitHub" data-bi-id="post_page_body_blog_follow" data-bi-name="The Old New Thing-github" aria-label="Follow Us on GitHub" target="_blank" rel="noopener noreferrer" href="https://github.com/oldnewthing"></a></li><li><a style="width: 24px; height: 24px; position: relative;" title="RSS Feed" data-bi-id="post_page_body_blog_follow" data-bi-name="The Old New Thing-rss-feed" aria-label="Subscribe to Our RSS Feed" target="_blank" rel="noopener noreferrer" href="https://devblogs.microsoft.com/oldnewthing/feed/"></a></li>        </ul>
+    </div>
+</div>
+    </div><!-- end max-width bottom section -->
+  </div><!-- end comments bottom full-width section -->
+</div>
+
+<!-- Comment icon loader model / popup -->
+<div class="modal fade bd-example-modal-sm" id="dev-cm-error-msg" tabindex="-1" role="dialog"
+  aria-labelledby="mySmallModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-sm modal-dialog-centered" style="margin: 0 auto;">
+    <div class="modal-content">
+      <div class="modal-body" style="text-align:center;">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Comment icon cofirm model / popup -->
+<div class="modal fade dev-cm-icon-modal" tabindex="-1" role="dialog" aria-labelledby="commentModalLabel"
+  aria-hidden="true" id="mi-modal">
+  <div class="modal-dialog modal-dialog-centered" style="margin: 0 auto; max-width:370px;">
+    <div class="modal-content">
+      <div class="modal-header" style="border-bottom: none;">
+        <div class="modal-title" id="myModalLabel" style="font-size: 16px;">Are you sure you wish to delete this
+          comment?</div>
+        <!-- <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button> -->
+      </div>
+      <div class="modal-footer" style="border-top: none;">
+        <button type="button" class="btn btn-primary" id="modal-btn-si">OK</button>
+        <button type="button" class="btn btn-secondary" id="modal-btn-no">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Code Header for Post detail pages and Code to append a click to copy button -->
+<!-- End -->
+
+
+
+</div><!-- end .wrapper -->
+</main><!-- end #main -->
+
+<!-- Add a hidden dark theme button to trigger the toggle function -->
+<div style="display:none;">
+        <div class="login-section c-me d-flex align-items-center">
+        <a class="login-but d-flex align-items-center" data-bi-area="dev blogs header" data-bi-name="Sign in" href="https://devblogs.microsoft.com/oldnewthing/wp-login.php?redirect_to=https%3A%2F%2Fdevblogs.microsoft.com%2Foldnewthing%2F20261027-00%2F%3Fp%3D112800%2F">Sign in</a>
+    </div>
+    </div><div id="theme-picker" data-bi-area="dev blogs header" data-bi-id="theme-picker" data-bi-name="Switch to dark theme" class="c-me theme-picker d-flex align-items-center" style="margin-right: 14px;">
+    <button id="theme-picker-button" style="height: 25px;" class="d-flex btn border-r-12"
+        aria-pressed="false" aria-label="Dark theme switch">
+        <span class="theme-text d-flex align-items-center"
+            style="overflow-x: visible; padding: 0px 8px; gap: 6px; font-family: 'Segoe UI', sans-serif; font-size: 13px;"></svg>Theme</span>
+    </button>
+</div>
+    
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+				
+				<div id="wp-link-backdrop" style="display: none"></div>
+		<div id="wp-link-wrap" class="wp-core-ui" style="display: none" role="dialog" aria-modal="true" aria-labelledby="link-modal-title">
+		<form id="wp-link" tabindex="-1">
+		<input type="hidden" id="_ajax_linking_nonce" name="_ajax_linking_nonce" value="127be98c1e" />		<h2 id="link-modal-title">Insert/edit link</h2>
+		<button type="button" id="wp-link-close"><span class="screen-reader-text">
+			Close		</span></button>
+		<div id="link-selector">
+			<div id="link-options">
+				<p class="howto" id="wplink-enter-url">Enter the destination URL</p>
+				<div>
+					<label><span>URL</span>
+					<input id="wp-link-url" type="text" aria-describedby="wplink-enter-url" /></label>
+				</div>
+				<div class="wp-link-text-field">
+					<label><span>Link Text</span>
+					<input id="wp-link-text" type="text" /></label>
+				</div>
+				<div class="link-target">
+					<label><span></span>
+					<input type="checkbox" id="wp-link-target" /> Open link in a new tab</label>
+				</div>
+			</div>
+			<p class="howto" id="wplink-link-existing-content">Or link to existing content</p>
+			<div id="search-panel">
+				<div class="link-search-wrapper">
+					<label>
+						<span class="search-label">Search</span>
+						<input type="search" id="wp-link-search" class="link-search-field" autocomplete="off" aria-describedby="wplink-link-existing-content" />
+						<span class="spinner"></span>
+					</label>
+				</div>
+				<div id="search-results" class="query-results" tabindex="0">
+					<ul></ul>
+					<div class="river-waiting">
+						<span class="spinner"></span>
+					</div>
+				</div>
+				<div id="most-recent-results" class="query-results" tabindex="0">
+					<div class="query-notice" id="query-notice-message">
+						<em class="query-notice-default">No search term specified. Showing recent items.</em>
+						<em class="query-notice-hint screen-reader-text">
+							Search or use up and down arrow keys to select an item.						</em>
+					</div>
+					<ul></ul>
+					<div class="river-waiting">
+						<span class="spinner"></span>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="submitbox">
+			<div id="wp-link-cancel">
+				<button type="button" class="button">Cancel</button>
+			</div>
+			<div id="wp-link-update">
+				<input type="submit" value="Add Link" class="button button-primary" id="wp-link-submit" name="wp-link-submit">
+			</div>
+		</div>
+		</form>
+		</div>
+		    
+            		
+		<!-- Model form for code insert  -->
+	<div class="modal fade" id="codeModal" tabindex="-1" role="dialog" aria-labelledby="codeModalLabel" aria-hidden="true">
+	<div class="modal-dialog modal-dialog-centered" role="document">
+		<div class="modal-content">
+		<div class="modal-header">
+			<h5 class="modal-title" id="codeModalLabel">Code Block</h5>
+			<button type="button" class="close" onclick="myCodeCancelFunction()" data-dismiss="modal" aria-label="Close">
+			<span aria-hidden="true">&times;</span>
+			</button>
+		</div>
+		<form id="myForm" action="#">
+			<div class="modal-body">
+				<div class="form-group">
+					<label for="code-text">Paste your code snippet</label>
+					<textarea class="form-control" id="code-text" style="height: 150px;"></textarea>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<button type="button" onclick="myCodeFunction()" class="btn btn-primary">Ok</button>
+				<button type="button" name="Cancel" onclick="myCodeCancelFunction()" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+			</div>
+		</form>
+		</div>
+	</div>
+	</div>
+
+
+
+  
+
+<!-- UHF footer -->
+<uhf-footer locale="en-us" partnerId="DEV_Blogs" footerId="DEV_BlogsFooter" theme="light">
+    
+    
+<uhf-footer-nav slot="uhf-footer-nav">
+            <div class="uhf-footer-nav-row">
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="What&#x27;s new" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/surface/devices/surface-laptop-ultra?icid=DSM_Footer_WhatsNew_SurfaceLaptopUltra" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Surface Laptop Ultra_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_Surface Laptop Ultra_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Surface Laptop Ultra</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/surface/devices/surface-pro" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Surface Pro_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_NewSurfacePro_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Surface Pro</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/surface/devices/surface-laptop" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Surface Laptop_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_SurfaceLaptop_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Surface Laptop</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/surface/devices/surface-rtx-spark-dev-box?icid=DSM_Footer_WhatsNew_SurfaceRTXSparkDevBox" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Surface RTX Spark Dev Box_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_footer_whatsnew_SurfaceRTXSparksDevBox_nav_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Surface RTX Spark Dev Box</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/copilot?icid=DSM_Footer_WhatsNew_Copilot" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Explore Copilot_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_CopilotMicrosoft_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Explore Copilot</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/microsoft-products-and-apps" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Explore Microsoft products_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_ExploreMicrosoftProducts_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Explore Microsoft products</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/windows/apps-for-windows?icid=DSM_Footer_WhatsNew_Windows11apps" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_What&#x27;s new_Windows 11 apps_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Whats_New_Footer_WhatsNew_Windows_11_apps_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Windows 11 apps</a>                            
+                    </uhf-footer-nav-group>
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="Microsoft Store" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://account.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Account profile_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_AccountProfile_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Account profile</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/download" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Download Center_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_DownloadCenter_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Download Center</a>                            
+                                <a class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?linkid=2139749" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Microsoft Store support_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_SalesAndSupport_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Store support</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/returns" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Returns_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_Returns_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Returns</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/order-tracking" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Order tracking_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_OrderTracking_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Order tracking</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/certified-refurbished-products" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Certified Refurbished_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_StoreLocations_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Certified Refurbished</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/why-microsoft-store?icid=footer_why-msft-store?icid=DSM_Footer_MicrosoftStore_WhyBuy" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Why buy from Microsoft Store_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Why buy from Microsoft Store_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Why buy from Microsoft Store</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/payment-financing-options?icid=footer_financing_vcc" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Microsoft Store_Flexible Payments_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Store_and_Support_Footer_StoreandSupport_Financing_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Flexible Payments</a>                            
+                    </uhf-footer-nav-group>
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="Education" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/education" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Microsoft in education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_MicrosoftInEducation_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft in education</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/education/devices/overview" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Devices for education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_DevicesforEducation_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Devices for education</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/education/products/teams" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Microsoft Teams for Education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_MicrosoftTeamsforEducation_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Teams for Education</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/education/products/microsoft-365" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Microsoft 365 Education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_Microsoft365Education_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft 365 Education</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/education/how-to-buy" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_How to buy for your school_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Howtobuyforyourschool_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">How to buy for your school</a>                            
+                                <a class="uhf-footer-link" href="https://education.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Educator training and development_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_EducatorTrainingDevelopment_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Educator training and development</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/education" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_Deals for students and parents_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_DealsForStudentsandParents_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Deals for students and parents</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/education/ai-in-education" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Education_AI for education_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Education_Footer_Education_Azureforstudents_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">AI for education</a>                            
+                    </uhf-footer-nav-group>
+            </div>
+            <div class="uhf-footer-nav-row">
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="Business" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/ai?icid=DSM_Footer_AI" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft AI_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business_AI_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft AI</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/security" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft Security_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business_Microsoft Security_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Security</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/dynamics-365" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Dynamics 365_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business_MicrosoftDynamics365_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Dynamics 365</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/microsoft-365/business" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft 365_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business_M365_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft 365</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/power-platform" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft Power Platform_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_DeveloperAndIT_Power Platform_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Power Platform</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/microsoft-teams/group-chat-software" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft Teams_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business_Microsoft365_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Teams</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/copilot?icid=DSM_Footer_Business_Copilot" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Microsoft Copilot_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_CopilotMicrosoft _nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Copilot</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/store/b/business?icid=CNavBusinessStore" id="Small-Business" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Business_Small Business_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Business_Footer_Business-SmallBusiness_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Small Business</a>                            
+                    </uhf-footer-nav-group>
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="Developer &amp; IT" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://azure.microsoft.com/en-us/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Azure_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_MicrosoftAzure_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Azure</a>                            
+                                <a class="uhf-footer-link" href="https://developer.microsoft.com/en-us/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Microsoft Developer_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_MicrosoftDeveloper_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Developer</a>                            
+                                <a class="uhf-footer-link" href="https://learn.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Microsoft Learn_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_MicrosoftLearn_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Learn</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/software-development-companies/offers-benefits/isv-success?icid=DSM_Footer_SupportAIMarketplace&amp;ocid=cmm3atxvn98" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Support for AI marketplace apps_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_SupportForAIMarketplaceApps_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Support for AI marketplace apps</a>                            
+                                <a class="uhf-footer-link" href="https://techcommunity.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Microsoft Tech Community_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_MicrosoftTechCommunity_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Tech Community</a>                            
+                                <a class="uhf-footer-link" href="https://marketplace.microsoft.com?icid=DSM_Footer_Marketplace&amp;ocid=cmm3atxvn98" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Microsoft Marketplace_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_Marketplace_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Microsoft Marketplace</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/software-development-companies?icid=DSM_Footer_SoftwareCompanies&amp;ocid=cmm3atxvn98" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Software companies_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Software companies_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Software companies</a>                            
+                                <a class="uhf-footer-link" href="https://visualstudio.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Developer &amp; IT_Visual Studio_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Developer_Footer_DeveloperAndIT_MicrosoftVisualStudio_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Visual Studio</a>                            
+                    </uhf-footer-nav-group>
+                    <uhf-footer-nav-group class="uhf-footer-nav-group" heading="Company" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">
+                                <a class="uhf-footer-link" href="https://careers.microsoft.com/" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Careers_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_Careers_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Careers</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/about" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_About Microsoft_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_AboutMicrosoft_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">About Microsoft</a>                            
+                                <a class="uhf-footer-link" href="https://news.microsoft.com/source/?icid=DSM_Footer_Company_CompanyNews" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Company news_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_CompanyNews_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Company news</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/privacy?icid=DSM_Footer_Company_Privacy" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Privacy at Microsoft_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_PrivacyAtMicrosoft_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Privacy at Microsoft</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/investor/default.aspx" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Investors_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_Investors_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Investors</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/diversity/default?icid=DSM_Footer_Company_Diversity" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Diversity and inclusion_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_DiversityAndInclusion_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Diversity and inclusion</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/accessibility" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Accessibility_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_Accessibility_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Accessibility</a>                            
+                                <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/corporate-responsibility/sustainability?icid=DSM_Footer_Sustainability" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;FooterNav&quot;,&quot;cN&quot;:&quot;FooterNav_Company_Sustainability_nav&quot;,&quot;ecn&quot;:&quot;FooterNav_Company_Footer_Company_Sustainability_nav&quot;,&quot;ehn&quot;:&quot;FooterNav&quot;}">Sustainability</a>                            
+                    </uhf-footer-nav-group>
+            </div>
+</uhf-footer-nav>
+    <div slot="uhf-footer-california-privacy-link">
+        
+<a class="uhf-footer-link" href="https://aka.ms/yourcaliforniaprivacychoices" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_California Privacy_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_CaliforniaPrivacy_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">
+    
+    <span>Your Privacy Choices</span>
+</a>
+        
+    </div>
+    <a slot="uhf-footer-consumer-health-privacy-link" class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?linkid=2259814" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Consumer Health Privacy_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_ConsumerHealthPrivacy_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Consumer Health Privacy</a>
+    
+<uhf-footer-menu slot="uhf-footer-menu" data-nav-label="Microsoft corporate links">
+            <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/sitemap1.aspx" id="uhf-Footer_Sitemap" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Sitemap_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_Sitemap_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Sitemap</a>
+            <a class="uhf-footer-link" href="https://support.microsoft.com/contactus" id="uhf-Footer_ContactUs" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Contact Microsoft_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_ContactUs_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Contact Microsoft</a>
+            <a class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?LinkId=521839" id="uhf-Footer_PrivacyandCookies" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Privacy _nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_PrivacyandCookies_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Privacy </a>
+            <a class="uhf-footer-link" href="#" id="uhf-Footer_ManageCookies" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Manage cookies_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_ManageCookies_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Manage cookies</a>
+            <a class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?LinkID=206977" id="uhf-Footer_TermsOfUse" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Terms of use_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_TermsOfUse_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Terms of use</a>
+            <a class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?linkid=2196228" id="uhf-Footer_Trademarks" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Trademarks_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_Trademarks_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Trademarks</a>
+            <a class="uhf-footer-link" href="https://go.microsoft.com/fwlink/?linkid=2196227" id="uhf-Footer_SafetyAndEco" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Safety &amp; eco_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_SafetyAndEco_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Safety &amp; eco</a>
+            <a class="uhf-footer-link" href="https://www.microsoft.com/en-us/legal/compliance/recycling" id="uhf-Recycling" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_Recycling_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Recycling_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">Recycling</a>
+            <a class="uhf-footer-link" href="https://choice.microsoft.com" id="uhf-Footer_AboutourAds" data-m="{&quot;compnm&quot;:&quot;UHF&quot;,&quot;view&quot;:&quot;UHF&quot;,&quot;pa&quot;:&quot;UniversalFooter&quot;,&quot;hn&quot;:&quot;LegalNav&quot;,&quot;cN&quot;:&quot;LegalNav_About our ads_nav&quot;,&quot;ecn&quot;:&quot;LegalNav_Footer_AboutourAds_nav&quot;,&quot;ehn&quot;:&quot;LegalNav&quot;}">About our ads</a>
+</uhf-footer-menu>
+</uhf-footer><!--/ UHF footer -->
+<!-- back to top button -->
+<div class="back-comment-buttons" data-bi-area="sidebar">
+  
+
+<div class="evo-right-sidebar">
+    <a data-bi-id="click back to top of page" data-bi-name="Back to top" href="#page" title="Back to top" aria-label="click back to top of page" class="evo-sidebar-button back-to-top">
+        <span class="evo-sidebar-button-inner">
+            
+        </span>
+    </a>
+</div>
+</div>
+<!-- back to top button -->
+<!-- UHF search functionality query parameter append for all pages excluding landing page -->
+  
+
+<!-- Add JSLL tracking to the mobile UHF logo trigger to match the desktop logo (Task 2440600) -->
+
+
+</body>
+
+</html>

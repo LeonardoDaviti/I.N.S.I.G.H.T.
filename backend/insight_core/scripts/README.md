@@ -111,8 +111,10 @@ A feed item's `<content:encoded>` (the full article) is stored over its `<descri
 (often only a summary). When a generic RSS feed still gives only a teaser (under 1,400
 characters), the article page of each **new** post is read once and its text stored, marked
 `metadata.full_content_fetched` - a later fetch never puts the feed's summary back over it.
-The page's navigation, header, footer, aside, forms and menu/related/share/subscribe/sidebar
-blocks are dropped before the article is picked, and the page wins only when it is clearly
+The page's navigation, header, footer, aside, forms and menu/related/share/subscribe/sidebar,
+comment, ad, newsletter and author blocks are dropped before the article is picked (the
+rules: `ingestion/kinds/parsing.py`, checked on the page corpus below); its text, code
+blocks, captions and images are kept in page order. The page wins only when it is clearly
 the same article, longer: the feed body's first 80 characters must appear in the first
 quarter of the page text (not checked for a feed body under 200 characters).
 Pages of one feed are read 2s apart. Links to GitHub, arXiv, Reddit, YouTube, Telegram and
@@ -137,6 +139,31 @@ again. The summary is printed as JSON.
 
 `--entities` reads no page: plain text is stored with HTML codes decoded ("That's", not
 "That&#39;s"), and this decodes the codes left in posts stored before that.
+
+### The reader's page corpus (refresh_page_corpus.py)
+
+The article reader (`parsing.extract_article_html`, used by full text, page watch and five
+site adapters) is tested on ~25 real pages saved in
+`insight_core/tests/fixtures/pages/` (issue 0032): Anthropic, DeepMind, Meta AI, NVIDIA,
+Apple Newsroom, the Google blog, 9to5google, WordPress, Substack, Ghost, Hugo, VitePress, a
+gallery, a docs page and others. `expectations.json` says, per page, the expected title,
+first and last sentence, image count and the chrome words that must not appear, and the
+known gaps (each with its reason). `test_page_corpus` checks them on every test run.
+
+When a site redesigns, refresh its copy by hand (never automatic; one request per page,
+2s apart):
+
+```bash
+cd backend
+python -m insight_core.scripts.refresh_page_corpus                      # the stored pages: what fails
+python -m insight_core.scripts.refresh_page_corpus --fetch [name ...]   # read them again: what changed
+python -m insight_core.scripts.refresh_page_corpus --fetch --write nvidia   # keep the new copy
+```
+
+`--fetch` reports, per page, each expectation that passes on one copy and fails on the
+other. `--write` replaces the stored copies (trimmed of scripts, styles, noscript, svg and
+base64 blobs) and their fetch date; the expectations are only edited by hand, and a
+weakened one needs a known gap with its reason.
 
 ### How a source is decided
 

@@ -29,3 +29,6 @@ venv
 # Local DB dumps taken before destructive regeneration
 backups/
 briefings_export/
+# The reader's page corpus (issue 0032): saved article pages and their expectations
+!backend/insight_core/tests/fixtures/pages/*.html
+!backend/insight_core/tests/fixtures/pages/expectations.json

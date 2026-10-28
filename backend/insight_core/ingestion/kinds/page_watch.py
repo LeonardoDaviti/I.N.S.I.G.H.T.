@@ -222,8 +222,8 @@ def _written_date(text: str) -> Optional[datetime]:
 
 
 def _title(page: str, url: str) -> str:
-    """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's,
-    or any short one on a <title>."""
+    """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's
+    (or one that starts with it: "| Mistral AI" for "Mistral"), or any short one on a <title>."""
     site = html.unescape(parsing.meta_content(page, "og:site_name")).strip()
     title, from_title_tag = html.unescape(parsing.meta_content(page, "og:title")).strip(), False
     if not title:
@@ -233,7 +233,8 @@ def _title(page: str, url: str) -> str:
                 from_title_tag = pattern is TITLE_RE
                 break
     suffix = SITE_SUFFIX_RE.search(title)
-    if suffix and (from_title_tag or (site and suffix.group(1).strip() == site)):
+    named = suffix.group(1).strip() if suffix else ""
+    if suffix and (from_title_tag or (site and (named == site or named.startswith(f"{site} ")))):
         title = title[:suffix.start()]
     return title or url
 

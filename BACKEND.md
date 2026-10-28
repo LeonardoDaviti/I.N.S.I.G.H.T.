@@ -296,6 +296,23 @@ share one (accepted; nothing is stored).
   recorded checkpoint; twice in a row it pauses: the job succeeds with `paused: true` and
   `paused_reason` ("reddit.com is limiting us"), and the checkpoint stays resumable.
 
+### Reading an article page
+
+One reader turns an article page into a post body: `parsing.read_article_page(html,
+base_url)` / `extract_article_html` in `ingestion/kinds/parsing.py`, used by full text
+(`full_text.read_article`), page watch (`page_watch.post_from`) and five site adapters. It
+drops chrome (named elements and class names, never an element holding most of the page's
+paragraph text), picks the article (`<article>`, `<main>`, a content class, else the block
+holding most paragraphs) and keeps its text blocks, code, captions and images in page order;
+the rules are commented in place.
+
+It is heuristics, so it is tested on real pages: `tests/fixtures/pages/` holds ~25 saved
+article pages and `expectations.json` (title, first and last sentence, image count, chrome
+words that must not appear, known gaps with their reasons), checked by `test_page_corpus`
+(issue 0032). A reader change must keep every page passing; a fix for one site that breaks
+another fails the suite. `scripts/refresh_page_corpus.py` re-reads the pages when a site
+redesigns (owner-run, see `scripts/README.md`).
+
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 
