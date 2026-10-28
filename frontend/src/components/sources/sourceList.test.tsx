@@ -157,6 +157,17 @@ describe('sortSources', () => {
     expect(ids('status', 'asc')).toEqual(['b', 'c', 'a']);
   });
 
+  it('worst status first, then A to Z within a status, never by the next fetch', () => {
+    // On the server a just-fetched source (next fetch furthest away) sank to the end of Scheduled.
+    const scheduled = [
+      healthRow({ source_id: 'hn', display_name: 'Hacker News', status: 'deferred', next_due_at: ago(-1) }),
+      healthRow({ source_id: 'arena', display_name: 'arena.ai', status: 'deferred', next_due_at: ago(-24) }),
+      healthRow({ source_id: 'jg', display_name: 'Jeff Geerling', status: 'deferred', next_due_at: ago(-5) }),
+      healthRow({ source_id: 'bad', display_name: 'Zed', status: 'error', consecutive_failures: 1 }),
+    ];
+    expect(sortSources(scheduled, 'status', 'desc').map((r) => r.source_id)).toEqual(['bad', 'arena', 'hn', 'jg']);
+  });
+
   it('applies inside every group', () => {
     expect(groupSources(list, 'none', [], { sort: 'added', dir: 'asc' })[0].rows.map((r) => r.source_id)).toEqual(['b', 'c', 'a']);
   });

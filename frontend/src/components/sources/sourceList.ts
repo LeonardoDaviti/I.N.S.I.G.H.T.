@@ -14,7 +14,7 @@
  */
 import type { Folder, HealthStatus, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
-import { HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, sortHealthRows, statusRank } from '../../lib/sourceSchedule';
+import { HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, statusRank } from '../../lib/sourceSchedule';
 import { formatRelativeTime } from '../../lib/dates';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
@@ -144,7 +144,7 @@ const time = (iso: string | null | undefined) => {
   return Number.isNaN(t) ? -Infinity : t;
 };
 
-/** Each column's ascending order (status has its own, `sortHealthRows`). */
+/** Each column's ascending order (status has its own: worst first). */
 const ASCENDING: Record<Exclude<SortBy, 'status'>, (a: SourceHealthRow, b: SourceHealthRow) => number> = {
   name: byName,
   kind: (a, b) => kindLabel(a).localeCompare(kindLabel(b)),
@@ -155,14 +155,15 @@ const ASCENDING: Record<Exclude<SortBy, 'status'>, (a: SourceHealthRow, b: Sourc
 
 /**
  * The order inside a group, by one column in a direction (default: the
- * column's own, DEFAULT_DIR). Status descending is worst first (the backend's
- * health order); ascending is the status order reversed. A source without posts
- * counts as the oldest. Ties fall back to the name, A to Z.
+ * column's own, DEFAULT_DIR). Status descending is worst first; ascending is the
+ * status order reversed. A source without posts counts as the oldest. Ties fall
+ * back to the name, A to Z, in every column: within a status too, never by the next
+ * fetch (a just-fetched source sank to the end of Scheduled).
  */
 export function sortSources(rows: readonly SourceHealthRow[], sort: SortBy, dir: SortDir = DEFAULT_DIR[sort]): SourceHealthRow[] {
   if (sort === 'status') {
-    if (dir === 'desc') return sortHealthRows(rows);
-    return [...rows].sort((a, b) => statusRank(b.status) - statusRank(a.status) || byName(a, b));
+    const sign = dir === 'desc' ? 1 : -1;
+    return [...rows].sort((a, b) => sign * (statusRank(a.status) - statusRank(b.status)) || byName(a, b));
   }
   const sign = dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => sign * ASCENDING[sort](a, b) || byName(a, b));

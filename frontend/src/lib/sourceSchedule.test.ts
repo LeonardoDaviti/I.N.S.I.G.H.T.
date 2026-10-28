@@ -9,7 +9,6 @@ import {
   formatDue,
   cadenceLine,
   parseOverrideHours,
-  sortHealthRows,
   withEffectiveStatus,
 } from './sourceSchedule.ts';
 import type { SourceHealthRow } from '../services/api';
@@ -97,34 +96,6 @@ test('cadenceLine says how often and why, in plain words (issue 0027)', () => {
   }
 });
 
-test('sortHealthRows matches the backend: status order, then most failures, then soonest due, then name', () => {
-  const rows = [
-    row({ source_id: 'deferred-late', status: 'deferred', next_due_at: iso(9 * HOUR), display_name: 'b' }),
-    row({ source_id: 'disabled', status: 'disabled', enabled: false, next_due_at: null }),
-    row({ source_id: 'due', status: 'due', next_due_at: iso(-HOUR) }),
-    row({ source_id: 'deferred-soon', status: 'deferred', next_due_at: iso(HOUR) }),
-    row({ source_id: 'backoff', status: 'backoff', consecutive_failures: 3 }),
-    row({ source_id: 'error-1', status: 'error', consecutive_failures: 1 }),
-    row({ source_id: 'error-4', status: 'error', consecutive_failures: 4 }),
-    row({ source_id: 'unavailable', status: 'unavailable' }),
-    row({ source_id: 'deferred-null', status: 'deferred', next_due_at: null, display_name: 'a' }),
-    row({ source_id: 'deferred-late-a', status: 'deferred', next_due_at: iso(9 * HOUR), display_name: 'A' }),
-  ];
-  assert.deepEqual(
-    sortHealthRows(rows).map((r) => r.source_id),
-    [
-      'error-4', 'error-1', 'backoff', 'unavailable', 'due',
-      'deferred-soon', 'deferred-late-a', 'deferred-late', 'deferred-null', 'disabled',
-    ],
-  );
-  assert.deepEqual([...HEALTH_STATUS_ORDER], ['error', 'backoff', 'unavailable', 'due', 'deferred', 'disabled']);
-});
-
-test('sortHealthRows does not mutate its input', () => {
-  const rows = [row({ source_id: 'b', status: 'deferred' }), row({ source_id: 'a', status: 'error', consecutive_failures: 1 })];
-  sortHealthRows(rows);
-  assert.equal(rows[0].source_id, 'b');
-});
 
 test('filterHealthRows: "error" means failing (error or backoff), like the "N source errors" chip', () => {
   const rows = [

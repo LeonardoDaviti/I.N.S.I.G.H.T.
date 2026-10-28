@@ -1,9 +1,6 @@
 /**
  * Source schedule presentation (Mark IX §F.3): due times, backoff, how often a source is fetched,
- * intervals and the health-table order. Pure; `now` is injected.
- *
- * `sortHealthRows` mirrors `operations_service._health_sort_key` exactly, so the
- * table reads in the same order the API returns and the next run decides.
+ * intervals and the status order. Pure; `now` is injected.
  */
 import type { HealthStatus, SourceHealthRow } from '../services/api';
 import { toDate } from './dates.ts';
@@ -69,19 +66,8 @@ export function statusRank(status: string): number {
   return index === -1 ? HEALTH_STATUS_ORDER.length : index;
 }
 
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 
 /** Worst first: status order, most failures, soonest due (none last), name. Returns a new array. */
-export function sortHealthRows(rows: readonly SourceHealthRow[]): SourceHealthRow[] {
-  return [...rows].sort((a, b) =>
-    statusRank(a.status) - statusRank(b.status)
-    || b.consecutive_failures - a.consecutive_failures
-    // ISO-8601 strings from one backend clock sort chronologically; "~" sorts after digits.
-    || compareText(a.next_due_at || '~', b.next_due_at || '~')
-    || compareText(String(a.display_name).toLowerCase(), String(b.display_name).toLowerCase()));
-}
 
 /** Did the source's last attempt fail? `last_outcome` decides; without it, an error
  *  newer than the last success (or with no success at all) counts. */
