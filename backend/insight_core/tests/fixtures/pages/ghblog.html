@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="en-US" class="mt-0">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="profile" href="https://gmpg.org/xfn/11">
+	<link rel="icon" type="image/x-icon" href="https://github.githubassets.com/favicon.ico">
+	<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />
+
+	<!-- This site is optimized with the Yoast SEO Premium plugin v28.6 (Yoast SEO v28.6) - https://yoast.com/product/yoast-seo-premium-wordpress/ -->
+	<title>The bridge to agent-scale Git infrastructure - The GitHub Blog</title>
+	<meta name="description" content="We moved a copy of 99.99999% of GitHub&#039;s repositories to Azure. Here&#039;s how per-reference quorums will bring over the rest." />
+	<link rel="canonical" href="https://github.blog/engineering/architecture-optimization/the-bridge-to-agent-scale-git-infrastructure/" />
+	<meta property="og:locale" content="en_US" />
+	<meta property="og:type" content="article" />
+	<meta property="og:title" content="The bridge to agent-scale Git infrastructure" />
+	<meta property="og:description" content="We moved a copy of 99.99999% of GitHub&#039;s repositories to Azure. Here&#039;s how per-reference quorums will bring over the rest." />
+	<meta property="og:url" content="https://github.blog/engineering/architecture-optimization/the-bridge-to-agent-scale-git-infrastructure/" />
+	<meta property="og:site_name" content="The GitHub Blog" />
+	<meta property="article:published_time" content="2026-10-21T16:00:00+00:00" />
+	<meta property="og:image" content="https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?fit=1920%2C1080" />
+	<meta property="og:image:width" content="1920" />
+	<meta property="og:image:height" content="1080" />
+	<meta property="og:image:type" content="image/png" />
+	<meta name="author" content="Eleanor White, Victoria Dye" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:label1" content="Written by" />
+	<meta name="twitter:data1" content="Eleanor White, Victoria Dye" />
+	<meta name="twitter:label2" content="Est. reading time" />
+	<meta name="twitter:data2" content="8 minutes" />
+
+
+	
+	<!-- / Yoast SEO Premium plugin. -->
+
+
+<link rel='dns-prefetch' href='//ghcc.githubassets.com' />
+<link rel='dns-prefetch' href='//js.monitor.azure.com' />
+<link rel='dns-prefetch' href='//cdnjs.cloudflare.com' />
+<link rel='dns-prefetch' href='//analytics.githubassets.com' />
+<link rel='dns-prefetch' href='//v0.wordpress.com' />
+<link rel="alternate" type="application/rss+xml" title="The GitHub Blog &raquo; Feed" href="https://github.blog/feed/" />
+<link rel="alternate" type="application/rss+xml" title="The GitHub Blog &raquo; Comments Feed" href="https://github.blog/comments/feed/" />
+<link rel="alternate" title="oEmbed (JSON)" type="application/json+oembed" href="https://github.blog/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fgithub.blog%2Fengineering%2Farchitecture-optimization%2Fthe-bridge-to-agent-scale-git-infrastructure%2F" />
+<link rel="alternate" title="oEmbed (XML)" type="text/xml+oembed" href="https://github.blog/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fgithub.blog%2Fengineering%2Farchitecture-optimization%2Fthe-bridge-to-agent-scale-git-infrastructure%2F&#038;format=xml" />
+
+
+
+
+
+
+
+
+
+
+
+
+<link rel='stylesheet' id='all-css-12' href='https://github.blog/wp-content/plugins/wp-menu-image/assets/css/wmi-front-style.css?m=1792019061g' type='text/css' media='all' />
+
+<link rel='stylesheet' id='all-css-14' href='https://github.blog/_static/??-eJx9yzsOgCAMANALiQUGDYPxLkAjTfjF1ujx1cnN8Q0Pzq5Cq4JVQBIWZNhI0uGV1daokChHiMQCgRkybUl8u8YHA/zWLzEJKg47dXnfWhYzO6uN05O5AXUKLFM=' type='text/css' media='all' />
+<link rel='stylesheet' id='highlightjs-css-css' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/default.min.css?ver=11.4.0' media='all' />
+<link rel="https://api.w.org/" href="https://github.blog/wp-json/" /><link rel="alternate" title="JSON" type="application/json" href="https://github.blog/wp-json/wp/v2/posts/99628" /><link rel="EditURI" type="application/rsd+xml" title="RSD" href="https://github.blog/xmlrpc.php?rsd" />
+<meta name="generator" content="WordPress 7.1.3" />
+<link rel='shortlink' href='https://wp.me/pamS32-pUU' />
+<!-- Stream WordPress user activity plugin v4.4.0 -->
+<link rel="llms-sitemap" href="https://github.blog/llms.txt" />
+<meta name="ha-url" content="https://collector.githubapp.com/github-blog/collect"><link rel="preload" href="https://github.blog/wp-content/themes/github-2021/dist/fonts/mona-sans.woff2" as="font" type="font/woff2" crossorigin="anonymous"><link rel="preload" href="https://github.blog/wp-content/themes/github-2021/dist/fonts/MonaspaceNeon-Regular.woff2" as="font" type="font/woff2" crossorigin="anonymous"><link rel="icon" href="https://github.blog/wp-content/uploads/2019/01/cropped-github-favicon-512.png?fit=32%2C32" sizes="32x32" />
+<link rel="icon" href="https://github.blog/wp-content/uploads/2019/01/cropped-github-favicon-512.png?fit=192%2C192" sizes="192x192" />
+<link rel="apple-touch-icon" href="https://github.blog/wp-content/uploads/2019/01/cropped-github-favicon-512.png?fit=180%2C180" />
+<meta name="msapplication-TileImage" content="https://github.blog/wp-content/uploads/2019/01/cropped-github-favicon-512.png?fit=270%2C270" />
+
+
+</head>
+<body class="wp-singular post-template-default single single-post postid-99628 single-format-standard wp-embed-responsive wp-theme-github-2021 wp-child-theme-github-2021-child font-mktg no-sidebar" data-color-mode="light" data-light-theme="light" data-dark-theme="dark">
+		<div data-color-mode="dark" data-light-theme="light" data-dark-theme="dark_dimmed" class="pt-header pt-lg-0">
+		<header id="header" class="header position-fixed position-lg-static pb-lg-header z-4 top-0 left-0 right-0 d-flex flex-column flex-items-stretch color-bg-default">
+						<a href="#start-of-content" class="p-3 color-bg-accent-emphasis color-fg-on-emphasis show-on-focus">
+				Skip to content			</a>
+							<a href="#sidebar" id="skip-to-sidebar" class="p-3 color-bg-accent-emphasis color-fg-on-emphasis show-on-focus">
+					Skip to sidebar				</a>
+						<div class="position-relative container-xl width-full mx-auto p-responsive-blog">
+				<div class="d-flex flex-items-center flex-justify-between pt-3 pb-3 color-fg-default">
+					
+<a href="https://github.com" target="_blank" rel="noreferrer" aria-label="GitHub homepage" class="Header-link position-relative d-flex flex-items-center color-fg-default">
+	
+</a>
+<span class="d-inline-block ml-2 f1-mktg f2-md-mktg" style="opacity: 0.3;">/</span>
+<a class="d-inline-block Header-link font-weight-semibold ml-2 f2 color-fg-default" href="https://github.blog/">
+	Blog</a>
+					
+<nav class="d-none d-lg-block" aria-label="Secondary navigation">
+	<ul id="secondary-navigation" class="secondary-navigation flex-items-center flex-nowrap list-style-none ml-4" aria-hidden="false"><li id="menu-item-78809"><a href="https://github.blog/changelog/" class="position-relative d-flex flex-items-center flex-start no-wrap py-2 px-4 f4 lh-condensed-ultra Link--secondary color-fg-default text-medium"><span class="menu-item-label">Changelog</span></a></li>
+<li id="menu-item-78810"><a href="https://docs.github.com/" class="position-relative d-flex flex-items-center flex-start no-wrap py-2 px-4 f4 lh-condensed-ultra Link--secondary color-fg-default text-medium"><span class="menu-item-label">Docs</span></a></li>
+<li id="menu-item-78811"><a href="https://github.com/customer-stories" class="position-relative d-flex flex-items-center flex-start no-wrap py-2 px-4 f4 lh-condensed-ultra Link--secondary color-fg-default text-medium"><span class="menu-item-label">Customer stories</span></a></li>
+</ul></nav>
+					
+<div class="d-none d-lg-flex flex-1">
+	<form id="desktop-search" class="desktop-search position-relative ml-lg-4 flex-1" action="https://github.blog" method="get" aria-hidden="true" aria-label="Search form" role="search">
+		<div class="position-relative d-flex flex-1 height-full color-bg-transparent" data-color-mode="light" data-light-theme="light" data-dark-theme="dark" >
+			<input aria-label="Search the blog" type="search" class="p-2 pl-3 pr-6 border-0 rounded-2 flex-1" placeholder="Search the blog…" value="" name="s" id="search-input">
+			<button type="submit" class="position-absolute right-0 z-3 d-flex flex-items-center flex-justify-center flex-self-center mr-2 p-2 border-0 rounded-2 color-bg-transparent color-fg-subtle" aria-label="Search">
+				
+			</button>
+		</div>
+	</form>
+	<button aria-label="Toggle search" class="flex-self-center ml-auto p-2 border-0 color-bg-transparent color-fg-default rounded-3 js-toggle" aria-controls="desktop-search" aria-expanded="false" >
+		
+		
+	</button>
+
+		<a		class="Button Button--size-medium Button--primary ml-3"
+		href="https://github.com/features/ai/github-app?utm_source=blog-header-button-cta&#038;utm_medium=blog&#038;utm_campaign=github-app-cli-Q1-push"				target="_blank"		data-analytics-click="Blog, click on button, text: Use Copilot for free; ref_location:top nav;"					>
+		<span class="Button__text">
+		<span class="Text Text--200 Text--antialiased Text--weight-semibold Button--label Button--label-medium Button--label-primary">
+			Try GitHub Copilot app		</span>
+		</span>
+
+			</a>
+		<a		class="Button Button--size-medium Button--secondary ml-3"
+		href="https://githubuniverse.com/?utm_source=Blog-button&#038;utm_medium=GitHub&#038;utm_campaign=blog_button_seb_uni_26"				target="_blank"		data-analytics-click="Blog, click on button, text: Attend Universe; ref_location:top nav;"					>
+		<span class="Button__text">
+		<span class="Text Text--200 Text--antialiased Text--weight-semibold Button--label Button--label-medium Button--label-secondary">
+			Attend GitHub Universe		</span>
+		</span>
+
+			</a>
+	</div>
+					
+<div class="d-flex d-lg-none flex-items-center flex-1 mr-n2">
+	<button aria-label="Toggle search" class="ml-auto p-2 border-0 color-bg-transparent color-fg-default rounded-3 js-toggle" aria-controls="mobile-search" aria-expanded="false" >
+		
+		
+	</button>
+	<button class="mobile-nav-focus-trap js-mobile-nav-focus-trap" data-target="#mobile-menu" data-focus-order="last"></button>
+	<button id="mobile-menu-toggle"  aria-label="Toggle menu" class="ml-2 p-2 border-0 color-bg-transparent color-fg-default rounded-3 js-toggle" aria-controls="mobile-menu" aria-expanded="false" data-trap-focus="#header">
+		
+		
+	</button>
+</div>
+				</div>
+			</div>
+							<div class="position-relative pb-lg-navigation" data-sticky-navigation=".sticky-navigation">
+					
+<nav aria-label="Primary navigation" class="sticky-navigation position-absolute z-4 top-0 left-0 d-none d-lg-block width-full color-border-subtle color-bg-default">
+	<div class="position-relative container-xl width-full mx-auto p-responsive-blog">
+		<ul id="primary-navigation" class="primary-navigation position-relative d-flex flex-row flex-nowrap flex-grow-0 flex-justify-between list-style-none"><li id="menu-item-78814"><a href="https://github.blog/ai-and-ml/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78814-dropdown" aria-expanded="false" aria-haspopup="true" role="button">AI &amp; ML</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="AI &amp; ML sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78814-dropdown" tabindex="-1">
+	<li id="menu-item-78863" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/ai-and-ml/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">AI &amp; ML</a><p class="mt-1 my-0 f4 color-fg-muted">Learn about artificial intelligence and machine learning across the GitHub ecosystem and the wider industry.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="AI &amp; ML sub-menu">
+		<li id="menu-item-78815" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/ai-and-ml/generative-ai/" class="d-block f4 color-fg-default text-bold">Generative AI</a><p class="mb-0 f5 color-fg-muted">Learn how to build with generative AI.</p></li>
+		<li id="menu-item-78816" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/ai-and-ml/github-copilot/" class="d-block f4 color-fg-default text-bold">GitHub Copilot</a><p class="mb-0 f5 color-fg-muted">Change how you work with GitHub Copilot.</p></li>
+		<li id="menu-item-78817" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/ai-and-ml/llms/" class="d-block f4 color-fg-default text-bold">LLMs</a><p class="mb-0 f5 color-fg-muted">Everything developers need to know about LLMs.</p></li>
+		<li id="menu-item-78818" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/ai-and-ml/machine-learning/" class="d-block f4 color-fg-default text-bold">Machine learning</a><p class="mb-0 f5 color-fg-muted">Machine learning tips, tricks, and best practices.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78864" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" fetchpriority="high" srcset="https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?w=300 300w, https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?w=800 800w, https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?w=400 400w, https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/06/AI-DarkMode-4.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://github.blog/ai-and-ml/generative-ai/how-ai-code-generation-works/" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">How AI code generation works</a><p class="mb-3 f5 color-fg-muted">Explore the capabilities and benefits of AI code generation and how it can improve your developer experience.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78819"><a href="https://github.blog/developer-skills/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78819-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Developer skills</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="Developer skills sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78819-dropdown" tabindex="-1">
+	<li id="menu-item-78865" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/developer-skills/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">Developer skills</a><p class="mt-1 my-0 f4 color-fg-muted">Resources for developers to grow in their skills and careers.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="Developer skills sub-menu">
+		<li id="menu-item-78820" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/developer-skills/application-development/" class="d-block f4 color-fg-default text-bold">Application development</a><p class="mb-0 f5 color-fg-muted">Insights and best practices for building apps.</p></li>
+		<li id="menu-item-78821" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/developer-skills/career-growth/" class="d-block f4 color-fg-default text-bold">Career growth</a><p class="mb-0 f5 color-fg-muted">Tips &amp; tricks to grow as a professional developer.</p></li>
+		<li id="menu-item-78822" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/developer-skills/github/" class="d-block f4 color-fg-default text-bold">GitHub</a><p class="mb-0 f5 color-fg-muted">Improve how you use GitHub at work.</p></li>
+		<li id="menu-item-78823" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/developer-skills/github-education/" class="d-block f4 color-fg-default text-bold">GitHub Education</a><p class="mb-0 f5 color-fg-muted">Learn how to move into your first professional role.</p></li>
+		<li id="menu-item-78824" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/developer-skills/programming-languages-and-frameworks/" class="d-block f4 color-fg-default text-bold">Programming languages &amp; frameworks</a><p class="mb-0 f5 color-fg-muted">Stay current on what’s new (or new again).</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78866" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?w=300 300w, https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?w=800 800w, https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?w=400 400w, https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/05/Enterprise-DarkMode-3.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://docs.github.com/en/get-started" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">Get started with GitHub documentation</a><p class="mb-3 f5 color-fg-muted">Learn how to start building, shipping, and maintaining software with GitHub.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78825"><a href="https://github.blog/engineering/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78825-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Engineering</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="Engineering sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78825-dropdown" tabindex="-1">
+	<li id="menu-item-78867" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/engineering/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">Engineering</a><p class="mt-1 my-0 f4 color-fg-muted">Get an inside look at how we’re building the home for all developers.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="Engineering sub-menu">
+		<li id="menu-item-78827" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/engineering/architecture-optimization/" class="d-block f4 color-fg-default text-bold">Architecture &amp; optimization</a><p class="mb-0 f5 color-fg-muted">Discover how we deliver a performant and highly available experience across the GitHub platform.</p></li>
+		<li id="menu-item-78828" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/engineering/engineering-principles/" class="d-block f4 color-fg-default text-bold">Engineering principles</a><p class="mb-0 f5 color-fg-muted">Explore best practices for building software at scale with a majority remote team.</p></li>
+		<li id="menu-item-78829" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/engineering/infrastructure/" class="d-block f4 color-fg-default text-bold">Infrastructure</a><p class="mb-0 f5 color-fg-muted">Get a glimpse at the technology underlying the world’s leading AI-powered developer platform.</p></li>
+		<li id="menu-item-78830" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/engineering/platform-security/" class="d-block f4 color-fg-default text-bold">Platform security</a><p class="mb-0 f5 color-fg-muted">Learn how we build security into everything we do across the developer lifecycle.</p></li>
+		<li id="menu-item-78858" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/engineering/user-experience/" class="d-block f4 color-fg-default text-bold">User experience</a><p class="mb-0 f5 color-fg-muted">Find out what goes into making GitHub the home for all developers.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78868" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.42.45 AM.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.42.45 AM.png?w=800 800w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.42.45 AM.png?w=400 400w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.42.45 AM.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.42.45 AM.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://github.blog/engineering/how-we-use-github-to-be-more-productive-collaborative-and-secure/" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">How we use GitHub to be more productive, collaborative, and secure</a><p class="mb-3 f5 color-fg-muted">Our engineering and security teams do some incredible work. Let’s take a look at how we use GitHub to be more productive, build collaboratively, and shift security left.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78832"><a href="https://github.blog/enterprise-software/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78832-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Enterprise software</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="Enterprise software sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78832-dropdown" tabindex="-1">
+	<li id="menu-item-78869" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/enterprise-software/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">Enterprise software</a><p class="mt-1 my-0 f4 color-fg-muted">Explore how to write, build, and deploy enterprise software at scale.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="Enterprise software sub-menu">
+		<li id="menu-item-78833" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/enterprise-software/automation/" class="d-block f4 color-fg-default text-bold">Automation</a><p class="mb-0 f5 color-fg-muted">Automating your way to faster and more secure ships.</p></li>
+		<li id="menu-item-78834" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/enterprise-software/ci-cd/" class="d-block f4 color-fg-default text-bold">CI/CD</a><p class="mb-0 f5 color-fg-muted">Guides on continuous integration and delivery.</p></li>
+		<li id="menu-item-78835" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/enterprise-software/collaboration/" class="d-block f4 color-fg-default text-bold">Collaboration</a><p class="mb-0 f5 color-fg-muted">Tips, tools, and tricks to improve developer collaboration.</p></li>
+		<li id="menu-item-78836" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/enterprise-software/devops/" class="d-block f4 color-fg-default text-bold">DevOps</a><p class="mb-0 f5 color-fg-muted">DevOps resources for enterprise engineering teams.</p></li>
+		<li id="menu-item-78837" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/enterprise-software/devsecops/" class="d-block f4 color-fg-default text-bold">DevSecOps</a><p class="mb-0 f5 color-fg-muted">How to integrate security into the SDLC.</p></li>
+		<li id="menu-item-78838" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/enterprise-software/governance-and-compliance/" class="d-block f4 color-fg-default text-bold">Governance &amp; compliance</a><p class="mb-0 f5 color-fg-muted">Ensuring your builds stay clean.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78870" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.43.47 AM.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.43.47 AM.png?w=800 800w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.43.47 AM.png?w=400 400w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.43.47 AM.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.43.47 AM.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://github.com/resources/whitepapers/gartner-magic-quadrant-and-critical-capabilities-for-ai-code-assistants" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">GitHub recognized as a Leader in the Gartner® Magic Quadrant™ for AI Code Assistants</a><p class="mb-3 f5 color-fg-muted">Learn why Gartner positioned GitHub as a Leader for the second year in a row.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78840"><a href="https://github.blog/news-insights/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78840-dropdown" aria-expanded="false" aria-haspopup="true" role="button">News &amp; insights</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="News &amp; insights sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78840-dropdown" tabindex="-1">
+	<li id="menu-item-78871" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/news-insights/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">News &amp; insights</a><p class="mt-1 my-0 f4 color-fg-muted">Keep up with what’s new and notable from inside GitHub.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="News &amp; insights sub-menu">
+		<li id="menu-item-78841" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/news-insights/company-news/" class="d-block f4 color-fg-default text-bold">Company news</a><p class="mb-0 f5 color-fg-muted">An inside look at news and product updates from GitHub.</p></li>
+		<li id="menu-item-78844" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/news-insights/product-news/" class="d-block f4 color-fg-default text-bold">Product</a><p class="mb-0 f5 color-fg-muted">The latest on GitHub’s platform, products, and tools.</p></li>
+		<li id="menu-item-78842" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/news-insights/octoverse/" class="d-block f4 color-fg-default text-bold">Octoverse</a><p class="mb-0 f5 color-fg-muted">Insights into the state of open source on GitHub.</p></li>
+		<li id="menu-item-78843" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/news-insights/policy-news-and-insights/" class="d-block f4 color-fg-default text-bold">Policy</a><p class="mb-0 f5 color-fg-muted">The latest policy and regulatory changes in software.</p></li>
+		<li id="menu-item-78845" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/news-insights/research/" class="d-block f4 color-fg-default text-bold">Research</a><p class="mb-0 f5 color-fg-muted">Data-driven insights around the developer ecosystem.</p></li>
+		<li id="menu-item-78847" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/news-insights/the-library/" class="d-block f4 color-fg-default text-bold">The library</a><p class="mb-0 f5 color-fg-muted">Older news and updates from GitHub.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78872" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?w=300 300w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?w=800 800w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?w=400 400w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.44.23 AM.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://github.blog/ai-and-ml/llms/unlocking-the-power-of-unstructured-data-with-rag/" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">Unlocking the power of unstructured data with RAG</a><p class="mb-3 f5 color-fg-muted">Learn how to use retrieval-augmented generation (RAG) to capture more insights.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78848"><a href="https://github.blog/open-source/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78848-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Open Source</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="Open Source sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78848-dropdown" tabindex="-1">
+	<li id="menu-item-78873" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/open-source/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">Open Source</a><p class="mt-1 my-0 f4 color-fg-muted">Everything open source on GitHub.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="Open Source sub-menu">
+		<li id="menu-item-78851" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/open-source/git/" class="d-block f4 color-fg-default text-bold">Git</a><p class="mb-0 f5 color-fg-muted">The latest Git updates.</p></li>
+		<li id="menu-item-78853" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/open-source/maintainers/" class="d-block f4 color-fg-default text-bold">Maintainers</a><p class="mb-0 f5 color-fg-muted">Spotlighting open source maintainers.</p></li>
+		<li id="menu-item-78854" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/open-source/social-impact/" class="d-block f4 color-fg-default text-bold">Social impact</a><p class="mb-0 f5 color-fg-muted">How open source is driving positive change.</p></li>
+		<li id="menu-item-78850" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/open-source/gaming/" class="d-block f4 color-fg-default text-bold">Gaming</a><p class="mb-0 f5 color-fg-muted">Explore open source games on GitHub.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78874" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.46.23 AM.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.46.23 AM.png?w=800 800w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.46.23 AM.png?w=400 400w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.46.23 AM.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.46.23 AM.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://resources.github.com/software-development/innersource/" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">An introduction to innersource</a><p class="mb-3 f5 color-fg-muted">Organizations worldwide are incorporating open source methodologies into the way they build and ship their own software.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+<li id="menu-item-78859"><a href="https://github.blog/security/" class="position-relative d-flex flex-items-center flex-start no-wrap py-3 f4-mktg text-bold js-toggle" aria-controls="primary-78859-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Security</a>
+<ul class="dropdown d-flex flex-wrap width-full position-absolute left-0 list-style-none mt-2 rounded-3 z-3 overflow-hidden color-border-subtle" aria-label="Security sub-menu" aria-hidden="true" data-color-mode="light" data-dark-theme="dark" data-light-theme="light" id="primary-78859-dropdown" tabindex="-1">
+	<li id="menu-item-78875" class="flex-1 p-5 py-xl-7 px-xl-7"><div class="col-9 mb-4 mb-lg-7"><a href="https://github.blog/security/" class="d-flex flex-items-center flex-start f3 lh-condensed color-fg-default text-bold">Security</a><p class="mt-1 my-0 f4 color-fg-muted">Stay up to date on everything security.</p></div>
+	<ul class="d-flex flex-wrap list-style-none" aria-label="Security sub-menu">
+		<li id="menu-item-78860" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right"><a href="https://github.blog/security/application-security/" class="d-block f4 color-fg-default text-bold">Application security</a><p class="mb-0 f5 color-fg-muted">Application security, explained.</p></li>
+		<li id="menu-item-78861" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8"><a href="https://github.blog/security/supply-chain-security/" class="d-block f4 color-fg-default text-bold">Supply chain security</a><p class="mb-0 f5 color-fg-muted">Demystifying supply chain security.</p></li>
+		<li id="menu-item-78855" class="col-6 d-block f4 color-fg-default color-border-subtle pr-4 pr-lg-8 border-right pt-2 pt-lg-4"><a href="https://github.blog/security/vulnerability-research/" class="d-block f4 color-fg-default text-bold">Vulnerability research</a><p class="mb-0 f5 color-fg-muted">Updates from the GitHub Security Lab.</p></li>
+		<li id="menu-item-78862" class="col-6 d-block f4 color-fg-default color-border-subtle pl-4 pl-lg-8 pt-2 pt-lg-4"><a href="https://github.blog/security/web-application-security/" class="d-block f4 color-fg-default text-bold">Web application security</a><p class="mb-0 f5 color-fg-muted">Helpful tips on securing web applications.</p></li>
+	</ul>
+</li>
+	<li id="menu-item-78876" class="p-5 py-xl-7 px-xl-8 col-4 color-bg-subtle post-card"><div class="d-block position-relative mb-3 rounded-2 tease-thumbnail overflow-hidden"><img width="800" height="425" src="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.47.04 AM.png?resize=800%2C425" class="tease-thumbnail__img d-block width-full height-auto aspect-ratio-1032-548 object-fit-cover" alt="" decoding="async" srcset="https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.47.04 AM.png?w=800 800w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.47.04 AM.png?w=400 400w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.47.04 AM.png?w=1032 1032w, https://github.blog/wp-content/uploads/2024/07/Screenshot-2024-07-23-at-8.47.04 AM.png?w=516 516w" sizes="(max-width: 800px) 100vw, 800px" /></div><a href="https://resources.github.com/security/the-enterprise-guide-to-ai-powered-devsecops/" class="d-block mb-2 f3 lh-condensed color-fg-default text-bold post-card__link">The enterprise guide to AI-powered DevSecOps</a><p class="mb-3 f5 color-fg-muted">Learn about core challenges in DevSecOps, and how you can start addressing them with AI and automation.</p><span class="Link d-inline-flex flex-items-center" role="presentation">Learn more</span></li>
+</ul>
+</li>
+</ul>	</div>
+</nav>
+				</div>
+						
+<form id="mobile-search" role="search" method="get" class="mobile-search" action="https://github.blog"  aria-hidden="true" aria-label="Search form">
+	<div class="d-flex flex-1 p-3 color-bg-inset">
+		<div class="d-flex flex-1 position-relative color-bg-transparent" data-color-mode="light" data-light-theme="light" data-dark-theme="dark" >
+			
+			<input aria-label="Search the blog" type="search" class="pl-6 search-field form-control p-2 flex-1" placeholder="Search the blog…" value="" name="s" id="search-input">
+		</div>
+
+			<button		class="Button Button--size-medium Button--secondary ml-2"
+				type="submit"									>
+		<span class="Button__text">
+		<span class="Text Text--200 Text--antialiased Text--weight-semibold Button--label Button--label-medium Button--label-secondary">
+			Search		</span>
+		</span>
+
+			</button>
+		</div>
+</form>
+			
+<nav id="mobile-menu" class="mobile-menu position-relative overflow-y-auto flex-1 width-full rounded-top-3" aria-label="Navigation menu" aria-hidden="true" data-color-mode="light" data-light-theme="light" data-dark-theme="dark_dimmed">
+	<div class="p-5">
+				<h2 class="mb-5 text-bold color-fg-subtle">Categories</h2>
+			<ul id="menu-new-primary-navigation" class="list-style-none"><li class="mb-5"><a href="https://github.blog/ai-and-ml/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78814-dropdown" aria-expanded="false" aria-haspopup="true" role="button">AI &amp; ML</a>
+<ul aria-hidden="true" aria-label="AI &amp; ML sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78814-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78814-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/ai-and-ml/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">AI &amp; ML</a><p class="mt-2 mb-0 color-fg-muted">Learn about artificial intelligence and machine learning across the GitHub ecosystem and the wider industry.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/ai-and-ml/generative-ai/" class="text-bold lh-condensed-ultra color-fg-default">Generative AI</a><p class="mb-0 f5 color-fg-muted">Learn how to build with generative AI.</p></li>
+		<li class="mt-4"><a href="https://github.blog/ai-and-ml/github-copilot/" class="text-bold lh-condensed-ultra color-fg-default">GitHub Copilot</a><p class="mb-0 f5 color-fg-muted">Change how you work with GitHub Copilot.</p></li>
+		<li class="mt-4"><a href="https://github.blog/ai-and-ml/llms/" class="text-bold lh-condensed-ultra color-fg-default">LLMs</a><p class="mb-0 f5 color-fg-muted">Everything developers need to know about LLMs.</p></li>
+		<li class="mt-4"><a href="https://github.blog/ai-and-ml/machine-learning/" class="text-bold lh-condensed-ultra color-fg-default">Machine learning</a><p class="mb-0 f5 color-fg-muted">Machine learning tips, tricks, and best practices.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://github.blog/ai-and-ml/generative-ai/how-ai-code-generation-works/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">How AI code generation works</a><p class="mb-3 f5 color-fg-muted">Explore the capabilities and benefits of AI code generation and how it can improve your developer experience.</p><a href="https://github.blog/ai-and-ml/generative-ai/how-ai-code-generation-works/" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/developer-skills/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78819-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Developer skills</a>
+<ul aria-hidden="true" aria-label="Developer skills sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78819-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78819-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/developer-skills/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Developer skills</a><p class="mt-2 mb-0 color-fg-muted">Resources for developers to grow in their skills and careers.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/developer-skills/application-development/" class="text-bold lh-condensed-ultra color-fg-default">Application development</a><p class="mb-0 f5 color-fg-muted">Insights and best practices for building apps.</p></li>
+		<li class="mt-4"><a href="https://github.blog/developer-skills/career-growth/" class="text-bold lh-condensed-ultra color-fg-default">Career growth</a><p class="mb-0 f5 color-fg-muted">Tips &amp; tricks to grow as a professional developer.</p></li>
+		<li class="mt-4"><a href="https://github.blog/developer-skills/github/" class="text-bold lh-condensed-ultra color-fg-default">GitHub</a><p class="mb-0 f5 color-fg-muted">Improve how you use GitHub at work.</p></li>
+		<li class="mt-4"><a href="https://github.blog/developer-skills/github-education/" class="text-bold lh-condensed-ultra color-fg-default">GitHub Education</a><p class="mb-0 f5 color-fg-muted">Learn how to move into your first professional role.</p></li>
+		<li class="mt-4"><a href="https://github.blog/developer-skills/programming-languages-and-frameworks/" class="text-bold lh-condensed-ultra color-fg-default">Programming languages &amp; frameworks</a><p class="mb-0 f5 color-fg-muted">Stay current on what’s new (or new again).</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://docs.github.com/en/get-started" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Get started with GitHub documentation</a><p class="mb-3 f5 color-fg-muted">Learn how to start building, shipping, and maintaining software with GitHub.</p><a href="https://docs.github.com/en/get-started" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/engineering/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78825-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Engineering</a>
+<ul aria-hidden="true" aria-label="Engineering sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78825-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78825-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/engineering/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Engineering</a><p class="mt-2 mb-0 color-fg-muted">Get an inside look at how we’re building the home for all developers.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/engineering/architecture-optimization/" class="text-bold lh-condensed-ultra color-fg-default">Architecture &amp; optimization</a><p class="mb-0 f5 color-fg-muted">Discover how we deliver a performant and highly available experience across the GitHub platform.</p></li>
+		<li class="mt-4"><a href="https://github.blog/engineering/engineering-principles/" class="text-bold lh-condensed-ultra color-fg-default">Engineering principles</a><p class="mb-0 f5 color-fg-muted">Explore best practices for building software at scale with a majority remote team.</p></li>
+		<li class="mt-4"><a href="https://github.blog/engineering/infrastructure/" class="text-bold lh-condensed-ultra color-fg-default">Infrastructure</a><p class="mb-0 f5 color-fg-muted">Get a glimpse at the technology underlying the world’s leading AI-powered developer platform.</p></li>
+		<li class="mt-4"><a href="https://github.blog/engineering/platform-security/" class="text-bold lh-condensed-ultra color-fg-default">Platform security</a><p class="mb-0 f5 color-fg-muted">Learn how we build security into everything we do across the developer lifecycle.</p></li>
+		<li class="mt-4"><a href="https://github.blog/engineering/user-experience/" class="text-bold lh-condensed-ultra color-fg-default">User experience</a><p class="mb-0 f5 color-fg-muted">Find out what goes into making GitHub the home for all developers.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://github.blog/engineering/how-we-use-github-to-be-more-productive-collaborative-and-secure/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">How we use GitHub to be more productive, collaborative, and secure</a><p class="mb-3 f5 color-fg-muted">Our engineering and security teams do some incredible work. Let’s take a look at how we use GitHub to be more productive, build collaboratively, and shift security left.</p><a href="https://github.blog/engineering/how-we-use-github-to-be-more-productive-collaborative-and-secure/" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/enterprise-software/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78832-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Enterprise software</a>
+<ul aria-hidden="true" aria-label="Enterprise software sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78832-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78832-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/enterprise-software/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Enterprise software</a><p class="mt-2 mb-0 color-fg-muted">Explore how to write, build, and deploy enterprise software at scale.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/automation/" class="text-bold lh-condensed-ultra color-fg-default">Automation</a><p class="mb-0 f5 color-fg-muted">Automating your way to faster and more secure ships.</p></li>
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/ci-cd/" class="text-bold lh-condensed-ultra color-fg-default">CI/CD</a><p class="mb-0 f5 color-fg-muted">Guides on continuous integration and delivery.</p></li>
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/collaboration/" class="text-bold lh-condensed-ultra color-fg-default">Collaboration</a><p class="mb-0 f5 color-fg-muted">Tips, tools, and tricks to improve developer collaboration.</p></li>
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/devops/" class="text-bold lh-condensed-ultra color-fg-default">DevOps</a><p class="mb-0 f5 color-fg-muted">DevOps resources for enterprise engineering teams.</p></li>
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/devsecops/" class="text-bold lh-condensed-ultra color-fg-default">DevSecOps</a><p class="mb-0 f5 color-fg-muted">How to integrate security into the SDLC.</p></li>
+		<li class="mt-4"><a href="https://github.blog/enterprise-software/governance-and-compliance/" class="text-bold lh-condensed-ultra color-fg-default">Governance &amp; compliance</a><p class="mb-0 f5 color-fg-muted">Ensuring your builds stay clean.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://github.com/resources/whitepapers/gartner-magic-quadrant-and-critical-capabilities-for-ai-code-assistants" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">GitHub recognized as a Leader in the Gartner® Magic Quadrant™ for AI Code Assistants</a><p class="mb-3 f5 color-fg-muted">Learn why Gartner positioned GitHub as a Leader for the second year in a row.</p><a href="https://github.com/resources/whitepapers/gartner-magic-quadrant-and-critical-capabilities-for-ai-code-assistants" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/news-insights/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78840-dropdown" aria-expanded="false" aria-haspopup="true" role="button">News &amp; insights</a>
+<ul aria-hidden="true" aria-label="News &amp; insights sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78840-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78840-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/news-insights/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">News &amp; insights</a><p class="mt-2 mb-0 color-fg-muted">Keep up with what’s new and notable from inside GitHub.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/news-insights/company-news/" class="text-bold lh-condensed-ultra color-fg-default">Company news</a><p class="mb-0 f5 color-fg-muted">An inside look at news and product updates from GitHub.</p></li>
+		<li class="mt-4"><a href="https://github.blog/news-insights/product-news/" class="text-bold lh-condensed-ultra color-fg-default">Product</a><p class="mb-0 f5 color-fg-muted">The latest on GitHub’s platform, products, and tools.</p></li>
+		<li class="mt-4"><a href="https://github.blog/news-insights/octoverse/" class="text-bold lh-condensed-ultra color-fg-default">Octoverse</a><p class="mb-0 f5 color-fg-muted">Insights into the state of open source on GitHub.</p></li>
+		<li class="mt-4"><a href="https://github.blog/news-insights/policy-news-and-insights/" class="text-bold lh-condensed-ultra color-fg-default">Policy</a><p class="mb-0 f5 color-fg-muted">The latest policy and regulatory changes in software.</p></li>
+		<li class="mt-4"><a href="https://github.blog/news-insights/research/" class="text-bold lh-condensed-ultra color-fg-default">Research</a><p class="mb-0 f5 color-fg-muted">Data-driven insights around the developer ecosystem.</p></li>
+		<li class="mt-4"><a href="https://github.blog/news-insights/the-library/" class="text-bold lh-condensed-ultra color-fg-default">The library</a><p class="mb-0 f5 color-fg-muted">Older news and updates from GitHub.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://github.blog/ai-and-ml/llms/unlocking-the-power-of-unstructured-data-with-rag/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Unlocking the power of unstructured data with RAG</a><p class="mb-3 f5 color-fg-muted">Learn how to use retrieval-augmented generation (RAG) to capture more insights.</p><a href="https://github.blog/ai-and-ml/llms/unlocking-the-power-of-unstructured-data-with-rag/" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/open-source/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78848-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Open Source</a>
+<ul aria-hidden="true" aria-label="Open Source sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78848-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78848-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/open-source/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Open Source</a><p class="mt-2 mb-0 color-fg-muted">Everything open source on GitHub.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/open-source/git/" class="text-bold lh-condensed-ultra color-fg-default">Git</a><p class="mb-0 f5 color-fg-muted">The latest Git updates.</p></li>
+		<li class="mt-4"><a href="https://github.blog/open-source/maintainers/" class="text-bold lh-condensed-ultra color-fg-default">Maintainers</a><p class="mb-0 f5 color-fg-muted">Spotlighting open source maintainers.</p></li>
+		<li class="mt-4"><a href="https://github.blog/open-source/social-impact/" class="text-bold lh-condensed-ultra color-fg-default">Social impact</a><p class="mb-0 f5 color-fg-muted">How open source is driving positive change.</p></li>
+		<li class="mt-4"><a href="https://github.blog/open-source/gaming/" class="text-bold lh-condensed-ultra color-fg-default">Gaming</a><p class="mb-0 f5 color-fg-muted">Explore open source games on GitHub.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://resources.github.com/software-development/innersource/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">An introduction to innersource</a><p class="mb-3 f5 color-fg-muted">Organizations worldwide are incorporating open source methodologies into the way they build and ship their own software.</p><a href="https://resources.github.com/software-development/innersource/" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+<li class="mb-5"><a href="https://github.blog/security/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default js-toggle" aria-controls="primary-mobile-78859-dropdown" aria-expanded="false" aria-haspopup="true" role="button">Security</a>
+<ul aria-hidden="true" aria-label="Security sub-menu" class="dropdown overflow-y-auto position-absolute top-0 left-0 right-0 bottom-0 flex-wrap p-5 list-style-none rounded-3 z-3 color-bg-default color-border-subtle" id="primary-mobile-78859-dropdown">
+	<li class="mb-5"><div class="mb-4"><button type="button" class="d-flex flex-items-center mb-4 p-0 border-0 text-semibold color-bg-transparent color-fg-subtle" aria-controls="primary-mobile-78859-dropdown" aria-expanded="true">Back</button><a href="https://github.blog/security/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">Security</a><p class="mt-2 mb-0 color-fg-muted">Stay up to date on everything security.</p></div>
+	<ul class="border-top list-style-none">
+		<li class="mt-4"><a href="https://github.blog/security/application-security/" class="text-bold lh-condensed-ultra color-fg-default">Application security</a><p class="mb-0 f5 color-fg-muted">Application security, explained.</p></li>
+		<li class="mt-4"><a href="https://github.blog/security/supply-chain-security/" class="text-bold lh-condensed-ultra color-fg-default">Supply chain security</a><p class="mb-0 f5 color-fg-muted">Demystifying supply chain security.</p></li>
+		<li class="mt-4"><a href="https://github.blog/security/vulnerability-research/" class="text-bold lh-condensed-ultra color-fg-default">Vulnerability research</a><p class="mb-0 f5 color-fg-muted">Updates from the GitHub Security Lab.</p></li>
+		<li class="mt-4"><a href="https://github.blog/security/web-application-security/" class="text-bold lh-condensed-ultra color-fg-default">Web application security</a><p class="mb-0 f5 color-fg-muted">Helpful tips on securing web applications.</p></li>
+	</ul>
+</li>
+	<li class="d-none"><div class="mb-4"><a href="https://resources.github.com/security/the-enterprise-guide-to-ai-powered-devsecops/" class="d-flex flex-items-center flex-justify-start lh-condensed-ultra text-bold color-fg-default">The enterprise guide to AI-powered DevSecOps</a><p class="mb-3 f5 color-fg-muted">Learn about core challenges in DevSecOps, and how you can start addressing them with AI and automation.</p><a href="https://resources.github.com/security/the-enterprise-guide-to-ai-powered-devsecops/" target="" class="Link d-inline-flex flex-items-center">Learn more</a></div></li>
+</ul>
+</li>
+</ul>				<ul id="menu-secondary-navigation" class="pt-5 border-top list-style-none"><li class="mb-5"><a href="https://github.blog/changelog/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default">Changelog</a></li>
+<li class="mb-5"><a href="https://docs.github.com/" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default">Docs</a></li>
+<li class="mb-5"><a href="https://github.com/customer-stories" class="d-flex flex-items-center flex-justify-between lh-condensed-ultra text-bold color-fg-default">Customer stories</a></li>
+</ul>	<a		class="Button Button--size-medium Button--secondary Button--block my-3"
+		href="https://githubuniverse.com/?utm_source=Blog-button&#038;utm_medium=GitHub&#038;utm_campaign=blog_button_seb_uni_26"				target="_blank"		data-analytics-click="Blog, click on button, text: Attend Universe; ref_location:top nav;"					>
+		<span class="Button__text">
+		<span class="Text Text--200 Text--antialiased Text--weight-semibold Button--label Button--label-medium Button--label-secondary">
+			Attend GitHub Universe		</span>
+		</span>
+
+			</a>
+		<a		class="Button Button--size-medium Button--primary Button--block"
+		href="https://github.com/features/ai/github-app?utm_source=blog-header-button-cta&#038;utm_medium=blog&#038;utm_campaign=github-app-cli-Q1-push"				target="_blank"		data-analytics-click="Blog, click on button, text: Use Copilot for free; ref_location:top nav;"					>
+		<span class="Button__text">
+		<span class="Text Text--200 Text--antialiased Text--weight-semibold Button--label Button--label-medium Button--label-primary">
+			Try GitHub Copilot app		</span>
+		</span>
+
+			</a>
+		</div>
+	<button class="mobile-nav-focus-trap js-mobile-nav-focus-trap" data-target="#mobile-menu-toggle" data-focus-order="target"></button>
+</nav>
+		</header>
+	</div>
+	<main id="start-of-content">
+<header class="position-relative" data-color-mode="dark" data-light-theme="light" data-dark-theme="dark_dimmed">
+	<div class="container-xl p-responsive-blog">
+		<div class="gutter-spacious">
+			<div class="col-12 offset-lg-1 col-lg-10 col-xl-8 py-5 py-md-6 ">
+				<div class="f5 mb-5 mb-md-8"><span><span><a class="Link--primary" href="https://github.blog/">Home</a></span> <span class="mx-2 opacity-5">/</span> <span><a class="Link--primary" href="https://github.blog/engineering/">Engineering</a></span> <span class="mx-2 opacity-5">/</span> <span><a class="Link--primary" href="https://github.blog/engineering/architecture-optimization/">Architecture &amp; optimization</a></span></span></div>				<h1 class="h3-mktg lh-condensed mb-3 color-fg-default">The bridge to agent-scale Git infrastructure</h1>				<div class="f4-mktg color-fg-muted">
+					<p>We moved a copy of 99.99999% of GitHub&#8217;s repositories to Azure. Here&#8217;s how per-reference quorums will bring over the rest, and how object storage lets reads scale independently.</p>
+				</div>
+			</div>
+							<div class="offset-lg-1 col-lg-10">
+					<div class="position-relative overflow-hidden rounded-2 z-1">
+													
+							<img width="1600" height="850" src="https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?resize=1600%2C850" class="d-block cover-image wp-post-image" alt="Mona sits on a raised green block beside another block displaying a circular refresh-style icon." decoding="async" loading="lazy" srcset="https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?w=1600 1600w, https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?w=800 800w, https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?w=400 400w, https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?w=1032 1032w, https://github.blog/wp-content/uploads/2026/01/generic-mona-github.png?w=516 516w" sizes="auto, (max-width: 1600px) 100vw, 1600px" />											</div>
+				</div>
+					</div>
+	</div>
+			<div class="position-absolute bottom-0 width-full" style="background:#fff; height:80px;"></div>
+	</header>
+<section class="container-xl mx-auto p-responsive-blog mt-4">
+	<div class="gutter-spacious">
+		<div class="col-12 offset-lg-1 col-lg-10">
+			<div class="d-lg-flex flex-justify-between flex-items-center">
+				<div class="mb-4 mb-lg-0">
+	<div class="mb-1">
+		<div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/nellwhite/" title="Posts by Eleanor White" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Eleanor White</a> & <a href="https://github.blog/author/vdye/" title="Posts by Victoria Dye" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Victoria Dye</a>			</span>
+							</span>
+</div>
+	</div>
+	<div data-color-mode="auto" data-light-theme="light_tritanopia" class="d-flex flex-column flex-md-row text-mono color-fg-muted">
+		<time datetime="2026-10-21" class="d-block">
+			October 21, 2026		</time>
+
+							<div class="d-flex flex-items-center mt-2 mt-md-0">
+				<span class="d-none d-md-block mx-3">|</span>
+				
+				8 minutes			</div>
+			</div>
+</div>
+				<ul class="list-style-none d-flex flex-items-center">
+	<li>
+		<span class="text-semibold">
+			Share:		</span>
+	</li>
+	<li class="ml-3">
+		<a href="https://x.com/share?text=The%20bridge%20to%20agent-scale%20Git%20infrastructure&#038;url=https%3A%2F%2Fgithub.blog%2Fengineering%2Farchitecture-optimization%2Fthe-bridge-to-agent-scale-git-infrastructure%2F" target="_blank" rel="noopener noreferrer" class="d-flex flex-justify-center flex-items-center border circle px-2 py-2" aria-label="Share on X">
+			
+		</a>
+	</li>
+	<li class="ml-3">
+		<a href="https://www.facebook.com/sharer/sharer.php?t=The%20bridge%20to%20agent-scale%20Git%20infrastructure&#038;u=https%3A%2F%2Fgithub.blog%2Fengineering%2Farchitecture-optimization%2Fthe-bridge-to-agent-scale-git-infrastructure%2F" target="_blank" rel="noopener noreferrer" class="d-flex flex-justify-center flex-items-center border circle px-2 py-2" aria-label="Share on Facebook">
+			
+		</a>
+	</li>
+	<li class="ml-3">
+		<a href="https://www.linkedin.com/shareArticle?title=The%20bridge%20to%20agent-scale%20Git%20infrastructure&#038;url=https%3A%2F%2Fgithub.blog%2Fengineering%2Farchitecture-optimization%2Fthe-bridge-to-agent-scale-git-infrastructure%2F" target="_blank" rel="noopener noreferrer" class="d-flex flex-justify-center flex-items-center border circle px-2 py-2" aria-label="Share on LinkedIn">
+			
+		</a>
+	</li>
+</ul>
+			</div>
+			<div class="indigo-separator mt-4"></div>
+		</div>
+	</div>
+</section>
+	<div class="container-xl mx-auto p-responsive-blog mt-4 mt-md-7 mb-7 mb-md-9">
+		<div class="d-flex flex-wrap flex-justify-center gutter-spacious">
+			<section class="col-12 col-md-8 col-lg-7 post__content is-layout-constrained post-99628 post type-post status-publish format-standard has-post-thumbnail hentry category-architecture-optimization category-engineering tag-git tag-infrastructure tag-technical-deep-dive">
+	<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/loose.dtd">
+<html><body><p class="wp-block-paragraph">Over the past year, while Git traffic grew exponentially, 99.99999% of the Git repositories on GitHub began living in two places at once: our own data centers and Azure. The rest are among the busiest on the platform, and they&rsquo;re held back by just one thing: a 25ms round trip.</p>
+
+
+
+<p class="wp-block-paragraph">In an <a href="https://github.blog/engineering/architecture-optimization/building-git-infrastructure-for-agent-scale-development/">earlier blog post</a>, we laid out the two principles behind our next-generation storage architecture:</p>
+
+
+
+<ul class="wp-block-list">
+<li>Minimize coordination</li>
+
+
+
+<li>Decouple storage from compute</li>
+</ul>
+
+
+
+<p class="wp-block-paragraph">In this post, we&rsquo;ll look at the immediate bridge between our old design and our new one. We&rsquo;ll talk about how a change to the way our quorum serializes writes gets the busiest repositories into Azure, and how that same step opens the door to replicas that keep no persistent state of their own.</p>
+
+
+
+<h2 id="h-how-we-got-here" class="wp-block-heading">How we got here</h2>
+
+
+
+<p class="wp-block-paragraph">The timing and shape of the move were driven by the agentic shift: rapidly growing traffic, a hard ceiling on the power capacity of our data centers and the surrounding geographical region, and physical supply chain constraints. At the beginning of our migration, the remaining capacity with all possible expansion gave us enough time to migrate safely, but not enough to do it slowly.</p>
+
+
+
+<p class="wp-block-paragraph">While we had prototyped new architectural approaches for scaling Git on cloud infrastructure, changing the storage architecture and the hosting platform at the same time, under that growth, carried too much risk. Given our scale and how critical the service is to the community, we needed to sequence the work carefully: move the data first, then evolve the architecture once it arrived.</p>
+
+
+
+<p class="wp-block-paragraph">Git operations are a Tier 0 service: they&rsquo;re a core function of GitHub, and nearly everything in GitHub depends on the repository data. That meant the data, services, and every dependency had to move first. The first copy of a repository landed in Azure&rsquo;s Central US region in August 2025. Today, most repositories have two of their five replicas in Azure, and Azure serves about half of Git traffic. For most of that time, Azure absorbed our growth while our own data centers held steady.</p>
+
+
+
+<p class="wp-block-paragraph">During the migration, traffic follows the data. Most repositories have five replicas to balance durability, availability, and scale. To minimize read latency, Spokes uses preferential routing to direct traffic to a replica in the same region and availability zone as the request. As replicas move to Azure, the share of the traffic that can be served from Azure grows with each one, until the last replica arrives and the old region stops receiving requests entirely. Every repository goes through this process:</p>
+
+
+
+<figure class="wp-block-video"><video height="900" style="aspect-ratio: 1600 / 900;" width="1600" controls poster="https://github.blog/wp-content/uploads/2026/10/Screenshot-2026-10-20-at-2.23.48-PM.png" src="https://github.blog/wp-content/uploads/2026/10/replica-migration.mp4"></video></figure>
+
+
+
+<h2 id="h-no-repository-left-behind" class="wp-block-heading">No repository left behind</h2>
+
+
+
+<p class="wp-block-paragraph">So, what about the remaining 0.00001% of repositories?</p>
+
+
+
+<p class="wp-block-paragraph">In our current architecture, a repository hosted in more than one region has a lower write throughput ceiling. Spokes&rsquo; quorum only needs a majority to commit a write, but it waits for every healthy replica to respond (up to a timeout) before moving on, so slow replicas delay every write rather than falling behind. In practice, that means the slowest healthy replica sets the latency of every write, and because each write holds a repository-wide lock until it commits, it also sets the throughput ceiling. Once a replica lives in the target Azure region, it&rsquo;s about 1,000 miles from our data centers, making each network round trip around 25ms, and a write requires multiple round trips. A repository already near its throughput ceiling can&rsquo;t absorb that on every serialized write; it would fall further behind with every push.</p>
+
+
+
+<p class="wp-block-paragraph">This is where our first principle, minimizing coordination, comes into play. Specifically for this case: don&rsquo;t serialize what doesn&rsquo;t need to be. Git&rsquo;s consistency requirements apply to each reference individually. Once the server accepts an update to a reference, no client should see an older value afterward, only that value or a newer one. That holds whether the update is a fast-forward, a force push, or a delete. But in most cases, updates to different references don&rsquo;t depend on each other and can be applied independently.</p>
+
+
+
+<p class="wp-block-paragraph">So, we&rsquo;re changing the scope of the quorum from the whole repository to individual references.</p>
+
+
+
+<p class="wp-block-paragraph">Holding a repository-wide lock for the entire reference update, round trips included, turns the quorum into a single, unordered request queue with one write in flight at a time. Each write in that queue takes as long as the slowest healthy replica. As the write rate grows, so does the queue, and each write waits longer than the one before it.</p>
+
+
+
+<p class="wp-block-paragraph">With per-reference serialization, only writes that contend on a shared reference must wait for each other. In practice, most writes to a repository touch different references&mdash;for example, agents and developers pushing to their own branches&mdash;so they no longer wait on each other. Each write still experiences the cross-region latency but writes to different references can be in flight at the same time. That removes the single bottleneck on the repository. We can visualize how queueing and timeouts build up by comparing the two approaches side by side under similar load:</p>
+
+
+
+<figure class="wp-block-video"><video height="832" style="aspect-ratio: 1600 / 832;" width="1600" controls poster="https://github.blog/wp-content/uploads/2026/10/Screenshot-2026-10-20-at-2.29.27-PM.png" src="https://github.blog/wp-content/uploads/2026/10/write-concurrency.mp4"></video></figure>
+
+
+
+<p class="wp-block-paragraph">These changes raise a repository&rsquo;s write throughput ceiling roughly in proportion to how many references are being written at once, and get the last remaining repositories into Azure. In internal testing with realistic traffic, writes to different references consistently saw 3&ndash;4x higher throughput at lower latency.</p>
+
+
+
+<h2 id="h-scaling-reads-on-their-own" class="wp-block-heading">Scaling reads on their own</h2>
+
+
+
+<p class="wp-block-paragraph">Most repositories are heavily read-skewed, with somewhere between 100 and 1,000 reads for every write. Today, reads and writes hit the same replicas, so they compete for the same resources and can&rsquo;t be scaled independently.</p>
+
+
+
+<p class="wp-block-paragraph">Decoupling storage from compute changes that. Once repository data is durably stored in Azure Blob Storage and updated with each incoming write, we can begin to decouple read traffic from the write quorum, and independently scale the compute needed for each. For example, reads would benefit from far more in-memory cache than we give them today, but that memory is also needed for compaction. Once they&rsquo;re separated, each gets its own configuration.</p>
+
+
+
+<p class="wp-block-paragraph">The first step is making object storage a member of the quorum, but a special one that we call a virtual replica. The compute that represents it is our first fully ephemeral node. It serves as a bridge to object storage, streaming incoming writes and serving no reads. Because it&rsquo;s a member of the quorum, a write isn&rsquo;t acknowledged until it&rsquo;s durable in object storage.</p>
+
+
+
+<p class="wp-block-paragraph">That adds a little latency to each write, but just like the cross-region round trip, per-reference serialization keeps it from becoming a throughput bottleneck. The virtual write replica also coalesces transactions on disjoint references into a single set of network I/Os to object storage, so a busy repository pays for one round trip across many concurrent writes instead of one per write. For now, the virtual write replica also handles compaction, and read replicas inherit the compacted state.</p>
+
+
+
+<p class="wp-block-paragraph">With the virtual write replica in place, we can scale out as many virtual read replicas as a repository needs, on demand. Each read replica warms its cache from Azure Blob Storage and starts taking read traffic without joining the quorum, using object storage as the source of truth and reconciling its local state against it in the background.</p>
+
+
+
+<p class="wp-block-paragraph">This step unlocks significant read scale. In internal testing, our distributed load testing harness routinely found ceilings in the current architecture. Against virtual read replicas, the harness hit its own limits first. It also comes with a few challenges that are solved in subsequent steps:</p>
+
+
+
+<ol class="wp-block-list">
+<li>Virtual read replicas start out reconciling with object storage in the background, which makes them a good fit for some read workloads but not all of them. Serving every kind of read requires moving that reconciliation in-line, fetching only the reference state and data that changed since the replica last caught up.</li>
+
+
+
+<li>While we&rsquo;ve incrementally increased write throughput by shifting to a per-reference model, the quorum remains the bounding factor for increasing further.</li>
+</ol>
+
+
+
+<p class="wp-block-paragraph">How can we push write throughput further?</p>
+
+
+
+<h2 id="h-what-comes-next" class="wp-block-heading">What comes next</h2>
+
+
+
+<p class="wp-block-paragraph">The GitHub of today was built on the Spokes quorum, and over the years Spokes has become much more than a quorum coordinator. It&rsquo;s also an intelligent routing and load balancing layer, a unified API that internal clients use to access and transact repository data at well over 100 billion operations per day, and a collection of background systems we call &ldquo;sweepers&rdquo; that handle repository placement, repair, and rebalancing between storage nodes.</p>
+
+
+
+<p class="wp-block-paragraph">The vast majority of what lives under the Spokes service umbrella applies just as well to the new architecture as it does to the existing one. But we also recognize that the commit protocol that has taken GitHub to a billion repositories won&rsquo;t take it to the next billion and beyond.</p>
+
+
+
+<p class="wp-block-paragraph">We&rsquo;re not done yet. With these steps in place, the next limit is write throughput. Every write still waits on replicas that each hold a full copy of the repository, yet very little of a write actually needs to be ordered. Git objects are immutable and named by their contents, so they can be stored without anyone agreeing on them. What&rsquo;s left is small, and the hard part is ordering it as fast as possible without moving the bottleneck somewhere else. Designing for that on a whiteboard is one thing. Doing it underneath a billion repositories that developers and agents are writing to around the clock is another. Getting there forced us to rethink the second-order effects too, like where durable reference state lives and how compaction and garbage collection scale.</p>
+
+
+
+<p class="wp-block-paragraph">Agent traffic isn&rsquo;t slowing down, and each of these steps gives repositories more headroom as it lands, without waiting for the end state.</p>
+
+
+
+<p class="wp-block-paragraph"><strong>Coming next week:</strong> At GitHub Universe and in the final post in this series, we&rsquo;ll take a tour through that end state, what it does for write throughput, the second-order problems we had to solve to get there, and why there&rsquo;s still a (small) consensus group somewhere in the stack.</p>
+
+
+
+<p class="wp-block-paragraph"><em>Thanks to Brian Celenza for their contributions to this post.</em></p>
+</body></html>
+	
+<section class="my-6 my-md-8 mt-md-0">
+	<hr class="post-tags-separator border-0 mt-0 mb-2" />
+	<div class="d-flex flex-shrink-0 flex-items-start">
+		<h2 class="text-mono f4-mktg py-1 mr-3 flex-shrink-0">Tags:</h2>
+		<ul class="d-flex flex-wrap px-0 my-0 list-style-none post-tags">
+							<li class="my-0">
+					<a href="https://github.blog/tag/git/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+						Git					</a>
+				</li>
+							<li class="my-0">
+					<a href="https://github.blog/tag/infrastructure/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+						Infrastructure					</a>
+				</li>
+							<li class="my-0">
+					<a href="https://github.blog/tag/technical-deep-dive/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+						technical deep dive					</a>
+				</li>
+					</ul>
+	</div>
+</section>
+	<div class="mt-8 mb-8 mb-md-0">
+	<h2 class="h5-mktg">
+		Written by	</h2>
+	<div class="gradient-separator mt-3 mb-4"></div>
+			<article class="author-bio mb-5 mb-md-4">
+	<div class="author-bio__content">
+					<div class="author-bio__avatar">
+				<picture>
+					<source srcset="https://avatars.githubusercontent.com/u/76486567?v=4&#038;s=200" width="120" height="120" media="(min-width: 768px)" />
+					<img class="d-block circle" src="https://avatars.githubusercontent.com/u/76486567?v=4&#038;s=200" alt="Eleanor White" width="80" height="80" loading="lazy" decoding="async" >
+				</picture>
+			</div>
+				<header class="author-bio__header">
+			<h3 class="f3-mktg text-bold mb-1">
+				<a href="https://github.blog/author/nellwhite/" class="Link--primary color-fg-default">Eleanor White</a>
+			</h3>
+							<p class="mb-0 f4 lh-condensed">
+					<a href="https://github.com/nellwhite" target="_blank">@nellwhite</a>
+				</p>
+					</header>
+					<div class="author-bio__bio f4 lh-default">
+				<p>Senior Software Engineer</p>
+			</div>
+			</div>
+</article>
+			<article class="author-bio mb-5 mb-md-4">
+	<div class="author-bio__content">
+					<div class="author-bio__avatar">
+				<picture>
+					<source srcset="https://avatars.githubusercontent.com/u/3619353?v=4&#038;s=200" width="120" height="120" media="(min-width: 768px)" />
+					<img class="d-block circle" src="https://avatars.githubusercontent.com/u/3619353?v=4&#038;s=200" alt="Victoria Dye" width="80" height="80" loading="lazy" decoding="async" >
+				</picture>
+			</div>
+				<header class="author-bio__header">
+			<h3 class="f3-mktg text-bold mb-1">
+				<a href="https://github.blog/author/vdye/" class="Link--primary color-fg-default">Victoria Dye</a>
+			</h3>
+							<p class="mb-0 f4 lh-condensed">
+					<a href="https://github.com/vdye" target="_blank">@vdye</a>
+				</p>
+					</header>
+					<div class="author-bio__bio f4 lh-default">
+				<p>Staff Software Engineer</p>
+			</div>
+			</div>
+</article>
+	</div>
+</section>
+
+<aside id="sidebar" class="col-12 col-md-4 col-lg-3 post__sidebar" aria-label="Sidebar">
+	
+<section aria-label="Tags">
+	<ul class="d-none d-md-flex flex-items-start flex-wrap list-style-none mt-4 mt-md-0 mb-6 mb-md-8 post-tags">
+					<li class="my-0">
+				<a href="https://github.blog/tag/git/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+					Git				</a>
+			</li>
+					<li class="my-0">
+				<a href="https://github.blog/tag/infrastructure/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+					Infrastructure				</a>
+			</li>
+					<li class="my-0">
+				<a href="https://github.blog/tag/technical-deep-dive/" class="d-block border py-2 px-3 f5 lh-condensed-ultra text-semibold Link--primary" rel="tag">
+					technical deep dive				</a>
+			</li>
+			</ul>
+</section>
+	<div class="position-sticky top-md-scroll">
+		<div class="d-none d-md-block">
+			<nav aria-labelledby="table-of-contents-title" class="mb-8 table-of-contents">
+	<h2 id="table-of-contents-title" class="h5-mktg aside-heading pb-3 border-bottom color-border-muted mb-3">Table of Contents</h2>
+	<ul class="list-style-none table-of-contents">
+					<li class="position-relative mt-2">
+				<a class="d-block f5-mktg text-semibold Link--primary px-3 py-2 rounded-3" href="#h-how-we-got-here">
+					<div class="mb-2px">How we got here</div>
+				</a>
+			</li>
+					<li class="position-relative mt-2">
+				<a class="d-block f5-mktg text-semibold Link--primary px-3 py-2 rounded-3" href="#h-no-repository-left-behind">
+					<div class="mb-2px">No repository left behind</div>
+				</a>
+			</li>
+					<li class="position-relative mt-2">
+				<a class="d-block f5-mktg text-semibold Link--primary px-3 py-2 rounded-3" href="#h-scaling-reads-on-their-own">
+					<div class="mb-2px">Scaling reads on their own</div>
+				</a>
+			</li>
+					<li class="position-relative mt-2">
+				<a class="d-block f5-mktg text-semibold Link--primary px-3 py-2 rounded-3" href="#h-what-comes-next">
+					<div class="mb-2px">What comes next</div>
+				</a>
+			</li>
+			</ul>
+</nav>
+		</div>
+		<section aria-labelledby="git-related-posts-title" class="mb-7 mb-md-8 mt-7 mt-md-0"><h2 class="h5-mktg aside-heading pb-3 border-bottom color-fg-muted color-border-muted" id="git-related-posts-title">More on <a href="https://github.blog/tag/git/" class="Link--primary">Git</a></h2><article class="py-4 d-flex flex-column"><div class="col-12  tease-text"><h3 class="h6-mktg mb-12px"><a href="https://github.blog/engineering/architecture-optimization/building-git-infrastructure-for-agent-scale-development/" class="Link--primary">Building Git infrastructure for agent-scale development</a></h3><div class="f4-mktg color-fg-muted"><p>We&#8217;re rebuilding GitHub&#8217;s Git infrastructure while GitHub keeps running, creating a foundation for agent-scale software development.</p>
+</div><div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/bcelenza/" title="Posts by Brian Celenza" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Brian Celenza</a>			</span>
+							</span>
+</div>
+</div></article><article class="py-4 d-flex flex-column border-top"><div class="col-12  tease-text"><h3 class="h6-mktg mb-12px"><a href="https://github.blog/open-source/git/highlights-from-git-2-56/" class="Link--primary">Highlights from Git 2.56</a></h3><div class="f4-mktg color-fg-muted"><p>The open source Git project just released Git 2.56. Here is GitHub&#8217;s look at some of the most interesting features and changes introduced since last time.</p>
+</div><div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/newren/" title="Posts by Elijah Newren" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Elijah Newren</a>			</span>
+							</span>
+</div>
+</div></article></section>	</div>
+</aside>
+		</div>
+	</div>
+	<section class="container-xl p-responsive-blog mx-auto mt-12 mb-8">
+	<h2 class="h5-mktg mb-4 mb-lg-7 pb-3 border-bottom color-border-subtle">
+		Related posts	</h2>
+	<div class="post-columns post-columns--3-3">
+	<article class="color-border-muted post-card">
+	<div class="d-flex flex-column">
+		<div class="d-block col-12 position-relative rounded-2 mb-3 overflow-hidden tease-thumbnail" target="_self">
+			
+			<img width="400" height="212" src="https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?resize=400%2C212" class="d-block cover-image tease-thumbnail__img wp-post-image" alt="Decorative illustration featuring Ducky inside a translucent cube surrounded by green geometric blocks." decoding="async" loading="lazy" srcset="https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?w=1600 1600w, https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?w=800 800w, https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?w=400 400w, https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?w=1032 1032w, https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?w=516 516w, https://github.blog/wp-content/uploads/2026/01/00ab37fbbb9bc343b007734b0e5805a26e747c90d955750bd976cb9ce84f6a2a-1920x1080-1.png?zoom=3&amp;resize=400%2C212 1200w" sizes="auto, (max-width: 400px) 100vw, 400px" />					</div>
+		<div class="mb-1"><a href="https://github.blog/engineering/" class="first-post-category f5-mktg text-gradient-purple-coral text-bold pb-1 position-relative z-2">Engineering</a></div>		<div class="">
+			<h3 class="h6-mktg mb-2">
+				<a class="Link--primary post-card__link" href="https://github.blog/engineering/platform-security/staying-evergreen-how-we-automated-secure-access-and-repo-hygiene-in-a-shared-org/" target="_self">
+					Staying Evergreen: How we automated secure access and repo hygiene in a shared org				</a>
+			</h3>
+			<div class="f4-mktg color-fg-muted">
+				<p>Put native GitHub features to work to review outside collaborator access and archive stale repositories.</p>
+			</div>
+		</div>
+		<footer>
+			<div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/callmegreg/" title="Posts by Greg Mohler" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Greg Mohler</a>			</span>
+							</span>
+</div>
+		</footer>
+	</div>
+</article>
+<article class="color-border-muted post-card">
+	<div class="d-flex flex-column">
+		<div class="d-block col-12 position-relative rounded-2 mb-3 overflow-hidden tease-thumbnail" target="_self">
+			
+			<img width="400" height="212" src="https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?resize=400%2C212" class="d-block cover-image tease-thumbnail__img wp-post-image" alt="Mona floats above green geometric blocks that include a GitHub invertocat logo in a decorative scene." decoding="async" loading="lazy" srcset="https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?w=1600 1600w, https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?w=800 800w, https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?w=400 400w, https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?w=1032 1032w, https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?w=516 516w, https://github.blog/wp-content/uploads/2026/01/generic-github-invertocat-mona-logo.png?zoom=3&amp;resize=400%2C212 1200w" sizes="auto, (max-width: 400px) 100vw, 400px" />					</div>
+		<div class="mb-1"><a href="https://github.blog/engineering/architecture-optimization/" class="first-post-category f5-mktg text-gradient-purple-coral text-bold pb-1 position-relative z-2">Architecture &amp; optimization</a></div>		<div class="">
+			<h3 class="h6-mktg mb-2">
+				<a class="Link--primary post-card__link" href="https://github.blog/engineering/architecture-optimization/from-2500-requests-to-24-rebuilding-star-history-without-the-stargazers/" target="_self">
+					From 2,500 requests to 24: Rebuilding star history without the stargazers				</a>
+			</h3>
+			<div class="f4-mktg color-fg-muted">
+				<p>Our new repo star history API now provides trends without returning individual identities or requiring unbounded database work. These are the engineering tradeoffs we made.</p>
+			</div>
+		</div>
+		<footer>
+			<div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/taylorcuilty/" title="Posts by Taylor Cuilty" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Taylor Cuilty</a> & <a href="https://github.blog/author/saritai/" title="Posts by Sarita Iyer" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Sarita Iyer</a>			</span>
+							</span>
+</div>
+		</footer>
+	</div>
+</article>
+<article class="color-border-muted post-card">
+	<div class="d-flex flex-column">
+		<div class="d-block col-12 position-relative rounded-2 mb-3 overflow-hidden tease-thumbnail" target="_self">
+			
+			<img width="400" height="212" src="https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?resize=400%2C212" class="d-block cover-image tease-thumbnail__img wp-post-image" alt="Image featuring the GitHub invertocat logo displayed on a floating cube against a decorative background." decoding="async" loading="lazy" srcset="https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?w=1600 1600w, https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?w=800 800w, https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?w=400 400w, https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?w=1032 1032w, https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?w=516 516w, https://github.blog/wp-content/uploads/2026/01/generic-invertocat-github-logo.png?zoom=3&amp;resize=400%2C212 1200w" sizes="auto, (max-width: 400px) 100vw, 400px" />					</div>
+		<div class="mb-1"><a href="https://github.blog/engineering/architecture-optimization/" class="first-post-category f5-mktg text-gradient-purple-coral text-bold pb-1 position-relative z-2">Architecture &amp; optimization</a></div>		<div class="">
+			<h3 class="h6-mktg mb-2">
+				<a class="Link--primary post-card__link" href="https://github.blog/engineering/architecture-optimization/building-git-infrastructure-for-agent-scale-development/" target="_self">
+					Building Git infrastructure for agent-scale development				</a>
+			</h3>
+			<div class="f4-mktg color-fg-muted">
+				<p>We&#8217;re rebuilding GitHub&#8217;s Git infrastructure while GitHub keeps running, creating a foundation for agent-scale software development.</p>
+			</div>
+		</div>
+		<footer>
+			<div class="d-flex flex-items-center mb-6px">
+		<span>
+					<span class="text-bold">
+				<a href="https://github.blog/author/bcelenza/" title="Posts by Brian Celenza" class="author url fn Link--primary no-wrap position-relative z-2" rel="author">Brian Celenza</a>			</span>
+							</span>
+</div>
+		</footer>
+	</div>
+</article>
+</div>
+</section>
+<aside class="container-xl p-responsive-blog mx-auto mb-12">
+	<h2 class="h5-mktg border-bottom pb-3">
+		Explore more from GitHub	</h2>
+	<div class="d-flex flex-wrap ml-md-n4">
+		<div class="col-12 col-md-6 col-lg-3 d-flex mt-4 mt-lg-6 pl-md-4">
+	<div class="rounded-3 color-bg-subtle d-flex flex-column flex-items-start width-full p-5 f4-mktg color-fg-muted">
+		<img src="https://github.blog/wp-content/uploads/2024/07/Icon-Circle.svg" width="44" height="44" class="width-auto d-block mb-3" alt="Docs"/>		<h3 class="f3-mktg text-bold color-fg-default mb-3">
+			Docs		</h3>
+		<div class="mb-auto">
+			<p>Everything you need to master GitHub, all in one place.</p>
+		</div>
+					<div class="mt-7">
+				<a data-analytics-click="Blog, click on module, text: Go to Docs; ref_location:bottom recirculation;" href="https://docs.github.com/" class="text-semibold arrow-target-mktg Link--primary" target="_blank" aria-label="Go to Docs">
+					Go to Docs											
+									</a>
+			</div>
+			</div>
+</div>
+<div class="col-12 col-md-6 col-lg-3 d-flex mt-4 mt-lg-6 pl-md-4">
+	<div class="rounded-3 color-bg-subtle d-flex flex-column flex-items-start width-full p-5 f4-mktg color-fg-muted">
+		<img src="https://github.blog/wp-content/uploads/2024/07/recirculation-github-icon.svg" width="44" height="44" class="width-auto d-block mb-3" alt="GitHub"/>		<h3 class="f3-mktg text-bold color-fg-default mb-3">
+			GitHub		</h3>
+		<div class="mb-auto">
+			<p>Build what&#8217;s next on GitHub, the place for anyone from anywhere to build anything.</p>
+		</div>
+					<div class="mt-7">
+				<a data-analytics-click="Blog, click on module, text: Start building; ref_location:bottom recirculation;" href="https://github.com/" class="text-semibold arrow-target-mktg Link--primary" target="_blank" aria-label="Start building">
+					Start building											
+									</a>
+			</div>
+			</div>
+</div>
+<div class="col-12 col-md-6 col-lg-3 d-flex mt-4 mt-lg-6 pl-md-4">
+	<div class="rounded-3 color-bg-subtle d-flex flex-column flex-items-start width-full p-5 f4-mktg color-fg-muted">
+		<img src="https://github.blog/wp-content/uploads/2024/07/Icon_da43dc.svg" width="44" height="44" class="width-auto d-block mb-3" alt="Customer stories"/>		<h3 class="f3-mktg text-bold color-fg-default mb-3">
+			Customer stories		</h3>
+		<div class="mb-auto">
+			<p>Meet the companies and engineering teams that build with GitHub.</p>
+		</div>
+					<div class="mt-7">
+				<a data-analytics-click="Blog, click on module, text: Learn more; ref_location:bottom recirculation;" href="https://github.com/customer-stories" class="text-semibold arrow-target-mktg Link--primary" target="_blank" aria-label="Learn more">
+					Learn more											
+									</a>
+			</div>
+			</div>
+</div>
+<div class="col-12 col-md-6 col-lg-3 d-flex mt-4 mt-lg-6 pl-md-4">
+	<div class="rounded-3 color-bg-subtle d-flex flex-column flex-items-start width-full p-5 f4-mktg color-fg-muted">
+		<img src="https://github.blog/wp-content/uploads/2025/06/Universe26-Icon.svg" width="44" height="44" class="width-auto d-block mb-3" alt="GitHub Universe 2026"/>		<h3 class="f3-mktg text-bold color-fg-default mb-3">
+			GitHub Universe 2026		</h3>
+		<div class="mb-auto">
+			<p>Join us October 28-29 in San Francisco or online for GitHub Universe, our flagship developer event uniting people, agents, and the world’s code.</p>
+		</div>
+					<div class="mt-7">
+				<a data-analytics-click="Blog, click on module, text: Register now; ref_location:bottom recirculation;" href="https://githubuniverse.com/?utm_source=Blog&#038;utm_medium=GitHub&#038;utm_campaign=module_uni_26" class="text-semibold arrow-target-mktg Link--primary" target="_blank" aria-label="Register now">
+					Register now											
+									</a>
+			</div>
+			</div>
+</div>
+	</div>
+</aside>
+<div class="py-6 py-lg-8 color-bg-subtle" data-color-mode="dark" data-light-theme="light" data-dark-theme="dark">
+	<div class="container-xl p-responsive-blog">
+		<section id="newsletter" class="newsletter rounded-2">
+	<div class="color-bg-subtle rounded-2">
+		<div class="d-flex flex-row flex-wrap gutter-spacious py-5 px-4 py-md-6 px-md-5">
+			<div class="newsletter-content col-12 col-lg-6 col-xl-7">
+				<h2 class="h4-mktg color-fg-default">We do newsletters, too</h2><p class="f3-mktg color-fg-muted mt-2 mb-3">Discover tips, technical guides, and best practices in our biweekly newsletter just for devs.</p>			</div>
+			<div class="col-12 col-lg-6 col-xl-5">
+				<label for="newsletter_emailAddress" class="">Your email address</label>
+				<form method="post" action="https://s88570519.t.eloqua.com/e/f2?elqFormName=copynewsletter-signup-form-637872624660309567&elqSiteID=88570519" class="js-form-validator newsletter-form">
+					<div class="newsletter-form d-md-flex flex-row mt-0 mb-3 rounded-2 required form-group">
+						<div class="m-0 width-full newsletter-input-container">
+							<span aria-hidden="true" class="required-indicator">*</span>
+							<label for="newsletter_emailAddress" class="screen-reader-text">Your email address</label>
+							<input type="email" required id="newsletter_emailAddress" name="emailAddress" placeholder="Your email address" class="required js-validity-check d-block width-full height-md-full f4-mktg newsletter-field rounded-2" />
+						</div>
+																								<input type="hidden" name="classification" value="Practitioner">
+						<button type="submit" class="js-form-validator-submit newsletter-submit flex-shrink-0 arrow-target-mktg d-none d-md-flex flex-row f3-mktg flex-items-center text-semibold rounded-2">
+							<span>Subscribe</span>
+							
+						</button>
+					</div>
+					<div class="form-checkbox color-fg-muted f6-mktg m-0 mt-2 form-group">
+						<label class="text-normal">
+							<input id="optincheckbox" name="marketingEmailOptIn1" type="checkbox" value="True">
+							Yes please, I’d like GitHub and affiliates to use my information for personalized communications, targeted advertising and campaign effectiveness. See the <a href="https://github.com/site/privacy" target="blank">GitHub Privacy Statement</a> for more details.						</label>
+					</div>
+					<button type="submit" class="js-form-validator-submit newsletter-submit flex-shrink-0 arrow-target-mktg mt-3 d-flex d-md-none flex-row f3-mktg flex-items-center text-semibold rounded-2">
+						<span>Subscribe</span>
+						
+					</button>
+				</form>
+			</div>
+		</div>
+	</div>
+</section>
+	</div>
+</div>
+</main>
+<div data-color-mode="dark" data-light-theme="light" data-dark-theme="dark">
+	<footer class="footer pt-6">
+		<h2 class="sr-only">Site-wide Links</h2>
+		
+<div class="container-xl p-responsive-blog">
+	<div class="d-flex flex-wrap py-5 mb-5">
+
+		<div class="col-12 col-lg-4 mb-5">
+			<a href="https://github.com/" data-ga-click="Resources, go to home, resources footer" class="color-fg-default" aria-label="Go to GitHub homepage">
+				
+			</a>
+		</div>
+
+		<nav aria-labelledby="product-menu" class="col-6 col-sm-3 col-lg-2 mb-6 mb-md-2 pr-3 pr-lg-0 pl-lg-4"><h3 id="product-menu" class="h5 mb-3 text-mono color-text-tertiary text-normal">Product</h3><ul class="list-style-none text-gray f5"><li class="lh-condensed mb-3"><a href="https://github.com/features" data-ga-click="Site Foundation Components, go to Features, site foundation components footer" class="Link--secondary">Features</a></li><li class="lh-condensed mb-3"><a href="https://github.com/security" data-ga-click="Site Foundation Components, go to Security, site foundation components footer" class="Link--secondary">Security</a></li><li class="lh-condensed mb-3"><a href="https://github.com/enterprise" data-ga-click="Site Foundation Components, go to Enterprise, site foundation components footer" class="Link--secondary">Enterprise</a></li><li class="lh-condensed mb-3"><a href="https://github.com/customer-stories?type=enterprise" data-ga-click="Site Foundation Components, go to Customer Stories, site foundation components footer" class="Link--secondary">Customer Stories</a></li><li class="lh-condensed mb-3"><a href="https://github.com/pricing" data-ga-click="Site Foundation Components, go to Pricing, site foundation components footer" class="Link--secondary">Pricing</a></li><li class="lh-condensed mb-3"><a href="https://resources.github.com/" data-ga-click="Site Foundation Components, go to Resources, site foundation components footer" class="Link--secondary">Resources</a></li></ul></nav><nav aria-labelledby="platform-menu" class="col-6 col-sm-3 col-lg-2 mb-6 mb-md-2 pr-3 pr-lg-0 pl-lg-4"><h3 id="platform-menu" class="h5 mb-3 text-mono color-text-tertiary text-normal">Platform</h3><ul class="list-style-none text-gray f5"><li class="lh-condensed mb-3"><a href="https://developer.github.com/" data-ga-click="Site Foundation Components, go to Developer API, site foundation components footer" class="Link--secondary">Developer API</a></li><li class="lh-condensed mb-3"><a href="https://partner.github.com/" data-ga-click="Site Foundation Components, go to Partners, site foundation components footer" class="Link--secondary">Partners</a></li><li class="lh-condensed mb-3"><a href="https://atom.io/" data-ga-click="Site Foundation Components, go to Atom, site foundation components footer" class="Link--secondary">Atom</a></li><li class="lh-condensed mb-3"><a href="https://www.electronjs.org/" data-ga-click="Site Foundation Components, go to Electron, site foundation components footer" class="Link--secondary">Electron</a></li><li class="lh-condensed mb-3"><a href="https://desktop.github.com/" data-ga-click="Site Foundation Components, go to GitHub Desktop, site foundation components footer" class="Link--secondary">GitHub Desktop</a></li></ul></nav><nav aria-labelledby="support-menu" class="col-6 col-sm-3 col-lg-2 mb-6 mb-md-2 pr-3 pr-lg-0 pl-lg-4"><h3 id="support-menu" class="h5 mb-3 text-mono color-text-tertiary text-normal">Support</h3><ul class="list-style-none text-gray f5"><li class="lh-condensed mb-3"><a href="https://docs.github.com/" data-ga-click="Site Foundation Components, go to Docs, site foundation components footer" class="Link--secondary">Docs</a></li><li class="lh-condensed mb-3"><a href="https://github.community/" data-ga-click="Site Foundation Components, go to Community Forum, site foundation components footer" class="Link--secondary">Community Forum</a></li><li class="lh-condensed mb-3"><a href="https://services.github.com/" data-ga-click="Site Foundation Components, go to Training, site foundation components footer" class="Link--secondary">Training</a></li><li class="lh-condensed mb-3"><a href="https://www.githubstatus.com/" data-ga-click="Site Foundation Components, go to Status, site foundation components footer" class="Link--secondary">Status</a></li><li class="lh-condensed mb-3"><a href="https://support.github.com/" data-ga-click="Site Foundation Components, go to Contact, site foundation components footer" class="Link--secondary">Contact</a></li></ul></nav><nav aria-labelledby="company-menu" class="col-6 col-sm-3 col-lg-2 mb-6 mb-md-2 pr-3 pr-lg-0 pl-lg-4"><h3 id="company-menu" class="h5 mb-3 text-mono color-text-tertiary text-normal">Company</h3><ul class="list-style-none text-gray f5"><li class="lh-condensed mb-3"><a href="https://github.com/about" data-ga-click="Site Foundation Components, go to About, site foundation components footer" class="Link--secondary">About</a></li><li class="lh-condensed mb-3"><a href="https://github.blog/" data-ga-click="Site Foundation Components, go to Blog, site foundation components footer" class="Link--secondary">Blog</a></li><li class="lh-condensed mb-3"><a href="https://github.com/about/careers" data-ga-click="Site Foundation Components, go to Careers, site foundation components footer" class="Link--secondary">Careers</a></li><li class="lh-condensed mb-3"><a href="https://github.com/about/press" data-ga-click="Site Foundation Components, go to Press, site foundation components footer" class="Link--secondary">Press</a></li><li class="lh-condensed mb-3"><a href="https://shop.github.com/" data-ga-click="Site Foundation Components, go to Shop, site foundation components footer" class="Link--secondary">Shop</a></li></ul></nav>
+	</div>
+</div>
+		
+<div class="color-bg-subtle">
+	<div class="container-xl p-responsive-blog f6 py-4 d-sm-flex flex-justify-between flex-items-center">
+
+	<ul class="list-style-none d-flex flex-wrap text-gray mb-3">
+			<li class="mr-3">&copy; 2026 GitHub, Inc.</li>
+
+			<li class="mr-3">
+				<a href="https://docs.github.com/en/github/site-policy/github-terms-of-service" data-ga-click="Site Foundation Components, go to terms, site foundation components footer" class="Link--secondary">Terms</a>
+			</li>
+
+			<li class="mr-3">
+				<a href="https://docs.github.com/en/github/site-policy/github-privacy-statement" data-ga-click="Site Foundation Components, go to privacy, site foundation components footer" class="Link--secondary">Privacy</a>
+			</li>
+
+				<li class="mr-3">
+		<button type="button" class="btn-link Link--secondary" onClick="_ghcc.showPreferences()">Manage Cookies</button>
+	</li>
+	<li class="mr-3">
+		<button type="button" class="btn-link Link--secondary" onClick="_ghcc.showPreferences()">Do not share my personal information</button>
+	</li>
+	
+		</ul>
+
+		<ul class="list-style-none d-flex flex-items-center mb-sm-0 lh-condensed-ultra">
+			<li class="mr-3 flex-self-start focusable-svg">
+				<a href="https://www.linkedin.com/company/github" data-ga-click="Blog, go to Linkedin, resources footer" style="color: #959da5;">
+					
+
+					<span class="sr-only">GitHub on LinkedIn</span>
+				</a>
+			</li>
+			<li class="mr-3 focusable-svg">
+				<a href="https://www.instagram.com/github/" data-ga-click="Blog, go to Instagram, resources footer" style="color: #959da5;">
+					
+
+					<span class="sr-only">GitHub on Instagram</span>
+				</a>
+			</li>
+			<li class="mr-3 focusable-svg">
+				<a href="https://www.youtube.com/github" data-ga-click="Blog, go to YouTube, resources footer" style="color: #959da5;">
+					
+
+					<span class="sr-only">GitHub on YouTube</span>
+				</a>
+			</li>
+			<li class="mr-3 focusable-svg">
+				<a href="https://twitter.com/github" data-ga-click="Blog, go to X, resources footer" style="color: #959da5;">
+					
+
+					<span class="sr-only">GitHub on X</span>
+				</a>
+			</li>
+			<li class="mr-3 flex-self-start focusable-svg">
+				<a href="https://www.tiktok.com/@github" data-ga-click="Blog, go to TikTok, resources footer" style="color: #959da5;">
+					
+
+					<span class="sr-only">GitHub on TikTok</span>
+				</a>
+			</li>
+			<li class="mr-3 flex-self-start focusable-svg">
+				<a href="https://www.twitch.tv/github" data-ga-click="Blog, go to Twitch, resources footer" style="color: #959da5;">
+					
+					<span class="sr-only">GitHub on Twitch</span>
+				</a>
+			</li>
+			<li class="focusable-svg">
+				<a href="https://github.com/github" data-ga-click="Blog, go to github's org, resources footer" style="color: #959da5;">
+					
+					<span class="sr-only">GitHub’s organization on GitHub</span>
+				</a>
+			</li>
+		</ul>
+
+
+
+	</div>
+</div>
+	</footer>
+</div>
+
+<div id="ghcc" style="position: sticky; bottom: 0; z-index: 99999;"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+</body>
+</html>

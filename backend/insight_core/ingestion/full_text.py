@@ -10,9 +10,9 @@ On for every generic RSS source; `settings.fetch_full_content: false` turns it o
 from __future__ import annotations
 
 import urllib.parse
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
-from insight_core.db.repo_posts import FULL_TEXT_FLAG
+from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.utils.content_fingerprints import normalize_text
@@ -58,24 +58,33 @@ def _same_article(current_text: str, page_text: str) -> bool:
     return current[:OPENING_CHARS] in page[:len(page) // 4]
 
 
-async def read_article(http: KindHttp, url: str, current_text: str) -> Optional[Tuple[str, str]]:
-    """(html, text) of the article at url, or None when the page holds nothing longer, or is
-    not clearly the same article (the feed body is the better version then).
+async def read_article(http: KindHttp, url: str, current_text: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+    """(html, text, how well the page was read) of the article at url, or None when the page
+    holds nothing longer, or is not clearly the same article (the feed body is the better
+    version then).
 
     Raises what the request raises (ValueError for an HTTP or network error).
     """
     page, _ = await http.get_text(url)
-    html = parsing.extract_article_html(page, base_url=url)
+    html, fidelity = parsing.read_article_page(page, base_url=url)
     text = parsing.strip_html(html)
     if len(text) <= max(len(current_text) + 250, 700) or not _same_article(current_text, text):
         return None
-    return html, text
+    return html, text, fidelity
 
 
-def with_full_text(post: Dict[str, Any], html: str, text: str) -> Dict[str, Any]:
+def with_full_text(post: Dict[str, Any], html: str, text: str,
+                   fidelity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         **post,
         "content_html": html,
         "content": text,
-        "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True},
+        "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
+                     **({PAGE_READ_KEY: fidelity} if fidelity else {})},
     }
+
+
+def pages_losing_images(posts: Iterable[Mapping[str, Any]]) -> Tuple[int, int]:
+    """(posts read from their page, those of them that lost most of their images)."""
+    reads = [fidelity for post in posts if (fidelity := (post.get("metadata") or {}).get(PAGE_READ_KEY))]
+    return len(reads), sum(1 for fidelity in reads if parsing.lost_most_images(fidelity))

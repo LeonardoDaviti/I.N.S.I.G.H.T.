@@ -296,6 +296,37 @@ share one (accepted; nothing is stored).
   recorded checkpoint; twice in a row it pauses: the job succeeds with `paused: true` and
   `paused_reason` ("reddit.com is limiting us"), and the checkpoint stays resumable.
 
+### Reading an article page
+
+One reader turns an article page into a post body: `parsing.read_article_page(html,
+base_url)` / `extract_article_html` in `ingestion/kinds/parsing.py`, used by full text
+(`full_text.read_article`), page watch (`page_watch.post_from`) and five site adapters. It
+drops chrome (named elements and class names, never an element holding most of the page's
+paragraph text), picks the article (`<article>`, `<main>`, a content class, else the block
+holding most paragraphs) and keeps its text blocks, code, captions and images in page order;
+the rules are commented in place.
+
+It is heuristics, so it is tested on real pages: `tests/fixtures/pages/` holds ~25 saved
+article pages and `expectations.json` (title, first and last sentence, image count, chrome
+words that must not appear, known gaps with their reasons), checked by `test_page_corpus`
+(issue 0032). A reader change must keep every page passing; a fix for one site that breaks
+another fails the suite. `scripts/refresh_page_corpus.py` re-reads the pages when a site
+redesigns (owner-run, see `scripts/README.md`).
+
+Every page read records how well it went, in the post's `metadata.page_read`
+(`repo_posts.PAGE_READ_KEY`; page watch and full text, kept when a later feed fetch keeps the
+body): `{page_images, kept_images, text_chars, short_opening}` (`parsing.read_fidelity`).
+`page_images` is an estimate from the article block the reader chose (related cards and
+sidebars it dropped never count): images with an address, no pixel, icon or avatar;
+`kept_images` the ones kept; `short_opening` a first block after the title under 25
+characters ("Share:"), a hint of chrome left in. It shows in two places:
+- source health: the row's `reading_notice`, from the source's 8 newest page reads, when at
+  least 3 of them and half lost most of their images (3 or more, under half kept): "Pages from
+  this source lose most of their images (5 of the last 8)"; or when at least 4 and three
+  quarters opened short. The source sheet shows it as a quiet line. None otherwise.
+- the run's job events: a source's line adds "· 2 of 3 pages lost most of their images", and
+  the ingestion log says the same.
+
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 

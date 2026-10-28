@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.db.repo_posts import PAGE_READ_KEY
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
@@ -222,8 +223,8 @@ def _written_date(text: str) -> Optional[datetime]:
 
 
 def page_title(page: str, url: str) -> str:
-    """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's,
-    or any short one on a <title>."""
+    """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's
+    (or one that starts with it: "| Mistral AI" for "Mistral"), or any short one on a <title>."""
     site = html.unescape(parsing.meta_content(page, "og:site_name")).strip()
     title, from_title_tag = html.unescape(parsing.meta_content(page, "og:title")).strip(), False
     if not title:
@@ -233,7 +234,8 @@ def page_title(page: str, url: str) -> str:
                 from_title_tag = pattern is TITLE_RE
                 break
     suffix = SITE_SUFFIX_RE.search(title)
-    if suffix and (from_title_tag or (site and suffix.group(1).strip() == site)):
+    named = suffix.group(1).strip() if suffix else ""
+    if suffix and (from_title_tag or (site and (named == site or named.startswith(f"{site} ")))):
         title = title[:suffix.start()]
     return title or url
 
@@ -250,7 +252,7 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
                  adapter: str, platform: str = "rss") -> Optional[Dict[str, Any]]:
     """The post any article page is: its body (the full-text reader), title, date (else now) and
     images; None when the page has no article body. Page watch and a saved page (issue 0031)."""
-    content_html = parsing.extract_article_html(page, base_url=url)
+    content_html, fidelity = parsing.read_article_page(page, base_url=url)
     content = parsing.strip_html(content_html)
     if not content:
         return None
@@ -268,7 +270,7 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "date": date or datetime.now(timezone.utc),
         "media_urls": media_urls,
         "categories": [],
-        "metadata": {"adapter": adapter},
+        "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity},
     }
 
 

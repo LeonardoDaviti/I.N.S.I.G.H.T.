@@ -159,6 +159,9 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(post["media_urls"], ["https://www-cdn.anthropic.com/images/Stre.jpg"])
         self.assertEqual(post["platform"], "rss")
         self.assertEqual(post["source"], LISTING)
+        # How well the page was read (issue 0032), next to the kind's name.
+        self.assertEqual(post["metadata"], {"adapter": "page_watch", "page_read": {
+            "page_images": 0, "kept_images": 0, "text_chars": len(post["content"]), "short_opening": False}})
 
     def test_the_title_loses_the_site_suffix(self):
         site_named = (f'<meta property="og:title" content="Voxtral 3: Speech &amp; Voice | Mistral">'

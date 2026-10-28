@@ -15,6 +15,7 @@ from insight_core.db import database as db
 
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_operations import JobRunsRepository, SystemSettingsRepository
+from insight_core.ingestion.kinds.parsing import lost_most_images
 from insight_core.ingestion.schedule import (
     BACKOFF_DORMANT_AFTER,
     Availability,
@@ -129,6 +130,31 @@ def _credential_notice(kind: Any) -> Optional[str]:
         return None
 
 
+# A source's page reads (repo_fetch_state.PAGE_READS_IN_HEALTH newest) that lost most of their
+# images, or opened with a very short block, before its row says so: conservative, so one
+# odd page never warns, and a source whose dropped images were related cards (NVIDIA) never
+# counts them (parsing.read_fidelity estimates from the article block only).
+READING_NOTICE_MIN = 3
+SHORT_OPENINGS_MIN = 4
+
+
+def reading_notice(page_reads: Any) -> Optional[str]:
+    """What source health says about how a source's pages are read (issue 0032), or None:
+    "Pages from this source lose most of their images (5 of the last 8)" when at least
+    READING_NOTICE_MIN of its newest page reads and at least half of them did, and the like
+    for openings under SHORT_OPENING_CHARS (three quarters of them)."""
+    reads = [read for read in (page_reads or []) if isinstance(read, dict)]
+    lost = sum(1 for read in reads if lost_most_images(read))
+    short = sum(1 for read in reads if read.get("short_opening"))
+    notes = []
+    if lost >= READING_NOTICE_MIN and lost * 2 >= len(reads):
+        notes.append(f"Pages from this source lose most of their images ({lost} of the last {len(reads)})")
+    if short >= SHORT_OPENINGS_MIN and short * 4 >= len(reads) * 3:
+        notes.append(f"Pages from this source often open with a very short block, maybe a menu left in "
+                     f"({short} of the last {len(reads)})")
+    return ". ".join(notes) or None
+
+
 def health_row(source: Dict[str, Any], kind: Any, availability: Availability, now: datetime) -> Dict[str, Any]:
     """One SourceHealthRow: the schedule view row + decide_fetch(force=False)."""
     state: Optional[FetchStateRow] = source.get("state")
@@ -174,6 +200,8 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # A kind that still fetches but would fetch more with a credential (Substack
         # without a session: teasers only) says so here; None otherwise.
         "credential_notice": _credential_notice(kind),
+        # How its newest page-read posts were read (page watch, full text): None, or a note.
+        "reading_notice": reading_notice(source.get("page_reads")),
         "status": health_status(enabled, decision, failures, state),
         "last_attempt_at": iso(state.last_attempt_at if state else None),
         "last_success_at": iso(state.last_success_at if state else None),

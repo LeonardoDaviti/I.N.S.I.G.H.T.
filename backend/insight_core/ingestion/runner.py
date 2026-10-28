@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
+from insight_core.ingestion import full_text
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
 from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.kinds import KindRegistry
@@ -227,6 +228,11 @@ class IngestionRunner:
             async with save_lock:
                 outcome = f.outcome
                 fetched_count, inserted_before = len(f.posts), saved.inserted
+                # Before the save releases the posts: how many read from their page lost images.
+                pages_read, pages_lost_images = full_text.pages_losing_images(f.posts)
+                if pages_lost_images:
+                    logger.info("%s: %s of %s pages read lost most of their images", _display_name(source),
+                                pages_lost_images, pages_read)
                 if outcome.status == OutcomeStatus.ERROR:
                     failures.append(SourceFailure(source["id"], _display_name(source), "fetch", outcome.error or "error"))
                 elif f.posts:
@@ -250,6 +256,7 @@ class IngestionRunner:
                     "source_id": source["id"], "display_name": _display_name(source),
                     "status": outcome.status.value, "error": outcome.error,
                     "fetched": fetched_count, "new": saved.inserted - inserted_before,
+                    "pages_read": pages_read, "pages_lost_images": pages_lost_images,
                     "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
                 })
             return f
