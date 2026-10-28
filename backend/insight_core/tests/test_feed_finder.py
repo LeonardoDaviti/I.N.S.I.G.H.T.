@@ -8,6 +8,7 @@ import time
 import unittest
 import urllib.request
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
@@ -310,11 +311,11 @@ class FindFeedRouteTests(unittest.TestCase):
 SHOP = "https://shop.example"
 
 
-def dated_section(path: str, count: int, site: str = SHOP) -> dict:
+def dated_section(path: str, count: int, site: str = SHOP, published: str = "2026-10-01T00:00:00Z") -> dict:
     """A section page of `count` dated articles (no sitemap), and the articles."""
     links = "".join(f'<a href="{path}/post-{n}">Post {n}</a>' for n in range(count))
     return {f"{site}{path}": page(body=f"<main>{links}</main>"),
-            **{f"{site}{path}/post-{n}": article(f"Post {n}", "2026-10-01T00:00:00Z") for n in range(count)}}
+            **{f"{site}{path}/post-{n}": article(f"Post {n}", published) for n in range(count)}}
 
 
 class FollowTheBlogTests(unittest.TestCase):
@@ -393,6 +394,98 @@ class FollowTheBlogTests(unittest.TestCase):
         finding, _ = find({f"{SHOP}/": page(body='<a href="/blog">Blog</a>'), f"{SHOP}/blog": page()},
                           f"{SHOP}/rss")
         self.assertEqual(finding, FeedFinding("none", pages=(f"{SHOP}/blog",)))
+
+
+def menu(header: str = "", footer: str = "", body: str = "") -> str:
+    return page(body=f"<header><nav>{header}</nav></header><main>{body}</main><footer>{footer}</footer>")
+
+
+def recent_section(path: str, count: int, days_ago: int = 3) -> dict:
+    """dated_section, its articles published days_ago."""
+    return dated_section(path, count, published=(datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat())
+
+
+class BlogUnderAnotherNameTests(unittest.TestCase):
+    """Issue 0047: a home page that names no blog or news page may still have one under another
+    word: linear.app's "Now" (/now), reka.ai's "Reka Latest" (/news), atlassian.com's "AI blogs &
+    news" (2026-10-28). Its own menu links are previewed and the evidence chooses: the one that
+    reads as an article list, the most articles first. No word is added to BLOG_LINK_TEXTS."""
+
+    ask = FollowTheBlogTests.ask
+
+    def test_an_unnamed_blog_is_found_by_its_article_count(self):
+        body = self.ask({f"{SHOP}/": menu('<a href="/pricing">Pricing</a><a href="/now">Now</a>'),
+                         f"{SHOP}/pricing": page(body="<p>Plans</p>"), **recent_section("/now", 6)}, SHOP)
+        self.assertEqual([(offer["url"], offer["prefix"], offer["found"]) for offer in body["pages"]],
+                         [(f"{SHOP}/now", "/now/", 6)])
+
+    def test_the_menu_link_with_the_most_articles_comes_first(self):
+        body = self.ask({f"{SHOP}/": menu('<a href="/stories">Stories</a>', '<a href="/latest">Latest</a>'),
+                         **recent_section("/stories", 7), **recent_section("/latest", 12)}, SHOP)
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/latest", f"{SHOP}/stories"])
+
+    def test_a_product_page_with_few_dated_links_is_not_offered(self):
+        # atlassian.com's /software: 572 links, one dated page among those read (2026-10-28).
+        responses = {f"{SHOP}/": menu('<a href="/software">Software</a>'), **recent_section("/software", 2)}
+        responses[f"{SHOP}/software"] = responses[f"{SHOP}/software"].replace(
+            "</main>", "".join(f'<a href="/software/tool-{n}">Tool {n}</a>' for n in range(30)) + "</main>")
+        responses.update({f"{SHOP}/software/tool-{n}": page(body="<p>A tool</p>") for n in range(30)})
+        body = self.ask(responses, SHOP)
+        self.assertEqual((body["status"], body["homepage"], body["pages"]), ("none", True, []))
+
+    def test_a_page_of_people_with_old_dates_is_not_offered(self):
+        # ideo.com's /leaders: 25 pages, each dated by a joining year (2026-10-28).
+        body = self.ask({f"{SHOP}/": menu('<a href="/leaders">Leaders</a>'),
+                         **recent_section("/leaders", 9, days_ago=400)}, SHOP)
+        self.assertEqual(body["pages"], [])
+
+    def test_a_page_of_policies_with_few_recent_dates_is_not_offered(self):
+        # 37signals.com's /policies: 3 dated pages among the 8 read, 2 updated this year (2026-10-28).
+        responses = {f"{SHOP}/": menu('<a href="/policies">Policies</a>'), **recent_section("/policies", 2),
+                     **recent_section("/policies/old", 1, days_ago=1500)}
+        responses[f"{SHOP}/policies"] = responses[f"{SHOP}/policies"].replace(
+            "</main>", '<a href="/policies/old/post-0">Old</a></main>')
+        body = self.ask(responses, SHOP)
+        self.assertEqual(body["pages"], [])
+
+    def test_a_named_blog_still_wins(self):
+        body = self.ask({f"{SHOP}/": menu('<a href="/blog">Blog</a><a href="/now">Now</a>'),
+                         **dated_section("/blog", 2), **recent_section("/now", 9)}, SHOP)
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/blog"])
+
+    def test_the_budget_is_respected(self):
+        # One menu page that never answers is left out; the others are offered in time.
+        async def never(_url):
+            await asyncio.sleep(3600)
+        responses = {f"{SHOP}/": menu('<a href="/slow">Slow</a><a href="/now">Now</a>'), f"{SHOP}/slow": never,
+                     **recent_section("/now", 6)}
+        started = time.monotonic()
+        with mock.patch.object(main.page_watch, "OFFER_BUDGET_S", 0.5):
+            body = self.ask(responses, SHOP)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/now"])
+
+    def test_the_previews_of_one_run_read_the_sites_sitemap_once(self):
+        sitemap = ('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                   f"<url><loc>{SHOP}/now/post-0</loc></url><url><loc>{SHOP}/stories/post-0</loc></url></urlset>")
+        http = FakeHttp({f"{SHOP}/robots.txt": f"Sitemap: {SHOP}/sitemap.xml", f"{SHOP}/sitemap.xml": sitemap,
+                         **recent_section("/now", 4), **recent_section("/stories", 3)})
+        found = asyncio.run(main.page_watch.offers(http, [], [f"{SHOP}/now", f"{SHOP}/stories"]))
+        self.assertEqual([offer["url"] for offer in found], [f"{SHOP}/now", f"{SHOP}/stories"])
+        self.assertEqual((http.requests.count(f"{SHOP}/robots.txt"), http.requests.count(f"{SHOP}/sitemap.xml")), (1, 1))
+
+    def test_the_finder_reports_the_menu_header_first_shallowest_first_at_most_twelve(self):
+        header = ("".join(f'<a href="/h{n}">H{n}</a>' for n in range(10)) + '<a href="/deep/page">Deep</a>'
+                  '<a href="/signup?plan=team">Sign up</a>')
+        footer = ('<a href="/f0">F0</a><a href="/f1">F1</a><a href="/f2">F2</a><a href="https://other.example/x">Away</a>'
+                  '<a href="/">Home</a>')
+        finding, _ = find({f"{SHOP}/": menu(header, footer, body='<a href="/body">In the page</a>')}, SHOP)
+        self.assertEqual(finding.menu, (*(f"{SHOP}/h{n}" for n in range(10)), f"{SHOP}/f0", f"{SHOP}/f1"))
+        self.assertEqual(finding.pages, ())
+
+    def test_no_menu_is_reported_when_a_page_is_named(self):
+        finding, _ = find({f"{SHOP}/": menu('<a href="/blog">Blog</a><a href="/now">Now</a>'), f"{SHOP}/blog": page()}, SHOP)
+        self.assertEqual((finding.pages, finding.menu), ((f"{SHOP}/blog",), ()))
 
 
 if __name__ == "__main__":

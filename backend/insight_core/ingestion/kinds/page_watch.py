@@ -45,8 +45,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
@@ -66,6 +66,10 @@ PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
 OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once (issue 0041)
+# A menu link is offered as an article list (issue 0047) when its preview read this many posts
+# dated this recently (of the PREVIEW_READS read; a list may lead with its category pages).
+MENU_POSTS = 3
+MENU_RECENT = timedelta(days=365)
 
 # The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
 # it again. For the process's life: a run builds its own registry, so a kind's own set would
@@ -135,15 +139,21 @@ class Discovery:
         return [*self.listed, *rest]
 
 
+# One run's reads of a site's robots.txt and sitemaps, by address: the previews of one offer
+# share them, so a site's sitemap is read once, not once per page previewed (issue 0047).
+SiteReads = Dict[str, "asyncio.Future[Tuple[Any, str]]"]
+
 # GET an address, at most max_bytes of it: (the body, the final URL after redirects).
 Reader = Callable[[str, int], Awaitable[Tuple[bytes, str]]]
 
 
-async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None, *,
+async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None,
+                   reads: Optional[SiteReads] = None, *,
                    memory: Optional[AddressMemory] = None,
                    read: Optional[Dict[str, Conditional]] = None) -> Discovery:
     """The articles of a listing page. Raises when the listing page cannot be read; a missing
-    or broken sitemap is just no sitemap.
+    or broken sitemap is just no sitemap. `reads`: the run's shared robots and sitemap reads
+    (an offer's previews, issue 0047).
 
     With memory every address is read through it, and memory.learned ends up holding the
     addresses read (none at all when one of them gave no validators). read: answers already
@@ -157,7 +167,7 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
         addresses.append(url)
         return answer.body or b"", answer.url
 
-    found = await _discover(get, http, listing_url, prefix)
+    found = await _discover(get, http, listing_url, prefix, reads)
     if memory is not None:
         kept = {url: memory.learned[url] for url in addresses if url in memory.learned}
         memory.learned = kept if len(kept) == len(set(addresses)) else {}
@@ -188,7 +198,8 @@ async def discover_changed(http: KindHttp, listing_url: str, prefix: Optional[st
     return await discover(http, listing_url, prefix, memory=memory, read=read)
 
 
-async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optional[str]) -> Discovery:
+async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optional[str],
+                    reads: Optional[SiteReads] = None) -> Discovery:
     # Where the listing landed, not the address given: deepmind.google/discover/blog/ is /blog/.
     body, landed = await get(listing_url, LISTING_MAX_BYTES)
     page = body.decode("utf-8", "replace")
@@ -203,18 +214,29 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
 
     listed = tuple(dict.fromkeys(url for url in links if under(url)))
     sitemap: Dict[str, Optional[datetime]] = {}
-    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix):
+    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix, reads):
         url = _clean(loc)
         if url and under(url):
             sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
     return Discovery(prefix, listed, sitemap)
 
 
-async def _sitemap_entries(get: Reader, http: KindHttp, listing: str,
-                           prefix: str) -> List[Tuple[str, Optional[str]]]:
+async def _shared(reads: Optional[SiteReads], url: str,
+                  read: Callable[[], Awaitable[Tuple[Any, str]]]) -> Tuple[Any, str]:
+    """read(), once per url within a run: a second caller awaits the first's read. A preview
+    cut by the budget never cancels a read another preview awaits."""
+    if reads is None:
+        return await read()
+    if url not in reads:
+        reads[url] = asyncio.ensure_future(read())
+    return await asyncio.shield(reads[url])
+
+
+async def _sitemap_entries(get: Reader, http: KindHttp, listing: str, prefix: str,
+                           reads: Optional[SiteReads] = None) -> List[Tuple[str, Optional[str]]]:
     origin = parsing.origin_from_source(listing, "")
     try:
-        robots, _ = await http.get_text(f"{origin}/robots.txt")
+        robots, _ = await _shared(reads, f"{origin}/robots.txt", lambda: http.get_text(f"{origin}/robots.txt"))
     except Exception:  # noqa: BLE001 - no robots.txt: the usual address
         robots = ""
     queue = [line.split(":", 1)[1].strip() for line in robots.splitlines()
@@ -228,7 +250,7 @@ async def _sitemap_entries(get: Reader, http: KindHttp, listing: str,
             continue
         read += 1
         try:
-            body, _ = await get(url, SITEMAP_MAX_BYTES)
+            body, _ = await _shared(reads, url, lambda: get(url, SITEMAP_MAX_BYTES))
         except Exception as exc:  # noqa: BLE001 - a missing sitemap is no sitemap
             logger.debug("Page watch: sitemap %s skipped (%s)", url, exc)
             continue
@@ -339,14 +361,15 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
     }
 
 
-async def preview(http: KindHttp, url: str, prefix: Optional[str] = None) -> Dict[str, Any]:
+async def preview(http: KindHttp, url: str, prefix: Optional[str] = None,
+                  reads: Optional[SiteReads] = None) -> Dict[str, Any]:
     """What following the page would give: {prefix, found, sitemap, items[{url, title, published_at}]},
     items the first PREVIEW_ITEMS posts (read PREVIEW_FAN_OUT at a time)."""
     address = parsing.web_address(url, "An address is needed to follow a page")
     if urllib.parse.urlparse(address).scheme.lower() not in ("http", "https"):
         raise ValueError("Only an http or https page can be followed")
     try:
-        found = await discover(http, address, prefix)
+        found = await discover(http, address, prefix, reads)
     except HttpError as exc:
         # The detail goes back to the caller: the status, never the site's answer.
         logger.info("Page watch preview: %s could not be read (%s)", address, str(exc)[:300])
@@ -379,25 +402,53 @@ def is_home(url: str) -> bool:
     return not parsing.path_segments(parsing.web_address(url, "An address is needed"))
 
 
-async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
+async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ()) -> List[Dict[str, Any]]:
     """The pages that can be followed instead of a home page (issue 0041), each {url, **preview},
     the most articles first: the preview's count, among the pages it read an article from. The
-    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out."""
-    tasks = {asyncio.create_task(preview(http, page)): page for page in dict.fromkeys(pages)}
+    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out.
+    When none of them is offered, the home page's menu links (issue 0047) are previewed in what
+    is left of the budget, and only an article list is offered (see _article_list)."""
+    deadline = asyncio.get_running_loop().time() + OFFER_BUDGET_S
+    reads: SiteReads = {}
+    found = [offer for offer in await _previews(http, pages, deadline, reads) if offer["items"]]
+    if not found:
+        started = datetime.now(timezone.utc)
+        found = [offer for offer in await _previews(http, [page for page in menu if page not in pages], deadline, reads)
+                 if _article_list(offer["items"], started)]
+    return sorted(found, key=lambda offer: -offer["found"])
+
+
+def _article_list(items: Sequence[Mapping[str, Any]], started: datetime) -> bool:
+    """Whether a preview's posts read as a list of articles to follow: at least MENU_POSTS of them
+    dated within MENU_RECENT. Pages of people or policies have dates too, old or few recent (a
+    leader's joining year, a policy's last update). A post with no date of its own is dated when
+    it was read, after the preview started: it is left out."""
+    recent = [date for item in items if (date := parsing.parse_datetime_value(item["published_at"]))
+              and started - MENU_RECENT <= date < started]
+    return len(recent) >= MENU_POSTS
+
+
+async def _previews(http: KindHttp, pages: Sequence[str], deadline: float,
+                    reads: SiteReads) -> List[Dict[str, Any]]:
+    """{url, **preview} of each page, in page order, the ones done by the deadline."""
+    tasks = {asyncio.create_task(preview(http, page, reads=reads)): page for page in dict.fromkeys(pages)}
     if not tasks:
         return []
-    done, pending = await asyncio.wait(tasks, timeout=OFFER_BUDGET_S)
+    done, pending = await asyncio.wait(tasks, timeout=max(0.0, deadline - asyncio.get_running_loop().time()))
     for task in pending:
         task.cancel()
+    for read in reads.values():
+        if not read.done():
+            read.cancel()
     found = []
     for task, page in tasks.items():
         if task not in done:
             logger.info("Page watch: %s not offered (no preview in %.0fs)", page, OFFER_BUDGET_S)
         elif task.exception() is not None:
             logger.info("Page watch: %s not offered (%s)", page, task.exception())
-        elif task.result()["items"]:
+        else:
             found.append({"url": page, **task.result()})
-    return sorted(found, key=lambda offer: -offer["found"])
+    return found
 
 
 class PageWatchKind(BaseSourceAdapter):

@@ -233,6 +233,17 @@ class ActTests(unittest.TestCase):
                          {"kind": "page_watch", "url": "https://shop.example/blog", "title": "shop.example/blog",
                           "found": 5, "prefix": "/blog/"})
 
+    def test_a_root_source_is_offered_a_blog_its_home_page_names_otherwise(self):
+        # Issue 0047: no page named blog or news; the menu link that reads as an article list.
+        old, home = "https://shop.example/rss", "https://shop.example/"
+        responses = {old: GONE, home: page(body='<nav><a href="/pricing">Pricing</a><a href="/now">Now</a></nav>'),
+                     "https://shop.example/pricing": page(),
+                     **dated_section("/now", 6, published=datetime.now(timezone.utc).isoformat())}
+        store, _, _ = look(responses, source={"id": "s1", "platform": "rss", "handle_or_url": old, "settings": {}})
+        replacement = store.records[0][2]["replacement"]
+        self.assertEqual({k: replacement[k] for k in ("kind", "url", "found", "prefix")},
+                         {"kind": "page_watch", "url": "https://shop.example/now", "found": 6, "prefix": "/now/"})
+
     def test_a_section_source_keeps_its_section_not_the_sites_blog(self):
         # The same-section rule: /news/rss gone is followed as /news/, never the site's /blog.
         old = "https://shop.example/news/rss"
