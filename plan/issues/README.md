@@ -40,7 +40,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0033](0033-continuous-reading-design.md) | Continuous reading: one calm column of separate articles | built, not deployed |
 | [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built, not deployed |
 | [0035](0035-add-many-sources.md) | Add many sources at once: a paste box and OPML | built, not deployed |
-| [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | ready-for-agent |
+| [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | built, not deployed |
 
 ## Analysis archive
 

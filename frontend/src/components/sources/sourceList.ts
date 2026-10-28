@@ -247,11 +247,19 @@ export const STATUS_GLYPH: Record<HealthStatus, Status> = {
   disabled: 'disabled',
 };
 
+/** The source doctor's finding in the list (issue 0036): null when it has not looked. */
+export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at'>): string | null {
+  if (row.replacement) return 'Broken: replacement found';
+  return row.doctor_looked_at ? 'Broken: no replacement found' : null;
+}
+
 /** The one fact a row shows on the right: what happens next, or what went wrong. */
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
   if (row.kind === 'saved') return 'pages you save';
   if (row.status === 'unavailable') return 'unavailable';
+  const broken = brokenNote(row);
+  if (broken) return broken;
   const backoff = backoffLabel(row, now);
   if (backoff) return backoff;
   if (row.status === 'error') return 'failed';

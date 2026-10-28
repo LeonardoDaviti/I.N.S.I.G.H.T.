@@ -582,6 +582,22 @@ describe('SourcesConfig', () => {
     expect(within(await screen.findByRole('dialog')).queryByText(/lose most of their images/)).not.toBeInTheDocument();
   });
 
+  it('a broken source’s replacement notice comes before its reading notice (issues 0036, 0032)', async () => {
+    const notice = 'Pages from this source lose most of their images (5 of the last 8)';
+    const broken = healthRow({
+      source_id: 'arena', display_name: 'Arena', status: 'backoff', consecutive_failures: 3, folders: [],
+      reading_notice: notice, doctor_looked_at: new Date().toISOString(),
+      replacement: { kind: 'feed', url: 'https://arena.ai/blog/feed.xml', title: 'Arena blog', found: null, prefix: null },
+    });
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([broken])) });
+    await userEvent.click(await screen.findByRole('button', { name: 'Arena' }));
+    const sheet = await screen.findByRole('dialog');
+    const replacement = within(sheet).getByText('This source stopped working.');
+    const reading = within(sheet).getByText(notice);
+    // The replacement is an action; the reading notice a quiet note under it.
+    expect(replacement.compareDocumentPosition(reading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('an unavailable source links from its sheet to Connections', async () => {
     const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
     const tg = healthRow({

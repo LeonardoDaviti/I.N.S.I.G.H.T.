@@ -22,6 +22,7 @@ import { ConnectionsLink } from './connections';
 import { writeToClipboard } from '../lib/clipboard';
 import { sourceReadPath } from '../lib/feedContext';
 import ArchiveSection from './sources/ArchiveSection';
+import ReplacementNotice from './sources/ReplacementNotice';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
 function SourceAddress({ value }: { value: string }) {
@@ -97,8 +98,6 @@ function HealthSummary({ row, now, scheduler }: { row: SourceHealthRow; now: Dat
         <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.decision_detail}</p>
       ) : null}
       <ConnectionsLink row={row} />
-      {/* A quiet note: the reader keeps less of this source's pages than they show (issue 0032). */}
-      {row.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.reading_notice}</p> : null}
       {row.last_error ? (
         <p className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
           <span aria-hidden="true" className="mr-1 font-semibold">×</span>
@@ -238,6 +237,10 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
           <div className="space-y-3">
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
+            {healthRow ? <ReplacementNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
+            {/* A quiet note, after the replacement (an action): the reader keeps less of this
+                source's pages than they show (issue 0032). */}
+            {healthRow?.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{healthRow.reading_notice}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               {saved ? (
                 <p className="text-[0.8125rem] text-fg-2">The pages you save from any site. Never fetched by itself.</p>

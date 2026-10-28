@@ -327,6 +327,33 @@ characters ("Share:"), a hint of chrome left in. It shows in two places:
 - the run's job events: a source's line adds "· 2 of 3 pages lost most of their images", and
   the ingestion log says the same.
 
+### A broken source finds its replacement (the source doctor)
+
+`ingestion/source_doctor.py` (issue 0036): the runner shows it every failed fetch, with the
+exception and the fetch state that failure wrote (`SourceDoctor.after_failure`, outside the
+save lock; it never raises).
+
+- **When:** an RSS (`generic_rss`) or page-watch source, never one a kind or site adapter
+  reads directly; at 3 failures in a row, or at once on HTTP 404/410 or an answer that does
+  not parse as a feed. At most once a day per source (`source_fetch_state.doctor_checked_at`,
+  migration 0032), and not again in a streak whose finding was dismissed.
+- **Look:** the feed finder on the address (it reads the section and home page itself) and
+  on a deeper section (`/a/b/rss` -> `/a/b/`), skipping the address itself; no feed: the
+  page-watch preview of the section, which must read at least one article.
+- **Act:** a feed on the same site (`www.` ignored) while the old address is gone (404/410)
+  is switched to, with a `doctor` job event ("Arena: feed moved, now following
+  arena.ai/blog/feed.xml"). Anything else is stored in `doctor_finding`
+  (`{replacement: {kind, url, title, found, prefix} | null, dismissed}`) and read by the
+  health row as `doctor_looked_at` and `replacement`. A fetch that works clears it.
+- **Switch** (`SourceConfigSyncService.switch_source`, used by the doctor and the route): the
+  new `handle_or_url` and `settings.page_watch` (set or removed) and a clean fetch state, in
+  one transaction; the id, name, tracks, read state and posts stay. Then sources.json is
+  rewritten; when it cannot be, the switch is undone, because a file still naming the old
+  address would make the next sync re-add it and mirror-delete the switched source. Nothing
+  is re-fetched: posts match by URL, and an archive brings the older ones.
+- `KindRegistry` caches by platform, address and whether `settings.page_watch` is set, so an
+  address once asked about as a feed resolves as page_watch once a source follows it.
+
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 
@@ -456,8 +483,10 @@ the result when the job finishes.
 | PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |
 | PUT | `/api/sources/{source_id}/cadence` | Set or clear the fetch interval override | `{override_hours}` (1-2160, or null) |
 | DELETE | `/api/sources/{source_id}` | Delete a source and its posts | |
+| POST | `/api/sources/{source_id}/switch` | Point a source at its replacement (issue 0036): name, tracks and posts kept, failures cleared, sources.json rewritten (the switch undone when it cannot be): `{handle_or_url, previous}`. 400: bad address or already a source | `{url, page_watch?}` (`page_watch: {prefix?}` follows the page) |
+| POST | `/api/sources/{source_id}/replacement/dismiss` | Hide the source doctor's finding until the next failure streak: `{row}`. 404 without a finding | |
 | GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
-| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary | |
+| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary; a row carries the source doctor's `doctor_looked_at` and `replacement` (`{kind: feed\|page_watch, url, title, found, prefix}`, null: none found) | |
 | POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
 | GET | `/api/folders` | Folders and tracks with counts | |
 | POST | `/api/folders` | Create a folder or track | `{name, kind?="folder"\|"track", description?, sort_order?, exclude_from_main_digest?, match_keywords?}` |

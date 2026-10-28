@@ -12,7 +12,9 @@ archive metadata -> report. Nothing runs after the last save: a run never measur
 sources (issue 0015). Kind sessions (B8, telegram_mtproto) are opened lazily inside the
 gate slot of a kind's first due source and closed in a finally at the end of the run; a
 session that cannot open makes that kind's sources unavailable. A fetch never raises out of
-the runner; a failing store write is logged and the run carries on.
+the runner; a failing store write is logged and the run carries on. A source whose fetch
+failed is shown to the source doctor (issue 0036), outside the save lock: it may look for the
+source's replacement and switch it.
 """
 from __future__ import annotations
 
@@ -71,6 +73,7 @@ class _Fetched:
     kind: SourceKind
     outcome: FetchOutcome
     posts: List[dict]
+    error: Optional[BaseException] = None    # what the fetch raised, for the source doctor
 
 
 class _RunSessions:
@@ -130,6 +133,7 @@ class IngestionRunner:
         availability: Callable[[], Availability],
         clock: Callable[[], datetime],
         rand: Callable[[], float] = random.random,
+        doctor: Optional[Any] = None,
     ) -> None:
         self.catalog = catalog
         self.state = state
@@ -141,6 +145,7 @@ class IngestionRunner:
         self.availability = availability
         self.clock = clock
         self.rand = rand
+        self.doctor = doctor    # SourceDoctor (ingestion/source_doctor.py), or None
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
         started = self.clock()
@@ -245,7 +250,7 @@ class IngestionRunner:
                         # The rest of the run (counts, archive metadata) sees the same outcome.
                         f.outcome = outcome = dataclasses.replace(outcome, status=OutcomeStatus.ERROR,
                                                                   error=f"save: {error}")
-                await self._safely(
+                rows = await self._safely(
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
                     now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
                 )
@@ -259,6 +264,8 @@ class IngestionRunner:
                     "pages_read": pages_read, "pages_lost_images": pages_lost_images,
                     "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
                 })
+            if self.doctor is not None and f.outcome.status == OutcomeStatus.ERROR and rows:
+                await self.doctor.after_failure(source, f.kind, rows[0], f.error, progress)
             return f
 
         fetched: List[_Fetched] = list(await asyncio.gather(*(fetch_and_save(s) for s in ordered)))
@@ -345,7 +352,7 @@ class IngestionRunner:
             logger.error("Failed to fetch %s: %s", source.get("handle_or_url"), str(exc)[:300])
             outcome = FetchOutcome.from_fetch(source["id"], fetched=0, error=str(exc) or type(exc).__name__,
                                               duration_s=time.monotonic() - started)
-            posts = []
+            return _Fetched(source, kind, outcome, [], exc)
         return _Fetched(source, kind, outcome, posts)
 
     # ------------------------------------------------------------------ helpers

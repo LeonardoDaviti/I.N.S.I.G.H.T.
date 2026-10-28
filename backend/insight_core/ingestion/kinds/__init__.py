@@ -13,14 +13,20 @@ if TYPE_CHECKING:
 
 
 class KindRegistry:
-    """Resolves a source to its kind: first match in priority order, cached per source."""
+    """Resolves a source to its kind: first match in priority order, cached per address.
+
+    The cache key is what a kind matches on: the platform, the address and whether
+    settings.page_watch is set, so a source switched to follow a page (issue 0036) at an
+    address once resolved as a feed (the feed finder asks about any address) gets page_watch.
+    """
 
     def __init__(self, kinds: Sequence["SourceKind"]) -> None:
         self.kinds = tuple(kinds)
-        self._cache: dict[tuple[str, str], "SourceKind"] = {}
+        self._cache: dict[tuple[str, str, bool], "SourceKind"] = {}
 
     def resolve(self, source: "Source") -> "SourceKind":
-        key = (str(source.get("platform") or ""), str(source.get("handle_or_url") or ""))
+        key = (str(source.get("platform") or ""), str(source.get("handle_or_url") or ""),
+               isinstance((source.get("settings") or {}).get("page_watch"), dict))
         kind = self._cache.get(key)
         if kind is None:
             kind = next((k for k in self.kinds if k.matches(source)), None)
