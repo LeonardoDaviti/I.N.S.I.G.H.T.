@@ -9,77 +9,70 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 
 ✓ built and deployed · ◐ built for v9.3 or partial · ○ to do · ⧗ future issue
 
-## Mark IX: everything a full reader needs
+## Focus (owner, 2026-10-28)
+- **The personal product now.** The hosted product waits, and **Mark X waits**: Mark IX first.
+- **v9.3** is the current release (being integrated). **v9.4 = search.**
+- **Skipped:** highlights, notes, post versions, rules (mute words, auto-read, auto-keep) and tags.
+  - Why skip rules: on the server, 41,000 of 41,128 posts are unread (0.3% read). Muting words would barely change that; search (v9.4) and "Show in Main feed: off" for firehose sources do.
+  - Why skip tags: tracks, Keep and search already cover them.
 
-### 1. Sources: read anything worth reading
-- ✓ RSS and Atom, with full text and images, and no menus or HTML codes (0008, 0032).
-- ✓ The feed finder: paste any page and get its feed (0026).
-- ✓ Page watching for sites without a feed: links plus sitemap, with an archive (0028).
-- ✓ Site readers for special sites (Pipecraft, Gwern, Dario and others).
-- ✓ Paid Substack with your cookie.
-- ✓ Telegram (bridge and your account).
-- ✓ YouTube.
-- ✓ X through your own Nitter.
-- ✓ Reddit, until Reddit ends RSS on 13 Nov 2026 (0025).
-- ✓ Hacker News, first version (0017).
-- ✓ GitHub Trending (0023).
-- ◐ Add many at once, and OPML import and export (0035).
-- ◐ The source doctor, so broken sources find their replacement (0036).
-- ◐ Save any page, and the bookmarklet (0031).
+## Mark IX, personal product: reading even better
+
+### Sources
+- ✓ RSS and Atom, with full text and images, no menus or HTML codes (0008, 0032).
+- ✓ The feed finder (0026) and page watching (0028).
+- ✓ Site readers, paid Substack, Telegram, YouTube, X through your Nitter.
+- ✓ Reddit, until 13 Nov 2026.
+- ✓ Hacker News, first version. ✓ GitHub Trending.
+- ◐ v9.3:
+  - add many at once, with OPML (0035);
+  - the source doctor (0036);
+  - save any page and the bookmarklet (0031).
 - ⧗ Full arXiv papers (0037). ⧗ PDF text (0038).
-- ⧗ Hacker News as its own kind, with comments (0017).
-- ⧗ GitHub and app release updates (0024).
-- ○ Native Mastodon and Bluesky, both open and free to read.
-- ○ Podcasts: a player, then transcripts.
-- ○ Keyword alerts and news queries.
-- ○ Page-change watching, only when a real page needs it.
-- ○ Email-in for newsletters with no web version, only when one exists.
-- ○ Conditional fetching (ETag / If-Modified-Since): fewer bytes and gentler on sites.
-- Not planned: bot-walled news (Reuters, AP, Bloomberg…), closed platforms without an API, and a headless browser.
+- ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
+- ○ Native Bluesky and Mastodon. ○ Podcasts.
+- ○ Conditional fetching (ETag).
+- Only on a real case: page-change watching, email-in.
 
-### 2. Reading: better than reading on the site
-- ✓ One calm column, continuous reading, and a byline that links to the source.
-- ✓ Clean full text and images.
-- ✓ The discussion link.
-- ✓ Nothing pointless on screen (0027).
-- ◐ Read later and Keep (0022).
-- ◐ Continue where I stopped (0030).
-- ◐ Calmer continuous reading (0033).
-- ◐ One reading density (0034).
-- ◐ The reading-fidelity corpus as a merge gate (0032).
-- ○ **Search across everything**, then saved searches. This is the biggest gap; nearly every competitor has it.
-- ○ Reading settings: font, size and column width.
-- ○ Read aloud with browser voices.
-- ○ Your own highlights and notes.
-- ○ Post versions: keep the text a source later edits.
-- ○ Offline reading, and send to Kindle or Kobo, after the PWA.
+### Reading
+- ✓ Continuous reading, clean text and images, the discussion link, nothing pointless on screen (0027).
+- ◐ v9.3:
+  - Read later and Keep (0022);
+  - continue where I stopped (0030);
+  - calmer continuous reading (0033);
+  - one density (0034);
+  - the fidelity corpus (0032).
+- **○ v9.4: search across everything,** then saved searches.
+- ○ Reading settings (font, size, width). ○ Read aloud.
+- ✗ Skipped: highlights, notes, post versions.
 
-### 3. Organisation: your newspaper, arranged your way
-- ✓ Tracks, the Main feed, and Unread / Later / Kept / All.
-- ○ Rules: mute words, auto-read, auto-keep.
-- ○ Your own tags.
-- ○ Source hygiene: "not opened in 60 days" and "dead for 30 days", with a prune suggestion.
-- ○ "Also discussed on Hacker News or Reddit": a badge from shared links.
+### Organisation
+- ✓ Tracks, the Main feed, Unread / Later / Kept / All, "Show in Main feed".
+- ○ Source hygiene: "dead for 30 days", "never opened", with a prune suggestion.
+- ○ "Also discussed on Hacker News or Reddit".
+- ✗ Skipped: rules, tags.
 
-### 4. Everywhere you read
-- ○ An installable PWA, with a share sheet.
-- ○ The Fever or Google Reader API, so Reeder, NetNewsWire and others can connect.
-- ○ Notifications (ntfy, Gotify, Pushover; Telegram or Discord posts).
-- ○ Publish a track as RSS.
-- ○ Webhooks.
-- ○ Export to Obsidian or Notion.
-- ○ A stable API with tokens.
+### Everywhere you read (personal use)
+- ○ An installable PWA with a share sheet; offline reading.
+- ○ The Fever or Google Reader API (Reeder, NetNewsWire).
+- ○ Notifications (ntfy). ○ Publish a track as RSS.
+- ○ Export to Obsidian. ○ Webhooks.
 
-### 5. Product foundations, for both audiences
-- ✓ The version line (0020). ✓ Useful logs (0021).
-- ○ **Login**. The hosted tiers need it first.
+### Running it yourself (self-hosted)
+- ✓ The version line, useful logs, the faster `./update`.
 - ○ A one-command install, lighter by merging the API and ingestion.
-- ○ A licence choice for the free self-hosted tier.
-- ○ A public read-only mode, with title, excerpt and link where full text isn't licensed.
-- ○ For the paid tier: one instance per customer, provisioning, billing, **backups**, limits and monitoring.
-- ○ A translated interface, for the paid tier.
+- ○ Optional login, needed once it's reachable beyond Tailscale.
 
-## Mark X: analysis on another level (ideas)
+## Hosted product: giving other people access (later)
+- Login and accounts.
+- A licence for the free self-hosted tier.
+- A public read-only mode: title, excerpt and link where full text isn't licensed.
+- One instance per customer, with provisioning, billing, backups, limits and monitoring.
+- Predefined sources and tracks for non-technical users.
+- A translated interface; translation of sources (with Mark X).
+- Platform APIs paid per customer (X); Telegram sessions per customer.
+
+## Mark X: analysis on another level (ideas, on hold)
 
 ### Understanding stories
 - **Story clustering:** the same news across sources and languages becomes one story, with who reported it first, who followed, and who added something new (0004, the citation graph).
