@@ -73,6 +73,7 @@ class PolitenessProfile:
     min_posts_per_fetch: int = 0
     requires: Literal["none", "ytdlp", "telegram_creds"] = "none"
     blocking_io: bool = False            # the kind's fetch/inspect/archive run in a thread
+    fetches: bool = True                 # False: never due, its posts come by hand (Saved, issue 0031)
 
     def rate_limit(self, *layers: Optional[Mapping[str, Any]]) -> RateLimit:
         """Profile defaults <- each layer in order (persisted settings, then request overrides).

@@ -554,6 +554,20 @@ export interface PageWatchPreview extends Envelope {
   items?: { url: string; title: string; published_at: string | null }[];
 }
 
+/** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. */
+export interface SavedPage extends Envelope {
+  status?: 'saved' | 'already';
+  post_id?: string;
+  title?: string;
+  source_id?: string;
+  /** False: the page could not be read as an article; its title and address were kept. */
+  readable?: boolean;
+  /** Why it could not be read ("HTTP 403", "no article on the page"). */
+  reason?: string | null;
+  /** A feed of the site that is not a source yet. */
+  feed?: FoundFeed | null;
+}
+
 export interface YouTubeProgressInput {
   videoUrl: string;
   title: string;
@@ -670,6 +684,8 @@ export function createApi() {
     /** The feeds for any page address (issue 0026); takes up to about 10 seconds. */
     findFeed: (url: string) => settle(request<FeedFinding>('/api/sources/find-feed', { method: 'POST', body: { url } })),
     /** What following a page without a feed would give (issue 0028); reads a few of its pages. */
+    savePage: (url: string, title?: string) =>
+      settle(request<SavedPage>('/api/saved', { method: 'POST', body: { url, ...(title ? { title } : {}) } })),
     previewPageWatch: (url: string, prefix?: string) =>
       settle(request<PageWatchPreview>('/api/sources/page-watch/preview', { method: 'POST', body: { url, ...(prefix ? { prefix } : {}) } })),
     updateSourceSettings: (sourceId: string, settings: SourceSettings) =>

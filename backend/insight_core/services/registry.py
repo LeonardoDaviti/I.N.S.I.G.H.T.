@@ -29,6 +29,7 @@ class Services:
     youtube: Any
     credentials: Any
     media_proxy: Any
+    saved: Any
 
 
 def build_services(db_url: Optional[str] = None) -> Services:
@@ -40,6 +41,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     from insight_core.services.post_detail_service import PostDetailService
     from insight_core.services.posts_service import PostsService
     from insight_core.services.reader_service import ReaderService
+    from insight_core.services.saved_service import SavedService
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.source_fetch_service import SourceFetchService
     from insight_core.services.sources_service import SourcesService
@@ -48,13 +50,15 @@ def build_services(db_url: Optional[str] = None) -> Services:
 
     db_url = db_url or ensure_database()
     source_fetch = SourceFetchService(db_url)
+    sources = SourcesService(db_url)
+    source_config_sync = SourceConfigSyncService(db_url)
     return Services(
         db_url=db_url,
-        sources=SourcesService(db_url),
+        sources=sources,
         folders=FoldersService(db_url),
         posts=PostsService(db_url),
         source_fetch=source_fetch,
-        source_config_sync=SourceConfigSyncService(db_url),
+        source_config_sync=source_config_sync,
         system_logs=SystemLogsService(),
         # One kind registry for the health table and the archive: the same resolution the
         # runner uses (KindRegistry.default), built once.
@@ -64,6 +68,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
         youtube=YouTubeService(db_url),
         credentials=CredentialsService(db_url),
         media_proxy=MediaProxyService(db_url),
+        saved=SavedService(db_url, sources=sources, source_config_sync=source_config_sync, kinds=source_fetch.kinds),
     )
 
 

@@ -6,6 +6,7 @@ import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCrede
 import { errorMessage } from '../lib/apiError';
 import { localDateISO, toDate } from '../lib/dates';
 import type { FeedFinding, FoundFeed, PageWatchPreview } from '../services/api';
+import BookmarkletHint from './BookmarkletHint';
 
 interface Template {
   id: string;
@@ -501,6 +502,8 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
               <Plus aria-hidden="true" /> Add source
             </Button>
           </DialogFooter>
+          {/* One page rather than a whole site (issue 0031). */}
+          <div className="border-t border-line pt-3"><BookmarkletHint /></div>
         </form>
       </DialogContent>
     </Dialog>

@@ -10,8 +10,9 @@ so a new kind needs no change anywhere else.
 - `ingestion/kinds/base.py`: the interface (`SourceKind`), the `BaseKind` defaults,
   `PolitenessProfile`, `RateLimit`, `Inspection`, `ArchivePage`, `KindUnavailable`.
 - `ingestion/kinds/__init__.py`: `KindRegistry`. `KindRegistry.default` lists the real kinds
-  in resolution order. The first kind whose `matches()` is true wins. `page_watch` is first
-  (its setting is the owner's explicit choice); `generic_rss` is last and matches everything.
+  in resolution order. The first kind whose `matches()` is true wins. `saved` and `page_watch`
+  are first (the Saved source is no feed; page watch's setting is the owner's explicit choice);
+  `generic_rss` is last and matches everything.
 - `ingestion/kinds/*.py`: the generic kinds (`page_watch`, `generic_rss`, `substack`,
   `reddit_subreddit`, `youtube_channel`, `telegram_rss`, `nitter_rss`, `telegram_mtproto`).
 - `ingestion/kinds/page_watch.py` (issue 0028): a page with no feed, followed. It matches
@@ -24,6 +25,12 @@ so a new kind needs no change anywhere else.
   life (failed ones for a day) and reads at most 10 of them besides its posts. It extends
   `BaseSourceAdapter` for `index_pages`, one article per archive page. `preview()` is behind
   `POST /api/sources/page-watch/preview`. Before writing a site adapter, try it.
+- `ingestion/kinds/saved.py` (issue 0031): the built-in Saved source (platform `saved`,
+  handle `Saved`), the pages saved from any site through `POST /api/saved`. It never fetches:
+  its profile has `fetches=False`, so `decide_fetch` never finds it due, not even forced (it
+  shows as Scheduled, never due or failing), and `archive_refused` says it has no archive. A
+  saved page is read by `page_watch.article_post`, the one helper for "a post from any article
+  page" (body, title, date, images) that page watch's `post_from` uses too.
 - `adapters/*.py`: the seven site kinds for sites with no usable feed (LessWrong, Gwern,
   Dario Amodei, The Batch, Phil Schmid, Zero to Mastery, pipecraft.me). They extend `BaseSourceAdapter`,
   which is a `BaseKind`.
@@ -114,6 +121,7 @@ PolitenessProfile(
     min_posts_per_fetch=0,
     requires="none",                # "ytdlp" or "telegram_creds"
     blocking_io=False,              # the kind's calls block; run them in a thread
+    fetches=True,                   # False: never due, its posts come by hand (saved)
 )
 ```
 

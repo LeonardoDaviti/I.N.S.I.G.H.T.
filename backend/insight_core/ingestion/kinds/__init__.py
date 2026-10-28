@@ -35,7 +35,8 @@ class KindRegistry:
     @staticmethod
     def default(http: "KindHttp", youtube: Any, *, db_url: Optional[str] = None) -> "KindRegistry":
         """The real kinds in resolution priority (spec §D.1); generic_rss is the fallback.
-        page_watch comes first: its setting (settings.page_watch) is the owner's explicit choice.
+        saved (platform saved, issue 0031) and page_watch come first: the Saved source is no feed,
+        and page_watch's setting (settings.page_watch) is the owner's explicit choice.
 
         With db_url, generic_rss and page_watch read the article page of new posts only (it asks which
         urls are already stored); without it, of every teaser it fetches.
@@ -46,6 +47,7 @@ class KindRegistry:
         from insight_core.ingestion.kinds.nitter_rss import NitterRssKind
         from insight_core.ingestion.kinds.page_watch import PageWatchKind
         from insight_core.ingestion.kinds.reddit import RedditKind
+        from insight_core.ingestion.kinds.saved import SavedKind
         from insight_core.ingestion.kinds.substack import SubstackKind
         from insight_core.ingestion.kinds.telegram_mtproto import TelegramKind
         from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
@@ -53,6 +55,7 @@ class KindRegistry:
 
         stored_urls = PostsRepository(db_url).stored_urls if db_url else None
         return KindRegistry([
+            SavedKind(),
             PageWatchKind(http, stored_urls=stored_urls),
             *(adapter_class(http) for adapter_class in ADAPTER_CLASSES),
             SubstackKind(http),

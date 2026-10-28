@@ -126,7 +126,9 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
   const jobs = useOperationsOverview().data?.jobs;
   const fetching = isRunning(fetchTarget) || runningFetchJob(jobs, source.id) !== null;
   const enabled = healthRow?.enabled ?? source.enabled;
-  const fetchable = enabled && healthRow?.status !== 'unavailable';
+  // The Saved source (issue 0031) is never fetched: no fetch, cadence, archive or delay to set.
+  const saved = healthRow?.kind === 'saved';
+  const fetchable = enabled && healthRow?.status !== 'unavailable' && !saved;
   const [inMainDigest, setInMainDigest] = useState<boolean | null>(null);
   const mainDigest = inMainDigest ?? healthRow?.in_main_digest ?? null;
   const [savingDigest, setSavingDigest] = useState(false);
@@ -235,7 +237,9 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
             <div className="flex flex-wrap items-center gap-2">
-              {fetchable ? (
+              {saved ? (
+                <p className="text-[0.8125rem] text-fg-2">The pages you save from any site. Never fetched by itself.</p>
+              ) : fetchable ? (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -289,9 +293,8 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
 
           {/* A source that is off or cannot be fetched has no cadence, main-feed or archive to set:
               its one line above says why (issue 0027). */}
-          {fetchable ? (
-            <>
-              <div className="flex items-start justify-between gap-4">
+          {fetchable || (saved && enabled) ? (
+            <div className="flex items-start justify-between gap-4">
                 <div>
                   <div id="main_digest_label" className="text-[0.8125rem] font-medium text-fg">Show in Main feed</div>
                   <p className="mt-0.5 text-[0.75rem] text-fg-3">
@@ -305,8 +308,10 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
                   onCheckedChange={() => void toggleMainDigest()}
                   className="mt-0.5"
                 />
-              </div>
-
+            </div>
+          ) : null}
+          {fetchable ? (
+            <>
               <div className="rounded-md border border-line p-3">
                 {healthRow ? (
                   <CadenceOverrideEditor row={healthRow} />
@@ -323,7 +328,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             </>
           ) : null}
 
-          <div className="sm:w-1/2">
+          {saved ? null : <div className="sm:w-1/2">
             <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
             <Input
               id="fetch_delay"
@@ -337,7 +342,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
             <p id="fetch_delay_help" className={hint('error' in fetchDelay)}>
               {'error' in fetchDelay ? `× ${fetchDelay.error}` : '0 to 60 seconds after each fetch.'}
             </p>
-          </div>
+          </div>}
 
           {error ? <Notice tone="error" title={error} /> : null}
 
