@@ -67,7 +67,7 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 
 ## Decisions
 
-- 002 hub deleted, 003 reading-only, 007 fetching out of the reader, 010 track page into the reader, 011 names link into Sources, 022 a row's source name reads the source and its one read button is the circle, 025 a started post's row shows how far, 029 read later and keep (`../decisions.md`).
+- 002 hub deleted, 003 reading-only, 007 fetching out of the reader, 010 track page into the reader, 011 names link into Sources, 022 a row's source name reads the source and its one read button is the circle, 025 a started post's row shows how far, 026 one reading density, 029 read later and keep (`../decisions.md`).
 
 ## Open issues
 
