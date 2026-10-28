@@ -31,7 +31,7 @@ const COL = {
   posts: 'w-[3.25rem] shrink-0 text-right tabular-nums',
   lastPost: 'hidden w-[3.25rem] shrink-0 text-right tabular-nums sm:block',
   added: 'hidden w-[3.25rem] shrink-0 text-right tabular-nums md:block',
-  note: 'hidden w-[8.5rem] shrink-0 truncate text-right tabular-nums md:block',
+  note: 'hidden w-[10.5rem] shrink-0 truncate text-right tabular-nums md:block',
 } as const;
 
 export interface TrackActions {

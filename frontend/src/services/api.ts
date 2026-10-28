@@ -381,6 +381,20 @@ export interface SourceHealthRow {
   consecutive_failures: number;
   next_retry_at: string | null;
   dormant: boolean;
+  /** When the source doctor last looked for this broken source's replacement (issue 0036);
+   *  null when it has not in this failure streak, or the finding was dismissed. */
+  doctor_looked_at?: string | null;
+  /** What it found; null with doctor_looked_at set: nothing. */
+  replacement?: SourceReplacement | null;
+}
+
+/** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */
+export interface SourceReplacement {
+  kind: 'feed' | 'page_watch';
+  url: string;
+  title: string;
+  found: number | null;
+  prefix: string | null;
 }
 
 export interface SourceHealthSummary {
@@ -659,6 +673,15 @@ export function createApi() {
     /** Set (hours in [1, 2160]) or clear (null) a source's fetch interval override. */
     setCadenceOverride: (sourceId: string, hours: number | null) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/cadence`, { method: 'PUT', body: { override_hours: hours } }),
+    /** Point a broken source at its replacement (issue 0036): a feed, or with `pageWatch` a page
+     *  to follow. Its name, tracks and posts stay. */
+    switchSource: (sourceId: string, url: string, pageWatch?: { prefix?: string }) =>
+      request<{ success: true; source_id: string; handle_or_url: string; previous: string }>(
+        `/api/sources/${enc(sourceId)}/switch`, { method: 'POST', body: { url, ...(pageWatch ? { page_watch: pageWatch } : {}) } },
+      ),
+    /** Hide the replacement notice until the source's next failure streak; the fresh row. */
+    dismissReplacement: (sourceId: string) =>
+      request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/replacement/dismiss`, { method: 'POST' }),
     /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(

@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { healthRow } from '../ops/fixtures';
 import {
   UNASSIGNED_KEY,
+  brokenNote,
   filterSources,
   groupSources,
   kindLabel,
   nextSort,
   rangeIds,
   readSourcesView,
+  rowFact,
   sortSources,
   stepActive,
   visibleRowKeys,
@@ -212,5 +214,21 @@ describe('keyboard walk', () => {
     expect(stepActive(keys, 'c', 1)).toBe('c');
     expect(stepActive(keys, 'a', -1)).toBe('a');
     expect(stepActive([], 'a', 1)).toBeNull();
+  });
+});
+
+describe('the source doctor note (issue 0036)', () => {
+  const now = new Date('2026-10-28T09:00:00Z');
+  const broken = { status: 'backoff' as const, consecutive_failures: 3, doctor_looked_at: '2026-10-28T08:00:00Z' };
+  const feed = { kind: 'feed' as const, url: 'https://arena.ai/blog/feed.xml', title: 'Arena blog', found: null, prefix: null };
+
+  it('says a replacement was found, or that none was', () => {
+    expect(rowFact(healthRow({ ...broken, replacement: feed }, now), now)).toBe('Broken: replacement found');
+    expect(rowFact(healthRow({ ...broken, replacement: null }, now), now)).toBe('Broken: no replacement found');
+  });
+
+  it('says nothing of the kind before the doctor looked, or for a source that is off', () => {
+    expect(brokenNote(healthRow({ status: 'backoff', consecutive_failures: 1 }, now))).toBeNull();
+    expect(rowFact(healthRow({ ...broken, replacement: feed, enabled: false }, now), now)).toBe('off');
   });
 });

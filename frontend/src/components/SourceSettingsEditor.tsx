@@ -22,6 +22,7 @@ import { ConnectionsLink } from './connections';
 import { writeToClipboard } from '../lib/clipboard';
 import { sourceReadPath } from '../lib/feedContext';
 import ArchiveSection from './sources/ArchiveSection';
+import ReplacementNotice from './sources/ReplacementNotice';
 
 /** The source's address, whole (it wraps, never truncates) with a copy button. */
 function SourceAddress({ value }: { value: string }) {
@@ -234,6 +235,7 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
           <div className="space-y-3">
             <SourceAddress value={source.handle_or_url} />
             {healthRow ? <HealthSummary row={healthRow} now={new Date()} scheduler={scheduler.data} /> : null}
+            {healthRow ? <ReplacementNotice row={healthRow} now={new Date()} onSwitched={onSave} /> : null}
             <div className="flex flex-wrap items-center gap-2">
               {fetchable ? (
                 <Button
