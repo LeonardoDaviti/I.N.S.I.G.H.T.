@@ -65,3 +65,24 @@ Status: **built** (2026-10-28, not deployed; migration 0032). Decided by the own
   oldnewthing working again, and never the whole site's feed; joanwestenberg.com switched;
   incompleteideas.net followed as a page);
   `frontend/src/components/sources/replacementNotice.test.tsx`, `sourceList.test.tsx`.
+
+## Dry run on the server's 7 failing sources (2026-10-28, before release)
+| Source | Error | Doctor |
+|---|---|---|
+| joanwestenberg.com/rss | 404 | auto-switch → www.joanwestenberg.com/feed (same site, gone) |
+| incompleteideas.net (Rich Sutton) | not a feed | suggest: follow the page (12 articles) |
+| tedunangst.com/flak/rss | DNS | no replacement |
+| dfarq.homeip.net/feed/ | garbled | no replacement |
+| rachelbythebay.com/w/atom.xml | 404 | no replacement |
+| devblogs.microsoft.com/oldnewthing/feed | SSL (temporary on the server) | **wrong:** suggested devblogs.microsoft.com/landing (all Microsoft blogs) |
+| r/MachineLearning | 429 | skipped (Reddit kind) |
+
+**Fix before release (v9.3):**
+1. Check the old address first: if it reads as a feed now, record "temporary error, working again" and look no further.
+2. A replacement must stay within the source's section (`/oldnewthing/…`); a home-page feed is offered only when the source was the whole site.
+3. Tests from these three real cases.
+
+**Fixed in v9.3** (release-9.3, test-first): 1 and 2 as written (see Built: "First, the old
+address" and the section rule in "Look"), and 3 in `test_source_doctor.py`'s
+`DryRunCaseTests`. incompleteideas.net's address is the site's root, which the doctor had
+skipped as its own page; a feed source at the root is now followed as that page.
