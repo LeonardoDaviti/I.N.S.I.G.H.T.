@@ -95,7 +95,8 @@ class JobProgressSink:
     run's summary, which the job already shows.
 
     A "source" event (one source fetched and saved) also sets the payload's live counters,
-    `sources: {done, total}` and `new_posts`, which the top bar's activity sign reads.
+    `sources: {done, total}` and `new_posts`, which the top bar's activity sign reads. A
+    "doctor" event is the source doctor's switch (issue 0036), its line as it wrote it.
     """
 
     def __init__(self, operations_service: Any, job_id: Optional[str]) -> None:
@@ -103,7 +104,7 @@ class JobProgressSink:
         self.job_id = job_id
 
     def event(self, phase: str, data: dict) -> None:
-        if not self.job_id or phase not in ("source", "slowed"):
+        if not self.job_id or phase not in ("source", "slowed", "doctor"):
             return
         data = data or {}
         progress, fields = None, None
@@ -113,6 +114,8 @@ class JobProgressSink:
             fields = {"sources": sources, "new_posts": data["new_posts"]}
             message = _source_line(data)
             level = "error" if data.get("status") == "error" else "info"
+        elif phase == "doctor":
+            message, level = data["line"], "warning"
         else:
             message, level = slowed_line(data), "warning"
         try:

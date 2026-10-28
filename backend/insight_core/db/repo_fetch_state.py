@@ -9,6 +9,7 @@ transaction. Spec: plan/INSIGHT_mark_ix_plan.md §C.3.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
@@ -48,6 +49,8 @@ class FetchStateRow:
     last_decision_at: Optional[datetime] = None
     next_due_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    doctor_checked_at: Optional[datetime] = None    # the source doctor last looked (issue 0036)
+    doctor_finding: Optional[Dict[str, Any]] = None  # what it found: {replacement, dismissed}
 
 
 _COLUMNS = [f.name for f in fields(FetchStateRow)]
@@ -162,7 +165,8 @@ class FetchStateRepository:
         """One atomic UPSERT; the failure counter is computed in SQL, never read-modify-write.
 
         error: counter + 1, last_error/_at set, next_retry_at = now + backoff(new count).
-        healthy/empty: counter reset, next_retry_at cleared, last_success_at = now.
+        healthy/empty: counter reset, next_retry_at cleared, last_success_at = now, and the
+        source doctor's finding cleared (the failure streak is over).
         unavailable: only last_attempt_at, last_outcome and last_error (+ trigger) move.
         """
         status = OutcomeStatus(_value(outcome.status))
@@ -191,6 +195,8 @@ class FetchStateRepository:
                     last_fetched_posts = EXCLUDED.last_fetched_posts,
                     consecutive_failures = 0,
                     next_retry_at = NULL,
+                    doctor_checked_at = NULL,
+                    doctor_finding = NULL,
                     updated_at = EXCLUDED.updated_at
                 RETURNING {_SELECT_COLUMNS}
                 """,
@@ -260,6 +266,46 @@ class FetchStateRepository:
             self.record_outcome(cur, outcome, trigger=trigger, now=now, backoff=backoff)
             for outcome in outcomes
         ]
+
+    def record_doctor(self, cur: Cursor, source_id: str, *, checked_at: datetime,
+                      finding: Dict[str, Any]) -> None:
+        """The source doctor looked at checked_at and found `finding` (issue 0036)."""
+        cur.execute(
+            """
+            INSERT INTO source_fetch_state (source_id, doctor_checked_at, doctor_finding, updated_at)
+            VALUES (%(sid)s, %(at)s, %(finding)s::jsonb, %(at)s)
+            ON CONFLICT (source_id) DO UPDATE SET
+                doctor_checked_at = EXCLUDED.doctor_checked_at,
+                doctor_finding = EXCLUDED.doctor_finding,
+                updated_at = EXCLUDED.updated_at
+            """,
+            {"sid": str(source_id), "at": checked_at, "finding": json.dumps(finding)},
+        )
+
+    def dismiss_doctor(self, cur: Cursor, source_id: str) -> bool:
+        """Hide the doctor's finding until the next failure streak. False when there is none."""
+        cur.execute(
+            """
+            UPDATE source_fetch_state
+               SET doctor_finding = doctor_finding || '{"dismissed": true}'::jsonb, updated_at = now()
+             WHERE source_id = %s AND doctor_finding IS NOT NULL
+            """,
+            (str(source_id),),
+        )
+        return (cur.rowcount or 0) > 0
+
+    def clear_failures(self, cur: Cursor, source_id: str) -> None:
+        """A source switched to a new address starts clean: no failures, backoff or finding."""
+        cur.execute(
+            """
+            UPDATE source_fetch_state
+               SET consecutive_failures = 0, next_retry_at = NULL, last_outcome = NULL,
+                   last_error = NULL, last_error_at = NULL, doctor_checked_at = NULL,
+                   doctor_finding = NULL, updated_at = now()
+             WHERE source_id = %s
+            """,
+            (str(source_id),),
+        )
 
     def refresh_cadence(
         self,

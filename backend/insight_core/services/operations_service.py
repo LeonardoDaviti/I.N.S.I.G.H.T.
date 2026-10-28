@@ -184,7 +184,18 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "consecutive_failures": failures,
         "next_retry_at": iso(stats.next_retry_at),
         "dormant": failures >= BACKOFF_DORMANT_AFTER,
+        **_doctor_fields(state),
     }
+
+
+def _doctor_fields(state: Optional[FetchStateRow]) -> Dict[str, Any]:
+    """The source doctor's finding (issue 0036): when it looked (None: it has not, in this
+    failure streak, or the owner dismissed it) and the replacement it found
+    ({kind: feed|page_watch, url, title, found, prefix}; None: nothing found)."""
+    finding = (state.doctor_finding if state else None) or {}
+    if state is None or state.doctor_checked_at is None or finding.get("dismissed"):
+        return {"doctor_looked_at": None, "replacement": None}
+    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": finding.get("replacement")}
 
 
 def _health_sort_key(row: Dict[str, Any]) -> tuple:
@@ -691,6 +702,27 @@ class OperationsService:
             raise LookupError(f"Source {source_id} not found")
         return row
 
+    def dismiss_replacement(self, source_id: str) -> Dict[str, Any]:
+        """Hide the source doctor's finding until the next failure streak; the fresh row.
+        LookupError when the source has no finding."""
+        dismissed = False
+        if self._valid_id(source_id):
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                dismissed = FetchStateRepository().dismiss_doctor(cur, source_id)
+                conn.commit()
+        row = self.get_source_health_row(source_id) if dismissed else None
+        if row is None:
+            raise LookupError(f"Source {source_id} has no replacement to dismiss")
+        return row
+
+    @staticmethod
+    def _valid_id(source_id: str) -> bool:
+        try:
+            uuid.UUID(str(source_id))
+            return True
+        except (TypeError, ValueError):
+            return False
+
     def _health_rows(self, view: List[Dict[str, Any]], now: datetime) -> List[Dict[str, Any]]:
         availability = self.availability()
         kinds = self.kinds
@@ -713,9 +745,7 @@ class OperationsService:
             return FetchStateRepository().load_schedule_view(cur, source_ids)
 
     def _write_cadence_override(self, source_id: str, hours: Optional[float]) -> bool:
-        try:
-            uuid.UUID(str(source_id))
-        except (TypeError, ValueError):
+        if not self._valid_id(source_id):
             return False
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             written = FetchStateRepository().set_cadence_override(cur, source_id, hours)

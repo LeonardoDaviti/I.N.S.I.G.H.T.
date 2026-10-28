@@ -286,6 +286,11 @@ class PageWatchPreviewRequest(BaseModel):
     prefix: str | None = None
 
 
+class SwitchSourceRequest(BaseModel):
+    url: str = ""
+    page_watch: Dict[str, Any] | None = None     # follow the page at url (issue 0028) instead of a feed
+
+
 class SourceEnabledRequest(BaseModel):
     enabled: bool
 
@@ -707,6 +712,28 @@ async def delete_source(source_id: str):
         raise LookupError(f"Source {source_id} not found")
     _export_sources_json()
     return {"success": True, "deleted": True, "source_id": source_id}
+
+
+@app.post("/api/sources/{source_id}/switch")
+@error_detail("switch the source")
+async def switch_source(source_id: str, request: SwitchSourceRequest):
+    """Point a source at its replacement (issue 0036): a feed, or with page_watch ({} or
+    {prefix}) a page to follow. Its id, name, tracks, read state and posts stay; its failures
+    clear; sources.json is rewritten in step (the switch is undone when it cannot be). Nothing
+    is re-fetched now. 404 for no such source; 400 for a bad address or one already a source."""
+    old = await asyncio.to_thread(services().source_config_sync.switch_source, source_id, request.url,
+                                  request.page_watch)
+    source = services().sources.get_source_by_id(source_id) or {}
+    return {"success": True, "source_id": source_id, "handle_or_url": source.get("handle_or_url"),
+            "previous": old["handle_or_url"]}
+
+
+@app.post("/api/sources/{source_id}/replacement/dismiss")
+@error_detail("dismiss the replacement")
+async def dismiss_replacement(source_id: str):
+    """Hide the source doctor's finding until the next failure streak; the fresh health row.
+    404 when the source has no finding."""
+    return {"success": True, "row": services().operations.dismiss_replacement(source_id)}
 
 
 @app.get("/api/sources/{source_id}/folders")

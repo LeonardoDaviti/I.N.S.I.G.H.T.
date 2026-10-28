@@ -33,7 +33,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
 
     This is the composition root, so it is the one place in ingestion/ that wires services
     in: YouTubeService for the youtube_channel kind, and the posts/sources services the
-    archive metadata writer reads.
+    archive metadata writer reads, and the sources.json sync the source doctor's switch uses.
     """
     import os
     from datetime import datetime, timezone
@@ -52,7 +52,9 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     )
     from insight_core.ingestion.runner import IngestionRunner
     from insight_core.ingestion.schedule import availability_from_env
+    from insight_core.ingestion.source_doctor import DbDoctorStore, SourceDoctor
     from insight_core.services.posts_service import PostsService
+    from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.sources_service import SourcesService
     from insight_core.services.youtube_service import YouTubeService
 
@@ -61,6 +63,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     def clock() -> datetime:
         return datetime.now(timezone.utc)
 
+    registry = KindRegistry.default(KindHttp(), YouTubeService(db_url), db_url=db_url)
     return IngestionRunner(
         catalog=DbSourceCatalog(db_url),
         state=DbFetchStateStore(db_url),
@@ -68,11 +71,17 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
         inspections=DbInspectionRefresher(
             writer=ArchiveMetadataWriter(posts=PostsService(db_url), sources=SourcesService(db_url)),
         ),
-        registry=KindRegistry.default(KindHttp(), YouTubeService(db_url), db_url=db_url),
+        registry=registry,
         gates=FetchGates.shared(),
         run_lock=PgAdvisoryRunLock(db_url),
         availability=availability_from_env,
         clock=clock,
+        # The doctor's look uses the Add source dialog's short timeout; a switch rewrites
+        # sources.json too, so the next sync keeps the new address (issue 0036).
+        doctor=SourceDoctor(
+            http=KindHttp(timeout=5), registry=registry, clock=clock,
+            store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),
+        ),
     )
 
 

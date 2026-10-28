@@ -2,13 +2,16 @@
 Business logic for source management.
 Handles CRUD operations for sources table.
 """
+import urllib.parse
 from typing import List, Dict, Any
 
 import psycopg
 
 from insight_core.db import database as db
+from insight_core.db.repo_fetch_state import FetchStateRepository
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.ingestion.kinds.page_watch import normalise_prefix
+from insight_core.ingestion.kinds.parsing import web_address
 from insight_core.logs.core.logger_config import get_component_logger
 
 def _valid_page_watch(value: Any) -> Dict[str, Any]:
@@ -95,6 +98,29 @@ class SourcesService:
             raise ValueError(f"{platform}/{handle} is already a source") from None
         self.logger.info(f"Added source: {platform}/{handle}")
         return {"source_id": source_id, "platform": platform, "handle": handle}
+
+    def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """Point a source at a new address (issue 0036): a feed, or a page to follow
+        (page_watch {} or {"prefix"}). One transaction: the address, settings.page_watch, and
+        a clean fetch state (no failures, no backoff, no doctor finding). The id, name, tracks,
+        read state and posts stay; posts match by URL, so nothing is duplicated.
+        Returns the old {handle_or_url, page_watch}. LookupError for no such source,
+        ValueError for a bad address or one that is already a source."""
+        handle = web_address(url, "An address is needed to switch to")
+        if urllib.parse.urlparse(handle).scheme.lower() not in ("http", "https"):
+            raise ValueError("A source can only switch to an http or https address")
+        if page_watch is not None:
+            page_watch = _valid_page_watch(page_watch)
+        try:
+            with db.transaction(self.db_url) as cur:
+                old = self.repo.get_source_by_id(cur, source_id)
+                if old is None or not self.repo.set_address(cur, source_id, handle, page_watch):
+                    raise LookupError(f"Source {source_id} not found")
+                FetchStateRepository().clear_failures(cur, source_id)
+        except psycopg.errors.UniqueViolation:
+            raise ValueError(f"{handle} is already a source") from None
+        self.logger.info(f"Switched source {source_id}: {old['handle_or_url']} -> {handle}")
+        return {"handle_or_url": old["handle_or_url"], "page_watch": (old.get("settings") or {}).get("page_watch")}
 
     def delete_source(self, source_id: str) -> bool:
         """Delete source (and cascade delete its posts)."""

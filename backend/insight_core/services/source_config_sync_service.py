@@ -134,6 +134,23 @@ class SourceConfigSyncService:
             "stats": stats,
         }
 
+    def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """SourcesService.switch_source, with sources.json rewritten in step (issue 0036).
+
+        A file still naming the old address would make the next sync add the old address back
+        and mirror-delete the switched source with its posts. So when the file cannot be
+        written the switch is undone and the error raised: the database never holds an
+        address the file does not.
+        """
+        old = self.sources_service.switch_source(source_id, url, page_watch)
+        try:
+            self.export_db_to_json()
+        except Exception:
+            self.logger.exception("Could not write sources.json after switching %s; switching back", source_id)
+            self.sources_service.switch_source(source_id, old["handle_or_url"], old["page_watch"])
+            raise
+        return old
+
     def export_db_to_json(self) -> Dict[str, Any]:
         current_document = self.load_json() if self.config_path.exists() else self._default_document()
         sources = self.sources_service.get_all_sources()

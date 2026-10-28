@@ -109,7 +109,26 @@ class SourcesRepository:
         else:
             self.logger.warning(f"Source {source_id} not found")
             return False
-    
+
+    def set_address(self, cur: Cursor, source_id: str, handle: str,
+                    page_watch: Optional[Dict[str, Any]]) -> bool:
+        """A new handle_or_url, and settings.page_watch set (page_watch given) or removed (None):
+        the source's id, name, tracks and posts stay (issue 0036). False when there is no such
+        source; UniqueViolation when the address is already another source."""
+        cur.execute(
+            """
+            UPDATE sources
+               SET handle_or_url = %s,
+                   settings = CASE WHEN %s::jsonb IS NULL THEN COALESCE(settings, '{}'::jsonb) - 'page_watch'
+                                   ELSE COALESCE(settings, '{}'::jsonb) || jsonb_build_object('page_watch', %s::jsonb) END,
+                   updated_at = now()
+             WHERE id = %s
+            RETURNING id
+            """,
+            (handle, *(2 * [None if page_watch is None else json.dumps(page_watch)]), source_id),
+        )
+        return cur.fetchone() is not None
+
     def get_sources_with_post_counts(self, cur: Cursor) -> List[Dict[str, Any]]:
         """
         Get all sources with their post counts and cadence columns.

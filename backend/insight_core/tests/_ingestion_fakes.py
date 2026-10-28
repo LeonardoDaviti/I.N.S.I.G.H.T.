@@ -87,7 +87,8 @@ class InMemoryFetchStateStore:
                 row = replace(row, last_error=outcome.error)
             else:
                 row = replace(row, consecutive_failures=0, next_retry_at=None, last_success_at=now,
-                              last_fetched_posts=outcome.fetched, last_error=None)
+                              last_fetched_posts=outcome.fetched, last_error=None,
+                              doctor_checked_at=None, doctor_finding=None)
             self.rows[outcome.source_id] = row
             written.append(row)
         return written
