@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { parseDoc } from './coverage';
 import { docBody, docHref, docTitle, inventoryRule, railGroups } from './studio';
+// Imported with the file, not inside the test: reading every real doc is slow on a loaded
+// machine, and inside the test it counted against the test's 5 s timeout.
+import { DOCS } from './library';
 
 describe('a studio doc', () => {
   const doc = parseDoc('pages/reader.md', '```meta\nkind: page\nstates: normal\n```\n\n# Reader\n\nCode: `pages/ReaderPage.tsx`.\n');
@@ -57,8 +60,7 @@ describe('the rail', () => {
 });
 
 describe('the real docs', () => {
-  it('each have one studio URL, and the rail reaches every one', async () => {
-    const { DOCS } = await import('./library');
+  it('each have one studio URL, and the rail reaches every one', () => {
     const hrefs = DOCS.map(docHref);
     expect(new Set(hrefs).size).toBe(DOCS.length);
     const reachable = railGroups(DOCS, [], []).flatMap((group) => group.items.flatMap((item) => [item, ...(item.children ?? [])]));

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
 import BlogPage from './BlogPage';
+// The post's body is a lazy chunk. Imported here, so rendering inside act() resolves it in the
+// same turn: the long article's render (~0.3 s idle, over findBy's 1 s on a loaded machine)
+// is awaited, not raced against a timeout.
+import '../blog/posts/junior-to-senior';
 import { POSTS } from '../blog/posts';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
@@ -40,18 +44,25 @@ describe('/blog', () => {
 });
 
 describe('/blog/junior-to-senior', () => {
+  /** The article, its lazy body rendered (see the import above). */
+  async function renderArticle() {
+    await act(async () => {
+      renderBlog('/blog/junior-to-senior');
+    });
+  }
+
   it('renders the article with its figures, each labelled for screen readers', async () => {
-    renderBlog('/blog/junior-to-senior');
+    await renderArticle();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('From junior to senior');
-    expect(await screen.findByRole('heading', { name: /A layer “to be safe”/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /A layer “to be safe”/ })).toBeInTheDocument();
     const figures = screen.getAllByRole('img');
     expect(figures).toHaveLength(6);
     for (const figure of figures) expect(figure).toHaveAccessibleName();
   });
 
   it('the quiz checks an answer, explains it, and resets for another try', async () => {
-    renderBlog('/blog/junior-to-senior');
-    const item = (await screen.findAllByRole('group'))[0].closest('li') as HTMLElement;
+    await renderArticle();
+    const item = screen.getAllByRole('group')[0].closest('li') as HTMLElement;
     const check = within(item).getByRole('button', { name: 'Check' });
     expect(check).toBeDisabled();
 

@@ -7,6 +7,12 @@ import { normalSite } from '../fixtures/sites';
 import type { FixtureRoute } from './transport';
 import { bootFrame, type BootedFrame } from './boot';
 import FrameRoot from './FrameRoot';
+// The routes' pages are lazy chunks. Imported here, a frame's first render waits only for
+// React, not for the pages' first transform, which on a loaded machine took longer than
+// findBy's 1 s (the reader test, first in the file, paid it).
+import '../../pages/ReaderPage';
+import '../../pages/PostDetailPage';
+import '../../pages/SourcesConfig';
 import { prototypeComponent } from '../prototypeRegistry';
 import { WALK, WALK_MESSAGE } from '../wall/walk';
 
@@ -36,7 +42,10 @@ describe('a frame', () => {
     const frame = boot('reader', 'normal', 'light');
     render(<FrameRoot booted={frame} />);
 
-    expect(await screen.findByRole('link', { name: /Prompt caching is now generally available/ })).toBeInTheDocument();
+    // The frame says when its page rendered and its queries settled; wait for that, not for a
+    // guess of how long a whole reader takes to render on a loaded machine.
+    await waitFor(() => expect(document.documentElement.dataset.frameReady).toBeDefined(), { timeout: 5_000 });
+    expect(screen.getByRole('link', { name: /Prompt caching is now generally available/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'INSIGHT, go to feed' })).toBeInTheDocument();
     expect(document.documentElement).toHaveClass('theme-light');
     expect(window.localStorage.getItem('insight.theme')).toBe('theme-light');
