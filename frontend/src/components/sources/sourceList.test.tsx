@@ -13,6 +13,7 @@ import {
   rowFact,
   sortSources,
   stepActive,
+  tidyNotes,
   visibleRowKeys,
   writeSourcesView,
 } from './sourceList';
@@ -236,5 +237,29 @@ describe('the source doctor note (issue 0036)', () => {
   it('says nothing of the kind before the doctor looked, or for a source that is off', () => {
     expect(brokenNote(healthRow({ status: 'backoff', consecutive_failures: 1 }, now))).toBeNull();
     expect(rowFact(healthRow({ ...broken, replacement: feed, enabled: false }, now), now)).toBe('off');
+  });
+});
+
+describe('source hygiene notes and the Tidy up filter (issue 0046)', () => {
+  const now = new Date('2026-10-28T09:00:00Z');
+  const quiet = healthRow({ source_id: 'quiet', quiet: true, last_post_at: '2026-03-04T10:00:00Z' }, now);
+  const unread = healthRow({ source_id: 'unread', never_opened: true, stored_posts: 214 }, now);
+  const both = healthRow({ source_id: 'both', quiet: true, never_opened: true, stored_posts: 30, last_post_at: '2026-03-04T10:00:00Z' }, now);
+  const fine = healthRow({ source_id: 'fine' }, now);
+
+  it('the note column says quiet with the last post, or never opened with the posts', () => {
+    expect(rowFact(quiet, now)).toBe('Quiet: last post Mar 4');
+    expect(rowFact(unread, now)).toBe('Never opened: 214 posts');
+    expect(rowFact(healthRow({ quiet: true, last_post_at: null }, now), now)).toBe('Quiet: no posts yet');
+    expect(tidyNotes(both, now)).toEqual(['Quiet: last post Mar 4', 'Never opened: 30 posts']);
+    expect(rowFact(both, now)).toBe('Quiet: last post Mar 4');
+    expect(tidyNotes(fine, now)).toEqual([]);
+    expect(rowFact(fine, now)).toMatch(/^fetched /);
+  });
+
+  it('?status=tidy keeps the marked sources only, and lives in the URL', () => {
+    expect(filterSources([quiet, unread, both, fine], { q: '', status: 'tidy' }).map((r) => r.source_id)).toEqual(['quiet', 'unread', 'both']);
+    expect(readSourcesView(new URLSearchParams('status=tidy')).status).toBe('tidy');
+    expect(writeSourcesView(new URLSearchParams(''), { q: '', status: 'tidy', group: 'none', sort: 'status', dir: 'desc' }).toString()).toBe('status=tidy');
   });
 });

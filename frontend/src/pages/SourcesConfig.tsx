@@ -13,7 +13,7 @@ import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import { HEALTH_FIXTURE_NAMES, isHealthFixtureName } from '../components/ops/fixtureNames';
-import SourceList, { type TrackActions } from '../components/sources/SourceList';
+import SourceList, { type TidyActions, type TrackActions } from '../components/sources/SourceList';
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
@@ -268,6 +268,26 @@ export default function SourcesConfig() {
     if (ok) toast(`Removed ${plural(members.length, 'source')} from ${folder?.name ?? 'the track'}`);
   };
 
+  // Tidy up (issue 0046): Keep hides the row's mark at once (it leaves the view), then
+  // refetches; Remove asks first and deletes exactly as any delete does (sources.json too).
+  const tidyActions: TidyActions = {
+    keep: (row) => {
+      queryClient.setQueriesData<SourcesHealthResponse>({ queryKey: [...SOURCES_HEALTH_KEY] }, (current) => (
+        current ? { ...current, rows: current.rows.map((r) => (r.source_id === row.source_id ? { ...r, quiet: false, never_opened: false } : r)) } : current
+      ));
+      void (async () => {
+        try {
+          await api.keepSource(row.source_id);
+          toast(`Kept ${rowName(row)}`);
+        } catch (err) {
+          setError(`Could not keep ${rowName(row)}: ${errorMessage(err)}`);
+        }
+        invalidate();
+      })();
+    },
+    remove: (row) => setPendingDelete({ kind: 'sources', ids: [row.source_id], name: rowName(row) }),
+  };
+
   const setMainDigest = async (ids: string[], on: boolean) => {
     const ok = await each(ids, async (id) => {
       await api.setSourceMainDigest(id, on);
@@ -441,7 +461,9 @@ export default function SourcesConfig() {
     body = (
       <EmptyState
         title="No sources match"
-        description={view.q ? `Nothing matches “${view.q}”${view.status ? ' with this status' : ''}.` : 'No source has this status right now.'}
+        description={view.q
+          ? `Nothing matches “${view.q}”${view.status ? ' with this status' : ''}.`
+          : view.status === 'tidy' ? 'Nothing to tidy up: no source went quiet or goes unopened.' : 'No source has this status right now.'}
         action={{ label: 'Clear filters', onClick: () => setView({ ...view, q: '', status: null }) }}
       />
     );
@@ -465,6 +487,7 @@ export default function SourcesConfig() {
         dir={view.dir}
         onSort={(column) => setView(nextSort(view, column))}
         focusToken={focusToken}
+        tidy={view.status === 'tidy' ? tidyActions : undefined}
       />
     );
   }

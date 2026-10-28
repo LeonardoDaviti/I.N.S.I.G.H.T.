@@ -10,7 +10,7 @@ import { cn } from '../../lib/utils';
 import { StatusGlyph, Switch } from '../ui';
 import TrackMenu from './TrackMenu';
 import SortButton from './SortButton';
-import { STATUS_GLYPH, kindLabel, rowFact, rowName, type SortBy, type SortDir, type SourceGroup } from './sourceList';
+import { STATUS_GLYPH, isTidy, kindLabel, rowFact, rowName, tidyNotes, type SortBy, type SortDir, type SourceGroup } from './sourceList';
 import { folderReadPath, sourceReadPath } from '../../lib/feedContext';
 
 /** A native checkbox in the ink colour (the browser picks a contrasting tick in both themes). */
@@ -66,14 +66,23 @@ export interface SourceListProps {
   focusToken: number;
   /** The track a deep link (`?track=`) points at, highlighted briefly. */
   highlightFolderId?: string | null;
+  /** Tidy up (issue 0046): a marked row offers Keep and Remove… in place of its read link. */
+  tidy?: TidyActions;
 }
+
+export interface TidyActions {
+  keep: (row: SourceHealthRow) => void;
+  remove: (row: SourceHealthRow) => void;
+}
+
+const TIDY_BUTTON = 'inline-flex h-7 shrink-0 items-center rounded-md px-2 text-[0.75rem] hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-fg coarse:h-11';
 
 /**
  * The sources as one dense list (one 36px line per source), in groups whose
  * headers stick under the toolbar and collapse (a headless group has none: the
  * flat list, and the untracked sources after a divider). Every row: select,
  * status glyph, name (opens the detail sheet), kind, posts, last new post,
- * added, a status note, read, on/off; on a phone only the glyph, name, posts,
+ * added, a status note, read (in Tidy up, Keep and Remove… on a marked row), on/off; on a phone only the glyph, name, posts,
  * read and switch (never a URL). Roving focus: only the active row's controls
  * are tab stops; j/k move it.
  */
@@ -95,6 +104,7 @@ export default function SourceList({
   onSort,
   focusToken,
   highlightFolderId = null,
+  tidy,
 }: SourceListProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const firstGroup = groups.find((g) => !collapsed.has(g.key) && g.rows.length);
@@ -285,10 +295,34 @@ export default function SourceList({
                             'text-[0.75rem]',
                             row.status === 'error' || row.status === 'backoff' ? 'font-medium text-fg' : 'text-fg-3',
                           )}
-                          title={row.last_error ?? (row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : undefined)}
+                          title={tidyNotes(row, now).join(' · ') || (row.last_error ?? (row.next_due_at ? `next ${formatDue(row.next_due_at, now)}` : undefined))}
                         >
                           {rowFact(row, now)}
                         </span>
+                        {tidy && isTidy(row) ? (
+                          <>
+                            <button
+                              type="button"
+                              tabIndex={tab}
+                              onClick={() => tidy.keep(row)}
+                              aria-label={`Keep ${name}`}
+                              title="Keep this source: the note goes, and comes back only if still true in 90 days"
+                              className={cn(TIDY_BUTTON, 'text-fg-2 hover:text-fg')}
+                            >
+                              Keep
+                            </button>
+                            <button
+                              type="button"
+                              tabIndex={tab}
+                              onClick={() => tidy.remove(row)}
+                              aria-label={`Remove ${name}`}
+                              title="Remove this source and its posts (asks first)"
+                              className={cn(TIDY_BUTTON, 'font-medium text-fg')}
+                            >
+                              Remove…
+                            </button>
+                          </>
+                        ) : null}
                         <Link
                           to={sourceReadPath(row.source_id)}
                           tabIndex={tab}

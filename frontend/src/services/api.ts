@@ -435,6 +435,15 @@ export interface SourceHealthRow {
   doctor_looked_at?: string | null;
   /** What it found; null with doctor_looked_at set: nothing. */
   replacement?: SourceReplacement | null;
+  /** Source hygiene (issue 0046): its fetches work but nothing new came for 30 days and
+   *  more than 3x its usual gap. Never on a broken or disabled source, nor within 90 days of Keep. */
+  quiet?: boolean;
+  /** 20 posts or more, added 30 days ago or more, and none opened, put in Later or kept. */
+  never_opened?: boolean;
+  /** How many of its posts were opened, put in Later, kept or part-read. */
+  opened_posts?: number;
+  /** When the owner last kept it from Tidy up; the marks hide for 90 days from then. */
+  tidy_kept_at?: string | null;
 }
 
 /** A broken source's replacement: a feed, or a page to follow (`found` articles under `prefix`). */
@@ -769,6 +778,9 @@ export function createApi() {
     /** Hide the replacement notice until the source's next failure streak; the fresh row. */
     dismissReplacement: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/replacement/dismiss`, { method: 'POST' }),
+    /** Keep a source marked quiet or never opened (issue 0046): its mark hides for 90 days; the fresh row. */
+    keepSource: (sourceId: string) =>
+      request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/tidy/keep`, { method: 'POST' }),
     /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
