@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
@@ -16,6 +16,7 @@ from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_operations import JobRunsRepository, SystemSettingsRepository
 from insight_core.ingestion.kinds.parsing import lost_most_images
+from insight_core.ingestion.kinds.saved import PLATFORM as SAVED_PLATFORM
 from insight_core.ingestion.schedule import (
     BACKOFF_DORMANT_AFTER,
     Availability,
@@ -155,6 +156,49 @@ def reading_notice(page_reads: Any) -> Optional[str]:
     return ". ".join(notes) or None
 
 
+# Source hygiene (issue 0046): two marks from data INSIGHT already has, never acted on alone.
+QUIET_AFTER = timedelta(days=30)        # nothing new for at least this long...
+QUIET_GAPS = 3                          # ...and for more than 3x the source's own mean gap
+NEVER_OPENED_MIN_POSTS = 20             # at least this many posts...
+NEVER_OPENED_MIN_AGE = timedelta(days=30)  # ...and added at least this long ago
+TIDY_KEEP_DAYS = 90                     # Keep hides the marks this long; then they may return
+NO_TIDY_MARKS = {"quiet": False, "never_opened": False}
+
+
+def tidy_marks(source: Dict[str, Any], status: str, now: datetime) -> Dict[str, bool]:
+    """Whether a source went quiet or was never opened (issue 0046).
+
+    Quiet: its fetches work (it is on, available and not failing, and has fetched once), yet
+    its newest post (or, with none, the day it was added) is older than QUIET_AFTER and than
+    QUIET_GAPS times its mean gap between posts (unknown gap: QUIET_AFTER alone).
+    Never opened: NEVER_OPENED_MIN_POSTS posts or more, added NEVER_OPENED_MIN_AGE ago or
+    more, and none opened (opened_posts, repo_fetch_state.OPENED_POST_SQL: opened, read for
+    a while, in Later, kept or part-read). Neither for a broken (failing) or disabled source,
+    for saved pages, or within TIDY_KEEP_DAYS of the owner's Keep.
+    """
+    state: Optional[FetchStateRow] = source.get("state")
+    if (status in (HealthStatus.ERROR.value, HealthStatus.BACKOFF.value, HealthStatus.DISABLED.value)
+            or source.get("platform") == SAVED_PLATFORM):
+        return dict(NO_TIDY_MARKS)
+    kept_at = source.get("tidy_kept_at")
+    if kept_at is not None and now - kept_at < timedelta(days=TIDY_KEEP_DAYS):
+        return dict(NO_TIDY_MARKS)
+    created_at = source.get("created_at")
+    newest = source.get("last_post_at") or created_at
+    quiet = False
+    if (status != HealthStatus.UNAVAILABLE.value and state is not None
+            and state.last_success_at is not None and newest is not None):
+        gap = source.get("mean_gap_seconds")
+        silence = now - newest
+        quiet = silence >= QUIET_AFTER and (gap is None or silence.total_seconds() > QUIET_GAPS * float(gap))
+    never_opened = (
+        int(source.get("post_count") or 0) >= NEVER_OPENED_MIN_POSTS
+        and created_at is not None and now - created_at >= NEVER_OPENED_MIN_AGE
+        and int(source.get("opened_posts") or 0) == 0
+    )
+    return {"quiet": quiet, "never_opened": never_opened}
+
+
 def health_row(source: Dict[str, Any], kind: Any, availability: Availability, now: datetime) -> Dict[str, Any]:
     """One SourceHealthRow: the schedule view row + decide_fetch(force=False)."""
     state: Optional[FetchStateRow] = source.get("state")
@@ -174,6 +218,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
     archive = settings.get("archive") or {}
     failures = stats.consecutive_failures
     stored = int(source.get("post_count") or 0)
+    status = health_status(enabled, decision, failures, state)
     return {
         "source_id": source["id"],
         "display_name": settings.get("display_name") or source.get("handle_or_url"),
@@ -202,7 +247,11 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "credential_notice": _credential_notice(kind),
         # How its newest page-read posts were read (page watch, full text): None, or a note.
         "reading_notice": reading_notice(source.get("page_reads")),
-        "status": health_status(enabled, decision, failures, state),
+        "status": status,
+        # Source hygiene (issue 0046): quiet / never opened, and the owner's last Keep.
+        **tidy_marks(source, status, now),
+        "opened_posts": int(source.get("opened_posts") or 0),
+        "tidy_kept_at": iso(source.get("tidy_kept_at")),
         "last_attempt_at": iso(state.last_attempt_at if state else None),
         "last_success_at": iso(state.last_success_at if state else None),
         "last_outcome": state.last_outcome if state else None,
@@ -742,6 +791,20 @@ class OperationsService:
         row = self.get_source_health_row(source_id) if dismissed else None
         if row is None:
             raise LookupError(f"Source {source_id} has no replacement to dismiss")
+        return row
+
+    def keep_source(self, source_id: str) -> Dict[str, Any]:
+        """Keep a source marked quiet or never opened (issue 0046): its marks hide for
+        TIDY_KEEP_DAYS and come back only if still true then. The fresh row; LookupError
+        for no such source."""
+        kept = False
+        if self._valid_id(source_id):
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                kept = FetchStateRepository().keep_source(cur, source_id, self.clock())
+                conn.commit()
+        row = self.get_source_health_row(source_id) if kept else None
+        if row is None:
+            raise LookupError(f"Source {source_id} not found")
         return row
 
     @staticmethod

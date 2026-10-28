@@ -32,6 +32,16 @@ MEDIUM_UP_TO_SECONDS = 7 * 24 * 3600
 MAX_ERROR_LENGTH = 2000
 PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
 
+# A post the owner opened (issue 0046): its page was opened or read for a while, or it was
+# put in Later, kept (starred) or left part-read. read_at alone is not an open: "mark read
+# up to here" sets it on posts never looked at. `p` is the post.
+OPENED_POST_SQL = """(
+    EXISTS (SELECT 1 FROM post_interactions i
+             WHERE i.post_id = p.id AND i.interaction_type IN ('opened', 'reading_session'))
+    OR EXISTS (SELECT 1 FROM post_reader_state r
+                WHERE r.post_id = p.id AND (r.later_at IS NOT NULL OR r.starred_at IS NOT NULL
+                                            OR r.resume_block IS NOT NULL)))"""
+
 
 @dataclass(frozen=True)
 class FetchStateRow:
@@ -345,7 +355,9 @@ class FetchStateRepository:
     ) -> List[Dict[str, Any]]:
         """Every source with its cadence columns, added date, post count, newest post, folders,
         its newest page reads (`page_reads`: the metadata.page_read of its PAGE_READS_IN_HEALTH
-        newest page-read posts, newest first) and fetch state.
+        newest page-read posts, newest first), how many of its posts were opened
+        (`opened_posts`, OPENED_POST_SQL), when the owner last kept it (`tidy_kept_at`, issue
+        0046) and fetch state.
 
         For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
         `settings` is merged with the platform defaults exactly as the runner's source
@@ -379,6 +391,9 @@ class FetchStateRepository:
                               FROM posts p
                              WHERE p.source_id = s.id AND p.metadata ? '{PAGE_READ_KEY}'
                              ORDER BY p.fetched_at DESC LIMIT {PAGE_READS_IN_HEALTH}) r) AS page_reads,
+                   (SELECT count(*) FROM posts p
+                     WHERE p.source_id = s.id AND {OPENED_POST_SQL}) AS opened_posts,
+                   s.tidy_kept_at,
                    {state_columns}
             FROM sources s
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
@@ -390,7 +405,7 @@ class FetchStateRepository:
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
-            state_values = r[16:]
+            state_values = r[18:]
             rows.append(
                 {
                     "id": str(r[0]),
@@ -410,10 +425,19 @@ class FetchStateRepository:
                     "folders": [{"id": str(f["id"]), "name": f["name"]} for f in (r[14] or [])],
                     # How the newest page-read posts were read, newest first (issue 0032).
                     "page_reads": list(r[15] or []),
+                    # Source hygiene (issue 0046): posts opened, and the owner's last Keep.
+                    "opened_posts": int(r[16] or 0),
+                    "tidy_kept_at": r[17],
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
             )
         return rows
+
+    def keep_source(self, cur: Cursor, source_id: str, at: datetime) -> bool:
+        """The owner kept a source marked quiet or never opened (issue 0046): the marks hide
+        for TIDY_KEEP_DAYS from `at`. False if no such source."""
+        cur.execute("UPDATE sources SET tidy_kept_at = %s WHERE id = %s", (at, str(source_id)))
+        return (cur.rowcount or 0) > 0
 
     def set_cadence_override(self, cur: Cursor, source_id: str, hours: Optional[float]) -> bool:
         """Write sources.fetch_interval_hours_override (None clears it). False if no such source.
