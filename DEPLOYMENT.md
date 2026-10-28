@@ -68,11 +68,16 @@ already stored), never a value. An older Telegram session file is not imported: 
 ```bash
 git pull
 docker exec insight-db pg_dump -U insight insight > /tmp/insight_pre_update.sql   # back up first
-docker compose build --pull
+docker compose build
 docker compose up -d --remove-orphans
 ```
 
 `./update` does the same without the dump: `git pull`, `docker compose down`, build, `up -d`.
+It reuses the cached base images and dependency installs, so a code-only update rebuilds
+only the code layers. `./update --refresh` (or `docker compose build --pull`) also pulls
+fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
+and then for security patches, and after changing `requirements.txt` or `package.json`
+(those rebuild their install layer anyway).
 If only environment variables changed: `docker compose up -d --force-recreate`.
 
 ### Version

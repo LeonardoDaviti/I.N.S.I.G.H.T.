@@ -7,6 +7,11 @@ git pull
 export INSIGHT_VERSION="$(cat VERSION)"
 export INSIGHT_COMMIT="$(git rev-parse --short HEAD)"
 export INSIGHT_COMMIT_DATE="$(git log -1 --format=%cs)"
+# The base images (python, node, nginx) are refreshed only with --refresh: pulling them on
+# every update rebuilt the pip and npm installs whenever Docker Hub had republished a base,
+# even when only code changed. Refresh now and then for security patches.
+pull=()
+if [[ "${1:-}" == "--refresh" ]]; then pull=(--pull); fi
 sudo docker compose down
-sudo --preserve-env=INSIGHT_VERSION,INSIGHT_COMMIT,INSIGHT_COMMIT_DATE docker compose build --pull backend ingestion frontend
+sudo --preserve-env=INSIGHT_VERSION,INSIGHT_COMMIT,INSIGHT_COMMIT_DATE docker compose build "${pull[@]}" backend ingestion frontend
 sudo docker compose up -d --remove-orphans
