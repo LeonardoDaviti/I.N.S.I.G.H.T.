@@ -465,6 +465,15 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 3)
         self.assertEqual([offer["url"] for offer in body["pages"]], [f"{SHOP}/now"])
 
+    def test_the_previews_of_one_run_read_the_sites_sitemap_once(self):
+        sitemap = ('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                   f"<url><loc>{SHOP}/now/post-0</loc></url><url><loc>{SHOP}/stories/post-0</loc></url></urlset>")
+        http = FakeHttp({f"{SHOP}/robots.txt": f"Sitemap: {SHOP}/sitemap.xml", f"{SHOP}/sitemap.xml": sitemap,
+                         **recent_section("/now", 4), **recent_section("/stories", 3)})
+        found = asyncio.run(main.page_watch.offers(http, [], [f"{SHOP}/now", f"{SHOP}/stories"]))
+        self.assertEqual([offer["url"] for offer in found], [f"{SHOP}/now", f"{SHOP}/stories"])
+        self.assertEqual((http.requests.count(f"{SHOP}/robots.txt"), http.requests.count(f"{SHOP}/sitemap.xml")), (1, 1))
+
     def test_the_finder_reports_the_menu_header_first_shallowest_first_at_most_twelve(self):
         header = ("".join(f'<a href="/h{n}">H{n}</a>' for n in range(10)) + '<a href="/deep/page">Deep</a>'
                   '<a href="/signup?plan=team">Sign up</a>')

@@ -42,6 +42,12 @@ When the homepage names no blog or news page, **let the evidence choose**:
   a joining year, 1978-2025) and 37signals.com/policies (3 dated, 2 of them updated this year).
   "Newest first" would lose intercom.com/blog (a featured post first) and bcg.com/publications.
   Three posts from the last year kept every blog and dropped both.
+- **One sitemap read per run:** the previews of one `offers` call (named and menu) share the
+  site's robots.txt and sitemap reads (`SiteReads`, a per-run map of address -> the read in
+  flight, passed into `preview`/`discover`; no global cache): twelve previews of one site read
+  its sitemap once. A preview cut by the budget never cancels a read another one awaits; reads
+  still running at the deadline are cancelled with the previews. Live re-check: linear.app
+  (/now, 106) and intercom.com (/blog/, 1758) offer the same.
 - **Everywhere 0041 applies:** `POST /api/sources/find-feed` passes `finding.menu` (the Add source
   dialog and add-many both use it, so no frontend change); the source doctor gathers the menu of
   each search with the pages, for a root source only (`page_watch.is_home`). What the offer
@@ -52,8 +58,9 @@ When the homepage names no blog or news page, **let the evidence choose**:
   offered; a named blog still wins over a menu link with more articles; the budget respected: a
   menu page that never answers is left out, the rest offered in time; the menu as reported:
   header first, shallowest first, at most 12, no other site, no home, no query, no body links;
-  no menu when a page is named); `test_source_doctor.py` (a root source is offered a blog its home
-  page names otherwise). Backend 794 tests OK. Frontend untouched.
+  no menu when a page is named; the previews of one run read the site's robots.txt and sitemap
+  once); `test_source_doctor.py` (a root source is offered a blog its home
+  page names otherwise). Backend 795 tests OK. Frontend untouched.
 - **Limits:** a blog link deeper than the twelve shallowest menu links is not reached
   (atlassian.com's `/blog/category/ai`, three deep after sixty product links; bain.com's menu
   leads with seventy office and language pages). A list whose articles carry no date of their own
