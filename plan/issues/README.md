@@ -48,6 +48,11 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0041](0041-follow-the-sites-blog.md) | Paste a homepage, follow its blog | built, not deployed |
 | [0042](0042-reader-keeps-structure.md) | The reader keeps tables, figures and captions | built, not deployed |
 | [0043](0043-gwern-reader-cleanup.md) | The Gwern reader reads only Gwern's writing | built, not deployed |
+| [0044](0044-conditional-fetching.md) | Conditional fetching: an unchanged feed costs nothing | planned for v9.5 |
+| [0045](0045-reading-settings.md) | Reading settings: font, size and width | planned for v9.5 |
+| [0046](0046-source-hygiene.md) | Source hygiene: quiet and never-opened sources | planned for v9.5 |
+| [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | planned for v9.5 |
+| [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | planned for v9.5 |
 
 ## Analysis archive
 
