@@ -120,6 +120,14 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertNotIn("Samsung", text)
         self.assertIn("Paragraph 11 of what the author wrote", text)
 
+    def test_a_hero_meta_wrapper_keeps_the_articles_subtitle(self):
+        # blog.google puts the standfirst in "uni-article-hero__meta-wrapper"; a "meta" part alone
+        # is no list of tags (the before/after check on 48 pages, 2026-10-28).
+        page = ('<html><body><main><div class="uni-article-hero__meta-wrapper"><p class="uni-article-hero__abstract">'
+                'Now, we are expanding alerts to more places and adding new details.</p></div>'
+                f'{PARAGRAPHS}</main></body></html>')
+        self.assertIn("expanding alerts to more places", _text(page))
+
     def test_a_table_of_contents_is_not_the_article(self):
         # anthropic.com: a sticky "Chapter 01: Connecting people to trusted sources" menu.
         page = ('<html><body><main><div class="StickyTableOfContents-module__Trigger"><p>Chapter 01: '

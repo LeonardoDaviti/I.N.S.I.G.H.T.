@@ -127,6 +127,8 @@ CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories")
 # A table of contents is a menu too (anthropic.com's "StickyTableOfContents-module__Trigger").
 CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents")
 CHROME_TOKENS = frozenset({"toc"})
+# The ending of a component part that is a share bar or a list of tags or topics.
+PART_ENDINGS = ("-share", "_share", "-guides", "-topics") + CHROME_ENDINGS
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
 TEXT_BLOCKS = "h1|h2|h3|p|blockquote"
@@ -147,10 +149,10 @@ def _chrome_token(token: str) -> bool:
         return True
     # A component part ("block__element"): each part is judged on its own, so blog.google's
     # "article-share__title" and 9to5google's "article__meta-guides" go, while a whole-article
-    # wrapper like "has-highlight-and-share" (no "__") stays.
+    # wrapper like "has-highlight-and-share" (no "__") stays. A bare "meta" part is no list:
+    # blog.google keeps the standfirst in "uni-article-hero__meta-wrapper".
     parts = token.split("__")
-    return len(parts) > 1 and any(part.startswith(CHROME_PREFIXES + ("meta",)) or part.endswith(("-share", "_share"))
-                                  for part in parts)
+    return len(parts) > 1 and any(part.startswith(CHROME_PREFIXES) or part.endswith(PART_ENDINGS) for part in parts)
 
 
 class _ChromeStripper(HTMLParser):
