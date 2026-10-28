@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   compactAge, feedDateLabel, feedDayHeading, feedDayKey, feedFullTime, feedTimeLabel, formatLocalDateTime, formatRelativeTime, localDateISO,
+  postBylineTime,
 } from './dates.ts';
 
 // getTimezoneOffset() convention: minutes to ADD to local time to get UTC,
@@ -102,6 +103,16 @@ test('feedFullTime: names the date and the time; empty when undated', () => {
   assert.match(label, /2026/);
   assert.match(label, /11:30|23:30/);
   assert.equal(feedFullTime('not a date', 'UTC'), '');
+});
+
+test('postBylineTime: the year only when it is not this year (issue 0033)', () => {
+  const now = new Date('2026-10-28T12:00:00Z');
+  const thisYear = postBylineTime('2026-10-09T23:30:00Z', now, 'UTC');
+  assert.doesNotMatch(thisYear, /2026/);
+  assert.match(thisYear, /Oct/);
+  assert.match(thisYear, /11:30|23:30/);
+  assert.match(postBylineTime('2025-10-09T23:30:00Z', now, 'UTC'), /2025/);
+  assert.equal(postBylineTime(null, now, 'UTC'), '');
 });
 
 test('compactAge stays short for a narrow numeric column', () => {

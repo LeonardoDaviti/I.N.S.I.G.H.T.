@@ -27,7 +27,7 @@ import { postSourceName } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { middleTruncate, plural } from '../lib/format';
-import { feedFullTime, formatLocalDateTime } from '../lib/dates';
+import { feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
 import { formatClock } from '../lib/duration';
 import type {
   Api,
@@ -590,7 +590,7 @@ interface PostArticleProps {
   current: boolean;
   /** When the open is recorded (and the post marked read): on mount, or once its end passes the top half of the screen. */
   readOn: 'mount' | 'end';
-  /** A post that follows another in the stream starts after a rule. */
+  /** A post that follows another in the stream starts after a rule, and its byline has no `settings`. */
   divider: boolean;
   keysEnabled: boolean;
 }
@@ -805,7 +805,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   // title shows it once, as the heading.
   const displayTitle = post.title || 'Untitled post';
   const bodyIsTitle = useMemo(() => postPlainText(post).replace(/\s+/g, ' ') === displayTitle, [post, displayTitle]);
-  const publishedLabel = feedFullTime(post?.published_at || post?.fetched_at || null);
+  const publishedLabel = postBylineTime(post?.published_at || post?.fetched_at || null);
+  const publishedFull = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
 
   useEffect(() => {
@@ -859,7 +860,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
       <header className="mb-8">
         <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
-            {/* The source name reads the source; `/ settings` beside it manages it (issue 0010). */}
+            {/* The source name reads the source; `/ settings` beside it manages it (issue 0010),
+                on the first post only: a post that follows in the stream reads source / date (issue 0033). */}
             {post.source_id ? (
               <>
                 <TextLink
@@ -869,12 +871,14 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
                 >
                   {middleTruncate(sourceName, 40)}
                 </TextLink>
-                <span className="whitespace-nowrap">
-                  <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
-                  <TextLink to={sourceSettingsHref(post.source_id)} className="text-fg-3 decoration-transparent hover:decoration-fg-3">
-                    settings
-                  </TextLink>
-                </span>
+                {divider ? null : (
+                  <span className="whitespace-nowrap">
+                    <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+                    <TextLink to={sourceSettingsHref(post.source_id)} className="text-fg-3 decoration-transparent hover:decoration-fg-3">
+                      settings
+                    </TextLink>
+                  </span>
+                )}
               </>
             ) : (
               <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>
@@ -885,7 +889,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
             {publishedLabel ? (
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
-                <time dateTime={publishedIso} className="tabular-nums">{publishedLabel}</time>
+                <time dateTime={publishedIso} title={publishedFull} className="tabular-nums">{publishedLabel}</time>
               </span>
             ) : null}
           </p>

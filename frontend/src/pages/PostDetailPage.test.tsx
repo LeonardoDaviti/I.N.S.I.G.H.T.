@@ -625,6 +625,24 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     expect(screen.getAllByText('The older post')).toHaveLength(1);
   });
 
+  it('only the first post’s byline says settings; the posts that follow read source / date (issue 0033)', async () => {
+    const withSource: Record<string, Post> = {
+      [POST_ID]: rssPost({ source_id: 'src-1' }),
+      [NEXT_ID]: rssPost({ id: NEXT_ID, source_id: 'src-1', title: 'The older post', published_at: '2026-09-26T10:00:00+00:00' }),
+    };
+    renderStream(contextApi({ getPostDetail: vi.fn((id: string) => Promise.resolve(detailFor(withSource[id]))) }));
+    const first = (await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' })).closest('header')!;
+    await nextReady();
+    see(streamEnd());
+    const next = (await screen.findByRole('heading', { level: 1, name: 'The older post' })).closest('header')!;
+
+    expect(within(first).getByRole('link', { name: 'settings' })).toHaveAttribute('href', '/settings/sources?source=src-1');
+    expect(within(next).queryByRole('link', { name: 'settings' })).toBeNull();
+    expect(within(next).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
+    expect(next.querySelector('time')).toHaveAttribute('dateTime', '2026-09-26T10:00:00+00:00');
+    expect(within(next).getByRole('group', { name: 'Post actions' })).toBeInTheDocument();
+  });
+
   it('j and k move between the posts in the stream', async () => {
     const user = userEvent.setup();
     renderStream(contextApi());

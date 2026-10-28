@@ -35,6 +35,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, not deployed |
 | [0029](0029-review-fixes.md) | Review fixes: correctness and overengineering in today's work | built, not deployed |
 | [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | ready-for-agent |
+| [0033](0033-continuous-reading-design.md) | Continuous reading: one calm column of separate articles | built, not deployed |
 | [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built, not deployed |
 | [0035](0035-add-many-sources.md) | Add many sources at once: a paste box and OPML | ready-for-agent |
 | [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | ready-for-agent |
