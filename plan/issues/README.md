@@ -43,6 +43,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | built, not deployed |
 | [0037](0037-full-arxiv-papers.md) | Full arXiv papers, from their HTML version | future |
 | [0038](0038-pdf-text.md) | Reading the PDFs posts link to | future |
+| [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | planned (after v9.4) |
 
 ## Analysis archive
 

@@ -32,7 +32,8 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
 - ○ Native Bluesky and Mastodon. ○ Podcasts.
 - ○ Conditional fetching (ETag).
-- Only on a real case: page-change watching, email-in.
+- ○ Page-change watching, per source, Gwern first (0039), planned after v9.4 (search).
+- Only on a real case: email-in.
 
 ### Reading
 - ✓ Continuous reading, clean text and images, the discussion link, nothing pointless on screen (0027).
@@ -73,6 +74,11 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - Platform APIs paid per customer (X); Telegram sessions per customer.
 
 ## Mark X: analysis on another level (ideas, on hold)
+
+### Added by the owner, 2026-10-28
+- **Deduplication** is Mark X: one story across sources and languages.
+- **Entity collection, even from skipped posts:** a Hacker News post about Tailscale, skipped in the Main feed, shows up later under *Company: Tailscale* or *Product: Tailscale* (0001 entity pages, filled automatically).
+- **"Palantir for news"**, keeping the owner in charge without the noise: collect everything (Mark IX), find anything (search), connect the dots (dedup, entities, first reporter), notice what matters (watchlists, trend spikes, priority), trust it (every claim links to its posts; nothing hidden by a black box).
 
 ### Understanding stories
 - **Story clustering:** the same news across sources and languages becomes one story, with who reported it first, who followed, and who added something new (0004, the citation graph).
