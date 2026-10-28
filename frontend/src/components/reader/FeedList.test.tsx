@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router-dom';
 
 import FeedList from './FeedList';
+// The feed's dialogs are lazy chunks (the reader's JS budget). Imported with the file, they
+// open in the same turn instead of racing findBy against their first transform.
+import './ShortcutHelp';
+import '../ops/ConfirmDialog';
 import { LiveRegionProvider } from './LiveRegion';
 import { feedItem, feedPage } from './fixtures';
 import { makeFakeApi } from '../../test/fakeApi';

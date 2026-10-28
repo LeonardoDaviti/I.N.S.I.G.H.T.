@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 
 import ReaderPage from './ReaderPage';
+// The feed's dialogs are lazy chunks (the reader's JS budget). Imported with the file, they
+// open in the same turn instead of racing findBy against their first transform.
+import '../components/reader/ShortcutHelp';
+import '../components/ops/ConfirmDialog';
 import { feedItem, feedPage } from '../components/reader/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';

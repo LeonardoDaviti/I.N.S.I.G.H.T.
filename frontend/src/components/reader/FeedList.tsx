@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -14,12 +14,10 @@ import { errorMessage } from '../../lib/apiError';
 import { plural } from '../../lib/format';
 import { feedDayHeading, feedDayKey } from '../../lib/dates';
 import { EmptyState, ErrorState, LoadingState, Notice, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
-import ConfirmDialog from '../ops/ConfirmDialog';
 import FeedItem from './FeedItem';
 import { feedItemDomId } from '../../lib/feedItem';
 import { recallSelection, rememberSelection } from '../../lib/readerSelection';
 import FeedGroup from './FeedGroup';
-import ShortcutHelp from './ShortcutHelp';
 import { useAnnounce } from './LiveRegion';
 
 export interface FeedListProps {
@@ -38,6 +36,11 @@ export interface FeedListProps {
 }
 
 const UNDO_MS = 5_000;
+
+// Opened by a key or a click, never on the first paint: their own chunks, loaded the first
+// time they open and kept mounted after, so closing still animates (the reader's JS budget).
+const ShortcutHelp = lazy(() => import('./ShortcutHelp'));
+const ConfirmDialog = lazy(() => import('../ops/ConfirmDialog'));
 const PREFETCH_DELAY_MS = 150;
 
 /**
@@ -61,6 +64,11 @@ function FeedList({
   const help = helpOpen ?? internalHelp;
   const setHelp = onHelpOpenChange ?? setInternalHelp;
   const [confirm, setConfirm] = useState<{ through: FeedItemData; count: number } | null>(null);
+  // The lazy dialogs mount the first time they open, and stay (see ShortcutHelp above).
+  const [helpUsed, setHelpUsed] = useState(help);
+  const [confirmUsed, setConfirmUsed] = useState(false);
+  if (help && !helpUsed) setHelpUsed(true);
+  if (confirm && !confirmUsed) setConfirmUsed(true);
 
   const { items, groups, entries } = feed;
   // A read or star patch replaces `items` but not its ids: key the ids on their
@@ -370,19 +378,23 @@ function FeedList({
   return (
     <>
       {body}
-      <ShortcutHelp open={help} onOpenChange={setHelp} />
-      <ConfirmDialog
-        open={Boolean(confirm)}
-        title={confirm ? `Mark ${plural(confirm.count, 'post')} as read?` : ''}
-        description={confirm ? (
-          <>
-            Everything unread from the newest post down to <span className="font-medium text-fg [overflow-wrap:anywhere]">“{confirm.through.title}”</span>. You can undo this for 5 seconds.
-          </>
+      <Suspense fallback={null}>
+        {helpUsed ? <ShortcutHelp open={help} onOpenChange={setHelp} /> : null}
+        {confirmUsed ? (
+          <ConfirmDialog
+            open={Boolean(confirm)}
+            title={confirm ? `Mark ${plural(confirm.count, 'post')} as read?` : ''}
+            description={confirm ? (
+              <>
+                Everything unread from the newest post down to <span className="font-medium text-fg [overflow-wrap:anywhere]">“{confirm.through.title}”</span>. You can undo this for 5 seconds.
+              </>
+            ) : null}
+            confirmLabel="Mark read"
+            onConfirm={() => void confirmMarkThrough()}
+            onCancel={() => setConfirm(null)}
+          />
         ) : null}
-        confirmLabel="Mark read"
-        onConfirm={() => void confirmMarkThrough()}
-        onCancel={() => setConfirm(null)}
-      />
+      </Suspense>
     </>
   );
 }

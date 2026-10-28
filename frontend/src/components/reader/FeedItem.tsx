@@ -8,7 +8,7 @@ import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId } from '../../lib/feedItem';
 import { formatClock } from '../../lib/duration';
-import { resumeShare } from '../../hooks/useReadingPosition';
+import { resumeShare } from '../../lib/readingPosition';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';

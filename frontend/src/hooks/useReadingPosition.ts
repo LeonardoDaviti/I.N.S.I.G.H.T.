@@ -4,21 +4,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { Api, PostDetailResponse } from '../services/api';
 import { patchFeeds } from './useReaderMutations';
 import { postKey } from './usePost';
+import { resumeShare } from '../lib/readingPosition';
 
 /** About three screens of text: a shorter post is read in one go, nothing to continue. */
 export const LONG_POST_CHARS = 4500;
 /** Saved once scrolling has stopped this long, and at once on leaving. */
 export const SAVE_AFTER_MS = 3000;
-
-/**
- * The share of a post read, when worth showing (issue 0030): started (5%) and not
- * nearly done (90%); otherwise null. The post's offer and its feed row use the same.
- */
-export function resumeShare(block?: number | null, blocks?: number | null): number | null {
-  if (block == null || !blocks) return null;
-  const share = block / blocks;
-  return share >= 0.05 && share <= 0.9 ? share : null;
-}
 
 /** The body's text blocks, in order: what a position counts. */
 const BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, table, figure';
