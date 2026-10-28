@@ -5,11 +5,11 @@
 -- its source's address is on gwern.net (www. ignored) and its own URL's path starts with
 -- /doc/ or /newsletter/.
 --
--- Never deleted: a post in Later or kept (starred), and pages saved by hand (0031: they
--- belong to the Saved source, whose address is not gwern.net). Read state, positions, the
--- interaction log and notes go with the post (ON DELETE CASCADE), and so does its search
--- vector, a column of the row. Nothing to do without a Gwern source; a second run finds
--- nothing.
+-- Never deleted: a post in Later or kept (starred), a post with a note (the owner's own
+-- writing), and pages saved by hand (0031: they belong to the Saved source, whose address
+-- is not gwern.net). Read state, positions and the interaction log go with the post
+-- (ON DELETE CASCADE), and so does its search vector, a column of the row. Nothing to do
+-- without a Gwern source; a second run finds nothing.
 
 DELETE FROM posts p
 USING sources s
@@ -19,4 +19,5 @@ WHERE s.id = p.source_id
   AND NOT EXISTS (
     SELECT 1 FROM post_reader_state r
     WHERE r.post_id = p.id AND (r.later_at IS NOT NULL OR r.starred_at IS NOT NULL)
-  );
+  )
+  AND NOT EXISTS (SELECT 1 FROM post_notes n WHERE n.post_id = p.id);

@@ -411,6 +411,7 @@ class GwernNoiseMigrationTests(unittest.TestCase):
                 ("doc_word", gwern, f"https://gwern.net/doctor-{tag}"),
                 ("kept", gwern, f"https://gwern.net/doc/kept/{tag}/index"),
                 ("later", gwern, f"https://gwern.net/newsletter/later/{tag}"),
+                ("noted", gwern, f"https://gwern.net/doc/noted/{tag}/index"),
                 ("saved", saved, f"https://gwern.net/doc/saved/{tag}/index"),
                 ("substack", substack, f"https://gwern.substack.com/doc/{tag}"),
                 ("other_site", other, f"https://example.invalid/doc/{tag}"),
@@ -426,7 +427,7 @@ class GwernNoiseMigrationTests(unittest.TestCase):
             cur.execute("INSERT INTO post_reader_state (post_id, later_at) VALUES (%s, now())", (posts["later"],))
             cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'opened')",
                         (posts["newsletter"],))
-            cur.execute("INSERT INTO post_notes (post_id, notes_markdown) VALUES (%s, 'n')", (posts["copy"],))
+            cur.execute("INSERT INTO post_notes (post_id, notes_markdown) VALUES (%s, 'n')", (posts["noted"],))
 
             cur.execute(sql)
 
@@ -441,6 +442,8 @@ class GwernNoiseMigrationTests(unittest.TestCase):
             cur.execute("SELECT count(*) FROM post_reader_state WHERE post_id = ANY(%s)",
                         ([posts["kept"], posts["later"]],))
             self.assertEqual(cur.fetchone()[0], 2, "Keep and Later stay with their posts")
+            cur.execute("SELECT notes_markdown FROM post_notes WHERE post_id = %s", (posts["noted"],))
+            self.assertEqual(cur.fetchone(), ("n",), "a note keeps its post")
 
             cur.execute(sql)  # a second run deletes nothing
             self.assertEqual(cur.rowcount, 0)
