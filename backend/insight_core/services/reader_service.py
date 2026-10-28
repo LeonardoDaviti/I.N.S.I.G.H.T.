@@ -1,4 +1,4 @@
-"""Reader: the post listing, read state and unread counts (Mark IX, B7).
+"""Reader: the post listing, read state, Later (issue 0022) and unread counts (Mark IX, B7).
 
 Owns the connection and transaction lifecycle around ReaderRepository and turns its
 results into the API shapes (FeedPage, FeedGroupsPage, ReadStateResult, UnreadCounts).
@@ -35,11 +35,25 @@ class ReaderService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.repo.unread_counts(cur)
 
-    def set_read(self, post_ids: Sequence[str], read: bool) -> Dict[str, Any]:
-        """Mark these posts read or unread. `ids` are the ones that changed."""
+    def set_read(self, post_ids: Sequence[str], read: bool, keep_later: bool = False) -> Dict[str, Any]:
+        """Mark these posts read or unread. `ids` are the ones that changed.
+
+        An explicit mark read finishes a post, so it also leaves Later (issue 0022);
+        `keep_later` is a read that is only an open (the feed marking what it opens).
+        """
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
                 ids = self.repo.set_read(cur, post_ids, read)
+                if read and not keep_later:
+                    self.repo.set_later(cur, post_ids, False)
+            conn.commit()
+        return _read_state_result(ids)
+
+    def set_later(self, post_ids: Sequence[str], later: bool, at: datetime | None = None) -> Dict[str, Any]:
+        """Put posts in Later (at `at`, default now) or take them out. `ids` are the ones that changed."""
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                ids = self.repo.set_later(cur, post_ids, later, at=at)
             conn.commit()
         return _read_state_result(ids)
 

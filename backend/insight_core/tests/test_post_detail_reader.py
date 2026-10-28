@@ -102,6 +102,7 @@ class PostDetailReaderStateTests(unittest.TestCase):
         self.assertFalse(state["is_favorited"])
         self.assertIsNone(state["read_at"])
         self.assertEqual(state["open_count"], 0)
+        self.assertIsNone(state["later_at"])
 
 
 @requires_test_db

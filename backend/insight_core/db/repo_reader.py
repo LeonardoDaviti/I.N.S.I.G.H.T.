@@ -8,7 +8,8 @@ Read state lives in the `post_reader_state` projection (0020). `post_interaction
 audit log; a list query cannot aggregate it per row cheaply.
 
 Every feed is ordered by the sort key `(COALESCE(published_at, fetched_at), id)` descending,
-which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort node).
+which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort node);
+the Later list (issue 0022) instead by when each post was saved, oldest first.
 "Unread" means no read_at, over every post the source ever gave us: an archived post from
 2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
 grouped "all" view) back to the last N days; unset or 0 means no window.
@@ -30,9 +31,9 @@ from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.post_fields import display_title
 
-FeedFilter = Literal["all", "unread", "starred"]
+FeedFilter = Literal["all", "unread", "later", "starred"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
-FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "starred")
+FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
 SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
 
@@ -48,6 +49,12 @@ SORT_KEY = "COALESCE(p.published_at, p.fetched_at)"
 # seq-scans + sorts posts. The anti-join keeps the posts_feed_order_idx Index Scan.
 UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
+)
+# A post's length in minutes: the reading estimate, or a video's duration.
+MINUTES_SQL = (
+    "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
+    " THEN ceil((p.metadata->>'duration_seconds')::numeric / 60) ELSE 0 END"
+    f" ELSE ceil(COALESCE(length(p.content), 0)::numeric / {CHARS_PER_READING_MINUTE}) END"
 )
 
 
@@ -66,7 +73,8 @@ def _require_uuid(value: str, what: str) -> str:
 
 @dataclass(frozen=True)
 class FeedScope:
-    """Which posts a feed shows. 'all' honours sources.in_main_digest; starred is a filter."""
+    """Which posts a feed shows. 'all' honours sources.in_main_digest (but not under the
+    later filter: a post put in Later is there whatever its source); starred is a filter."""
 
     kind: Literal["all", "folder", "source"]
     id: Optional[str] = None
@@ -189,7 +197,8 @@ _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, 4000), p.url, p.source_id,
     COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
-    length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]')
+    length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
+    rs.later_at
 """
 
 
@@ -215,6 +224,7 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "published_at": row[8],
         "read_at": row[9],
         "starred_at": row[10],
+        "later_at": row[14],
         "reading_minutes": None if is_video or not content_length else math.ceil(content_length / CHARS_PER_READING_MINUTE),
         "duration_seconds": duration_seconds if is_video else None,
         "media_thumb": feed_thumb(row[13], row[3]),
@@ -241,9 +251,9 @@ class ReaderRepository:
     # ---- predicates ---------------------------------------------------------------
 
     @staticmethod
-    def _scope_sql(scope: FeedScope) -> Tuple[str, List[Any]]:
+    def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
         if scope.kind == "all":
-            return "s.in_main_digest", []
+            return ("TRUE" if filter == "later" else "s.in_main_digest"), []
         if scope.kind == "folder":
             return "p.source_id IN (SELECT sf.source_id FROM source_folders sf WHERE sf.folder_id = %s)", [scope.id]
         return "p.source_id = %s", [scope.id]
@@ -254,6 +264,8 @@ class ReaderRepository:
             return f"{UNREAD_SQL} AND {window_sql}", window_params
         if filter == "starred":
             return "rs.starred_at IS NOT NULL", []
+        if filter == "later":
+            return "rs.later_at IS NOT NULL", []
         if filter == "all":
             return "TRUE", []
         raise ValueError(f"invalid feed filter: {filter!r}")
@@ -281,13 +293,16 @@ class ReaderRepository:
 
     def _stream(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
                 ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
-        scope_sql, params = self._scope_sql(query.scope)
+        scope_sql, params = self._scope_sql(query.scope, query.filter)
         filter_sql, filter_params = self._filter_sql(query.filter)
         bounds_sql, bounds_params = self._bounds_sql(since, until)
         where = [scope_sql, filter_sql, bounds_sql]
         params += filter_params + bounds_params
+        # Later is a queue: oldest saved first, its cursor on later_at. Every other list: newest first.
+        later = query.filter == "later"
+        key, order, after = ("rs.later_at", "ASC", ">") if later else (SORT_KEY, "DESC", "<")
         if query.cursor is not None:
-            where.append(f"({SORT_KEY}, p.id) < (%s, %s::uuid)")
+            where.append(f"({key}, p.id) {after} (%s, %s::uuid)")
             params += [query.cursor.sort_at, query.cursor.post_id]
         limit = query.limit
         cur.execute(
@@ -297,28 +312,30 @@ class ReaderRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             WHERE {' AND '.join(where)}
-            ORDER BY {SORT_KEY} DESC, p.id DESC
+            ORDER BY {key} {order}, p.id {order}
             LIMIT %s
             """,
             [*params, limit + 1],
         )
         rows = cur.fetchall()
         items = [_item(r) for r in rows[:limit]]
-        next_cursor = FeedCursor(items[-1]["sort_at"], items[-1]["id"]) if len(rows) > limit else None
+        next_cursor = None
+        if len(rows) > limit:
+            next_cursor = FeedCursor(items[-1]["later_at" if later else "sort_at"], items[-1]["id"])
         return items, next_cursor
 
     def _by_source(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
                    ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One group per source, newest group first; keyset on (newest_sort_at, source_id).
 
-        `count` honours the filter and, when one is set, the unread window: it then bounds every
-        filter except `starred` (an explicit star never ages out).
+        `count` honours the filter and, when one is set, the unread window: it then bounds
+        `unread` and `all` (an explicit star or Later never ages out).
         The time bound (`days` or `day`) bounds both the counts and the items. Two queries per
         page whatever its size: the groups, then every group's newest items in one LATERAL.
         """
         scope, filter, group_cursor = query.scope, query.filter, query.cursor
         groups, per_source = min(query.limit, MAX_FEED_GROUPS), query.per_source
-        scope_sql, scope_params = self._scope_sql(scope)
+        scope_sql, scope_params = self._scope_sql(scope, filter)
         filter_sql, filter_params = self._filter_sql(filter)
         window = ["TRUE"]
         window_params: List[Any] = []
@@ -443,6 +460,36 @@ class ReaderRepository:
                 (post_id,),
             )
 
+    def set_later(self, cur: Cursor, post_ids: Sequence[str], later: bool, *, at: datetime | None = None
+                  ) -> List[str]:
+        """Put posts in Later (at `at`, default now; a post already there keeps its time) or take
+        them out. Returns the ids changed. Nothing calls this on a clock: Later never expires."""
+        ids = [_require_uuid(pid, "post id") for pid in post_ids]
+        if not ids:
+            return []
+        if later:
+            cur.execute(
+                """
+                INSERT INTO post_reader_state (post_id, later_at)
+                SELECT p.id, COALESCE(%s::timestamptz, now()) FROM posts p WHERE p.id = ANY(%s::uuid[])
+                ON CONFLICT (post_id) DO UPDATE
+                    SET later_at = EXCLUDED.later_at, updated_at = now()
+                    WHERE post_reader_state.later_at IS NULL
+                RETURNING post_id
+                """,
+                (at, ids),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE post_reader_state SET later_at = NULL, updated_at = now()
+                WHERE post_id = ANY(%s::uuid[]) AND later_at IS NOT NULL
+                RETURNING post_id
+                """,
+                (ids,),
+            )
+        return [str(r[0]) for r in cur.fetchall()]
+
     def mark_read_through(self, cur: Cursor, scope: FeedScope, through: FeedCursor, *, newest: FeedCursor,
                           now: datetime) -> List[str]:
         """Mark unread posts in `scope` from `newest` down to `through` (inclusive) read.
@@ -477,7 +524,8 @@ class ReaderRepository:
         return [str(r[0]) for r in cur.fetchall()]
 
     def unread_counts(self, cur: Cursor) -> Dict[str, Any]:
-        """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set)."""
+        """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set),
+        and `later`: {count, minutes}, every post in Later and what reading them costs."""
         window_sql, window_params = self._window_sql()
         cur.execute(
             f"""
@@ -504,4 +552,15 @@ class ReaderRepository:
             for folder_id, source_id in cur.fetchall():
                 key = str(folder_id)
                 by_folder[key] = by_folder.get(key, 0) + by_source[str(source_id)]
-        return {"total": total, "by_source": by_source, "by_folder": by_folder}
+        cur.execute(
+            f"""
+            SELECT COUNT(*), COALESCE(SUM({MINUTES_SQL}), 0)
+            FROM post_reader_state rs
+            JOIN posts p ON p.id = rs.post_id
+            JOIN sources s ON s.id = p.source_id
+            WHERE rs.later_at IS NOT NULL
+            """
+        )
+        later_count, later_minutes = cur.fetchone()
+        return {"total": total, "by_source": by_source, "by_folder": by_folder,
+                "later": {"count": int(later_count), "minutes": int(later_minutes)}}

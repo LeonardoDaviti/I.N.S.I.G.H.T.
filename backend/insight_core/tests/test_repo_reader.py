@@ -203,6 +203,81 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in items], [c])
         self.assertIsNotNone(items[0]["starred_at"])
 
+    # ---- Later (issue 0022) ------------------------------------------------------
+
+    def _later(self, post: str, at: datetime) -> None:
+        self.repo.set_later(self.cur, [post], True, at=at)
+
+    def test_set_later_sets_keeps_the_first_time_and_clears(self):
+        source = self._source()
+        (post,) = self._posts(source, 1)
+        first = self.now - timedelta(days=2)
+
+        self.assertEqual(self.repo.set_later(self.cur, [post], True, at=first), [post])
+        self.assertEqual(self.repo.set_later(self.cur, [post], True), [], "already in Later: nothing changes")
+        self.assertEqual(self._page(FeedScope("source", source))[0][0]["later_at"], first)
+
+        self.assertEqual(self.repo.set_later(self.cur, [post], False), [post])
+        self.assertIsNone(self._page(FeedScope("source", source))[0][0]["later_at"])
+
+    def test_later_lists_the_oldest_saved_first_across_pages(self):
+        source = self._source()
+        a, b, c = self._posts(source, 3)   # published newest first
+        self._later(a, self.now - timedelta(days=1))
+        self._later(c, self.now - timedelta(days=3))
+        self._later(b, self.now - timedelta(days=2))
+        scope = FeedScope("source", source)
+
+        first, cursor = self._page(scope, filter="later", limit=2)
+        second, end = self._page(scope, filter="later", limit=2, cursor=cursor)
+
+        self.assertEqual([i["id"] for i in first + second], [c, b, a], "oldest saved first")
+        self.assertIsNone(end)
+
+    def test_a_later_post_stays_in_unread(self):
+        source = self._source()
+        a, b = self._posts(source, 2)
+        self._later(a, self.now)
+
+        unread, _ = self._page(FeedScope("source", source), filter="unread")
+
+        self.assertEqual([i["id"] for i in unread], [a, b])
+
+    def test_the_main_feed_later_holds_every_source(self):
+        hidden = self._source(in_main_digest=False)
+        (post,) = self._posts(hidden, 1)
+        self._later(post, self.now)
+
+        items, _ = self._page(FeedScope("all"), filter="later", limit=100)
+
+        self.assertIn(post, [i["id"] for i in items], "a post you put in Later is there, whatever its source")
+
+    def test_marking_read_leaves_later_to_the_caller(self):
+        source = self._source()
+        (post,) = self._posts(source, 1)
+        self._later(post, self.now)
+
+        self.repo.set_read(self.cur, [post], True)
+
+        self.assertIsNotNone(self._page(FeedScope("source", source))[0][0]["later_at"],
+                             "an open marks read too: only the service's explicit mark read clears Later")
+
+    def test_later_counts_posts_and_their_reading_minutes(self):
+        before = self.repo.unread_counts(self.cur)["later"]
+        text = self._source()
+        video = self._source(platform="youtube")
+        long_post = self._post(text, self.now - timedelta(hours=1), content="x" * 2300)   # 3 min
+        short_post = self._post(text, self.now - timedelta(hours=2), content="x" * 100)   # 1 min
+        clip = self._post(video, self.now - timedelta(hours=3), metadata={"duration_seconds": 754})  # 13 min
+        for post in (long_post, short_post, clip):
+            self._later(post, self.now)
+        self.repo.set_read(self.cur, [short_post], True)   # read, still in Later
+
+        after = self.repo.unread_counts(self.cur)["later"]
+
+        self.assertEqual(after["count"] - before["count"], 3)
+        self.assertEqual(after["minutes"] - before["minutes"], 3 + 1 + 13)
+
     def test_days_bounds_the_feed(self):
         source = self._source()
         recent = self._post(source, self.now - timedelta(days=1))
@@ -353,7 +428,7 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(item["media_thumb"], "https://img.invalid/a.jpg")
         self.assertEqual(item["platform"], "youtube")
         self.assertEqual(item["source_id"], source)
-        for key in ("url", "source_display_name", "sort_at", "published_at", "read_at", "starred_at"):
+        for key in ("url", "source_display_name", "sort_at", "published_at", "read_at", "starred_at", "later_at"):
             self.assertIn(key, item)
 
     def test_media_thumb_is_an_image(self):

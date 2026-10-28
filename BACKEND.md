@@ -404,14 +404,15 @@ the result when the job finishes.
 | GET | `/` | Liveness text | |
 | GET | `/health` | Container health check | |
 | GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
-| GET | `/api/feed` | Every post list, newest first, one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|starred`, `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
-| GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder | |
-| PUT | `/api/feed/read` | Read state, answers `{updated, ids}` | `{ids, read}` (1-500 ids), or `{scope, through_cursor, newest_cursor}` to mark read through a cursor |
+| GET | `/api/feed` | Every post list, newest first (Later: oldest saved first), one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|later\|starred` (starred is Keep, "Kept"; later on `all` holds every source), `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
+| GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder; `later: {count, minutes}` | |
+| PUT | `/api/feed/read` | Read state, answers `{updated, ids}`; marking read by ids also takes the posts out of Later | `{ids, read, keep_later?}` (1-500 ids; `keep_later`: the read is only an open), or `{scope, through_cursor, newest_cursor}` to mark read through a cursor |
 | GET | `/api/media` | One image of one post, through the 24-hour cache | `post`, `url` |
 | GET | `/api/posts/item/{post_id}` | One post with its reader state | |
-| POST | `/api/posts/item/{post_id}/opened` | Record an open (marks it read) | `{metadata?}` |
+| POST | `/api/posts/item/{post_id}/opened` | Record an open (marks it read; it stays in Later) | `{metadata?}` |
 | POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
-| POST | `/api/posts/item/{post_id}/favorite` | Star or unstar | `{favorited}` |
+| PUT | `/api/feed/later` | Read later (issue 0022): put posts in Later or take them out, answers `{updated, ids}` | `{ids, later}` (1-500 ids) |
+| POST | `/api/posts/item/{post_id}/favorite` | Star (Keep) or unstar | `{favorited}` |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
 | POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
 | POST | `/api/sources/find-feed` | The feeds for any page address (`ingestion/feed_finder.py`, under 10 s): `{status: feed\|found\|direct\|none, feeds: [{url, title}]}` | `{url}` (no scheme: https) |

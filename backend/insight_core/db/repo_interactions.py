@@ -39,7 +39,7 @@ class PostInteractionsRepository:
         }
 
     def get_post_reader_state(self, cur: Cursor, post_id: str) -> Dict[str, Any]:
-        """Interaction-log aggregates plus the read-state projection (read_at, starred_at).
+        """Interaction-log aggregates plus the read-state projection (read_at, starred_at, later_at).
 
         `is_favorited` comes from the projection (post_reader_state.starred_at), which the
         favorite endpoint writes; the interaction log stays the audit trail.
@@ -57,11 +57,12 @@ class PostInteractionsRepository:
                     END
                 ), 0) AS total_read_seconds,
                 (SELECT rs.read_at FROM post_reader_state rs WHERE rs.post_id = %s) AS read_at,
-                (SELECT rs.starred_at FROM post_reader_state rs WHERE rs.post_id = %s) AS starred_at
+                (SELECT rs.starred_at FROM post_reader_state rs WHERE rs.post_id = %s) AS starred_at,
+                (SELECT rs.later_at FROM post_reader_state rs WHERE rs.post_id = %s) AS later_at
             FROM post_interactions i
             WHERE i.post_id = %s
         """
-        cur.execute(query, (post_id, post_id, post_id))
+        cur.execute(query, (post_id, post_id, post_id, post_id))
         row = cur.fetchone()
         if not row:
             return {
@@ -73,6 +74,7 @@ class PostInteractionsRepository:
                 "total_read_seconds": 0,
                 "read_at": None,
                 "starred_at": None,
+                "later_at": None,
             }
         return {
             "post_id": post_id,
@@ -83,4 +85,5 @@ class PostInteractionsRepository:
             "total_read_seconds": int(row[3] or 0),
             "read_at": row[4],
             "starred_at": row[5],
+            "later_at": row[6],
         }

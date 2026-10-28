@@ -49,8 +49,12 @@ class FakeReader:
         self._record("mark_read_through", scope, through, newest)
         return {"success": True, "updated": 1, "ids": [POST_ID]}
 
-    def set_read(self, ids, read):
-        self._record("set_read", ids, read)
+    def set_read(self, ids, read, keep_later=False):
+        self._record("set_read", ids, read, keep_later=keep_later)
+        return {"success": True, "updated": len(ids), "ids": ids}
+
+    def set_later(self, ids, later):
+        self._record("set_later", ids, later)
         return {"success": True, "updated": len(ids), "ids": ids}
 
 
@@ -152,6 +156,28 @@ class FeedRouteTests(unittest.TestCase):
         self.assertBadRequest(call(main.app, "PUT", "/api/feed/read", json_body={"ids": ["nope"], "read": True}))
         self.assertBadRequest(call(main.app, "PUT", "/api/feed/read",
                                    json_body={"ids": [POST_ID] * 501, "read": True}))
+        self.assertEqual(self.reader.calls, [])
+
+    def test_read_ids_can_keep_later(self):
+        call(main.app, "PUT", "/api/feed/read", json_body={"ids": [POST_ID], "read": True, "keep_later": True})
+        self.assertEqual(self.reader.calls[0], ("set_read", ([POST_ID], True), {"keep_later": True}))
+
+    def test_feed_parses_the_later_filter(self):
+        status, _, _ = self.get_feed(filter="later")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.reader.calls[0][1][0].filter, "later")
+
+    # ---- PUT /api/feed/later -------------------------------------------------------
+
+    def test_later_ids(self):
+        status, _, body = call(main.app, "PUT", "/api/feed/later", json_body={"ids": [POST_ID], "later": True})
+        self.assertEqual((status, body), (200, {"success": True, "updated": 1, "ids": [POST_ID]}))
+        self.assertEqual(self.reader.calls[0][:2], ("set_later", ([POST_ID], True)))
+
+    def test_later_rejects_bad_ids(self):
+        for payload in ({"ids": ["nope"], "later": True}, {"ids": [], "later": True}, {"later": True}):
+            with self.subTest(payload=payload):
+                self.assertBadRequest(call(main.app, "PUT", "/api/feed/later", json_body=payload))
         self.assertEqual(self.reader.calls, [])
 
 
