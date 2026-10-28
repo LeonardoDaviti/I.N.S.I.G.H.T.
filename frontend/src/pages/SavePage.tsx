@@ -14,6 +14,8 @@ import { sourceLabel } from '../lib/sourceLabel';
 import { siteOf } from '../lib/savePage';
 import BookmarkletHint from '../components/BookmarkletHint';
 
+const LATER_PATH = '/?filter=later';
+
 /** "This site has a feed. Follow it?": adds the feed as a source and reads it now. */
 function FeedNudge({ feed }: { feed: FoundFeed }) {
   const api = useApi();
@@ -46,19 +48,21 @@ function FeedNudge({ feed }: { feed: FoundFeed }) {
 function SavedResult({ result }: { result: SavedPage }) {
   const read = result.post_id ? <TextLink to={postHref(result.post_id, null)}>Read it</TextLink> : null;
   const saved = result.source_id ? <TextLink to={sourceReadPath(result.source_id)}>Saved</TextLink> : 'Saved';
+  // Every save goes to Later at the time it was saved (issue 0022, owner's decision).
+  const later = <TextLink to={LATER_PATH}>Later</TextLink>;
   if (result.status === 'already') {
-    return <Notice tone="status" title="Already in INSIGHT" message={<>{result.title ? `${result.title}. ` : null}{read}</>} />;
+    return <Notice tone="status" title="Already in INSIGHT" message={<>{result.title ? `${result.title}. ` : null}It’s in {later}. {read}</>} />;
   }
   if (result.readable === false) {
     return (
       <Notice
         tone="warning"
         title="Saved, without its text"
-        message={<>The page couldn’t be read as an article{result.reason ? ` (${result.reason})` : ''}, so its title and link are kept in {saved}. {read}</>}
+        message={<>The page couldn’t be read as an article{result.reason ? ` (${result.reason})` : ''}, so its title and link are kept in {saved} and in {later}. {read}</>}
       />
     );
   }
-  return <Notice tone="completion" title="Saved to INSIGHT" message={<>{result.title} is in {saved}, unread. {read}</>} />;
+  return <Notice tone="completion" title="Saved to INSIGHT" message={<>{result.title} is in {saved} and in {later}, unread. {read}</>} />;
 }
 
 /**
@@ -102,7 +106,7 @@ export default function SavePage() {
 
   return (
     <Page width="reading">
-      <PageHeader title="Save to INSIGHT" meta={given ? null : 'Any web page, kept unread in Saved.'} />
+      <PageHeader title="Save to INSIGHT" meta={given ? null : 'Any web page, kept unread in Saved and in Later.'} />
       <div className="space-y-5">
         {given ? (
           <div className="space-y-1 rounded-md border border-line p-4">

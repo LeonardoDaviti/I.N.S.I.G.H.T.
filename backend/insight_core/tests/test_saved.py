@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -179,6 +179,65 @@ class SaveRouteTests(unittest.TestCase):
                         (f"{SITE}/feed.xml/",))
         _, body = self.save({ARTICLE_URL: ARTICLE, f"{SITE}/feed.xml": FEED})
         self.assertIsNone(body["feed"])
+
+    # ---- saved pages go to Later and sort by when they were saved (issue 0022, owner's decisions)
+
+    def _at(self, when):
+        registry.services().saved.clock = lambda: when
+
+    def _state(self, post_id):
+        ((published_at, later_at, metadata),) = self._rows(
+            "SELECT p.published_at, rs.later_at, p.metadata FROM posts p "
+            "LEFT JOIN post_reader_state rs ON rs.post_id = p.id WHERE p.id = %s", post_id)
+        return published_at, later_at, metadata
+
+    def test_a_save_is_in_later_at_the_save_time_and_dated_by_it(self):
+        saved_at = datetime.now(timezone.utc).replace(microsecond=0)
+        self._at(saved_at)
+        _, body = self.save({ARTICLE_URL: ARTICLE})
+        published_at, later_at, metadata = self._state(body["post_id"])
+        self.assertEqual((published_at, later_at), (saved_at, saved_at))
+        self.assertEqual(metadata["article_published_at"], "2026-10-20T08:00:00+00:00", "the page's own date is kept")
+        _, _, later = call(main.app, "GET", "/api/feed", query={"scope": "all", "filter": "later"})
+        self.assertIn(body["post_id"], [item["id"] for item in later["items"]])
+
+    def test_saved_pages_sort_by_when_they_were_saved_not_the_articles_date(self):
+        newer_article = ARTICLE.replace("2026-10-20T08:00:00Z", "2026-10-27T08:00:00Z")
+        saved_at = datetime.now(timezone.utc).replace(microsecond=0)
+        self._at(saved_at - timedelta(hours=2))
+        _, first = self.save({f"{SITE}/newer": newer_article}, url=f"{SITE}/newer")
+        self._at(saved_at)
+        _, second = self.save({ARTICLE_URL: ARTICLE})
+        # A post from a followed source, newer than both articles but older than the saves.
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO sources (platform, handle_or_url, enabled) VALUES ('rss', %s, true) RETURNING id",
+                        (f"{SITE}/feed.xml",))
+            (other_source,) = cur.fetchone()
+            cur.execute("INSERT INTO posts (source_id, url, title, content, published_at) VALUES (%s, %s, 'Other', 'Body', %s) "
+                        "RETURNING id", (other_source, f"{SITE}/followed/1", saved_at - timedelta(hours=3)))
+            (other,) = cur.fetchone()
+        _, _, feed = call(main.app, "GET", "/api/feed", query={"scope": f"source:{second['source_id']}", "filter": "all"})
+        self.assertEqual([item["id"] for item in feed["items"]], [second["post_id"], first["post_id"]])
+        self.assertEqual(datetime.fromisoformat(feed["items"][0]["sort_at"].replace("Z", "+00:00")), saved_at)
+        _, _, main_feed = call(main.app, "GET", "/api/feed", query={"scope": "all", "filter": "unread", "limit": "100"})
+        ids = [item["id"] for item in main_feed["items"]]
+        self.assertLess(ids.index(second["post_id"]), ids.index(str(other)), "a save tops the Main feed")
+
+    def test_a_page_already_in_insight_goes_to_later_and_keeps_its_date(self):
+        dated = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO sources (platform, handle_or_url, enabled) VALUES ('rss', %s, true) RETURNING id",
+                        (f"{SITE}/feed.xml",))
+            (source,) = cur.fetchone()
+            cur.execute("INSERT INTO posts (source_id, url, title, content, published_at) VALUES (%s, %s, 'An essay', 'Body', %s) "
+                        "RETURNING id", (source, ARTICLE_URL, dated))
+            (existing,) = cur.fetchone()
+        saved_at = datetime.now(timezone.utc).replace(microsecond=0)
+        self._at(saved_at)
+        status, body = self.save({ARTICLE_URL: ARTICLE})
+        self.assertEqual((status, body["status"], body["post_id"]), (200, "already", str(existing)))
+        published_at, later_at, _ = self._state(existing)
+        self.assertEqual((published_at, later_at), (dated, saved_at))
 
     def test_only_web_addresses(self):
         for url in ("", "file:///etc/passwd", "javascript:alert(1)"):

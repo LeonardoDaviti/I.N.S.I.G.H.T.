@@ -52,6 +52,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     source_fetch = SourceFetchService(db_url)
     sources = SourcesService(db_url)
     source_config_sync = SourceConfigSyncService(db_url)
+    reader = ReaderService(db_url)
     return Services(
         db_url=db_url,
         sources=sources,
@@ -64,11 +65,12 @@ def build_services(db_url: Optional[str] = None) -> Services:
         # runner uses (KindRegistry.default), built once.
         operations=OperationsService(db_url, kinds=source_fetch.kinds),
         post_detail=PostDetailService(db_url),
-        reader=ReaderService(db_url),
+        reader=reader,
         youtube=YouTubeService(db_url),
         credentials=CredentialsService(db_url),
         media_proxy=MediaProxyService(db_url),
-        saved=SavedService(db_url, sources=sources, source_config_sync=source_config_sync, kinds=source_fetch.kinds),
+        saved=SavedService(db_url, sources=sources, source_config_sync=source_config_sync, kinds=source_fetch.kinds,
+                           reader=reader),
     )
 
 

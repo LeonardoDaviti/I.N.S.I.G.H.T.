@@ -4,7 +4,12 @@
     result["status"]   # "saved" | "already"
 
 A page already stored (its URL, or the one it redirects to, normalised) is not stored again:
-"already", with that post. Otherwise the page is read as page watch reads an article
+"already", with that post.
+
+Every save puts the post in Later at the save time (issue 0022, owner's decision), through
+ReaderService.set_later, and a new saved post is dated by that time (its published_at, which
+the feed sorts by), so it tops the feed and sorts by when it was saved, not by the article's own
+date (kept as metadata.article_published_at). A page already stored keeps its date. Otherwise the page is read as page watch reads an article
 (page_watch.article_post: the full-text reader, title, date, images). A page that cannot be
 read as an article (built with JavaScript, blocked, an error) is still saved, with its title
 (the page's, else the one the bookmarklet sent) and its address, and the answer says why
@@ -20,7 +25,7 @@ import asyncio
 import logging
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from insight_core.db import database as db
 from insight_core.db.repo_posts import PostsRepository
@@ -28,6 +33,7 @@ from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing, saved
 from insight_core.ingestion.kinds.page_watch import LISTING_MAX_BYTES, article_post, page_date, page_title
+from insight_core.services.reader_service import ReaderService
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.saved")
@@ -57,28 +63,41 @@ def _web_page(address: str) -> bool:
     return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
 
 
+def dated_by_save(post: Dict[str, Any], saved_at: datetime) -> Dict[str, Any]:
+    """The post dated by when it was saved; the page's own date stays in its metadata."""
+    metadata = dict(post.get("metadata") or {})
+    if not metadata.get("unreadable") and isinstance(post.get("date"), datetime):
+        metadata["article_published_at"] = post["date"].isoformat()
+    return {**post, "date": saved_at, "metadata": metadata}
+
+
 class SavedService:
-    def __init__(self, db_url: str, *, sources: Any, source_config_sync: Any, kinds: Any) -> None:
+    def __init__(self, db_url: str, *, sources: Any, source_config_sync: Any, kinds: Any,
+                 reader: ReaderService | None = None, clock: Callable[[], datetime] | None = None) -> None:
         self.db_url = db_url
         self.sources = sources
         self.source_config_sync = source_config_sync
         self.kinds = kinds
         self.posts = PostsRepository(db_url)
+        self.reader = reader or ReaderService(db_url)
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def save(self, http: KindHttp, url: str, title: Optional[str] = None) -> Dict[str, Any]:
         address = parsing.web_address(url, "An address is needed to save a page")
         if not _web_page(address):
             raise ValueError("Only an http or https page can be saved")
+        saved_at = self.clock()
         stored = await asyncio.to_thread(self.stored_post, [address])
         if stored:
-            return {"success": True, "status": "already", **stored}
+            return await self._already(stored, saved_at)
         (post, reason), finding = await asyncio.gather(
             self.read(http, address, (title or "").strip()), find_feeds(http, self.kinds, address))
         stored = post["url"] != address and await asyncio.to_thread(self.stored_post, [post["url"]])
         if stored:
-            return {"success": True, "status": "already", **stored}
+            return await self._already(stored, saved_at)
         source_id = await asyncio.to_thread(self.saved_source_id)
-        post_id = await asyncio.to_thread(self._insert, source_id, post)
+        post_id = await asyncio.to_thread(self._insert, source_id, dated_by_save(post, saved_at))
+        await asyncio.to_thread(self.reader.set_later, [post_id], True, saved_at)
         return {
             "success": True,
             "status": "saved",
@@ -89,6 +108,12 @@ class SavedService:
             "reason": reason,
             "feed": await asyncio.to_thread(self.unfollowed_feed, finding),
         }
+
+    async def _already(self, stored: Dict[str, Any], saved_at: datetime) -> Dict[str, Any]:
+        """A page already in INSIGHT: that post goes to Later (a post already there keeps its
+        time), its date untouched."""
+        await asyncio.to_thread(self.reader.set_later, [stored["post_id"]], True, saved_at)
+        return {"success": True, "status": "already", **stored}
 
     async def read(self, http: KindHttp, address: str, title: str) -> Tuple[Dict[str, Any], Optional[str]]:
         """(the post the page is, None) or, when it cannot be read as an article, (a post of its
