@@ -372,5 +372,85 @@ class StalePostLimitMigrationTests(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class GwernNoiseMigrationTests(unittest.TestCase):
+    """0036 deletes the Gwern posts stored from /doc/ and /newsletter/ before 0043 (issue 0048)."""
+
+    @requires_test_db
+    def test_0036_deletes_gwern_directories_and_newsletters(self):
+        sql = (MIGRATIONS_DIR / "0036_gwern_noise_cleanup.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+
+            def source(platform, handle):
+                cur.execute(
+                    """
+                    INSERT INTO sources (platform, handle_or_url, enabled, in_main_digest)
+                    VALUES (%s, %s, false, false)
+                    ON CONFLICT (platform, handle_or_url) DO UPDATE SET enabled = false
+                    RETURNING id
+                    """,
+                    (platform, handle),
+                )
+                return cur.fetchone()[0]
+
+            gwern = source("rss", "https://www.gwern.net/")
+            substack = source("rss", "https://gwern.substack.com/feed")
+            saved = source("saved", "Saved")
+            other = insert_scratch_source(cur)
+            tag = os.urandom(4).hex()
+            posts = {}
+            for name, source_id, url in [
+                ("directory", gwern, f"https://gwern.net/doc/ai/{tag}/index"),
+                ("abstract", gwern, f"https://gwern.net/doc/ai/{tag}/abstract"),
+                ("copy", gwern, f"https://www.gwern.net/doc/{tag}/1990-smith.html"),
+                ("newsletter", gwern, f"https://gwern.net/newsletter/2020/{tag}"),
+                ("essay", gwern, f"https://gwern.net/spaced-repetition-{tag}"),
+                ("blog", gwern, f"https://gwern.net/blog/2026/{tag}"),
+                ("doc_word", gwern, f"https://gwern.net/doctor-{tag}"),
+                ("kept", gwern, f"https://gwern.net/doc/kept/{tag}/index"),
+                ("later", gwern, f"https://gwern.net/newsletter/later/{tag}"),
+                ("noted", gwern, f"https://gwern.net/doc/noted/{tag}/index"),
+                ("saved", saved, f"https://gwern.net/doc/saved/{tag}/index"),
+                ("substack", substack, f"https://gwern.substack.com/doc/{tag}"),
+                ("other_site", other, f"https://example.invalid/doc/{tag}"),
+            ]:
+                cur.execute("INSERT INTO posts (source_id, url, title, content) VALUES (%s, %s, 't', 'c') "
+                            "RETURNING id", (source_id, url))
+                posts[name] = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO post_reader_state (post_id, read_at, resume_block, resume_blocks) "
+                "VALUES (%s, now(), 3, 10)", (posts["directory"],))
+            cur.execute("INSERT INTO post_reader_state (post_id, read_at, starred_at) VALUES (%s, now(), now())",
+                        (posts["kept"],))
+            cur.execute("INSERT INTO post_reader_state (post_id, later_at) VALUES (%s, now())", (posts["later"],))
+            cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'opened')",
+                        (posts["newsletter"],))
+            cur.execute("INSERT INTO post_notes (post_id, notes_markdown) VALUES (%s, 'n')", (posts["noted"],))
+
+            cur.execute(sql)
+
+            cur.execute("SELECT id FROM posts WHERE id = ANY(%s)", (list(posts.values()),))
+            left = {r[0] for r in cur.fetchall()}
+            gone = {name for name, post_id in posts.items() if post_id not in left}
+            self.assertEqual(gone, {"directory", "abstract", "copy", "newsletter"})
+            for table in ("post_reader_state", "post_interactions", "post_notes"):
+                cur.execute(f"SELECT count(*) FROM {table} t WHERE NOT EXISTS "
+                            "(SELECT 1 FROM posts p WHERE p.id = t.post_id)")
+                self.assertEqual(cur.fetchone()[0], 0, f"{table} has no orphans")
+            cur.execute("SELECT count(*) FROM post_reader_state WHERE post_id = ANY(%s)",
+                        ([posts["kept"], posts["later"]],))
+            self.assertEqual(cur.fetchone()[0], 2, "Keep and Later stay with their posts")
+            cur.execute("SELECT notes_markdown FROM post_notes WHERE post_id = %s", (posts["noted"],))
+            self.assertEqual(cur.fetchone(), ("n",), "a note keeps its post")
+
+            cur.execute(sql)  # a second run deletes nothing
+            self.assertEqual(cur.rowcount, 0)
+        finally:
+            conn.rollback()
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
