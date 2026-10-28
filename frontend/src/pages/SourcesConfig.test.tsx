@@ -582,6 +582,22 @@ describe('SourcesConfig', () => {
     expect(within(await screen.findByRole('dialog')).queryByText(/lose most of their images/)).not.toBeInTheDocument();
   });
 
+  it('a source whose pages can be watched offers Watch for changes, off by default, saved at once (issue 0039)', async () => {
+    const gwern = healthRow({ source_id: 'gwern', display_name: 'Gwern', kind: 'gwern_site', watchable: true, watch_changes: false, folders: [] });
+    const feed = healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', watchable: false, folders: [] });
+    const updateSourceSettings = vi.fn().mockResolvedValue({ success: true, source_id: 'gwern', settings: { watch_changes: true } });
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([gwern, feed])), updateSourceSettings });
+    await userEvent.click(await screen.findByRole('button', { name: 'Gwern' }));
+    const watch = within(await screen.findByRole('dialog')).getByRole('switch', { name: 'Watch for changes' });
+    expect(watch).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(watch);
+    expect(updateSourceSettings).toHaveBeenCalledWith('gwern', { watch_changes: true });
+    expect(watch).toHaveAttribute('aria-checked', 'true');
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    expect(within(await screen.findByRole('dialog')).queryByRole('switch', { name: 'Watch for changes' })).not.toBeInTheDocument();
+  });
+
   it('a broken source’s replacement notice comes before its reading notice (issues 0036, 0032)', async () => {
     const notice = 'Pages from this source lose most of their images (5 of the last 8)';
     const broken = healthRow({

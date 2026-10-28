@@ -9,6 +9,7 @@ import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId } from '../../lib/feedItem';
 import { formatClock } from '../../lib/duration';
 import { resumeShare } from '../../lib/readingPosition';
+import { lateFind, updateChanges, updateLine } from '../../lib/pageUpdate';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
@@ -80,7 +81,8 @@ function FeedItem({
   const length = lengthLabel(item);
   const share = resumeShare(item.resume_block, item.resume_blocks);
   const progress = share === null ? null : Math.round(share * 100);
-  // The feed's own order key (published, else fetched), so the column and the day headers agree.
+  // The feed's own order key (when it reached you if later than its date, else published, else
+  // fetched; issue 0039), so the column and the day headers agree.
   const time = item.sort_at ?? item.published_at;
   const showThumb = item.media_thumb && !thumbFailed;
   const excerpt = item.excerpt?.trim();
@@ -101,6 +103,10 @@ function FeedItem({
   );
   const fullTime = useMemo(() => feedFullTime(time), [time]);
   const source = sourceLabel(item.source_display_name);
+  // The date column is when the post reached you; a changed or late-found page says why.
+  const pageNote = item.update
+    ? `updated ${updateChanges(item.update)}`.trim()
+    : lateFind(item) ? `published ${feedDateLabel(item.published_at, now ?? new Date())}` : null;
   // On a real pointer the actions wait for hover or focus; on touch (phones
   // included), and on the selected row, they stay visible (lead review #1). The
   // reveal is instant: hovering rows happens hundreds of times a day.
@@ -173,6 +179,13 @@ function FeedItem({
                 <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
               </span>
               <span className="sr-only">{progress}% read</span>
+            </>
+          ) : null}
+          {pageNote ? (
+            <>
+              {showSource || length ? <span aria-hidden="true" className="shrink-0">·</span> : null}
+              {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
+              <span data-page-note className="min-w-0 truncate" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
             </>
           ) : null}
           {!isRead ? <span className="sr-only">Unread</span> : null}

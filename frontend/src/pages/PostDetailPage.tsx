@@ -28,7 +28,8 @@ import { postSourceName } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { middleTruncate, plural } from '../lib/format';
-import { feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
+import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
+import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
 import type {
   Api,
@@ -829,6 +830,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const publishedLabel = postBylineTime(post?.published_at || post?.fetched_at || null);
   const publishedFull = feedFullTime(post?.published_at || post?.fetched_at || null);
   const publishedIso = post?.published_at || post?.fetched_at || undefined;
+  // What the page states about itself (issue 0039): when it changed, its status and confidence.
+  const page = useMemo(() => pageState(post.metadata, post.published_at), [post.metadata, post.published_at]);
+  const pageLine = [page.update ? updateLine(page.update) : null, ...page.notes].filter(Boolean).join(' · ');
 
   useEffect(() => {
     if (current) document.title = `${displayTitle} · INSIGHT`;
@@ -932,6 +936,12 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 <time dateTime={publishedIso} title={publishedFull} className="tabular-nums">{publishedLabel}</time>
               </span>
             ) : null}
+            {page.modified ? (
+              <span className="whitespace-nowrap">
+                <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+                <time dateTime={page.modified} title={feedFullTime(page.modified)} className="tabular-nums">updated {feedDateLabel(page.modified)}</time>
+              </span>
+            ) : null}
           </p>
           <PostActions
             url={post.url}
@@ -948,6 +958,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         <h1 dir="auto" className="mt-2 break-words text-pretty text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
           {displayTitle}
         </h1>
+        {pageLine ? <p data-page-state className="mt-2 text-[0.8125rem] text-fg-3 [overflow-wrap:anywhere]">{pageLine}</p> : null}
         <span aria-live="polite" className="sr-only">{announcement}</span>
       </header>
 

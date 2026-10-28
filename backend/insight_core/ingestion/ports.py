@@ -28,6 +28,8 @@ from typing import (
 from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
+from insight_core.ingestion.http import Validators
+from insight_core.ingestion.page_changes import PageCheck, WatchedPage
 from insight_core.ingestion.schedule import FetchDecision, backoff_delay
 from insight_core.ingestion.types import FetchOutcome, SourceSelector, Trigger
 
@@ -58,9 +60,21 @@ class FetchStateStore(Protocol):
                         now: Optional[datetime] = None,
                         backoff: Optional[Callable[[int], timedelta]] = None) -> List[FetchStateRow]: ...
 
+    def load_validators(self, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]: ...
+
+    def save_validators(self, source_id: str, validators: Mapping[str, Validators]) -> None: ...
+
 
 class PostSaver(Protocol):
     def save(self, drafts: Sequence[PostDraft]) -> SaveBatchResult: ...
+
+
+class PageWatchStore(Protocol):
+    """Watched pages (issue 0039): which of a source's are due a check, and what each check found."""
+
+    def due(self, source_id: str, *, now: datetime, limit: int) -> List[WatchedPage]: ...
+
+    def checked(self, source_id: str, checks: Sequence[PageCheck], *, now: datetime) -> None: ...
 
 
 class InspectionRefresher(Protocol):
@@ -138,8 +152,10 @@ def slowed_line(data: dict) -> str:
 
 
 def _source_line(data: dict) -> str:
-    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", or why it failed; with
-    "· 2 of 3 pages lost most of their images" when pages read for it did (issue 0032)."""
+    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", "Simon Willison: unchanged
+    · 3 of 81 sources" (its feed answered 304, issue 0044), or why it failed; with
+    "· 2 of 3 pages lost most of their images" when pages read for it did (issue 0032), and
+    "· 50 pages checked for changes, 2 updated" when it watches its pages (issue 0039)."""
     name, sources = data["display_name"], data["sources"]
     of_run = f"{sources['done']} of {sources['total']} source{'' if sources['total'] == 1 else 's'}"
     status = data.get("status")
@@ -150,7 +166,12 @@ def _source_line(data: dict) -> str:
     lost = data.get("pages_lost_images") or 0
     images = (f" · {lost} of {data.get('pages_read') or lost} page{'' if data.get('pages_read') == 1 else 's'}"
               f" lost most of their images" if lost else "")
-    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)}{images} · {of_run}"
+    checked = data.get("checked") or 0
+    changes = (f" · {checked} page{'' if checked == 1 else 's'} checked for changes, {data.get('updated') or 0} updated"
+               if checked else "")
+    if data.get("unchanged"):
+        return f"{name}: unchanged{changes} · {of_run}"
+    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)}{images}{changes} · {of_run}"
 
 
 # --------------------------------------------------------------------------- catalog
@@ -229,6 +250,16 @@ class DbFetchStateStore:
             conn.commit()
         return rows
 
+    def load_validators(self, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self.repo.load_validators(cur, source_ids)
+
+    def save_validators(self, source_id: str, validators: Mapping[str, Validators]) -> None:
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                self.repo.replace_validators(cur, source_id, validators)
+            conn.commit()
+
     def refresh_cadence(self) -> int:
         with db.connection(self.db_url) as conn:
             with conn.cursor() as cur:
@@ -252,6 +283,41 @@ class DbPostSaver:
             return SaveBatchResult()
         with db.connection(self.db_url) as conn:
             return self.repo.save_batch(conn, drafts)
+
+
+# --------------------------------------------------------------------------- watched pages
+
+
+class DbPageWatchStore:
+    """PageWatchRepository with connection handling (issue 0039)."""
+
+    def __init__(self, db_url: str, repo: Any = None) -> None:
+        self.db_url = db_url
+        if repo is None:
+            from insight_core.db.repo_page_watch import PageWatchRepository
+
+            repo = PageWatchRepository()
+        self.repo = repo
+
+    def due(self, source_id: str, *, now: datetime, limit: int) -> List[WatchedPage]:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            rows = self.repo.due(cur, source_id, now=now, limit=limit)
+        return [WatchedPage(row["post_id"], row["url"], row["text_hash"], row["modified"],
+                            Validators(row["etag"], row["last_modified"], row["learned_at"]), row["head_missed"])
+                for row in rows]
+
+    def checked(self, source_id: str, checks: Sequence[PageCheck], *, now: datetime) -> None:
+        if not checks:
+            return
+        rows = [{"post_id": c.post_id, "text_hash": c.text_hash, "modified": c.modified,
+                 "head_missed": c.head_missed, "etag": c.validators.etag if c.validators else None,
+                 "last_modified": c.validators.last_modified if c.validators else None,
+                 "learned_at": c.validators.learned_at if c.validators else None}
+                for c in checks]
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                self.repo.checked(cur, source_id, rows, now=now)
+            conn.commit()
 
 
 # --------------------------------------------------------------------------- run lock

@@ -10,7 +10,7 @@
  * padding), so the client can build one from any item it has loaded.
  */
 
-export type FeedFilter = 'all' | 'unread' | 'later' | 'starred';
+export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated';
 
 export interface FeedContext {
   scope: string;
@@ -22,7 +22,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const CURSOR_RE = /^[A-Za-z0-9_-]+$/;
 
 export function isFeedFilter(value: unknown): value is FeedFilter {
-  return value === 'all' || value === 'unread' || value === 'later' || value === 'starred';
+  return value === 'all' || value === 'unread' || value === 'later' || value === 'starred' || value === 'updated';
 }
 
 export function isValidScope(scope: string): boolean {

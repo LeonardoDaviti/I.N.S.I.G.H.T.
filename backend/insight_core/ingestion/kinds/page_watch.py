@@ -22,6 +22,16 @@ category page), is not a post. A live fetch remembers the pages it skipped for t
 life (one that failed, for a day) and reads at most SKIP_READS of them besides its posts, so
 they never use up its limit. A site that builds its pages with JavaScript yields no bodies,
 so no posts (the preview says so).
+
+A live fetch asks conditionally (issue 0044): when the listing page and every sitemap file the
+last fetch read answer 304, nothing changed and the fetch is no posts. Validators are kept only
+when every address read gave some and the fetch left no candidate unread (otherwise the next
+fetch must look again, so it reads in full).
+
+Its stored pages can be watched for changes (issue 0039, page_changes): page_post reads one
+again as a fetch does, and article_post keeps the date the page says it changed (metadata
+modified). A post found only in the sitemap is marked as backlog (repo_posts.BACKLOG_KEY): it is
+never "new to you", so a fetch reading the site's history does not fill the top of the feed.
 """
 from __future__ import annotations
 
@@ -36,11 +46,11 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
-from insight_core.db.repo_posts import PAGE_READ_KEY
-from insight_core.ingestion.http import HttpError, KindHttp
+from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
+from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
@@ -125,11 +135,62 @@ class Discovery:
         return [*self.listed, *rest]
 
 
-async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None) -> Discovery:
+# GET an address, at most max_bytes of it: (the body, the final URL after redirects).
+Reader = Callable[[str, int], Awaitable[Tuple[bytes, str]]]
+
+
+async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = None, *,
+                   memory: Optional[AddressMemory] = None,
+                   read: Optional[Dict[str, Conditional]] = None) -> Discovery:
     """The articles of a listing page. Raises when the listing page cannot be read; a missing
-    or broken sitemap is just no sitemap."""
+    or broken sitemap is just no sitemap.
+
+    With memory every address is read through it, and memory.learned ends up holding the
+    addresses read (none at all when one of them gave no validators). read: answers already
+    in hand (discover_changed's), used instead of asking again."""
+    pending, addresses = dict(read or {}), []
+
+    async def get(url: str, max_bytes: int) -> Tuple[bytes, str]:
+        if memory is None:
+            return await http.get_start(url, max_bytes)
+        answer = pending.pop(url, None) or await memory.get(http, url, max_bytes=max_bytes)
+        addresses.append(url)
+        return answer.body or b"", answer.url
+
+    found = await _discover(get, http, listing_url, prefix)
+    if memory is not None:
+        kept = {url: memory.learned[url] for url in addresses if url in memory.learned}
+        memory.learned = kept if len(kept) == len(set(addresses)) else {}
+    return found
+
+
+async def discover_changed(http: KindHttp, listing_url: str, prefix: Optional[str],
+                           memory: AddressMemory) -> Optional[Discovery]:
+    """discover(), or None when the listing page and every sitemap file the last fetch read
+    answer 304. The first that answers in full (or, a sitemap, fails) ends the asking; the
+    others are then read in full."""
+    read: Dict[str, Conditional] = {}
+    if memory.sending(listing_url) is not None:
+        for url in [listing_url, *(url for url in memory.stored if url != listing_url)]:
+            if url == listing_url:
+                answer = await memory.get(http, url, max_bytes=LISTING_MAX_BYTES)   # its failure is the fetch's
+            else:
+                try:
+                    answer = await memory.get(http, url, max_bytes=SITEMAP_MAX_BYTES)
+                except Exception:  # noqa: BLE001 - a sitemap gone is a change: discover reads what is there
+                    break
+            if not answer.not_modified:
+                read[url] = answer
+                break
+        else:
+            return None
+    memory.full = True     # something changed: what answered 304 is read in full again
+    return await discover(http, listing_url, prefix, memory=memory, read=read)
+
+
+async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optional[str]) -> Discovery:
     # Where the listing landed, not the address given: deepmind.google/discover/blog/ is /blog/.
-    body, landed = await http.get_start(listing_url, LISTING_MAX_BYTES)
+    body, landed = await get(listing_url, LISTING_MAX_BYTES)
     page = body.decode("utf-8", "replace")
     listing = _clean(landed) or landed
     links = [url for href in LINK_RE.findall(page) if (url := _clean(href, landed))]
@@ -142,14 +203,15 @@ async def discover(http: KindHttp, listing_url: str, prefix: Optional[str] = Non
 
     listed = tuple(dict.fromkeys(url for url in links if under(url)))
     sitemap: Dict[str, Optional[datetime]] = {}
-    for loc, lastmod in await _sitemap_entries(http, listing, prefix):
+    for loc, lastmod in await _sitemap_entries(get, http, listing, prefix):
         url = _clean(loc)
         if url and under(url):
             sitemap.setdefault(url, parsing.parse_datetime_value(lastmod))
     return Discovery(prefix, listed, sitemap)
 
 
-async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tuple[str, Optional[str]]]:
+async def _sitemap_entries(get: Reader, http: KindHttp, listing: str,
+                           prefix: str) -> List[Tuple[str, Optional[str]]]:
     origin = parsing.origin_from_source(listing, "")
     try:
         robots, _ = await http.get_text(f"{origin}/robots.txt")
@@ -166,7 +228,7 @@ async def _sitemap_entries(http: KindHttp, listing: str, prefix: str) -> List[Tu
             continue
         read += 1
         try:
-            body, _ = await http.get_start(url, SITEMAP_MAX_BYTES)
+            body, _ = await get(url, SITEMAP_MAX_BYTES)
         except Exception as exc:  # noqa: BLE001 - a missing sitemap is no sitemap
             logger.debug("Page watch: sitemap %s skipped (%s)", url, exc)
             continue
@@ -271,7 +333,9 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "date": date or datetime.now(timezone.utc),
         "media_urls": media_urls,
         "categories": [],
-        "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity},
+        # When the page says it last changed: what a watched page is checked by (issue 0039).
+        "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity,
+                     **({"modified": modified} if (modified := parsing.page_modified(page)) else {})},
     }
 
 
@@ -338,6 +402,8 @@ async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
 
 class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
+    conditional = True                  # fetch_latest takes memory= (issue 0044)
+    watches = True                      # its stored pages can be re-read for changes (issue 0039)
     available_basis = "estimate"        # discovered candidate pages; some may be no post
     PAGE_SIZE = 1                       # one article page per archive page: the host gate spaces them
     PAGE_DELAY_SECONDS = 2
@@ -353,6 +419,10 @@ class PageWatchKind(BaseSourceAdapter):
         settings = (source.get("settings") or {}).get("page_watch") or {}
         return await discover(self.http, str(source["handle_or_url"]), settings.get("prefix"))
 
+    async def _discover_changed(self, source: Source, memory: AddressMemory) -> Optional[Discovery]:
+        settings = (source.get("settings") or {}).get("page_watch") or {}
+        return await discover_changed(self.http, str(source["handle_or_url"]), settings.get("prefix"), memory)
+
     async def _page(self, url: str) -> Optional[str]:
         """The page at url; None when it cannot be read, unless the host is limiting us."""
         try:
@@ -364,16 +434,24 @@ class PageWatchKind(BaseSourceAdapter):
             logger.info("Page watch: %s could not be read (%s)", url, exc)
             return None
 
-    async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
-        found = await self._discover(source)
+    async def fetch_latest(self, source: Source, limit: int, *,
+                           memory: Optional[AddressMemory] = None) -> List[Dict[str, Any]]:
+        """With memory (the runner's), the listing page and its sitemap files are asked
+        conditionally: when none changed, no posts."""
+        found = await (self._discover(source) if memory is None else self._discover_changed(source, memory))
+        if found is None:
+            return []
         now = time.monotonic()
         candidates = [url for url in found.candidates() if SKIPPED.get(url, now) <= now]
         stored = (await asyncio.to_thread(self.stored_urls, candidates)
                   if self.stored_urls and candidates else set())
         posts: List[Dict[str, Any]] = []
         reads = skips = 0
+        listed = set(found.listed)
         for url in (url for url in candidates if url not in stored):
             if len(posts) >= limit or skips >= SKIP_READS:
+                if memory is not None:
+                    memory.forget()   # candidates left unread: the next fetch must look again
                 break
             if reads:
                 await self.http.sleep(self.PAGE_DELAY_SECONDS)
@@ -384,8 +462,13 @@ class PageWatchKind(BaseSourceAdapter):
                 skips += 1
                 SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
             else:
+                if url not in listed:
+                    post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
                 posts.append(post)
         return posts
+
+    def page_post(self, source: Source, url: str, page: str) -> Optional[Dict[str, Any]]:
+        return post_from(page, str(source["handle_or_url"]), url, None)
 
     async def inspect(self, source: Source) -> Inspection:
         found = await self._discover(source)
@@ -403,5 +486,5 @@ class PageWatchKind(BaseSourceAdapter):
             yield page
 
 
-__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "infer_prefix", "is_home", "normalise_prefix",
-           "offers", "page_date", "page_title", "preview"]
+__all__ = ["Discovery", "PageWatchKind", "article_post", "discover", "discover_changed", "infer_prefix", "is_home",
+           "normalise_prefix", "offers", "page_date", "page_title", "preview"]

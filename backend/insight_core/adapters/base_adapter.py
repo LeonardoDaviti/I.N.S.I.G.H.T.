@@ -26,6 +26,7 @@ class BaseSourceAdapter(BaseKind):
     adapter_type: ClassVar[str] = "base"
     # The discovered index is the whole archive; Gwern overrides (candidate pages).
     available_basis = "exact"
+    page_based = True        # its posts come from the site's own lists (issue 0039)
     PAGE_DELAY_SECONDS: ClassVar[float] = 1
     # Checkpoint modes this adapter writes; a checkpoint is resumable when its mode is one
     # of these and it carries RESUME_KEY.

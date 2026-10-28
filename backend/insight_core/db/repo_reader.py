@@ -7,8 +7,10 @@ a keyset cursor and a view (a stream, or one group per source).
 Read state lives in the `post_reader_state` projection (0020). `post_interactions` stays the
 audit log; a list query cannot aggregate it per row cheaply.
 
-Every feed is ordered by the sort key `(COALESCE(published_at, fetched_at), id)` descending,
-which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort node);
+Every feed is ordered by the sort key `(COALESCE(surfaced_at, published_at, fetched_at), id)`
+descending, which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort
+node). surfaced_at (0037, issue 0039) is set only for a page that was new to you long after its
+date, or a watched page that changed: it sorts at when it reached you, every other post as before;
 the Later list (issue 0022) instead by when each post was saved, oldest first.
 "Unread" means no read_at, over every post the source ever gave us: an archived post from
 2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
@@ -31,9 +33,9 @@ from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.post_fields import display_title
 
-FeedFilter = Literal["all", "unread", "later", "starred"]   # starred is Keep ("Kept")
+FeedFilter = Literal["all", "unread", "later", "starred", "updated"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
-FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred")
+FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred", "updated")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
 SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
 
@@ -43,7 +45,7 @@ DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-ti
 EXCERPT_CHARS = 280
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
-SORT_KEY = "COALESCE(p.published_at, p.fetched_at)"
+SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
 # "Unread" as an anti-join, not `rs.read_at IS NULL` on the LEFT JOIN: the planner
 # estimates a null-extended LEFT JOIN column at ~0 rows, gives up on the LIMIT, and
 # seq-scans + sorts posts. The anti-join keeps the posts_feed_order_idx Index Scan.
@@ -198,7 +200,7 @@ _ITEM_COLUMNS = f"""
     COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
-    rs.resume_block, rs.resume_blocks, rs.later_at
+    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update'
 """
 
 
@@ -230,6 +232,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "media_thumb": feed_thumb(row[13], row[3]),
         "resume_block": row[14],
         "resume_blocks": row[15],
+        # A watched page's last meaningful change (issue 0039): {at, words, words_added, ...}.
+        "update": row[17],
     }
 
 
@@ -268,6 +272,8 @@ class ReaderRepository:
             return "rs.starred_at IS NOT NULL", []
         if filter == "later":
             return "rs.later_at IS NOT NULL", []
+        if filter == "updated":   # a watched page that changed (issue 0039), latest change first
+            return "p.metadata ? 'page_update'", []
         if filter == "all":
             return "TRUE", []
         raise ValueError(f"invalid feed filter: {filter!r}")

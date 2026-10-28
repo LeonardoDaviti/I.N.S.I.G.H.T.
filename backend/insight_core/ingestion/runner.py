@@ -15,11 +15,26 @@ session that cannot open makes that kind's sources unavailable. A fetch never ra
 the runner; a failing store write is logged and the run carries on. A source whose fetch
 failed is shown to the source doctor (issue 0036), outside the save lock: it may look for the
 source's replacement and switch it.
+
+A kind that fetches conditionally (kind.conditional, issue 0044: generic RSS, page watch) gets
+an AddressMemory holding its source's stored validators; "Fetch now" on one source reads in
+full. What it learned is kept only after a fetch that worked and whose posts were saved, so a
+failed save is fetched in full again. A fetch whose every address answered 304 is a success
+with 0 posts like any other (health green, backoff untouched, the doctor not woken); its event
+says "unchanged".
+
+A source that watches its pages for changes (page_changes.watching, issue 0039) has a slice of
+its stored pages re-checked after its fetch, inside the same host slot (PageWatchStore.due,
+page_changes.check_pages); the pages that changed are saved with the fetch's posts, and the
+checks are recorded after the save (a changed page whose save failed is not, so it is read
+again). A page-based kind's posts (kind.page_based) are saved as "new to you" once the source
+has fetched before: one first seen long after its date sorts at when it was first seen.
 """
 from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import logging
 import random
 import time
@@ -28,15 +43,16 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
-from insight_core.ingestion import full_text
+from insight_core.ingestion import full_text, page_changes
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
-from insight_core.ingestion.http import HttpError
+from insight_core.ingestion.http import AddressMemory, HttpError, Validators
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindSession, KindUnavailable, SourceKind
 from insight_core.ingestion.ports import (
     NULL_PROGRESS,
     FetchStateStore,
     InspectionRefresher,
+    PageWatchStore,
     PostSaver,
     ProgressSink,
     RunLock,
@@ -74,6 +90,9 @@ class _Fetched:
     outcome: FetchOutcome
     posts: List[dict]
     error: Optional[BaseException] = None    # what the fetch raised, for the source doctor
+    memory: Optional[AddressMemory] = None   # a conditional kind's validators (issue 0044)
+    checks: List[page_changes.PageCheck] = dataclasses.field(default_factory=list)   # watched pages (0039)
+    watching: bool = False
 
 
 class _RunSessions:
@@ -134,6 +153,7 @@ class IngestionRunner:
         clock: Callable[[], datetime],
         rand: Callable[[], float] = random.random,
         doctor: Optional[Any] = None,
+        watch: Optional[PageWatchStore] = None,
     ) -> None:
         self.catalog = catalog
         self.state = state
@@ -146,6 +166,7 @@ class IngestionRunner:
         self.clock = clock
         self.rand = rand
         self.doctor = doctor    # SourceDoctor (ingestion/source_doctor.py), or None
+        self.watch = watch      # watched pages (issue 0039), or None: nothing is re-checked
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
         started = self.clock()
@@ -202,17 +223,23 @@ class IngestionRunner:
             return self._report(request, started, run_id=run_id, status="nothing_due",
                                 sources_considered=len(sources), decisions=counts)
 
+        validators = await self._safely("load validators", self.state.load_validators,
+                                        [s["id"] for s, kind, _ in due if getattr(kind, "conditional", False)])
         sessions = _RunSessions()
         try:
+            # A page-based source that has fetched before: what it finds now is new to you (0039).
+            fetched_before = {source_id for source_id, row in states.items() if row.last_success_at is not None}
             return await self._fetch_and_save(request, progress, started, run_id, sources, due, counts,
-                                                 sessions)
+                                                 sessions, validators or {}, fetched_before)
         finally:
             await sessions.close_all()
 
     async def _fetch_and_save(self, request: FetchRequest, progress: ProgressSink, started: datetime,
                                  run_id: str, sources: List[Dict[str, Any]],
                                  due: List[tuple[Dict[str, Any], SourceKind, FetchDecision]],
-                                 counts: Dict[str, int], sessions: _RunSessions) -> RunReport:
+                                 counts: Dict[str, int], sessions: _RunSessions,
+                                 validators: Dict[str, Dict[str, Validators]],
+                                 fetched_before: Optional[set] = None) -> RunReport:
         # Fetch: priority first, then round-robin across hosts so tasks that start together
         # mostly want different gates.
         by_id = {source["id"]: (source, kind, decision) for source, kind, decision in due}
@@ -226,13 +253,18 @@ class IngestionRunner:
         failures: List[SourceFailure] = []
         save_lock = asyncio.Lock()
         done = 0
+        full = request.selector.kind == "source"   # "Fetch now" on one source reads every address in full
 
         async def fetch_and_save(source: Dict[str, Any]) -> _Fetched:
             nonlocal done
-            f = await self._fetch(*by_id[source["id"]], sessions, progress)
+            f = await self._fetch(*by_id[source["id"]], sessions, progress,
+                                  stored=validators.get(source["id"]), full=full)
+            surface = f.kind.page_based and source["id"] in (fetched_before or ())
             async with save_lock:
                 outcome = f.outcome
-                fetched_count, inserted_before = len(f.posts), saved.inserted
+                changed = sum(1 for check in f.checks if check.post is not None)
+                fetched_count, inserted_before = len(f.posts) - changed, saved.inserted
+                resurfaced_before = len(saved.resurfaced_ids)
                 # Before the save releases the posts: how many read from their page lost images.
                 pages_read, pages_lost_images = full_text.pages_losing_images(f.posts)
                 if pages_lost_images:
@@ -241,7 +273,7 @@ class IngestionRunner:
                 if outcome.status == OutcomeStatus.ERROR:
                     failures.append(SourceFailure(source["id"], _display_name(source), "fetch", outcome.error or "error"))
                 elif f.posts:
-                    error = await self._save(f, saved)
+                    error = await self._save(f, saved, surface=surface)
                     if error:
                         failures.append(SourceFailure(source["id"], _display_name(source), "save", error))
                         # Outcomes are recorded after the save: a source none of whose posts
@@ -254,14 +286,27 @@ class IngestionRunner:
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
                     now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
                 )
+                if f.memory is not None and outcome.status.is_success:
+                    if (saved.by_source.get(source["id"]) or {}).get("failed"):
+                        f.memory.forget()   # a post that failed to save is read again next time
+                    if f.memory.changed:
+                        await self._safely("save validators", self.state.save_validators, source["id"],
+                                           f.memory.learned)
+                if f.checks:
+                    # A changed page whose post was not saved is not recorded: it is read again.
+                    lost = outcome.status == OutcomeStatus.ERROR or (saved.by_source.get(source["id"]) or {}).get("failed")
+                    await self._safely("record page checks", self.watch.checked, source["id"],
+                                       [c for c in f.checks if not (lost and c.post is not None)], now=self.clock())
                 if outcome.status == OutcomeStatus.HEALTHY:
                     await self.inspections.refresh(source, f.kind, outcome.fetched)
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
                     "status": outcome.status.value, "error": outcome.error,
+                    "unchanged": bool(f.memory and outcome.status.is_success and f.memory.unchanged),
                     "fetched": fetched_count, "new": saved.inserted - inserted_before,
                     "pages_read": pages_read, "pages_lost_images": pages_lost_images,
+                    "checked": len(f.checks), "updated": len(saved.resurfaced_ids) - resurfaced_before,
                     "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
                 })
             if self.doctor is not None and f.outcome.status == OutcomeStatus.ERROR and rows:
@@ -299,9 +344,9 @@ class IngestionRunner:
             sources_with_new=len(inserted_by_source), inserted_by_source=inserted_by_source[:LIST_CAP],
         )
 
-    async def _save(self, f: _Fetched, saved: SaveBatchResult) -> Optional[str]:
+    async def _save(self, f: _Fetched, saved: SaveBatchResult, *, surface: bool = False) -> Optional[str]:
         """Save one source's posts into `saved`. Returns why the source failed to save, or None."""
-        drafts = [PostDraft(f.source["id"], post) for post in f.posts]
+        drafts = [PostDraft(f.source["id"], post, watch=f.watching, surface=surface) for post in f.posts]
         f.posts = []  # the drafts own the bodies now; they are released after the save
         try:
             result = await asyncio.to_thread(self.saver.save, drafts)
@@ -315,10 +360,21 @@ class IngestionRunner:
         return None
 
     async def _fetch(self, source: Dict[str, Any], kind: SourceKind, decision: FetchDecision,
-                     sessions: _RunSessions, progress: ProgressSink) -> _Fetched:
+                     sessions: _RunSessions, progress: ProgressSink, *,
+                     stored: Optional[Dict[str, Validators]] = None, full: bool = False) -> _Fetched:
         """Fetch one source under its gates. Never raises."""
         started = time.monotonic()
         posts: List[dict] = []
+        memory: Optional[AddressMemory] = None
+        checks: List[page_changes.PageCheck] = []
+        watching = self.watch is not None and page_changes.watching(source, kind)
+
+        async def fetch_latest() -> List[dict]:
+            nonlocal memory
+            if not getattr(kind, "conditional", False):
+                return list(await kind.fetch_latest(source, decision.post_limit) or [])
+            memory = AddressMemory(stored, now=self.clock(), full=full)
+            return list(await kind.fetch_latest(source, decision.post_limit, memory=memory) or [])  # type: ignore[call-arg]
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
             host = kind.host_key(source)
@@ -326,7 +382,7 @@ class IngestionRunner:
                 await sessions.ensure(kind)
                 logger.info("Fetching up to %s posts from %s", decision.post_limit, _display_name(source))
                 try:
-                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                    posts = await fetch_latest()
                 except HttpError as exc:
                     if not exc.limiting:
                         raise
@@ -338,8 +394,10 @@ class IngestionRunner:
                         "source_id": source["id"], "display_name": _display_name(source),
                     })
                     await self.gates.sleep(wait)
-                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                    posts = await fetch_latest()
                 self.gates.host_limiter.succeeded(host)
+                if watching:
+                    checks = await self._check_pages(source, kind, full)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,
                                               duration_s=time.monotonic() - started)
         except KindUnavailable as exc:
@@ -353,7 +411,26 @@ class IngestionRunner:
             outcome = FetchOutcome.from_fetch(source["id"], fetched=0, error=str(exc) or type(exc).__name__,
                                               duration_s=time.monotonic() - started)
             return _Fetched(source, kind, outcome, [], exc)
-        return _Fetched(source, kind, outcome, posts)
+        posts += [check.post for check in checks if check.post is not None]
+        return _Fetched(source, kind, outcome, posts, memory=memory, checks=checks, watching=watching)
+
+    async def _check_pages(self, source: Dict[str, Any], kind: SourceKind, full: bool) -> List[page_changes.PageCheck]:
+        """A slice of the source's stored pages through the cheap checks (issue 0039). Never
+        raises: a check that cannot run is no checks, and the fetch stands."""
+        try:
+            pages = await asyncio.to_thread(self.watch.due, source["id"], now=self.clock(),  # type: ignore[union-attr]
+                                            limit=page_changes.WATCH_SLICE)
+            if not pages:
+                return []
+            checks = await page_changes.check_pages(
+                kind.http, pages, functools.partial(kind.page_post, source),  # type: ignore[attr-defined]
+                now=self.clock(), delay_s=kind.profile.page_delay_s, full=full)
+        except Exception as exc:  # noqa: BLE001 - checking for changes is not worth the fetch
+            logger.warning("%s: could not check its pages for changes: %s", _display_name(source), exc)
+            return []
+        logger.info("%s: %s pages checked for changes, %s changed", _display_name(source), len(checks),
+                    sum(1 for check in checks if check.post is not None))
+        return checks
 
     # ------------------------------------------------------------------ helpers
 

@@ -12,12 +12,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from psycopg import Cursor
 
 from insight_core.db.repo_posts import PAGE_READ_KEY
 from insight_core.db.repo_sources import SourcesRepository
+from insight_core.ingestion.http import Validators
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus, Trigger
 
 if TYPE_CHECKING:
@@ -308,6 +309,33 @@ class FetchStateRepository:
             """,
             (str(source_id),),
         )
+
+    def load_validators(self, cur: Cursor, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]:
+        """{source_id: {url: Validators}}: what each source's addresses said last (issue 0044)."""
+        ids = [str(s) for s in source_ids]
+        if not ids:
+            return {}
+        cur.execute(
+            """SELECT source_id, url, etag, last_modified, learned_at FROM source_fetch_validators
+                WHERE source_id = ANY(%s::uuid[])""",
+            (ids,),
+        )
+        found: Dict[str, Dict[str, Validators]] = {}
+        for source_id, url, etag, last_modified, learned_at in cur.fetchall():
+            found.setdefault(str(source_id), {})[url] = Validators(etag, last_modified, learned_at)
+        return found
+
+    def replace_validators(self, cur: Cursor, source_id: str, validators: Mapping[str, Validators]) -> None:
+        """A source's validators are now exactly these (none: it reads every address in full)."""
+        cur.execute("DELETE FROM source_fetch_validators WHERE source_id = %s", (str(source_id),))
+        rows = [(str(source_id), url, v.etag, v.last_modified, v.learned_at)
+                for url, v in validators.items() if v and v.learned_at is not None]
+        if rows:
+            cur.executemany(
+                """INSERT INTO source_fetch_validators (source_id, url, etag, last_modified, learned_at)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                rows,
+            )
 
     def refresh_cadence(
         self,

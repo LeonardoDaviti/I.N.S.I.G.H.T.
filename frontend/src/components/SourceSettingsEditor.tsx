@@ -151,6 +151,26 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
     }
   };
 
+  // Watch for changes (issue 0039): only a kind that reads each post from its page can.
+  const [watchChanges, setWatchChanges] = useState<boolean | null>(null);
+  const watching = watchChanges ?? healthRow?.watch_changes ?? Boolean(source.settings.watch_changes);
+  const [savingWatch, setSavingWatch] = useState(false);
+  const toggleWatch = async () => {
+    const next = !watching;
+    setWatchChanges(next);
+    setSavingWatch(true);
+    try {
+      const response = await api.updateSourceSettings(source.id, { watch_changes: next });
+      if (!response.success) throw new Error(response.error || 'Could not change watching for changes');
+      void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
+    } catch (err) {
+      setWatchChanges(!next);
+      setError(errorMessage(err));
+    } finally {
+      setSavingWatch(false);
+    }
+  };
+
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -313,6 +333,23 @@ export default function SourceSettingsEditor({ source, onClose, onSave, healthRo
                   onCheckedChange={() => void toggleMainDigest()}
                   className="mt-0.5"
                 />
+            </div>
+          ) : null}
+          {fetchable && healthRow?.watchable ? (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div id="watch_changes_label" className="text-[0.8125rem] font-medium text-fg">Watch for changes</div>
+                <p className="mt-0.5 text-[0.75rem] text-fg-3">
+                  Re-reads its pages now and then, the recently changed ones more often. A page that changed comes back with what changed. Saves instantly.
+                </p>
+              </div>
+              <Switch
+                checked={watching}
+                aria-labelledby="watch_changes_label"
+                disabled={savingWatch}
+                onCheckedChange={() => void toggleWatch()}
+                className="mt-0.5"
+              />
             </div>
           ) : null}
           {fetchable ? (
