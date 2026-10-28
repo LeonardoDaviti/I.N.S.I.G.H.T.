@@ -148,6 +148,36 @@ class FeedFinderTests(unittest.TestCase):
         self.assertEqual(http.requests[:3], ["https://pg.example/essays/hackers.html", "https://pg.example/essays/",
                                              "https://pg.example/"])
 
+    def test_a_company_homepage_leads_to_its_own_blog_on_a_subdomain(self):
+        # www.cloudflare.com has no feed; it links blog.cloudflare.com, whose feed is /rss/ (2026-10-28).
+        finding, http = find({
+            "https://www.cloud.example/": page(body='<a href="https://blog.cloud.example/">Blog</a>'
+                                                    '<a href="https://blog.other.example/">Partner blog</a>'),
+            "https://blog.cloud.example/": page(head='<link rel="alternate" type="application/rss+xml" href="/rss/">'),
+            "https://blog.cloud.example/rss/": rss("Cloud Blog"),
+            "https://blog.other.example/": page(head='<link rel="alternate" type="application/rss+xml" href="/rss/">'),
+            "https://blog.other.example/rss/": rss("Someone else"),
+        }, "https://www.cloud.example/")
+        self.assertEqual(finding, found(("https://blog.cloud.example/rss/", "Cloud Blog")))
+        self.assertNotIn("https://blog.other.example/", http.requests)
+
+    def test_common_paths_are_tried_under_the_blog_too(self):
+        # stripe.com links "Blog" -> /blog, which advertises no feed; the feed is /blog/feed.rss (2026-10-28).
+        finding, _ = find({
+            "https://pay.example/": page(body='<a href="/blog">Blog</a>'),
+            "https://pay.example/blog": page(body="<p>Posts</p>"),
+            "https://pay.example/blog/feed.rss": rss("Pay blog"),
+        }, "https://pay.example/")
+        self.assertEqual(finding, found(("https://pay.example/blog/feed.rss", "Pay blog")))
+
+    def test_a_link_named_newsroom_on_the_same_site_counts_too(self):
+        finding, _ = find({
+            "https://corp.example/": page(body='<a href="/company/newsroom">Newsroom</a>'),
+            "https://corp.example/company/newsroom": page(body='<a href="/company/newsroom/feed.xml">RSS</a>'),
+            "https://corp.example/company/newsroom/feed.xml": rss("Corp news"),
+        }, "https://corp.example/")
+        self.assertEqual(finding, found(("https://corp.example/company/newsroom/feed.xml", "Corp news")))
+
     def test_common_paths_last_and_only_the_first_valid_in_their_order(self):
         finding, http = find({
             "https://x.example/": page(),

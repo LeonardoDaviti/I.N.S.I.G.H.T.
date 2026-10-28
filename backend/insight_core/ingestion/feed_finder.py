@@ -10,7 +10,9 @@ One search, cheapest first, stopping at the first stage that finds something:
   1. The address itself: a feed ("feed"); else its page's <link rel="alternate"> feeds, then
      its <a> links that look like feeds.
   2. The section page (/blog/) and the home page, fetched in parallel, the same way.
-  3. Common feed paths on the site: the first that is a feed.
+  3. The page's links to its own blog or newsroom (named so, or a blog./news. subdomain of the
+     same site), at most two, the same way: www.cloudflare.com leads to blog.cloudflare.com.
+  4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
 A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
 be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
 run at once, each within REQUEST_TIMEOUT_S, the whole search within BUDGET_S: a slow or
@@ -35,7 +37,7 @@ from insight_core.ingestion.kinds.parsing import local_name, origin_from_source,
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
 
-PAGE_BYTES = 1_000_000          # the most of a page read for its links
+PAGE_BYTES = 3_000_000          # the most of a page read for its links (cloudflare.com: 1.3 MB, the blog link in its footer)
 FEED_BYTES = 64 * 1024          # the most of a candidate read to prove it a feed
 PARSE_CHUNK = 16 * 1024         # fed to the pull parser at a time, so a page stops early
 REQUEST_TIMEOUT_S = 5.0
@@ -43,7 +45,12 @@ BUDGET_S = 10.0
 PROOF_GRACE_S = 1.0
 FAN_OUT = 4
 MAX_CANDIDATES = 6              # per stage, from the pages' links
-COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom",
+# A page with no feed may link its own blog or newsroom, often on a subdomain
+# (www.cloudflare.com -> blog.cloudflare.com): links so named, on the same site, at most two.
+BLOG_LINK_TEXTS = frozenset({"blog", "the blog", "our blog", "news", "newsroom", "press", "engineering blog"})
+BLOG_HOSTS = ("blog.", "news.", "newsroom.")
+MAX_BLOG_LINKS = 2
+COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom", "/feed.rss",
                 "/?feed=rss2", "/feeds/posts/default")
 
 FEED_ROOTS = {"rss", "feed", "rdf"}
@@ -118,8 +125,16 @@ class _Search:
         if feeds := await self._prove([link for got in pages if got for link in _feed_links(*got)]):
             return FeedFinding("found", feeds)
 
+        blogs = _blog_links(*page) if page else []
+        blog_pages = await asyncio.gather(*(self._get(blog, PAGE_BYTES) for blog in blogs))
+        if feeds := await self._prove([link for got in blog_pages if got for link in _feed_links(*got)]):
+            return FeedFinding("found", feeds)
+
+        # Common paths under the blogs the page links first (more specific), then at the root.
         origin = origin_from_source(here, "")
-        if feeds := await self._prove([origin + path for path in COMMON_PATHS], limit=None, first=True):
+        bases = [*(blog.rstrip("/") for blog in blogs), origin]
+        guesses = [base + path for base in dict.fromkeys(bases) for path in COMMON_PATHS]
+        if feeds := await self._prove(guesses, limit=None, first=True):
             return FeedFinding("found", feeds[:1])
         return FeedFinding("none")
 
@@ -247,6 +262,34 @@ def _feed_links(body: bytes, page_url: str) -> List[str]:
     return list(dict.fromkeys(url for url in absolute if url))
 
 
+def _blog_links(body: bytes, page_url: str) -> List[str]:
+    """The page's links to its own blog or newsroom (see BLOG_LINK_TEXTS), absolute, on the same
+    site (a blog./news. subdomain included), at most MAX_BLOG_LINKS."""
+    links = _FeedLinks()
+    try:
+        links.feed(body.decode("utf-8", errors="replace"))
+        links.close()
+    except Exception:  # noqa: BLE001 - keep what was read before the page broke the parser
+        pass
+    site = _site(_host(page_url))
+    absolute = (_absolute(page_url, href) for href in links.blogs)
+    same = (url for url in absolute if url and url != page_url and _site(_host(url)) == site)
+    return list(dict.fromkeys(same))[:MAX_BLOG_LINKS]
+
+
+def _host(url: str) -> str:
+    try:
+        return (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:      # a malformed link
+        return ""
+
+
+def _site(host: str) -> str:
+    """The host without a www., blog., news. or newsroom. label: the site it belongs to."""
+    first, _, rest = host.partition(".")
+    return rest if rest and f"{first}." in ("www.",) + BLOG_HOSTS else host
+
+
 def _absolute(base: str, href: str) -> Optional[str]:
     """href as an absolute http(s) URL without its fragment; None for anything else (a
     malformed one, "http://[x/", too)."""
@@ -280,6 +323,7 @@ class _FeedLinks(HTMLParser):
         self.base: Optional[str] = None
         self.alternates: List[str] = []
         self.anchors: List[str] = []
+        self.blogs: List[str] = []                   # links to the site's own blog or newsroom
         self._anchor: Optional[List[str]] = None     # [href, text so far]
 
     def handle_starttag(self, tag: str, attrs: Sequence[Tuple[str, Optional[str]]]) -> None:
@@ -303,6 +347,8 @@ class _FeedLinks(HTMLParser):
             self._anchor = None
             if _looks_like_feed(href, text) and not _is_comments(href, text):
                 self.anchors.append(href)
+            elif " ".join(text.lower().split()) in BLOG_LINK_TEXTS or _host(href).startswith(BLOG_HOSTS):
+                self.blogs.append(href)
 
 
 def _is_comments(href: str, label: str) -> bool:
