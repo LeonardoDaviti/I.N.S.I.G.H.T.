@@ -569,9 +569,19 @@ return "\\n".join(blocks)
         preview, read again. 11 of the 18 had been stored with 0 images while their pages had 7 to 30. The fix (<C>99f4b5d</C>, <C>251ba1a</C>) keeps
         images in page order and treats a table of contents as chrome. The issue then asks the harder question, why nobody saw it, and answers it
         plainly: the reader was tested “only on small hand-written fixtures. A fixture tests the rule its author thought of, never the site that
-        breaks it.” The prevention it specifies is a corpus of about 25 real pages, each with its expected title, first and last sentence, image
-        count and words that must not appear, run on every reader change; and then, with that corpus, a measured comparison against a proven
-        extractor such as Mozilla’s Readability, adopted only if it clearly wins.
+        breaks it.” The prevention was built the same day (<C>c82ff9b</C>, <C>e26f223</C>): a corpus of 24 real pages, each with its expected
+        title, first and last sentence, hand-counted image count and words that must not appear, run on every reader change. Building it found
+        more of the same class of bug, and the reader went from 93 to 113 of 123 expectations met; ten checks stay recorded as known gaps that
+        must fail until fixed. Every page read now also records how many images the article had and kept, so the next loss shows in a
+        source’s health instead of waiting for someone to look.
+      </P>
+      <P>
+        Two checks guard the guard. The corpus was measured against two proven extractors on the same pages: INSIGHT’s reader met 89 of 99
+        checks, readability-lxml 79 and trafilatura 74 (both mostly lose images), so neither was adopted. And because the corpus is what the
+        fixes were tuned on, the old and new readers were run on 48 real pages <em>outside</em> it: 31 kept exactly the same text, total text
+        rose from 375,000 to 383,000 characters, and of 18 sentences no longer kept, 17 were clutter (footers, “Next / Previous”, a sponsor
+        box, a writer’s biography). The eighteenth was a real subtitle on the Google blog, removed by a rule written the day before; it was
+        fixed with a test (<C>f86cb4d</C>). That is the honest shape of the speed: a fix shipped one loss, and the next check caught it.
       </P>
 
       <H3>What went wrong in the workflow itself</H3>
@@ -715,7 +725,7 @@ return "\\n".join(blocks)
               ['Keep a feature because it was built', 'Weigh gains and costs, then cut', 'Analysis retired, tag and backup'],
               ['One big change', 'One slice, one commit, owner reviews', 'Issue 0005, eleven slices'],
               ['Fix what was reported, in place', 'An issue file: the owner’s words, a Status line', 'plan/issues, 0007–0036'],
-              ['Test on the fixture you wrote', 'Test on real pages, kept as a corpus', 'Issue 0032, about 25 pages'],
+              ['Test on the fixture you wrote', 'Test on real pages, kept as a corpus', 'Issue 0032: 24 pages, 93 → 113 of 123 checks'],
               ['Review after it is merged', 'Review each branch before it merges', 'Issue 0029, the lesson'],
               ['Ship whatever is on main', 'A version line says what runs', 'VERSION, Mark IX v9.2 (0020)'],
             ].map(([habit, practice, here]) => (
