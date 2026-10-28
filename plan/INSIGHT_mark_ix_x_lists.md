@@ -17,11 +17,17 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - Why skip tags: tracks, Keep and search already cover them.
 
 ## The rest of Mark IX (owner, 2026-10-28)
-- **v9.6, read everywhere:** the PWA with a share sheet and offline reading; the Fever / Google Reader API; saved searches.
-- **v9.7, sources, deeper:** full arXiv (0037), PDF text (0038), Hacker News with comments (0017), release updates (0024), native Bluesky and Mastodon.
-- **v9.8, running it, and output:** a one-command install (API and ingestion merged), optional login, notifications (ntfy), a track published as RSS, "also discussed on HN / Reddit".
-- **Cut:** podcasts, read aloud, export to Obsidian, webhooks (a track published as RSS covers the last two).
-- **Then Mark X**, after living with 9.4 and 9.5 for a few weeks so the tuning and reading history are real.
+Rule: **better reading in the current INSIGHT, not features for their own sake.** Build only what the owner will use soon.
+- **v9.6, everything reads well:**
+  - full arXiv papers (0037), which are 45% of all posts;
+  - PDF text (0038);
+  - the reader's known gaps: pages laid out in tables that read as 0 words (paulgraham.com), code written as `<figure><code>` (fasterthanli.me), from 0042 and 0039's checks;
+  - Hacker News with its comments (0017), read in place.
+- **v9.7, find and follow up:** saved searches; "also discussed on Hacker News / Reddit" under a post; tuning watch, Tidy up and search after weeks of real use.
+- **Only on a real case:** release updates (0024), native Bluesky and Mastodon, email-in.
+- **Cut** (features for their own sake, owner 2026-10-28): the installable app (PWA), the Fever / Google Reader API, a one-command install, optional login, notifications, a track published as RSS, podcasts, read aloud, export to Obsidian, webhooks.
+  - Login and a simpler install come back only with the hosted product.
+- **Then Mark X**, after living with 9.4 and 9.5 for a few weeks.
 
 ## Mark IX, personal product: reading even better
 
@@ -38,9 +44,9 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - ◐ v9.4:
   - paste a homepage, follow its blog (0041);
   - the Gwern reader reads only Gwern's writing (0043).
-- ⧗ v9.7: full arXiv papers (0037), PDF text (0038).
-- ⧗ v9.7: Hacker News kind with comments (0017), release updates (0024).
-- ○ v9.7: native Bluesky and Mastodon. ✗ Cut: podcasts.
+- ⧗ v9.6: full arXiv papers (0037), PDF text (0038).
+- ⧗ v9.6: Hacker News with comments (0017). Only on a real case: release updates (0024).
+- Only on a real case: native Bluesky and Mastodon. ✗ Cut: podcasts.
 - ◐ v9.5:
   - conditional fetching (ETag, Last-Modified): an unchanged feed costs nothing (0044);
   - page-change watching, per source, Gwern first (0039);
@@ -59,7 +65,7 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - **◐ v9.4:**
   - **search across everything (0040);**
   - the reader keeps tables, figures and captions (0042).
-- ○ v9.6: saved searches.
+- ○ v9.7: saved searches.
 - ◐ v9.5: reading settings (font, size, width) (0045).
 - ✗ Cut: read aloud.
 - ✗ Skipped: highlights, notes, post versions.
@@ -67,19 +73,19 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 ### Organisation
 - ✓ Tracks, the Main feed, Unread / Later / Kept / All, "Show in Main feed".
 - ◐ v9.5: source hygiene: quiet and never-opened sources, Tidy up with Keep and Remove (0046).
-- ○ v9.8: "also discussed on Hacker News or Reddit".
+- ○ v9.7: "also discussed on Hacker News or Reddit".
 - ✗ Skipped: rules, tags.
 
 ### Everywhere you read (personal use)
-- ○ v9.6: an installable PWA with a share sheet; offline reading.
-- ○ v9.6: the Fever or Google Reader API (Reeder, NetNewsWire).
-- ○ v9.8: notifications (ntfy); publish a track as RSS.
+- ✗ Cut: an installable PWA with a share sheet; offline reading.
+- ✗ Cut: the Fever or Google Reader API (Reeder, NetNewsWire).
+- ✗ Cut: notifications (ntfy); publish a track as RSS.
 - ✗ Cut: export to Obsidian, webhooks.
 
 ### Running it yourself (self-hosted)
 - ✓ The version line, useful logs, the faster `./update`.
-- ○ v9.8: a one-command install, lighter by merging the API and ingestion.
-- ○ v9.8: optional login, needed once it's reachable beyond Tailscale.
+- ✗ Cut (until the hosted product): a one-command install, lighter by merging the API and ingestion.
+- ✗ Cut (until the hosted product): optional login, needed once it's reachable beyond Tailscale.
 
 ## Hosted product: giving other people access (later)
 - Login and accounts.
