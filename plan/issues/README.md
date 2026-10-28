@@ -46,6 +46,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | planned for v9.5 |
 | [0040](0040-search.md) | Search across every post | planned for v9.4 |
 | [0041](0041-follow-the-sites-blog.md) | Paste a homepage, follow its blog | planned for v9.4 |
+| [0042](0042-reader-keeps-structure.md) | The reader keeps tables, figures and captions | planned for v9.4 |
+| [0043](0043-gwern-reader-cleanup.md) | The Gwern reader reads only Gwern's writing | planned for v9.4 |
 
 ## Analysis archive
 
