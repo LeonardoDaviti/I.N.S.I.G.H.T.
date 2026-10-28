@@ -7,6 +7,8 @@ export interface BlogPost {
   summary: string;
   /** ISO date the post was published. */
   date: string;
+  /** ISO date of the last substantial update, when there was one. */
+  updated?: string;
   readingMinutes: number;
   Body: LazyExoticComponent<ComponentType>;
 }
@@ -17,9 +19,10 @@ export const POSTS: readonly BlogPost[] = [
     slug: 'junior-to-senior',
     title: 'From junior to senior: how INSIGHT is learning to maintain itself',
     summary:
-      'INSIGHT grew from 964 lines to 99,059 in sixteen months, and about half is weight. Five junior habits behind it, with real code; the image diet from 949 MB to 464 MB and what it teaches; and the decision to retire analysis, weighed both ways.',
+      'INSIGHT grew from 964 lines to 99,059 in sixteen months, and about half is weight. Five junior habits behind it, with real code; the image diet from 949 MB to 464 MB; the decision to retire analysis, weighed both ways. Updated: how an issue moves from the owner’s note to a release, and how fast we ship — 125 commits in two weeks, measured from git and judged both ways.',
     date: '2026-10-11',
-    readingMinutes: 22,
+    updated: '2026-10-28',
+    readingMinutes: 39,
     Body: lazy(() => import('./posts/junior-to-senior')),
   },
 ];
