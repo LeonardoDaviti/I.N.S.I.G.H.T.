@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import http.client
 import io
 import socket
@@ -10,6 +11,7 @@ import threading
 import time
 import unittest
 import urllib.request
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -48,6 +50,44 @@ class DroppedConnectionTests(unittest.TestCase):
         with mock.patch.object(urllib.request, "urlopen", side_effect=ConnectionResetError(104, "reset")):
             with self.assertRaises(HttpError):
                 asyncio.run(KindHttp().get_start("https://x.example/", 10))
+
+
+class _Response(io.BytesIO):
+    """A response with headers, as urlopen returns it."""
+
+    def __init__(self, body: bytes, headers: dict):
+        super().__init__(body)
+        self.headers = http.client.HTTPMessage()
+        for name, value in headers.items():
+            self.headers[name] = value
+
+    def geturl(self):
+        return "https://x.example/feed"
+
+
+class CompressedBodyTests(unittest.TestCase):
+    """Some servers gzip a body nobody asked to compress: swift.org says so in Content-Encoding,
+    dfarq.homeip.net doesn't (its feed starts with gzip's 1f 8b and no header) (2026-10-28)."""
+
+    FEED = b'<?xml version="1.0"?><rss version="2.0"><channel><title>Swift</title></channel></rss>'
+
+    def test_gzip_is_unpacked_with_or_without_the_header(self):
+        packed = gzip.compress(self.FEED)
+        for headers in ({"Content-Encoding": "gzip"}, {}):
+            with self.subTest(headers=headers):
+                with mock.patch.object(urllib.request, "urlopen", return_value=_Response(packed, headers)):
+                    body, _ = asyncio.run(KindHttp().get_text("https://x.example/feed"))
+                self.assertEqual(body, self.FEED.decode())
+                with mock.patch.object(urllib.request, "urlopen", return_value=_Response(packed, headers)):
+                    start, _ = asyncio.run(KindHttp().get_start("https://x.example/feed", 40))
+                self.assertEqual(start, self.FEED[:40])
+
+    def test_deflate_and_a_plain_body_pass(self):
+        with mock.patch.object(urllib.request, "urlopen",
+                               return_value=_Response(zlib.compress(self.FEED), {"Content-Encoding": "deflate"})):
+            self.assertEqual(asyncio.run(KindHttp().get_text("https://x.example/feed"))[0], self.FEED.decode())
+        with mock.patch.object(urllib.request, "urlopen", return_value=_Response(self.FEED, {})):
+            self.assertEqual(asyncio.run(KindHttp().get_text("https://x.example/feed"))[0], self.FEED.decode())
 
 
 class SchemeTests(unittest.TestCase):

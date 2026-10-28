@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from concurrent.futures import Executor
 from typing import Any, Awaitable, Callable, Dict, Iterator, Optional, Tuple, TypeVar
 
@@ -84,6 +85,30 @@ def _web(url: str) -> None:
 
 def _env_hosts(name: str, default: str = "") -> set[str]:
     return {host.strip().lower() for host in os.getenv(name, default).split(",") if host.strip()}
+
+
+def _unpacked(body: bytes, encoding: Optional[str], max_bytes: Optional[int] = None) -> bytes:
+    """The body as the server meant it: gzip or deflate undone. A server may compress a body
+    nobody asked to compress, with a Content-Encoding header or without one (then gzip's own
+    1f 8b start gives it away). A cut-off body (a byte cap) unpacks as far as it goes; one that
+    isn't really compressed passes as it came."""
+    unpack = _unpacker(body, encoding)
+    if unpack is None:
+        return body
+    try:
+        return unpack.decompress(body, max_bytes or 0)
+    except zlib.error:
+        return body
+
+
+def _unpacker(start: bytes, encoding: Optional[str]) -> Any:
+    """A decompressor for a body that starts with `start`, or None when it isn't compressed."""
+    encoding = (encoding or "").strip().lower()
+    if encoding in ("gzip", "x-gzip") or start[:2] == b"\x1f\x8b":
+        return zlib.decompressobj(16 + zlib.MAX_WBITS)
+    if encoding == "deflate":
+        return zlib.decompressobj(zlib.MAX_WBITS if start[:1] == b"\x78" else -zlib.MAX_WBITS)  # zlib-wrapped, or raw
+    return None
 
 
 class KindHttp:
@@ -176,9 +201,9 @@ class KindHttp:
         )
         with _classified("fetching", url):
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
-                body = response.read().decode("utf-8", errors="replace")
+                raw = response.read()
                 headers = {key.lower(): value for key, value in response.headers.items()}
-                return body, headers
+                return _unpacked(raw, headers.get("content-encoding")).decode("utf-8", errors="replace"), headers
 
     def _get_start_sync(self, url: str, max_bytes: int) -> Tuple[bytes, str]:
         _web(url)
@@ -186,13 +211,21 @@ class KindHttp:
         request = urllib.request.Request(url, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
         with _classified("fetching", url):
             with urllib.request.urlopen(request, timeout=self.timeout, context=self._context_for(url)) as response:
-                chunks, size = [], 0
+                encoding = (getattr(response, "headers", None) or {}).get("Content-Encoding")
+                unpack, chunks, size = None, [], 0   # max_bytes counts the body's own bytes, unpacked
                 while size < max_bytes:
                     if time.monotonic() > deadline:
                         raise TimeoutError   # leaving the with closes the connection
-                    chunk = response.read1(min(READ_CHUNK, max_bytes - size))
+                    chunk = response.read1(READ_CHUNK if unpack else min(READ_CHUNK, max_bytes - size))
                     if not chunk:
                         break
+                    if not chunks and unpack is None:
+                        unpack = _unpacker(chunk, encoding)
+                    if unpack:
+                        try:
+                            chunk = unpack.decompress(chunk, max_bytes - size)
+                        except zlib.error:
+                            break            # broken past this point: keep what unpacked so far
                     chunks.append(chunk)
                     size += len(chunk)
                 return b"".join(chunks), response.geturl()
