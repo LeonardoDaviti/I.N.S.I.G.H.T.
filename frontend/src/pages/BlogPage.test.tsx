@@ -56,8 +56,16 @@ describe('/blog/junior-to-senior', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('From junior to senior');
     expect(screen.getByRole('heading', { name: /A layer “to be safe”/ })).toBeInTheDocument();
     const figures = screen.getAllByRole('img');
-    expect(figures).toHaveLength(6);
+    expect(figures).toHaveLength(9);
     for (const figure of figures) expect(figure).toHaveAccessibleName();
+  });
+
+  it('keeps its first date and says when it was updated, with the two new parts', async () => {
+    renderBlog('/blog/junior-to-senior');
+    const header = screen.getByRole('heading', { level: 1 }).closest('header') as HTMLElement;
+    expect(header).toHaveTextContent('11 October 2026 · updated 28 October 2026 · 39 min read');
+    expect(await screen.findByRole('heading', { name: /How an issue moves now/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /How fast we ship, and is that good\?/ })).toBeInTheDocument();
   });
 
   it('the quiz checks an answer, explains it, and resets for another try', async () => {

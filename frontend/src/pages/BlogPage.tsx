@@ -11,7 +11,8 @@ const dateLabel = (iso: string) =>
 function Meta({ post }: { post: BlogPost }) {
   return (
     <span className="tabular-nums">
-      <time dateTime={post.date}>{dateLabel(post.date)}</time> · {post.readingMinutes} min read
+      <time dateTime={post.date}>{dateLabel(post.date)}</time>
+      {post.updated ? <> · updated <time dateTime={post.updated}>{dateLabel(post.updated)}</time></> : null} · {post.readingMinutes} min read
     </span>
   );
 }
