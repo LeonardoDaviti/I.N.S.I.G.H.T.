@@ -82,7 +82,7 @@ Status: **built, not deployed** (2026-10-28) for v9.4 (owner, 2026-10-28, from t
   education application: interactive prompt use of the best surviving LLM from each year ...".
 
 ### Left open
-- Posts already stored from `/doc/` and `/newsletter/` stay; nothing deletes them.
+- Posts already stored from `/doc/` and `/newsletter/` stay; nothing deletes them (0048 does, migration 0036).
 
 ## Not here (0039, v9.5)
 Re-checking edits, dating a page that is new *to you*, and the "Updated" mark.
