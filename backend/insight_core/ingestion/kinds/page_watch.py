@@ -56,8 +56,8 @@ PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
 OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once (issue 0041)
-# A menu link is offered as an article list (issue 0047) when its preview read this many dated
-# posts (of the PREVIEW_READS read; a list may lead with its category pages), the newest this recent.
+# A menu link is offered as an article list (issue 0047) when its preview read this many posts
+# dated this recently (of the PREVIEW_READS read; a list may lead with its category pages).
 MENU_POSTS = 3
 MENU_RECENT = timedelta(days=365)
 
@@ -336,11 +336,12 @@ async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ())
 
 def _article_list(items: Sequence[Mapping[str, Any]], started: datetime) -> bool:
     """Whether a preview's posts read as a list of articles to follow: at least MENU_POSTS of them
-    dated, the newest within MENU_RECENT. A page of people or past work has dates too, old ones
-    (a leader's joining year). A post with no date of its own is dated when it was read, after
-    the preview started: it is left out."""
-    dates = [date for item in items if (date := parsing.parse_datetime_value(item["published_at"])) and date < started]
-    return len(dates) >= MENU_POSTS and max(dates) >= started - MENU_RECENT
+    dated within MENU_RECENT. Pages of people or policies have dates too, old or few recent (a
+    leader's joining year, a policy's last update). A post with no date of its own is dated when
+    it was read, after the preview started: it is left out."""
+    recent = [date for item in items if (date := parsing.parse_datetime_value(item["published_at"]))
+              and started - MENU_RECENT <= date < started]
+    return len(recent) >= MENU_POSTS
 
 
 async def _previews(http: KindHttp, pages: Sequence[str], deadline: float) -> List[Dict[str, Any]]:

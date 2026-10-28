@@ -439,6 +439,15 @@ class BlogUnderAnotherNameTests(unittest.TestCase):
                          **recent_section("/leaders", 9, days_ago=400)}, SHOP)
         self.assertEqual(body["pages"], [])
 
+    def test_a_page_of_policies_with_few_recent_dates_is_not_offered(self):
+        # 37signals.com's /policies: 3 dated pages among the 8 read, 2 updated this year (2026-10-28).
+        responses = {f"{SHOP}/": menu('<a href="/policies">Policies</a>'), **recent_section("/policies", 2),
+                     **recent_section("/policies/old", 1, days_ago=1500)}
+        responses[f"{SHOP}/policies"] = responses[f"{SHOP}/policies"].replace(
+            "</main>", '<a href="/policies/old/post-0">Old</a></main>')
+        body = self.ask(responses, SHOP)
+        self.assertEqual(body["pages"], [])
+
     def test_a_named_blog_still_wins(self):
         body = self.ask({f"{SHOP}/": menu('<a href="/blog">Blog</a><a href="/now">Now</a>'),
                          **dated_section("/blog", 2), **recent_section("/now", 9)}, SHOP)
