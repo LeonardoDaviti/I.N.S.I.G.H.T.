@@ -15,7 +15,7 @@ from insight_core.adapters.lesswrong_adapter import LessWrongAdapter
 from insight_core.adapters.philschmid_adapter import PhilSchmidCloudAttentionAdapter
 from insight_core.adapters.pipecraft_adapter import PipecraftAdapter
 from insight_core.adapters.zerotomastery_adapter import ZeroToMasteryMonthlyAdapter
-from insight_core.ingestion.kinds import KindRegistry
+from insight_core.ingestion.kinds import KindRegistry, parsing
 from insight_core.tests._kind_fakes import FakeHttp
 
 # Trimmed from https://www.pipecraft.me/api/posts and /api/posts/<section>/<slug> (2026-10-27).
@@ -45,6 +45,70 @@ PIPECRAFT_INDEX = {
 }
 PIPECRAFT_IMAGE = "https://miro.medium.com/v2/resize:fit:1400/format:webp/1*3KUxMR1t.jpeg"
 
+# Trimmed from https://gwern.net/sitemap.xml, /doc/newest/index, /blog/index and
+# /spaced-repetition (2026-10-28).
+GWERN_SITEMAP = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://gwern.net/spaced-repetition</loc></url>
+  <url><loc>https://gwern.net/fiction/alice</loc></url>
+  <url><loc>https://gwern.net/blog/2026/llm-timetravel</loc></url>
+  <url><loc>https://gwern.net/blog/index</loc></url>
+  <url><loc>https://gwern.net/doc/science/1986-hamming</loc></url>
+  <url><loc>https://gwern.net/doc/psychology/spaced-repetition/index</loc></url>
+  <url><loc>https://gwern.net/doc/newest/index</loc></url>
+  <url><loc>https://gwern.net/newsletter/2021/05</loc></url>
+  <url><loc>https://gwern.net/newsletter/index</loc></url>
+  <url><loc>https://gwern.net/doc/psychology/2021-paper.pdf</loc></url>
+  <url><loc>https://gwern.net/doc/rotten.com/library/bio/misc/heidi-fleiss/HEIDMASK.JPG</loc></url>
+  <url><loc>https://gwern.net/static/app.js</loc></url>
+  <url><loc>https://gwern.net/spaced-repetition.md</loc></url>
+</urlset>"""
+GWERN_NEWEST = """<html><body>
+<a class="blog link-page" href="/blog/index" title="Shortform Gwern writings">Blog</a>
+<a href="/about" class="site link-page">About</a>
+<a href="/doc/newest/abstract" class="link-page">abstract</a>
+<a href="/blog/2026/llm-timetravel" class="link-annotated link-page">LLM Time Travel</a>
+<a href="https://arxiv.org/abs/2510.01234" class="link-annotated">A paper by someone else</a>
+<a href="/doc/ai/scaling/2026-smith.pdf" class="link-annotated link-page">Another paper</a>
+<a href="/lean-scaling#measurement-design" class="link-page link-modified-recently">Lean Scaling</a>
+<a href="/fiction/walking" class="link-page">Walking</a>
+<a href="/doc/ai/scaling/index" class="link-tag link-page">ai/scaling</a>
+<a href="/static/app.js" class="link-page">Asset</a>
+</body></html>"""
+GWERN_BLOG_INDEX = """<html><body>
+<a class="blog link-page" href="/blog/index" title="Shortform Gwern writings">Blog</a>
+<ul>
+<li><a href="/blog/2026/llm-timetravel" id="2026-09-02" class="prefetch-not link-page icon-not" data-include-selector-not="#return-to-blog-index-link">LLM Time Travel</a></li>
+<li><a href="/blog/2026/face-training"
+  id="2026-06-20" class="prefetch-not link-page icon-not">Face Training</a></li>
+<li><a href="/blog/2011/i-zombies" id="2011-12-18" class="prefetch-not link-page icon-not">I-Zombies</a></li>
+</ul></body></html>"""
+GWERN_PARAGRAPH = ("<p>Spaced repetition is a centuries-old psychological technique for efficient memorization "
+                   "&amp; practice of skills where instead of attempting to memorize by cramming, memorization "
+                   "can be done far more efficiently by instead spacing out each review.</p>\n")
+GWERN_PAGE = """<html><head>
+<title>Spaced Repetition for Efficient Learning · Gwern.net</title>
+<meta name="citation_title" content="Spaced Repetition for Efficient Learning">
+<meta name="dc.date.issued" content="2009-03-11">
+<meta name="citation_publication_date" content="2009-03-11">
+<meta name="dcterms.modified" content="2019-05-17">
+<meta name="keywords" content="psychology, cs/haskell">
+<link rel="canonical" href="https://gwern.net/spaced-repetition">
+<link rel="alternate" type="text/markdown" href="https://gwern.net/spaced-repetition.md">
+</head><body><main><article>
+<div id="page-metadata" class="markdownBody"><div class="page-description"><p>Efficient memorization.</p></div>
+        <div class="page-metadata-fields">
+            <span class="page-date-range"><span class="date-range" title="The date range 2009-03-11–2019-05-17 lasted 10 years (3,720 days), ending 7 years ago.">2009-03-11<span class="subsup"><sup>–</sup><sub>10y</sub></span>2019-05-17</span></span>
+            <span class="page-status" title="Writing status of current page: ranges &#39;abandoned&#39;/&#39;notes&#39;/&#39;draft&#39;/&#39;in progress&#39;/&#39;finished&#39;"><em><span class="completion-status" data-progress-percentage="100">finished</span></em></span>
+            <span class="page-confidence"><a href="/about#confidence-tags" title="Explanation of &#39;confidence&#39; metadata">certainty</a>: <em><span class="completion-status" data-progress-percentage="90">highly likely</span></em></span>
+            <span class="page-importance"><a href="/about#importance-tags" title="Explanation of &#39;importance&#39; metadata">importance</a>: <em>9</em></span>
+            <span class="page-similars"><a class="similars" href="#similars">similar</a></span>
+        </div></div>
+<div id="markdownBody" class="markdownBody">
+""" + GWERN_PARAGRAPH * 3 + """<figure><img src="/doc/psychology/spaced-repetition/forgetting-curve.png" width="800" height="600" alt="The forgetting curve">
+<figcaption><p>A graphical representation of the forgetting curve: Stahl et al <span class="date-range">2010<sub><span title="2010 was 16 years ago.">16ya</span></sub></span>; <em>CNS Spectrums</em></p></figcaption></figure>
+<p>Meta-analysis of 35 studies (<span class="date-range" title="The date range 1929–1989 lasted 60 years, ending 37 years ago.">1929<span class="subsup"><sup>–</sup><sub>60</sub></span>1989<sub><span title="1989 was 37 years ago.">37ya</span></sub></span>) varying tests during the semester.</p>
+</div></article></main></body></html>"""
 
 def _pipecraft_http():
     responses = {"https://www.pipecraft.me/api/posts": json.dumps(PIPECRAFT_INDEX)}
@@ -163,60 +227,66 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(posts[0]["media_urls"], ["https://example.com/image.png"])
         self.assertEqual(posts[0]["metadata"]["author_slug"], "alice")
 
-    def test_gwern_sitemap_filters_to_html_pages(self):
-        adapter = GwernAdapter(self.http)
-        xml = """<?xml version="1.0" encoding="UTF-8"?>
-        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-          <url><loc>https://gwern.net/style-guide</loc></url>
-          <url><loc>https://gwern.net/fiction/alice</loc></url>
-          <url><loc>https://gwern.net/doc/psychology/index</loc></url>
-          <url><loc>https://gwern.net/doc/psychology/2021-paper.pdf</loc></url>
-          <url><loc>https://gwern.net/static/app.js</loc></url>
-          <url><loc>https://gwern.net/doc/newest/index</loc></url>
-        </urlset>
-        """
+    def test_gwern_archive_is_his_writing_only(self):
+        # /doc/ (directories, their introductions, other people's texts) and newsletters (the
+        # Substack feed) are not candidates.
+        http = FakeHttp({"https://gwern.net/sitemap.xml": GWERN_SITEMAP})
+        urls = asyncio.run(GwernAdapter(http)._discover_archive_urls({"handle_or_url": "https://gwern.net"}))
+        self.assertEqual(urls, [
+            "https://gwern.net/blog/2026/llm-timetravel",
+            "https://gwern.net/fiction/alice",
+            "https://gwern.net/spaced-repetition",
+        ])
 
-        async def fake_fetch_text(url, user_agent=None):
-            return xml, {}
+    def test_gwern_daily_reads_both_indexes_once_each_with_blog_dates(self):
+        http = FakeHttp({"https://gwern.net/doc/newest/index": GWERN_NEWEST,
+                         "https://gwern.net/blog/index": GWERN_BLOG_INDEX})
+        entries = asyncio.run(GwernAdapter(http)._discover_recent_entries({"handle_or_url": "https://gwern.net"}))
+        # Gwern's own pages from /doc/newest/index first (not the papers, nav or assets), then
+        # the blog newest first; llm-timetravel is on both and is listed once, with its date.
+        self.assertEqual(list(entries.items()), [
+            ("https://gwern.net/blog/2026/llm-timetravel", "2026-09-02"),
+            ("https://gwern.net/lean-scaling", None),
+            ("https://gwern.net/fiction/walking", None),
+            ("https://gwern.net/blog/2026/face-training", "2026-06-20"),
+            ("https://gwern.net/blog/2011/i-zombies", "2011-12-18"),
+        ])
 
-        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
-        urls = asyncio.run(adapter._discover_archive_urls({"handle_or_url": "https://gwern.net"}))
+    def test_gwern_page_is_one_request_read_from_its_html(self):
+        url = "https://gwern.net/spaced-repetition"
+        http = FakeHttp({url: GWERN_PAGE})
+        post = asyncio.run(GwernAdapter(http)._fetch_page_post({"handle_or_url": "https://gwern.net"}, url))
+        self.assertEqual(http.requests, [url])  # no markdown copy
+        self.assertEqual(post["title"], "Spaced Repetition for Efficient Learning")
+        self.assertEqual(post["external_id"], "/spaced-repetition")
+        self.assertEqual(post["date"], datetime(2009, 3, 11, tzinfo=timezone.utc))
+        self.assertEqual(post["content"], parsing.strip_html(post["content_html"]))
+        self.assertIn("Stahl et al 2010 ;", post["content"])
+        self.assertIn("35 studies ( 1929–1989 )", post["content"])
+        self.assertNotRegex(post["content"], r"\d+ya\b")   # no "201016ya"
+        self.assertNotIn("(!W", post["content"])
+        self.assertNotIn("{.", post["content"])
+        self.assertIn('src="https://gwern.net/doc/psychology/spaced-repetition/forgetting-curve.png"',
+                      post["content_html"])
+        self.assertEqual(post["metadata"], {
+            "adapter": "gwern_site", "created": "2009-03-11", "modified": "2019-05-17",
+            "status": "finished", "confidence": "highly likely", "importance": "9",
+        })
 
-        self.assertEqual(
-            urls,
-            [
-                "https://gwern.net/doc/psychology/index",
-                "https://gwern.net/fiction/alice",
-                "https://gwern.net/style-guide",
-            ],
-        )
-
-    def test_gwern_recent_url_discovery_ignores_nav_and_assets(self):
-        adapter = GwernAdapter(self.http)
-        html = """
-        <html>
-          <body>
-            <a href="/about" class="site link-page">About</a>
-            <a href="/style-guide" class="prefetch-not link-page link-modified-recently">Style Guide</a>
-            <a href="/fiction/alice" class="prefetch-not link-page link-modified-recently">Alice</a>
-            <a href="/doc/paper.pdf" class="link-page link-modified-recently">Paper</a>
-            <a href="/static/app.js" class="link-page">Asset</a>
-          </body>
-        </html>
-        """
-
-        async def fake_fetch_text(url, user_agent=None):
-            return html, {}
-
-        self.http.get_text = fake_fetch_text  # type: ignore[method-assign]
-        urls = asyncio.run(adapter._discover_recent_urls({"handle_or_url": "https://gwern.net"}, limit=10))
-        self.assertEqual(
-            urls,
-            [
-                "https://gwern.net/style-guide",
-                "https://gwern.net/fiction/alice",
-            ],
-        )
+    def test_gwern_fetch_latest_dates_a_page_by_its_blog_link(self):
+        page = GWERN_PAGE.replace('<meta name="citation_publication_date" content="2009-03-11">', "") \
+                         .replace('<meta name="dc.date.issued" content="2009-03-11">', "")
+        http = FakeHttp({
+            "https://gwern.net/doc/newest/index": "<html></html>",
+            "https://gwern.net/blog/index": GWERN_BLOG_INDEX,
+            "https://gwern.net/blog/2026/llm-timetravel": page,
+            "https://gwern.net/blog/2026/face-training": GWERN_PAGE,
+        })
+        posts = asyncio.run(GwernAdapter(http).fetch_latest({"handle_or_url": "https://gwern.net"}, 2))
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0]["metadata"]["created"], "2026-09-02")
+        self.assertEqual(posts[0]["date"], datetime(2026, 9, 2, tzinfo=timezone.utc))
+        self.assertNotIn("https://gwern.net/blog/2011/i-zombies", http.requests)  # stops at the limit
 
     def test_dario_discovers_homepage_entries_and_fetches_post(self):
         adapter = DarioAmodeiAdapter(self.http)

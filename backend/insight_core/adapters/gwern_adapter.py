@@ -1,4 +1,11 @@
-"""Gwern site-map and markdown-backed source adapter."""
+"""Gwern site adapter: his writing from the sitemap, the daily list from his two index pages.
+
+An explicit exception for a site with its own index pages (issue 0043). Every Gwern rule is
+here, none in the shared reader: the archive is the sitemap without /doc/ (topic directories,
+their introductions, copies of other people's texts) and the /newsletter/ issues (those are the Substack feed); the daily list is
+/blog/index (dated by each link's id) and Gwern's own pages on /doc/newest/index; each page
+is one request, read by the shared reader from its HTML.
+"""
 
 from __future__ import annotations
 
@@ -13,36 +20,47 @@ from insight_core.ingestion.kinds.base import Inspection, RateLimit
 
 
 class GwernAdapter(BaseSourceAdapter):
-    """Archive Gwern through sitemap discovery and per-page markdown sources."""
+    """Archive Gwern's writing through the sitemap; read each page's HTML once."""
 
     adapter_type = "gwern_site"
-    available_basis = "estimate"   # sitemap candidates; some pages are not essays
+    available_basis = "estimate"   # sitemap candidates; a few may hold no article
     HOSTS = {"gwern.net", "www.gwern.net"}
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1
     CHECKPOINT_MODES = frozenset({"gwern_index"})
     SITEMAP_PATH = "/sitemap.xml"
     NEWEST_PATH = "/doc/newest/index"
+    BLOG_PATH = "/blog/index"
     SKIP_PATHS = {
         "/index",
         "/about",
         "/me",
         "/changelog",
         "/blog/index",
-        "/doc/newest/index",
-        "/doc/newest/abstract",
-        "/doc/index",
     }
-    BANNED_PREFIXES = ("/static/", "/metadata/")
+    # /doc/ is not Gwern's writing: topic directories (/index), their introductions (/abstract)
+    # and copies of other people's texts and papers. /newsletter/
+    # issues are the same as gwern.substack.com/feed, which the feed finder offers.
+    BANNED_PREFIXES = ("/static/", "/metadata/", "/doc/", "/newsletter/")
     BANNED_EXTENSIONS = {
         ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
         ".pdf", ".epub", ".zip", ".xz", ".json", ".csv",
         ".txt", ".mp4", ".webm", ".mp3", ".wav", ".ico",
         ".css", ".js", ".xml",
     }
+    # The page's own metadata block: <span class="page-status">…</span> and its siblings.
+    PAGE_FIELDS = ("status", "confidence", "importance")
 
     LINK_TAG_RE = re.compile(r"(?is)<link\b(?P<attrs>[^>]+)>")
     ANCHOR_TAG_RE = re.compile(r"(?is)<a\b(?P<attrs>[^>]+)>")
+    DATE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    # A date-range span renders "2010<sub>16ya</sub>" and "1929<sup>–</sup><sub>60</sub>1989":
+    # keep the dates and the dash, drop the "years ago" and "lasted" subscripts.
+    DATE_RANGE_RE = re.compile(
+        r'(?is)(<span class="date-range\b[^"]*"[^>]*>[^<]*)'
+        r'(?:<span class="subsup"><sup>([^<]*)</sup><sub>[^<]*</sub></span>([^<]*))?'
+        r'(?:<sub>(?:<span[^>]*>[^<]*</span>|[^<]*)</sub>)?(?=</span>)'
+    )
 
     def matches(self, source: Dict[str, Any]) -> bool:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or ""))
@@ -53,17 +71,11 @@ class GwernAdapter(BaseSourceAdapter):
         return Inspection(len(urls), self.PAGE_SIZE, None)
 
     async def fetch_latest(self, source: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        urls = await self._discover_recent_urls(source, limit=max(limit * 3, 12))
         posts: List[Dict[str, Any]] = []
-        seen = set()
-        for url in urls:
-            if url in seen:
-                continue
-            seen.add(url)
-            post = await self._fetch_page_post(source, url)
-            if not post:
-                continue
-            posts.append(post)
+        for url, listed_date in (await self._discover_recent_entries(source)).items():
+            post = await self._fetch_page_post(source, url, listed_date)
+            if post:
+                posts.append(post)
             if len(posts) >= limit:
                 break
         return posts
@@ -74,11 +86,12 @@ class GwernAdapter(BaseSourceAdapter):
         async for page in self.index_pages(source, entries, target, checkpoint, self._fetch_page_post):
             yield page
 
-    async def _discover_archive_urls(self, source: Dict[str, Any]) -> List[str]:
+    def _base(self, source: Dict[str, Any]) -> str:
         parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or "https://gwern.net"))
-        base = f"{parsed.scheme or 'https'}://{parsed.netloc or 'gwern.net'}"
-        sitemap_url = f"{base}{self.SITEMAP_PATH}"
-        body, _ = await self.http.get_text(sitemap_url)
+        return f"{parsed.scheme or 'https'}://{parsed.netloc or 'gwern.net'}"
+
+    async def _discover_archive_urls(self, source: Dict[str, Any]) -> List[str]:
+        body, _ = await self.http.get_text(f"{self._base(source)}{self.SITEMAP_PATH}")
         root = ET.fromstring(body)
         urls: List[str] = []
         for node in root.iter():
@@ -89,35 +102,30 @@ class GwernAdapter(BaseSourceAdapter):
                 urls.append(url)
         return sorted(dict.fromkeys(urls))
 
-    async def _discover_recent_urls(self, source: Dict[str, Any], limit: int) -> List[str]:
-        parsed = urllib.parse.urlparse(str(source.get("handle_or_url") or "https://gwern.net"))
-        base = f"{parsed.scheme or 'https'}://{parsed.netloc or 'gwern.net'}"
-        newest_url = f"{base}{self.NEWEST_PATH}"
-        body, _ = await self.http.get_text(newest_url)
-        urls: List[str] = []
-        seen = set()
+    async def _discover_recent_entries(self, source: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        """{url: the date its index link gives, or None}, in reading order, each page once:
+        Gwern's own pages on /doc/newest/index (most of it is other people's papers), then
+        /blog/index newest first, each short post dated by its link's id."""
+        base = self._base(source)
+        entries: Dict[str, Optional[str]] = {}
+        for path in (self.NEWEST_PATH, self.BLOG_PATH):
+            body, _ = await self.http.get_text(f"{base}{path}")
+            for match in self.ANCHOR_TAG_RE.finditer(body):
+                attrs = match.group("attrs") or ""
+                href = self._extract_attr(attrs, "href")
+                if not href.startswith("/") or "link-page" not in self._extract_attr(attrs, "class"):
+                    continue
+                url = urllib.parse.urljoin(base, href.split("#", 1)[0])
+                if not self._is_candidate_page_url(url):
+                    continue
+                link_id = self._extract_attr(attrs, "id")
+                listed_date = link_id if self.DATE_ID_RE.match(link_id) else None
+                if url not in entries or (listed_date and not entries[url]):
+                    entries[url] = listed_date
+        return entries
 
-        for match in self.ANCHOR_TAG_RE.finditer(body):
-            attrs = match.group("attrs") or ""
-            href = self._extract_attr(attrs, "href")
-            class_name = self._extract_attr(attrs, "class")
-            if not href or not href.startswith("/"):
-                continue
-            if "link-page" not in class_name:
-                continue
-            absolute_url = urllib.parse.urljoin(base, href)
-            if not self._is_candidate_page_url(absolute_url):
-                continue
-            if absolute_url in seen:
-                continue
-            seen.add(absolute_url)
-            urls.append(absolute_url)
-            if len(urls) >= limit:
-                break
-
-        return urls
-
-    async def _fetch_page_post(self, source: Dict[str, Any], url: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_page_post(self, source: Dict[str, Any], url: str,
+                               listed_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             html, _ = await self.http.get_text(url)
         except Exception:
@@ -130,79 +138,63 @@ class GwernAdapter(BaseSourceAdapter):
             or self._extract_html_title(html)
             or canonical_url
         )
-        markdown_url = self._extract_markdown_url(html) or f"{canonical_url}.md"
-        article_html = parsing.extract_article_html(html)
-        markdown_body = ""
-        try:
-            markdown_text, _ = await self.http.get_text(markdown_url)
-            markdown_body = self._strip_front_matter(markdown_text)
-        except Exception:
-            markdown_body = ""
-
-        content_text = markdown_body.strip() or parsing.strip_html(article_html) or (parsing.meta_content(html, "description") or "")
+        article_html = parsing.extract_article_html(self._without_years_ago(html), canonical_url)
+        content_text = parsing.strip_html(article_html) or parsing.meta_content(html, "description")
         if not content_text.strip():
             return None
 
-        created_at = (
-            parsing.meta_content(html, "citation_publication_date")
-            or parsing.meta_content(html, "dc.date.issued")
-            or parsing.meta_content(html, "dcterms.modified")
-        )
+        created = (parsing.meta_content(html, "citation_publication_date")
+                   or parsing.meta_content(html, "dc.date.issued") or listed_date)
+        modified = parsing.meta_content(html, "dcterms.modified")
         thumbnail = parsing.meta_content(html, "og:image")
-        categories = self._extract_keywords(html)
-        media_urls = [thumbnail] if thumbnail else []
-        external_id = urllib.parse.urlparse(canonical_url).path.rstrip("/") or "/"
+        metadata: Dict[str, Any] = {"adapter": self.adapter_type, "created": created, "modified": modified}
+        metadata.update(self._page_fields(html))
 
         return {
             "platform": "rss",
             "source": str(source.get("handle_or_url") or "https://gwern.net"),
             "url": canonical_url,
-            "external_id": external_id,
+            "external_id": urllib.parse.urlparse(canonical_url).path.rstrip("/") or "/",
             "guid": canonical_url,
             "title": title,
             "content": content_text,
             "content_html": article_html,
-            "date": parsing.parse_datetime_value(created_at),
-            "media_urls": media_urls,
-            "categories": categories,
-            "metadata": {
-                "adapter": self.adapter_type,
-                "markdown_url": markdown_url,
-                "created": parsing.meta_content(html, "citation_publication_date") or parsing.meta_content(html, "dc.date.issued"),
-                "modified": parsing.meta_content(html, "dcterms.modified"),
-            },
+            "date": parsing.parse_datetime_value(created or modified),
+            "media_urls": [thumbnail] if thumbnail else [],
+            "categories": self._extract_keywords(html),
+            "metadata": metadata,
         }
 
     def _is_candidate_page_url(self, url: str) -> bool:
         parsed = urllib.parse.urlparse(url)
-        host = (parsed.hostname or "").lower()
-        if host not in self.HOSTS:
+        if (parsed.hostname or "").lower() not in self.HOSTS:
             return False
 
         path = parsed.path or "/"
-        if any(path.startswith(prefix) for prefix in self.BANNED_PREFIXES):
-            return False
-        if path in self.SKIP_PATHS:
+        if path in self.SKIP_PATHS or any(path.startswith(prefix) for prefix in self.BANNED_PREFIXES):
             return False
 
-        lowered = path.lower()
-        if lowered.endswith(".md"):
+        lowered = path.lower().rstrip("/")
+        if lowered.endswith(".md") or any(lowered.endswith(ext) for ext in self.BANNED_EXTENSIONS):
             return False
-        if lowered.endswith("/"):
-            lowered = lowered[:-1]
+        return "." not in path.rsplit("/", 1)[-1]
 
-        for extension in self.BANNED_EXTENSIONS:
-            if lowered.endswith(extension):
-                return False
+    def _without_years_ago(self, html: str) -> str:
+        return self.DATE_RANGE_RE.sub(lambda m: m.group(1) + (m.group(2) or "") + (m.group(3) or ""), html)
 
-        if path.endswith("/index"):
-            return True
-
-        final_segment = path.rsplit("/", 1)[-1]
-        return "." not in final_segment
+    def _page_fields(self, html: str) -> Dict[str, str]:
+        """status, confidence and importance from the page's metadata block, as shown
+        ("finished", "possible", "7"); a field the page lacks is left out."""
+        fields: Dict[str, str] = {}
+        for name in self.PAGE_FIELDS:
+            match = re.search(rf'(?is)<span class="page-{name}"[^>]*>(.*?)</span>\s*(?=<span class="page-|</div>)', html)
+            value = parsing.strip_html(match.group(1)).rsplit(":", 1)[-1].strip() if match else ""
+            if value:
+                fields[name] = value
+        return fields
 
     def _extract_attr(self, attrs: str, name: str) -> str:
-        match = re.search(rf'\b{name}="([^"]*)"', attrs)
+        match = re.search(rf'(?<![\w-]){name}="([^"]*)"', attrs)
         return match.group(1) if match else ""
 
     def _extract_canonical_url(self, html: str) -> str:
@@ -215,29 +207,11 @@ class GwernAdapter(BaseSourceAdapter):
                 return href
         return ""
 
-    def _extract_markdown_url(self, html: str) -> str:
-        for match in self.LINK_TAG_RE.finditer(html):
-            attrs = match.group("attrs") or ""
-            rel = self._extract_attr(attrs, "rel")
-            href = self._extract_attr(attrs, "href")
-            link_type = self._extract_attr(attrs, "type")
-            if rel == "alternate" and href and "markdown" in link_type.lower():
-                return href
-        return ""
-
     def _extract_html_title(self, html: str) -> str:
         match = re.search(r"(?is)<title>(.*?)</title>", html)
         if not match:
             return ""
         return parsing.strip_html(match.group(1)).strip()
-
-    def _strip_front_matter(self, markdown_text: str) -> str:
-        text = markdown_text or ""
-        if text.startswith("---\n"):
-            end = text.find("\n...\n")
-            if end != -1:
-                return text[end + 5 :].strip()
-        return text.strip()
 
     def _extract_keywords(self, html: str) -> List[str]:
         raw = parsing.meta_content(html, "keywords")

@@ -1,6 +1,6 @@
 # 0043 — The Gwern reader reads only Gwern's writing
 
-Status: **planned** for v9.4 (owner, 2026-10-28, from the Gwern study).
+Status: **built, not deployed** (2026-10-28) for v9.4 (owner, 2026-10-28, from the Gwern study).
 
 ## The case (measured 2026-10-28, `adapters/gwern_adapter.py`)
 - **The archive would fetch 1,261 pages**:
@@ -22,6 +22,67 @@ Status: **planned** for v9.4 (owner, 2026-10-28, from the Gwern study).
 - **Clean the text:** drop the "years ago" subscript of `date-range` spans before reading. This is a Gwern-only rule, kept in the adapter.
 - **Keep the page's metadata** in the post's `metadata`: `created`, `modified`, `status`, `confidence`, `importance`. Showing it ("Updated …", "finished · likely") is 0039's work.
 - It stays a site adapter: an explicit exception for a site with its own index pages. Keep every rule in the adapter and none in the shared code, and keep the adapter small.
+
+## Built
+- **One file**, `backend/insight_core/adapters/gwern_adapter.py`; the shared reader
+  (`parsing.py`) and the saver are unchanged. Every Gwern rule is in the adapter.
+- **Archive candidates:** the sitemap less everything under `/doc/` and `/newsletter/` (two banned
+  prefixes, beside `/static/` and `/metadata/`). `/doc/` holds the topic directories (`/index`),
+  their introductions (`/abstract`) and copies of other people's texts, none of it Gwern's writing
+  (owner, 2026-10-28); the skip list keeps `/index`, `/about`, `/me`, `/changelog`, `/blog/index`.
+- **Daily** (`_discover_recent_entries`): `/doc/newest/index`, then `/blog/index`, each read once;
+  of each, the `link-page` links to candidate pages (`#fragment` dropped), in page order, as
+  `{url: date}`, one entry per page. A link whose `id` is a date (`2026-09-02`, every blog
+  entry) gives that date; a page listed on both keeps the date. `fetch_latest` reads entries in
+  that order until it has `limit` posts. The page's own date wins; the link's date is used when
+  the page has none.
+- **One request per page:** the markdown copy is no longer fetched (`markdown_url` is gone from
+  the metadata). `content_html` = `parsing.extract_article_html(page, canonical_url)` (the page
+  address makes Gwern's relative images absolute, so figures are kept), `content` = its
+  `strip_html` text (the description when no article is found).
+- **Dates:** before reading, `DATE_RANGE_RE` rewrites each `date-range` span to its dates and dash:
+  `2010<sub>16ya</sub>` -> `2010`, `1929<sup>–</sup><sub>60</sub>1989<sub>37ya</sub>` -> `1929–1989`.
+  Other `subsup` spans (inflation-adjusted dollars) are left as they are.
+- **Metadata:** `{adapter, created, modified, status, confidence, importance}`. `created` is
+  `citation_publication_date` / `dc.date.issued` / the link's date, `modified` is
+  `dcterms.modified`; status, confidence and importance are read from the
+  `page-status` / `page-confidence` / `page-importance` spans as shown ("finished",
+  "highly likely", "9"; the label before the colon dropped). A field the page lacks is left out
+  (blog posts have no importance; their confidence is "log"). The post's `date` is `created`, or
+  `modified` when there is none.
+- **The saver** (`repo_posts`): on a re-fetch the incoming `metadata`, `content` and
+  `content_html` replace the stored ones (the full-text keep rule does not apply: the adapter
+  never sets `full_content_fetched`), so a stored Gwern post that is fetched again gets the HTML
+  text and the new metadata in place of the markdown. Its `content_hash` changes too, which is
+  harmless: the hash is only read by `post_detail_service`, which shows it; nothing reacts to a
+  changed hash.
+- **Tests** (`test_source_adapters.py`, fixtures trimmed from the 2026-10-28 downloads): the
+  candidate filter (`/doc/`, newsletters, assets, `.md` out); both
+  indexes, nav and papers dropped, blog dates kept, a page on both listed once with its date; one
+  request per page, the text equal to the HTML's, no `16ya`, the range `1929–1989`, the image
+  absolute, the metadata fields; `fetch_latest` dating a page from its blog link and stopping at
+  the limit (17 adapter tests). Backend suite: 745 tests, OK.
+
+### Live check (2026-10-28, read-only, 8 requests about 1.2 s apart, nothing stored)
+- **Candidates: 465** (was 1,261): 292 root essays, 76 `/blog/`, 50 fiction, 22 reviews, 7 `/zeo/`,
+  6 `/haskell/`, 6 `/note/`, 4 `/sicp/`, 2 `/nootropic/` (recounted from the same sitemap after
+  `/doc/` was left out: 531 less its 66 pages, 35 of them `/abstract` introductions).
+- **Daily list: 80 pages**: the 75 dated blog entries plus 5 of Gwern's pages from
+  `/doc/newest/index` (`/lean-scaling`, `/fiction/walking`, `/fiction/perished-paradise-graveyard`,
+  `/fiction/molting`, `/fiction/tilakkhana`); `llm-timetravel` and `face-training` are on both and
+  listed once. In order: `blog/2026/llm-timetravel` (2026-09-02), `lean-scaling`,
+  `blog/2026/face-training` (2026-06-20), `fiction/walking`, ...
+- **The 5 pages** (`fetch_latest(limit=5)`, one request each): llm-timetravel 1,152 words,
+  lean-scaling 2,662, face-training 1,381, fiction/walking 388 (3 images), perished-paradise-graveyard
+  57,479; none with a `NNya` subscript or markdown syntax.
+- **One post's fields** (`/blog/2026/llm-timetravel`): title "LLM Time Travel Visualization",
+  external_id `/blog/2026/llm-timetravel`, date 2026-09-02, categories `["ai/scaling"]`,
+  media_urls the site logo (`og:image`), metadata `{adapter: gwern_site, created: 2026-09-02,
+  modified: 2026-09-21, status: finished, confidence: log}`; the text opens "Proposal for AI
+  education application: interactive prompt use of the best surviving LLM from each year ...".
+
+### Left open
+- Posts already stored from `/doc/` and `/newsletter/` stay; nothing deletes them.
 
 ## Not here (0039, v9.5)
 Re-checking edits, dating a page that is new *to you*, and the "Updated" mark.
