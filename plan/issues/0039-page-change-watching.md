@@ -1,6 +1,6 @@
 # 0039 — Watching pages for changes (Gwern first)
 
-Status: **planned** for after v9.4 (owner, 2026-10-28: "super useful for Gwern").
+Status: **planned** for v9.5 (owner, 2026-10-28: "super useful for Gwern").
 
 ## The case: Gwern
 - Gwern rewrites essays constantly; INSIGHT keeps the first text it read. The reader stores each page's `dcterms.modified` (`adapters/gwern_adapter.py`) but never re-checks it.

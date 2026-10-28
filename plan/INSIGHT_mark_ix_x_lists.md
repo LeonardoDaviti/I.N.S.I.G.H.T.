@@ -11,7 +11,7 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 
 ## Focus (owner, 2026-10-28)
 - **The personal product now.** The hosted product waits, and **Mark X waits**: Mark IX first.
-- **v9.3** is the current release (being integrated). **v9.4 = search.**
+- **v9.3** is the current release (being integrated). **v9.4 = search** (0040) and following a site's blog from its homepage (0041). **v9.5 = page-change watching (0039), reading settings, source hygiene, conditional fetching (ETag).**
 - **Skipped:** highlights, notes, post versions, rules (mute words, auto-read, auto-keep) and tags.
   - Why skip rules: on the server, 41,000 of 41,128 posts are unread (0.3% read). Muting words would barely change that; search (v9.4) and "Show in Main feed: off" for firehose sources do.
   - Why skip tags: tracks, Keep and search already cover them.
@@ -31,8 +31,8 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - ⧗ Full arXiv papers (0037). ⧗ PDF text (0038).
 - ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
 - ○ Native Bluesky and Mastodon. ○ Podcasts.
-- ○ Conditional fetching (ETag).
-- ○ Page-change watching, per source, Gwern first (0039), planned after v9.4 (search).
+- ○ v9.5: conditional fetching (ETag); it also lowers page watching's load.
+- ○ Page-change watching, per source, Gwern first (0039), v9.5.
 - Only on a real case: email-in.
 
 ### Reading
@@ -43,13 +43,13 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - calmer continuous reading (0033);
   - one density (0034);
   - the fidelity corpus (0032).
-- **○ v9.4: search across everything,** then saved searches.
-- ○ Reading settings (font, size, width). ○ Read aloud.
+- **○ v9.4: search across everything (0040),** then saved searches.
+- ○ v9.5: reading settings (font, size, width). ○ Read aloud.
 - ✗ Skipped: highlights, notes, post versions.
 
 ### Organisation
 - ✓ Tracks, the Main feed, Unread / Later / Kept / All, "Show in Main feed".
-- ○ Source hygiene: "dead for 30 days", "never opened", with a prune suggestion.
+- ○ v9.5: source hygiene: "dead for 30 days", "never opened", with a prune suggestion.
 - ○ "Also discussed on Hacker News or Reddit".
 - ✗ Skipped: rules, tags.
 

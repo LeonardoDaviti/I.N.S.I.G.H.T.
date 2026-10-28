@@ -43,7 +43,9 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | built, not deployed |
 | [0037](0037-full-arxiv-papers.md) | Full arXiv papers, from their HTML version | future |
 | [0038](0038-pdf-text.md) | Reading the PDFs posts link to | future |
-| [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | planned (after v9.4) |
+| [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | planned for v9.5 |
+| [0040](0040-search.md) | Search across every post | planned for v9.4 |
+| [0041](0041-follow-the-sites-blog.md) | Paste a homepage, follow its blog | planned for v9.4 |
 
 ## Analysis archive
 
@@ -57,6 +59,6 @@ list the files to look at. The finished analysis plans are in `plan/archive/`.
 
 Still open from the old backend `FUTURES.md` (the rest is built or obsolete):
 
-- Conditional fetching: send `ETag` / `If-Modified-Since` and skip unchanged feeds.
+- Conditional fetching: send `ETag` / `If-Modified-Since` and skip unchanged feeds (v9.5).
 - Post versioning: keep a post's earlier text when its source edits it.
 - Retention: a policy for old posts (soft delete, then purge).
