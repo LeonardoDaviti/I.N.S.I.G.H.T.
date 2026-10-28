@@ -28,10 +28,15 @@ export interface RequestOptions {
 // Relative by default (the Vite dev proxy forwards /api to the backend). VITE_API_URL overrides it.
 const API_BASE_URL: string = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || '';
 
+/** An API path as a link or a download opens it (the export, issue 0035). */
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(apiUrl(path), {
       method: options.method ?? 'GET',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),

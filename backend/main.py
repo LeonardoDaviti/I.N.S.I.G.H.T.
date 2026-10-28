@@ -5,6 +5,7 @@ import os
 import asyncio
 import re
 import uuid
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -25,6 +26,7 @@ from insight_core.ingestion import run_ingestion
 from insight_core.ingestion.feed_finder import find_feeds
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import page_watch
+from insight_core.ingestion.kinds import saved as saved_kind
 from insight_core.ingestion.kinds.base import KindUnavailable
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
@@ -670,6 +672,64 @@ async def list_sources():
     sources = services().sources.get_all_sources_with_settings()
     return {"success": True, "sources": sources, "total": len(sources),
             "total_posts": sum(int(s.get("post_count") or 0) for s in sources)}
+
+
+OPML_NS = "https://insight.local/opml"
+ET.register_namespace("insight", OPML_NS)
+
+
+def sources_opml(sources: List[Dict[str, Any]], folders: List[Dict[str, Any]],
+                 memberships: Dict[str, List[str]]) -> bytes:
+    """Every source as an OPML outline (issue 0035): one outline per track, in track order,
+    each source under its first track (category names all of them), then the sources in none.
+    insight:displayName, insight:pageWatchPrefix ("" when the path is inferred) and
+    insight:platform (when not rss) carry what INSIGHT needs to add it back. The built-in
+    Saved source (issue 0031) is no subscription and is left out."""
+    root = ET.Element("opml", version="2.0")
+    ET.SubElement(ET.SubElement(root, "head"), "title").text = "INSIGHT sources"
+    body = ET.SubElement(root, "body")
+    ordered = sorted(folders, key=lambda f: (f.get("sort_order") or 0, f["name"]))
+    names = {f["id"]: f["name"] for f in ordered}
+    groups = {f["id"]: ET.SubElement(body, "outline", text=f["name"], title=f["name"]) for f in ordered}
+    rank = {f["id"]: i for i, f in enumerate(ordered)}
+    outlines = []
+    for source in sources:
+        if source.get("platform") == saved_kind.PLATFORM:
+            continue
+        settings = source.get("settings") or {}
+        tracks = sorted((fid for fid in memberships.get(source["id"], []) if fid in names), key=rank.get)
+        name = str(settings.get("display_name") or "").strip()
+        address = source["handle_or_url"]
+        attrs = {"type": "rss", "text": name or address, "title": name or address, "xmlUrl": address}
+        if tracks:
+            attrs["category"] = ",".join(names[fid] for fid in tracks)
+        if name:
+            attrs[f"{{{OPML_NS}}}displayName"] = name
+        if isinstance(settings.get("page_watch"), dict):
+            attrs["htmlUrl"] = address
+            attrs[f"{{{OPML_NS}}}pageWatchPrefix"] = str(settings["page_watch"].get("prefix") or "")
+        if source.get("platform") not in (None, "", "rss"):
+            attrs[f"{{{OPML_NS}}}platform"] = source["platform"]
+        outlines.append((groups[tracks[0]] if tracks else None, attrs))
+    for parent, attrs in outlines:
+        if parent is not None:
+            ET.SubElement(parent, "outline", attrs)
+    for parent, attrs in outlines:
+        if parent is None:
+            ET.SubElement(body, "outline", attrs)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+@app.get("/api/sources/export.opml")
+@error_detail("export the sources")
+async def export_sources_opml():
+    """Every source as OPML 2.0, grouped by track, for another reader or an off-site copy (issue 0035)."""
+    folders_service = services().folders
+    sources = services().sources.get_all_sources_with_settings()
+    memberships = {s["id"]: folders_service.list_folders_for_source(s["id"]) for s in sources}
+    return Response(content=sources_opml(sources, folders_service.list_folders(), memberships),
+                    media_type="text/x-opml",
+                    headers={"Content-Disposition": 'attachment; filename="insight-sources.opml"'})
 
 
 @app.post("/api/sources")
