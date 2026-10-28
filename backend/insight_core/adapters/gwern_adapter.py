@@ -1,8 +1,8 @@
 """Gwern site adapter: his writing from the sitemap, the daily list from his two index pages.
 
 An explicit exception for a site with its own index pages (issue 0043). Every Gwern rule is
-here, none in the shared reader: the archive is the sitemap without the /doc/**/index topic
-directories and the /newsletter/ issues (those are the Substack feed); the daily list is
+here, none in the shared reader: the archive is the sitemap without /doc/ (topic directories,
+their introductions, copies of other people's texts) and the /newsletter/ issues (those are the Substack feed); the daily list is
 /blog/index (dated by each link's id) and Gwern's own pages on /doc/newest/index; each page
 is one request, read by the shared reader from its HTML.
 """
@@ -37,11 +37,11 @@ class GwernAdapter(BaseSourceAdapter):
         "/me",
         "/changelog",
         "/blog/index",
-        "/doc/newest/abstract",
     }
-    # /doc/**/index are topic directories (links and annotations, not reading); /newsletter/
+    # /doc/ is not Gwern's writing: topic directories (/index), their introductions (/abstract)
+    # and copies of other people's texts and papers. /newsletter/
     # issues are the same as gwern.substack.com/feed, which the feed finder offers.
-    BANNED_PREFIXES = ("/static/", "/metadata/", "/newsletter/")
+    BANNED_PREFIXES = ("/static/", "/metadata/", "/doc/", "/newsletter/")
     BANNED_EXTENSIONS = {
         ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
         ".pdf", ".epub", ".zip", ".xz", ".json", ".csv",
@@ -172,8 +172,6 @@ class GwernAdapter(BaseSourceAdapter):
 
         path = parsed.path or "/"
         if path in self.SKIP_PATHS or any(path.startswith(prefix) for prefix in self.BANNED_PREFIXES):
-            return False
-        if path.startswith("/doc/") and path.endswith("/index"):
             return False
 
         lowered = path.lower().rstrip("/")

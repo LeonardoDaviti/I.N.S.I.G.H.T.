@@ -26,9 +26,10 @@ Status: **built, not deployed** (2026-10-28) for v9.4 (owner, 2026-10-28, from t
 ## Built
 - **One file**, `backend/insight_core/adapters/gwern_adapter.py`; the shared reader
   (`parsing.py`) and the saver are unchanged. Every Gwern rule is in the adapter.
-- **Archive candidates:** the sitemap less `/doc/**/index` (any `/doc/` path ending `/index`) and
-  `/newsletter/` (a banned prefix, beside `/static/` and `/metadata/`); the old skip list keeps
-  `/index`, `/about`, `/me`, `/changelog`, `/blog/index` and `/doc/newest/abstract`.
+- **Archive candidates:** the sitemap less everything under `/doc/` and `/newsletter/` (two banned
+  prefixes, beside `/static/` and `/metadata/`). `/doc/` holds the topic directories (`/index`),
+  their introductions (`/abstract`) and copies of other people's texts, none of it Gwern's writing
+  (owner, 2026-10-28); the skip list keeps `/index`, `/about`, `/me`, `/changelog`, `/blog/index`.
 - **Daily** (`_discover_recent_entries`): `/doc/newest/index`, then `/blog/index`, each read once;
   of each, the `link-page` links to candidate pages (`#fragment` dropped), in page order, as
   `{url: date}`, one entry per page. A link whose `id` is a date (`2026-09-02`, every blog
@@ -52,17 +53,20 @@ Status: **built, not deployed** (2026-10-28) for v9.4 (owner, 2026-10-28, from t
 - **The saver** (`repo_posts`): on a re-fetch the incoming `metadata`, `content` and
   `content_html` replace the stored ones (the full-text keep rule does not apply: the adapter
   never sets `full_content_fetched`), so a stored Gwern post that is fetched again gets the HTML
-  text and the new metadata in place of the markdown.
+  text and the new metadata in place of the markdown. Its `content_hash` changes too, which is
+  harmless: the hash is only read by `post_detail_service`, which shows it; nothing reacts to a
+  changed hash.
 - **Tests** (`test_source_adapters.py`, fixtures trimmed from the 2026-10-28 downloads): the
-  candidate filter (directories, newsletters, assets, `.md` out; `/doc/` essay pages in); both
+  candidate filter (`/doc/`, newsletters, assets, `.md` out); both
   indexes, nav and papers dropped, blog dates kept, a page on both listed once with its date; one
   request per page, the text equal to the HTML's, no `16ya`, the range `1929–1989`, the image
   absolute, the metadata fields; `fetch_latest` dating a page from its blog link and stopping at
   the limit (17 adapter tests). Backend suite: 745 tests, OK.
 
 ### Live check (2026-10-28, read-only, 8 requests about 1.2 s apart, nothing stored)
-- **Candidates: 531** (was 1,261): 292 root essays, 76 `/blog/`, 66 `/doc/` pages, 50 fiction,
-  22 reviews, 7 `/zeo/`, 6 `/haskell/`, 6 `/note/`, 4 `/sicp/`, 2 `/nootropic/`.
+- **Candidates: 465** (was 1,261): 292 root essays, 76 `/blog/`, 50 fiction, 22 reviews, 7 `/zeo/`,
+  6 `/haskell/`, 6 `/note/`, 4 `/sicp/`, 2 `/nootropic/` (recounted from the same sitemap after
+  `/doc/` was left out: 531 less its 66 pages, 35 of them `/abstract` introductions).
 - **Daily list: 80 pages**: the 75 dated blog entries plus 5 of Gwern's pages from
   `/doc/newest/index` (`/lean-scaling`, `/fiction/walking`, `/fiction/perished-paradise-graveyard`,
   `/fiction/molting`, `/fiction/tilakkhana`); `llm-timetravel` and `face-training` are on both and
@@ -78,12 +82,7 @@ Status: **built, not deployed** (2026-10-28) for v9.4 (owner, 2026-10-28, from t
   education application: interactive prompt use of the best surviving LLM from each year ...".
 
 ### Left open
-- The 66 `/doc/` pages kept as candidates are mostly not Gwern's own prose: about 35 are a topic
-  directory's `/abstract` page (the directory's introduction) and most others are hosted copies of
-  other people's texts (`/doc/science/1986-hamming`, `/doc/anime/eva/1996-newtype-anno-interview`).
-  The decision named only directories and newsletters, so they stay; leaving them out is one more
-  rule in `_is_candidate_page_url` if the owner wants it.
-- Posts already stored from `/doc/**/index` and `/newsletter/` stay; nothing deletes them.
+- Posts already stored from `/doc/` and `/newsletter/` stay; nothing deletes them.
 
 ## Not here (0039, v9.5)
 Re-checking edits, dating a page that is new *to you*, and the "Updated" mark.

@@ -228,12 +228,12 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(posts[0]["metadata"]["author_slug"], "alice")
 
     def test_gwern_archive_is_his_writing_only(self):
-        # Directories (/doc/**/index) and newsletters (the Substack feed) are not candidates.
+        # /doc/ (directories, their introductions, other people's texts) and newsletters (the
+        # Substack feed) are not candidates.
         http = FakeHttp({"https://gwern.net/sitemap.xml": GWERN_SITEMAP})
         urls = asyncio.run(GwernAdapter(http)._discover_archive_urls({"handle_or_url": "https://gwern.net"}))
         self.assertEqual(urls, [
             "https://gwern.net/blog/2026/llm-timetravel",
-            "https://gwern.net/doc/science/1986-hamming",
             "https://gwern.net/fiction/alice",
             "https://gwern.net/spaced-repetition",
         ])
