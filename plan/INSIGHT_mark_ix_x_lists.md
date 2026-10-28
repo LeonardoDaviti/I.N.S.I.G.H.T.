@@ -7,11 +7,11 @@ Written 2026-10-28 from the owner's direction:
 
 Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `plan/INSIGHT_competitors_research.md`.
 
-✓ built and deployed · ◐ built for v9.3 or partial · ○ to do · ⧗ future issue
+✓ built and deployed · ◐ built for v9.3 or v9.4 (not deployed) or partial · ○ to do · ⧗ future issue
 
 ## Focus (owner, 2026-10-28)
 - **The personal product now.** The hosted product waits, and **Mark X waits**: Mark IX first.
-- **v9.3** is the current release (being integrated). **v9.4 = search** (0040) and following a site's blog from its homepage (0041), the reader keeping tables and figures (0042), the Gwern reader cleanup (0043). **v9.5 = page-change watching (0039), reading settings, source hygiene, conditional fetching (ETag).**
+- **v9.3** is built, not deployed. **v9.4** is the current release (being integrated): **search** (0040) and following a site's blog from its homepage (0041), the reader keeping tables and figures (0042), the Gwern reader cleanup (0043). **v9.5 = page-change watching (0039), reading settings, source hygiene, conditional fetching (ETag).**
 - **Skipped:** highlights, notes, post versions, rules (mute words, auto-read, auto-keep) and tags.
   - Why skip rules: on the server, 41,000 of 41,128 posts are unread (0.3% read). Muting words would barely change that; search (v9.4) and "Show in Main feed: off" for firehose sources do.
   - Why skip tags: tracks, Keep and search already cover them.
@@ -28,6 +28,9 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - add many at once, with OPML (0035);
   - the source doctor (0036);
   - save any page and the bookmarklet (0031).
+- ◐ v9.4:
+  - paste a homepage, follow its blog (0041);
+  - the Gwern reader reads only Gwern's writing (0043).
 - ⧗ Full arXiv papers (0037). ⧗ PDF text (0038).
 - ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
 - ○ Native Bluesky and Mastodon. ○ Podcasts.
@@ -43,7 +46,10 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - calmer continuous reading (0033);
   - one density (0034);
   - the fidelity corpus (0032).
-- **○ v9.4: search across everything (0040),** then saved searches.
+- **◐ v9.4:**
+  - **search across everything (0040);**
+  - the reader keeps tables, figures and captions (0042).
+- ○ Saved searches.
 - ○ v9.5: reading settings (font, size, width). ○ Read aloud.
 - ✗ Skipped: highlights, notes, post versions.
 
