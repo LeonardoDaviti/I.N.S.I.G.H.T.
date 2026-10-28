@@ -79,6 +79,14 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("Update the claude-api skill: a new default model, …", body),
                          "Update the claude-api skill: a new default model, build-eval and hillclimb guides (#1930)")
 
+    def test_a_title_cut_with_brackets_by_the_telegram_bridge_is_the_body_first_line(self):
+        # tg.i-c-a.su cuts titles with " [...]" (turboproject, 2026-10-21).
+        body = "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».\n\nДальше текст."
+        for cut in ("🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е [...]",
+                    "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного е […]"):
+            self.assertEqual(display_title(cut, body),
+                             "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».")
+
     def test_plain_text_is_never_read_as_html(self):
         # Stored titles and bodies are plain text, already decoded: "<T>" is text, not a tag.
         self.assertEqual(display_title("Option<T> in Rust", ""), "Option<T> in Rust")

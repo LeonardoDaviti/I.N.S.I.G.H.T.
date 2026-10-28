@@ -13,14 +13,15 @@ from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 TITLE_MAX_CHARS = 120
 TITLE_MIN_SENTENCE_CHARS = 20
 SENTENCE_END_RE = re.compile(r"[.!?…](?=\s|$)")
-TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.)\s*$")
+# "…", "..." or, from the Telegram RSS bridge, "[...]" / "[…]".
+TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.|\[(?:…|\.\.\.)\])\s*$")
 
 
 def display_title(title: str | None, content: str | None) -> str:
     """The title the feed and the post page show; the stored title is never changed.
 
     The text is the title, or the body when the title is empty or is the body's start cut with
-    "…" (a tweet, a Telegram post, a GitHub commit). Only its first non-empty line counts. A
+    "…" or "[...]" (a tweet, a Telegram post, a GitHub commit). Only its first non-empty line counts. A
     line over 120 characters is cut at its first sentence end (after 20 characters at least),
     else at the last space within 117 characters, with "…". Title and body are stored plain
     text, so nothing in them is read as a tag.
