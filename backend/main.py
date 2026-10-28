@@ -761,10 +761,15 @@ FEED_FINDER_HTTP = KindHttp(timeout=5, executor=ThreadPoolExecutor(max_workers=8
 @error_detail("look for the feed")
 async def find_feed(request: FindFeedRequest):
     """The feeds for any page address (issue 0026): status feed (it is one), found, direct (a
-    kind reads the site itself) or none, with feeds [{url, title}]. 400 when url is empty."""
+    kind reads the site itself) or none, with feeds [{url, title}]. 400 when url is empty.
+    None for a site's home page (issue 0041): homepage true, and pages, the site's own blog or
+    news pages the finder read that can be followed instead, each with its page-watch preview
+    ({url, prefix, found, sitemap, items}), the most articles first."""
     finding = await find_feeds(FEED_FINDER_HTTP, services().source_fetch.kinds, request.url)
+    homepage = finding.status == "none" and page_watch.is_home(request.url)
     return {"success": True, "status": finding.status,
-            "feeds": [{"url": feed.url, "title": feed.title} for feed in finding.feeds]}
+            "feeds": [{"url": feed.url, "title": feed.title} for feed in finding.feeds],
+            "homepage": homepage, "pages": await page_watch.offers(FEED_FINDER_HTTP, finding.pages) if homepage else []}
 
 
 @app.post("/api/sources/page-watch/preview")

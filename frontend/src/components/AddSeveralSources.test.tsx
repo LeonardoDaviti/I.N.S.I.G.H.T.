@@ -212,6 +212,30 @@ describe('Add several sources (issue 0035)', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('a home page with no feed: its blog with the most articles, named by the pasted address; else the home page with a warning (issue 0041)', async () => {
+    const blog = { url: 'https://pay.example/blog', prefix: '/blog/', found: 269, sitemap: false,
+      items: [{ url: 'https://pay.example/blog/a', title: 'A', published_at: null }] };
+    const findFeed = vi.fn((url: string): Promise<FeedFinding> => Promise.resolve(url === 'pay.example'
+      ? { success: true, status: 'none', feeds: [], homepage: true, pages: [blog, { ...blog, url: 'https://pay.example/press', prefix: '/press/', found: 3 }] }
+      : { success: true, status: 'none', feeds: [], homepage: true, pages: [] }));
+    const previewPageWatch = vi.fn().mockResolvedValue({ success: true, prefix: '/customers/', found: 40, sitemap: false,
+      items: [{ url: 'https://shop.example/customers/a', title: 'Acme', published_at: null }] });
+    const { api, onAddMany } = setup({ findFeed, previewPageWatch });
+    await paste('pay.example\nhttps://shop.example/');
+    expect(await within(rowOf('pay.example')).findByText('No feed: follow pay.example/blog (269 articles)')).toBeInTheDocument();
+    expect(await within(rowOf('https://shop.example/')).findByText(
+      'No feed: follow the page (40 articles). This is the site\'s homepage: it may pick up product pages, not articles.')).toBeInTheDocument();
+    expect(previewPageWatch).toHaveBeenCalledTimes(1);
+    expect(previewPageWatch).toHaveBeenCalledWith('https://shop.example/', undefined);
+
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Add 2 sources' }));
+    await waitFor(() => expect(onAddMany).toHaveBeenCalled());
+    expect(api.addSource).toHaveBeenCalledWith(expect.objectContaining({
+      handle_or_url: 'https://pay.example/blog', display_name: 'pay.example', page_watch: { prefix: '/blog/' } }));
+    expect(api.addSource).toHaveBeenCalledWith(expect.objectContaining({
+      handle_or_url: 'https://shop.example/', display_name: '', page_watch: { prefix: '/customers/' } }));
+  });
+
   it('back to one source', async () => {
     setup();
     await openSeveral();

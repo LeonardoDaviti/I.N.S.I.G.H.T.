@@ -5,10 +5,10 @@ import { Button, Dialog, DialogContent, DialogFooter, FilterChip, Input } from '
 import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCredential } from './connections';
 import { errorMessage } from '../lib/apiError';
 import { localDateISO, toDate } from '../lib/dates';
-import type { FeedFinding, FoundFeed, PageWatchPreview } from '../services/api';
+import type { FeedFinding, FoundFeed, PageOffer, PageWatchPreview } from '../services/api';
 import BookmarkletHint from './BookmarkletHint';
 import AddSeveralSources, { type AddedSource } from './AddSeveralSources';
-import { sameAddress, shortAddress } from '../lib/addresses';
+import { HOMEPAGE_WARNING, sameAddress, shortAddress, siteName, withScheme } from '../lib/addresses';
 
 interface Template {
   id: string;
@@ -246,13 +246,18 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
               : finding?.status === 'found' && foundFeeds.length === 1 ? `Found the feed for this page: ${shortAddress(foundFeeds[0].url)}`
                 : null;
   // No feed: the page itself can be followed, its articles read from its links and the
-  // sitemap (issue 0028). The preview is asked again when the path changes.
-  const [followFor, setFollowFor] = useState<string | null>(null);
+  // sitemap (issue 0028). The preview is asked again when the path changes. For a site's home
+  // page, the finder offers the site's own blog or news pages instead (issue 0041).
+  const [follow, setFollow] = useState<{ for: string; page: string } | null>(null);
   const [path, setPath] = useState('');
   const [pagePreview, setPagePreview] = useState<(PageWatchPreview & { for: string; asked: string }) | null>(null);
-  const following = findsFeed && settled && finding?.status === 'none' && followFor === address;
+  const noFeed = findsFeed && settled && finding?.status === 'none';
+  const offers = noFeed ? finding?.pages ?? [] : [];
+  const following = noFeed && follow?.for === address;
+  const followed = following && follow ? follow.page : address;
+  const followsHome = !!finding?.homepage && followed === address;
   const askedPath = normalisePath(path);
-  const previewed = !!pagePreview && pagePreview.for === address
+  const previewed = !!pagePreview && pagePreview.for === followed
     && (!askedPath || askedPath === pagePreview.asked || askedPath === pagePreview.prefix);
   const pageItems = previewed ? pagePreview?.items ?? [] : [];
 
@@ -260,14 +265,23 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
     if (!following || previewed) return;
     let cancelled = false;
     const timeout = window.setTimeout(() => {
-      void api.previewPageWatch(address, askedPath || undefined).then((result) => {
+      void api.previewPageWatch(followed, askedPath || undefined).then((result) => {
         if (cancelled) return;
-        setPagePreview({ ...result, for: address, asked: askedPath });
+        setPagePreview({ ...result, for: followed, asked: askedPath });
         if (!askedPath && result.prefix) setPath(result.prefix);
       });
     }, askedPath ? 600 : 0);
     return () => { cancelled = true; window.clearTimeout(timeout); };
-  }, [api, following, previewed, address, askedPath]);
+  }, [api, following, previewed, followed, askedPath]);
+
+  // An offered page comes with its preview: following it asks nothing more.
+  const followOffer = (offer: PageOffer) => {
+    setPagePreview({ success: true, ...offer, for: offer.url, asked: '' });
+    setPath(offer.prefix);
+    setFollow({ for: address, page: offer.url });
+  };
+  const offerLabel = (offer: PageOffer) => `Follow ${siteName(offer.url)}: ${offer.found} article${offer.found === 1 ? '' : 's'}`;
+  const otherOffers = offers.filter((offer) => offer.url !== (following ? followed : offers[0]?.url));
 
   const pageNote = !following ? null
     : !previewed ? 'Looking for articles…'
@@ -304,9 +318,9 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
     }
 
     onAdd({
-      // A followed page is read as an address: it needs its scheme.
-      handle_or_url: canFollow && !/^https?:\/\//i.test(address) ? `https://${address}` : address,
-      display_name: displayName.trim(),
+      handle_or_url: canFollow ? withScheme(followed) : address,
+      // A site's blog followed keeps the pasted address as its name ("stripe.com").
+      display_name: displayName.trim() || (canFollow && followed !== address ? siteName(address) : ''),
       fetch_delay_seconds: fetchDelay,
       ...(canFollow && pagePreview?.prefix ? { page_watch: { prefix: pagePreview.prefix } } : {}),
     });
@@ -403,11 +417,32 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
             />
             {alreadyAdded && !looking ? <p role="status" className={hint}>This feed is already in your sources</p> : null}
             {feedNote ? <p role="status" className={hint}>{feedNote}</p> : null}
-            {findsFeed && settled && finding?.status === 'none' && !alreadyAdded && !following ? (
-              <Button size="sm" className="mt-2" onClick={() => setFollowFor(address)}>Follow this page instead</Button>
+            {noFeed && !alreadyAdded && !following && offers.length > 0 ? (
+              <Button size="sm" className="mt-2" onClick={() => followOffer(offers[0])}>{offerLabel(offers[0])}</Button>
+            ) : noFeed && !alreadyAdded && !following ? (
+              <>
+                {finding?.homepage ? <p className={hint}>{HOMEPAGE_WARNING}</p> : null}
+                <Button size="sm" className="mt-2" onClick={() => setFollow({ for: address, page: address })}>Follow this page instead</Button>
+              </>
+            ) : null}
+            {noFeed && !alreadyAdded && otherOffers.length > 0 ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Other pages on this site</summary>
+                <ul className="mt-1.5 space-y-1">
+                  {otherOffers.map((offer) => (
+                    <li key={offer.url}>
+                      <button type="button" className="text-[0.8125rem] text-fg-2 underline underline-offset-2 hover:text-fg" onClick={() => followOffer(offer)}>
+                        {offerLabel(offer)}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ) : null}
             {following ? (
               <div className="mt-2 space-y-3 rounded-md border border-line p-3" data-testid="page-watch">
+                {followed !== address ? <p className="text-[0.8125rem] text-fg">Following {siteName(followed)}</p> : null}
+                {followsHome ? <p className="text-[0.8125rem] text-fg-2">{HOMEPAGE_WARNING}</p> : null}
                 <p role="status" className="text-[0.8125rem] text-fg-2">{pageNote}</p>
                 {pageItems.length > 0 ? (
                   <ul className="space-y-1">

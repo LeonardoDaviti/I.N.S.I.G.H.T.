@@ -15,7 +15,8 @@ working again": no replacement, nothing to suggest) and nothing else is looked a
 
 Otherwise it looks the way every source add does: the feed finder (issue 0026) on the source's
 address (which reads its section and home page too) and on a deeper section ("/a/b/rss" ->
-"/a/b/"); no feed: page watching (issue 0028) previews the section. A feed on the source's site
+"/a/b/"); no feed: page watching (issue 0028) previews the section (for a source at the site's
+root, the site's own blog or news page with the most articles first, issue 0041). A feed on the source's site
 must stay within its section (the address less its last segment: "/oldnewthing/" for
 "/oldnewthing/feed"), so the home page's feed of every blog on the site is never taken for one
 of them; a source at the site's root ("/rss") takes any feed of the site. Then:
@@ -133,15 +134,24 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
     # The finder on the address reads its first-segment section and home page itself; a
     # deeper section ("/a/b/") needs a search of its own.
     pages: List[str] = [address] + ([section(address)] if len(path_segments(section(address))) >= 2 else [])
+    blog_pages: List[str] = []
     for page in pages:
         finding = await find_feeds(http, registry, page)
         feed = next((f for f in finding.feeds if not _same(f.url, address) and within_section(f.url, address)), None)
         if feed:
             return {"kind": "feed", "url": feed.url, "title": feed.title or short_address(feed.url),
                     "found": None, "prefix": None}
+        blog_pages += finding.pages
     # The section's page; for a source at the root that is the address itself: a site whose
     # address answers a page, not a feed (incompleteideas.net), is followed as that page.
     listing = section(address)
+    # At the root, the whole site is the section: its own blog or news page with the most
+    # articles comes before its home page (issue 0041), as for any source add.
+    offered = await page_watch.offers(http, blog_pages) if page_watch.is_home(listing) else []
+    if offered:
+        best = offered[0]
+        return {"kind": "page_watch", "url": best["url"], "title": short_address(best["url"]),
+                "found": best["found"], "prefix": best["prefix"]}
     if follows_page and _same(listing, address):
         return None
     try:

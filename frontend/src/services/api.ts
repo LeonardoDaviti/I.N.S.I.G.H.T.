@@ -559,6 +559,10 @@ export interface FoundFeed {
 export interface FeedFinding extends Envelope {
   status?: 'feed' | 'found' | 'direct' | 'none';
   feeds?: FoundFeed[];
+  /** None, and the address is a site's home page (issue 0041): a poor page to follow. */
+  homepage?: boolean;
+  /** For a home page: the site's own blog or news pages to follow instead, the most articles first. */
+  pages?: PageOffer[];
 }
 
 /** Following a page without a feed (issue 0028): the article URLs found under the path, the first few read. */
@@ -568,6 +572,15 @@ export interface PageWatchPreview extends Envelope {
   /** Some of the articles came from the site's sitemap. */
   sitemap?: boolean;
   items?: { url: string; title: string; published_at: string | null }[];
+}
+
+/** A site's blog or news page to follow instead of its home page, with its preview (issue 0041). */
+export interface PageOffer {
+  url: string;
+  prefix: string;
+  found: number;
+  sitemap: boolean;
+  items: { url: string; title: string; published_at: string | null }[];
 }
 
 /** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. */

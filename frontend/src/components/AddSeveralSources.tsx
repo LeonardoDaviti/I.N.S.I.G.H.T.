@@ -4,7 +4,7 @@ import { useApi } from '../services/ApiContext';
 import { useFolders } from '../hooks/useReaderDirectory';
 import { Button, DialogFooter, Input, Select, Textarea } from './ui';
 import type { FoundFeed } from '../services/api';
-import { sameAddress, shortAddress } from '../lib/addresses';
+import { HOMEPAGE_WARNING, sameAddress, shortAddress, siteName, withScheme } from '../lib/addresses';
 
 /** A source added here, for its first fetch. */
 export interface AddedSource {
@@ -54,7 +54,9 @@ type Found =
   | { kind: 'direct' }
   | { kind: 'unchecked' }
   | { kind: 'page-looking' }
-  | { kind: 'page'; prefix: string; found: number }
+  // followed: a site's blog or news page offered for its home page (issue 0041); homepage: the
+  // home page itself, the last resort.
+  | { kind: 'page'; prefix: string; found: number; followed?: string; homepage?: boolean }
   | { kind: 'already'; here?: boolean }
   | { kind: 'unreadable' };
 
@@ -75,15 +77,16 @@ function foundText(found: Found): string {
     case 'direct': return 'INSIGHT reads it directly';
     case 'unchecked': return 'Could not look for a feed; added as typed';
     case 'page-looking': return 'No feed: looking for articles…';
-    case 'page': return `No feed: follow the page (${found.found} article${found.found === 1 ? '' : 's'})`;
+    case 'page': {
+      const articles = `${found.found} article${found.found === 1 ? '' : 's'}`;
+      return found.followed ? `No feed: follow ${siteName(found.followed)} (${articles})`
+        : `No feed: follow the page (${articles})${found.homepage ? `. ${HOMEPAGE_WARNING}` : ''}`;
+    }
     case 'already': return found.here ? 'Already in this list' : 'Already in your sources';
     case 'unreadable': return 'Nothing readable';
     default: return '';
   }
 }
-
-/** A followed page is read as an address: it needs its scheme. */
-const withScheme = (address: string) => (/^https?:\/\//i.test(address) ? address : `https://${address}`);
 
 interface AddSeveralSourcesProps {
   existingAddresses: readonly string[];
@@ -148,12 +151,12 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
       if (ADDABLE.has(final.kind)) claimed.add(key);
       update(index, { found: final, chosen, ticked: ADDABLE.has(final.kind) });
     };
-    const followPage = async (index: number, address: string, prefix?: string) => {
+    const followPage = async (index: number, address: string, prefix?: string, homepage?: boolean) => {
       update(index, { found: { kind: 'page-looking' } });
       const preview = await api.previewPageWatch(address, prefix || undefined);
       if (!live()) return;
       const readable = preview.success && (preview.items?.length ?? 0) > 0 && !!preview.prefix;
-      settle(index, readable ? { kind: 'page', prefix: preview.prefix ?? '', found: preview.found ?? 0 } : { kind: 'unreadable' }, address);
+      settle(index, readable ? { kind: 'page', prefix: preview.prefix ?? '', found: preview.found ?? 0, homepage } : { kind: 'unreadable' }, address);
     };
     const resolve = async (index: number) => {
       const line = list[index];
@@ -166,7 +169,9 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
       if (!finding.success) settle(index, { kind: 'unchecked' }, line);
       else if ((finding.status === 'feed' || finding.status === 'found') && finding.feeds?.length) settle(index, { kind: 'feed', feeds: finding.feeds }, finding.feeds[0].url);
       else if (finding.status === 'direct') settle(index, { kind: 'direct' }, line);
-      else await followPage(index, line);
+      // A home page: the site's blog or news page with the most articles, already previewed.
+      else if (finding.pages?.length) settle(index, { kind: 'page', prefix: finding.pages[0].prefix, found: finding.pages[0].found, followed: finding.pages[0].url }, finding.pages[0].url);
+      else await followPage(index, line, undefined, finding.homepage);
     };
     let next = 0;
     const worker = async () => {
@@ -208,7 +213,8 @@ export default function AddSeveralSources({ existingAddresses, onBack, onClose, 
       const page = found.kind === 'page';
       const address = page ? withScheme(row.chosen) : row.chosen;
       const feedTitle = found.kind === 'feed' ? found.feeds.find((f) => f.url === row.chosen)?.title : undefined;
-      const name = (feedTitle || row.imported.name || '').trim();
+      // A site's blog followed keeps the pasted address as its name ("stripe.com").
+      const name = (feedTitle || row.imported.name || (found.kind === 'page' && found.followed ? siteName(row.line) : '')).trim();
       const r = await api.addSource({
         platform: 'rss', handle_or_url: address, display_name: name, fetch_delay_seconds: 1,
         ...(page ? { page_watch: { prefix: found.prefix } } : {}),

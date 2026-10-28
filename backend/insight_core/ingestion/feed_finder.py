@@ -12,6 +12,9 @@ One search, cheapest first, stopping at the first stage that finds something:
   2. The section page (/blog/) and the home page, fetched in parallel, the same way.
   3. The page's links to its own blog or newsroom (named so, or a blog./news. subdomain of the
      same site), at most two, the same way: www.cloudflare.com leads to blog.cloudflare.com.
+     A page that cannot be read (a feed gone) takes its home page's links instead. The ones
+     that answer on the same site are reported as the finding's pages: with no feed, the
+     pages to follow instead of a home page (issue 0041).
   4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
 A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
 be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
@@ -71,6 +74,7 @@ class Feed:
 class FeedFinding:
     status: Status              # feed: the address is one; found: feeds for it; direct: a kind reads it
     feeds: Tuple[Feed, ...] = ()
+    pages: Tuple[str, ...] = ()  # none: the site's own blog or news pages the search read (stage 3)
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFinding:
@@ -85,7 +89,7 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFi
         async with asyncio.timeout(BUDGET_S):
             finding = await search.run(address)
     except TimeoutError:
-        finding = FeedFinding("none")
+        finding = FeedFinding("none", pages=search.pages)
     logger.info("Feed finder: %s -> %s, %d feed(s), %d request(s), %.1fs", address, finding.status,
                 len(finding.feeds), search.requests, time.monotonic() - started)
     return finding
@@ -102,6 +106,7 @@ class _Search:
         self.fan_out = asyncio.Semaphore(FAN_OUT)
         self.tried: set[str] = set()
         self.requests = 0
+        self.pages: Tuple[str, ...] = ()
 
     async def run(self, url: str) -> FeedFinding:
         if urllib.parse.urlparse(url).scheme not in ("http", "https"):
@@ -121,22 +126,28 @@ class _Search:
             if feeds := await self._prove(_feed_links(body, here)):
                 return FeedFinding("found", feeds)
 
-        pages = await asyncio.gather(*(self._get(around, PAGE_BYTES) for around in _around(here, url)))
+        around = _around(here, url)
+        pages = await asyncio.gather(*(self._get(other, PAGE_BYTES) for other in around))
         if feeds := await self._prove([link for got in pages if got for link in _feed_links(*got)]):
             return FeedFinding("found", feeds)
 
-        blogs = _blog_links(*page) if page else []
+        # An address that cannot be read (a feed gone) takes its home page's links instead.
+        origin = origin_from_source(here, "")
+        linking = page or dict(zip(around, pages)).get(f"{origin}/")
+        blogs = _blog_links(*linking) if linking else []
         blog_pages = await asyncio.gather(*(self._get(blog, PAGE_BYTES) for blog in blogs))
+        site = _site(_host(here))
+        self.pages = tuple(dict.fromkeys(got[1] for got in blog_pages if got and _site(_host(got[1])) == site
+                                         and got[1].rstrip("/") != here.rstrip("/")))
         if feeds := await self._prove([link for got in blog_pages if got for link in _feed_links(*got)]):
             return FeedFinding("found", feeds)
 
         # Common paths under the blogs the page links first (more specific), then at the root.
-        origin = origin_from_source(here, "")
         bases = [*(blog.rstrip("/") for blog in blogs), origin]
         guesses = [base + path for base in dict.fromkeys(bases) for path in COMMON_PATHS]
         if feeds := await self._prove(guesses, limit=None, first=True):
             return FeedFinding("found", feeds[:1])
-        return FeedFinding("none")
+        return FeedFinding("none", pages=self.pages)
 
     async def _get(self, url: str, max_bytes: int) -> Optional[Tuple[bytes, str]]:
         """(the start of the body, the final URL), or None when the request fails or is slow."""
@@ -264,7 +275,7 @@ def _feed_links(body: bytes, page_url: str) -> List[str]:
 
 def _blog_links(body: bytes, page_url: str) -> List[str]:
     """The page's links to its own blog or newsroom (see BLOG_LINK_TEXTS), absolute, on the same
-    site (a blog./news. subdomain included), at most MAX_BLOG_LINKS."""
+    site (a blog./news. subdomain included), the shallowest first, at most MAX_BLOG_LINKS."""
     links = _FeedLinks()
     try:
         links.feed(body.decode("utf-8", errors="replace"))
@@ -274,7 +285,8 @@ def _blog_links(body: bytes, page_url: str) -> List[str]:
     site = _site(_host(page_url))
     absolute = (_absolute(page_url, href) for href in links.blogs)
     same = (url for url in absolute if url and url != page_url and _site(_host(url)) == site)
-    return list(dict.fromkeys(same))[:MAX_BLOG_LINKS]
+    # The section itself before a page within it: /blog before /blog/tag/research.
+    return sorted(dict.fromkeys(same), key=lambda url: len(path_segments(url)))[:MAX_BLOG_LINKS]
 
 
 def _host(url: str) -> str:
@@ -324,7 +336,9 @@ class _FeedLinks(HTMLParser):
         self.alternates: List[str] = []
         self.anchors: List[str] = []
         self.blogs: List[str] = []                   # links to the site's own blog or newsroom
-        self._anchor: Optional[List[str]] = None     # [href, text so far]
+        # [href, text so far, its first piece of text]: a menu item's label comes before its
+        # description ("Blog", then "Product updates, insights…").
+        self._anchor: Optional[List[str]] = None
 
     def handle_starttag(self, tag: str, attrs: Sequence[Tuple[str, Optional[str]]]) -> None:
         values = {name: value or "" for name, value in attrs}
@@ -335,19 +349,21 @@ class _FeedLinks(HTMLParser):
               and _is_feed_type(values.get("type", "")) and not _is_comments(href, values.get("title", ""))):
             self.alternates.append(href)
         elif tag == "a" and href:
-            self._anchor = [href, ""]
+            self._anchor = [href, "", ""]
 
     def handle_data(self, data: str) -> None:
         if self._anchor is not None:
             self._anchor[1] += data
+            self._anchor[2] = self._anchor[2] or data.strip()
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._anchor is not None:
-            href, text = self._anchor
+            href, text, label = self._anchor
             self._anchor = None
             if _looks_like_feed(href, text) and not _is_comments(href, text):
                 self.anchors.append(href)
-            elif " ".join(text.lower().split()) in BLOG_LINK_TEXTS or _host(href).startswith(BLOG_HOSTS):
+            elif ({" ".join(text.lower().split()), " ".join(label.lower().split())} & BLOG_LINK_TEXTS
+                  or _host(href).startswith(BLOG_HOSTS)):
                 self.blogs.append(href)
 
 
