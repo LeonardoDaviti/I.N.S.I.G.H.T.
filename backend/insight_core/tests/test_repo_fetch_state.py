@@ -226,6 +226,16 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertFalse(row["enabled"])
         self.assertIsNone(view[bare]["state"])
 
+    def test_last_post_is_when_the_newest_post_reached_you(self):
+        # A page published long ago but surfaced today (issue 0039) keeps its source from
+        # reading as quiet in Tidy up (issue 0046).
+        self.cur.execute(
+            "INSERT INTO posts (source_id, url, published_at, fetched_at, surfaced_at) VALUES (%s, %s, %s, %s, %s)",
+            (self.source, f"https://test.invalid/mark-ix/surfaced/{self.source}", NOW - 400 * 24 * H, NOW, NOW),
+        )
+        view = {r["id"]: r for r in self.repo.load_schedule_view(self.cur)}
+        self.assertEqual(view[self.source]["last_post_at"], NOW)
+
     def test_schedule_view_carries_the_newest_page_reads(self):
         # Issue 0032: metadata.page_read of the newest PAGE_READS_IN_HEALTH page-read posts.
         for i in range(PAGE_READS_IN_HEALTH + 2):

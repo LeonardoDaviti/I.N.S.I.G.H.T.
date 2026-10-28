@@ -406,7 +406,7 @@ class FetchStateRepository:
                    s.mean_gap_seconds, s.cadence_sample_size, s.cadence_tier,
                    s.cadence_computed_at, s.fetch_interval_hours_override, s.created_at,
                    (SELECT count(*) FROM posts p WHERE p.source_id = s.id) AS post_count,
-                   (SELECT max(COALESCE(p.published_at, p.fetched_at)) FROM posts p
+                   (SELECT max(COALESCE(p.surfaced_at, p.published_at, p.fetched_at)) FROM posts p
                      WHERE p.source_id = s.id) AS last_post_at,
                    COALESCE((
                        SELECT json_agg(json_build_object('id', f.id, 'name', f.name)
