@@ -47,6 +47,13 @@ so a new kind needs no change anywhere else.
   learned pace, `BACKEND.md`).
 - `ingestion/runner.py`: `IngestionRunner`, the live fetch (`run_ingestion(FetchRequest) ->
   RunReport`). `services/source_fetch_service.py` runs the archive.
+- `ingestion/source_doctor.py` (issue 0036): after a failed fetch of a `generic_rss` or
+  `page_watch` source (3 in a row, or at once on 404/410 or a feed that does not parse; once
+  a day) it looks for the source's replacement with `find_feeds` and `page_watch.preview`,
+  switches a gone feed to a new one on the same site, and stores anything else as a
+  suggestion (`BACKEND.md`, the source doctor). A new kind that reads its site directly is
+  never looked at: only the two kinds in `DOCTOR_KINDS` are. A kind whose fetch should count
+  as gone raises `HttpError` with `status` 404 or 410.
 
 ## The interface
 

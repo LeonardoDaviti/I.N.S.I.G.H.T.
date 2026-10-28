@@ -1,6 +1,6 @@
 # 0036 — Source doctor: a broken source finds its replacement
 
-Status: **ready-for-agent** (owner, 2026-10-28: "our checker of sources should check if that old source is working, if not it should automatically run our feed finder or follow page and find all the posts"; "everything your pick").
+Status: **built** (2026-10-28, not deployed; migration 0032). Decided by the owner (2026-10-28: "our checker of sources should check if that old source is working, if not it should automatically run our feed finder or follow page and find all the posts"; "everything your pick").
 
 ## The case
 `https://arena.ai/blog/rss/` stopped working; the source failed every fetch. Pasting `https://arena.ai/blog` offered "Follow this page instead": 76 articles.
@@ -14,3 +14,41 @@ Status: **ready-for-agent** (owner, 2026-10-28: "our checker of sources should c
   - **Nothing found:** "Broken: no replacement found", plainly, not only "HTTP 404" in backoff.
 - Posts match by URL, so a switch never duplicates what is stored; an archive after a switch brings the older ones.
 - Rate: the doctor runs at most once a day per source.
+
+## Built
+- **One module**, `backend/insight_core/ingestion/source_doctor.py`, one entry point
+  (`SourceDoctor.after_failure`), which the runner calls after every failed fetch with the
+  exception and the fresh fetch state, outside the save lock. It never raises.
+- **When:** `generic_rss` and `page_watch` sources of platform rss only (YouTube, Reddit,
+  Telegram, Substack, site adapters and any other direct kind are never looked at); 3 failures in
+  a row, or at once on HTTP 404/410 (`HttpError.status`) or an answer that does not parse as a
+  feed (`ParseError`). At most once a day (`source_fetch_state.doctor_checked_at`), and not again
+  in a streak whose finding was dismissed; a fetch that works clears the finding.
+- **Look:** `find_feeds` on the address (it reads the first-segment section and the home page
+  itself) and on a deeper section (`/a/b/rss` -> `/a/b/`); the address itself is never its own
+  replacement. No feed: `page_watch.preview` of the section, which must read at least one article.
+- **Act:** a feed on the same site (`www.` ignored) while the old address answered 404/410 is
+  switched to: `handle_or_url` changes, `settings.page_watch` is removed, failures and backoff
+  clear, the job gets the line "Arena: feed moved, now following arena.ai/blog/feed.xml" (and the
+  log). A switch that fails (the address is already a source) becomes a suggestion. Anything else
+  is stored in `source_fetch_state.doctor_finding` (`{replacement: {kind, url, title, found,
+  prefix} | null, dismissed}`); the health row carries `doctor_looked_at` and `replacement`.
+- **Routes:** `POST /api/sources/{id}/switch {url, page_watch?}` and
+  `POST /api/sources/{id}/replacement/dismiss` (the fresh row; 404 without a finding).
+- **sources.json:** every switch (doctor or route) goes through
+  `SourceConfigSyncService.switch_source`: the DB change in one transaction, then sources.json is
+  rewritten; when the file cannot be written the switch is undone, since a file naming the old
+  address would make the next sync re-add it and mirror-delete the switched source with its posts.
+- **Kind cache:** `KindRegistry` now keys on platform, address and whether `settings.page_watch`
+  is set, so an address the feed finder once resolved as a feed resolves as page_watch after a
+  Switch to follow it.
+- **UI:** the Sources list note reads "Broken: replacement found" / "Broken: no replacement found"
+  (note column widened to 10.5rem); the sheet shows "This source stopped working." with "INSIGHT
+  found a replacement: <title> (<address>)" or "Follow <page>: N articles", Switch and Dismiss,
+  or "INSIGHT looked for a replacement 2h ago and found none."
+- **Limits:** the same-site test compares host names less `www.`, not the public-suffix list
+  (`blog.arena.ai` and `arena.ai` are different sites, so that is a suggestion). An answer that
+  is well-formed XML but not a feed (XHTML) reads as an empty fetch, not a failure, so the doctor
+  never sees it. Nothing is re-fetched after a switch.
+- Tests: `backend/insight_core/tests/test_source_doctor.py`;
+  `frontend/src/components/sources/replacementNotice.test.tsx`, `sourceList.test.tsx`.
