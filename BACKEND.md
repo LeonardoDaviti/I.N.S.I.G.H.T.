@@ -313,6 +313,20 @@ words that must not appear, known gaps with their reasons), checked by `test_pag
 another fails the suite. `scripts/refresh_page_corpus.py` re-reads the pages when a site
 redesigns (owner-run, see `scripts/README.md`).
 
+Every page read records how well it went, in the post's `metadata.page_read`
+(`repo_posts.PAGE_READ_KEY`; page watch and full text, kept when a later feed fetch keeps the
+body): `{page_images, kept_images, text_chars, short_opening}` (`parsing.read_fidelity`).
+`page_images` is an estimate from the article block the reader chose (related cards and
+sidebars it dropped never count): images with an address, no pixel, icon or avatar;
+`kept_images` the ones kept; `short_opening` a first block after the title under 25
+characters ("Share:"), a hint of chrome left in. It shows in two places:
+- source health: the row's `reading_notice`, from the source's 8 newest page reads, when at
+  least 3 of them and half lost most of their images (3 or more, under half kept): "Pages from
+  this source lose most of their images (5 of the last 8)"; or when at least 4 and three
+  quarters opened short. The source sheet shows it as a quiet line. None otherwise.
+- the run's job events: a source's line adds "· 2 of 3 pages lost most of their images", and
+  the ingestion log says the same.
+
 How sources are fetched at all is described in
 `backend/insight_core/docs/CONNECTOR_DEVELOPMENT_GUIDE.md` (source kinds).
 

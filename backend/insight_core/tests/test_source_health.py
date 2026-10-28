@@ -189,8 +189,24 @@ class SourceHealthTests(unittest.TestCase):
                 "interval_basis", "override_hours", "next_due_at", "would_fetch_now", "decision",
                 "last_attempt_at", "last_success_at", "last_outcome", "last_fetched_posts",
                 "last_error", "last_error_at", "consecutive_failures", "next_retry_at", "dormant",
-                "status",
+                "status", "reading_notice",
             }, True, row["source_id"])
+
+    def test_a_source_whose_pages_lose_their_images_says_so(self):
+        # Issue 0032: from the newest page reads (metadata.page_read), conservatively.
+        lost = {"page_images": 6, "kept_images": 1, "text_chars": 3000, "short_opening": False}
+        fine = {"page_images": 6, "kept_images": 6, "text_chars": 3000, "short_opening": False}
+        short = {**fine, "short_opening": True}
+        view = schedule_view()
+        view[0] = {**view[0], "page_reads": [lost] * 5 + [fine] * 3}
+        view[1] = {**view[1], "page_reads": [lost] * 2 + [fine] * 6}
+        view[2] = {**view[2], "page_reads": [short] * 7 + [fine]}
+        rows = {r["source_id"]: r for r in make_service(view).get_source_health()["rows"]}
+        self.assertEqual(rows["deferred"]["reading_notice"],
+                         "Pages from this source lose most of their images (5 of the last 8)")
+        self.assertIsNone(rows["due"]["reading_notice"], "2 of 8 is no pattern")
+        self.assertIn("open with a very short block", rows["backoff"]["reading_notice"])
+        self.assertIsNone(rows["new"]["reading_notice"], "no page reads")
 
     def test_summary_counts_add_up_to_the_enabled_sources(self):
         summary = self.result["summary"]

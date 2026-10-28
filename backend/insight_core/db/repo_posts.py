@@ -20,6 +20,9 @@ from insight_core.utils.json_safe import json_default
 # metadata key of a body read from the article page (ingestion/full_text.py)
 FULL_TEXT_FLAG = "full_content_fetched"
 FULL_TEXT_CHECKED = "full_text_checked_at"
+# metadata key of how well a page was read (parsing.read_fidelity; issue 0032): page watch
+# and full text set it, source health sums the newest ones per source.
+PAGE_READ_KEY = "page_read"
 
 
 def _env_commit_batch() -> int:
@@ -462,7 +465,9 @@ class PostsRepository:
             "normalized_url = %(normalized_url)s",
             "canonical_url = %(canonical_url)s",
             "url_host = %(url_host)s",
+            # A kept body keeps how well its page was read too.
             f"metadata = CASE WHEN {keep} THEN ({metadata}) || jsonb_build_object('{FULL_TEXT_FLAG}', true)"
+            f" || jsonb_strip_nulls(jsonb_build_object('{PAGE_READ_KEY}', {row}metadata -> '{PAGE_READ_KEY}'))"
             f" ELSE {metadata} END",
             "media_urls = %(media_urls)s::jsonb",
             "categories = %(categories)s::jsonb",

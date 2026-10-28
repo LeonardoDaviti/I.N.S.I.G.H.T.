@@ -430,7 +430,7 @@ def extract_article_html(html_text: str, base_url: str = "") -> str:
 
 
 def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
-    """How well a page was read, kept in a post's metadata (FIDELITY_KEY):
+    """How well a page was read, kept in a post's metadata (repo_posts.PAGE_READ_KEY):
       page_images    the article images in the chosen article block (no pixel, icon or
                      avatar): an estimate of what the site shows, from the block the reader
                      chose, so related cards and sidebars it dropped never count
@@ -451,11 +451,11 @@ def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
     }
 
 
-FIDELITY_KEY = "page_read"
 LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept
 
 
 def lost_most_images(fidelity: Any) -> bool:
+    """The page had at least LOST_IMAGES_MIN article images and under half were kept."""
     if not isinstance(fidelity, dict):
         return False
     page, kept = int(fidelity.get("page_images") or 0), int(fidelity.get("kept_images") or 0)

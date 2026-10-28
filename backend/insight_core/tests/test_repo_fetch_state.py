@@ -6,6 +6,7 @@ test's own scratch rows.
 """
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_fetch_state import FetchStateRepository
+from insight_core.db.repo_fetch_state import PAGE_READS_IN_HEALTH, FetchStateRepository
 from insight_core.ingestion.schedule import (
     DecisionKind,
     FetchDecision,
@@ -224,6 +225,19 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual(row["state"].last_fetched_posts, 2)
         self.assertFalse(row["enabled"])
         self.assertIsNone(view[bare]["state"])
+
+    def test_schedule_view_carries_the_newest_page_reads(self):
+        # Issue 0032: metadata.page_read of the newest PAGE_READS_IN_HEALTH page-read posts.
+        for i in range(PAGE_READS_IN_HEALTH + 2):
+            self.cur.execute(
+                "INSERT INTO posts (source_id, url, fetched_at, metadata) VALUES (%s, %s, %s, %s::jsonb)",
+                (self.source, f"https://test.invalid/mark-ix/read/{self.source}/{i}", NOW - i * H,
+                 json.dumps({"page_read": {"kept_images": i}})),
+            )
+        self.add_posts(self.source, [NOW])          # a post read from its feed: not counted
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertEqual([read["kept_images"] for read in row["page_reads"]], list(range(PAGE_READS_IN_HEALTH)))
+        self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[insert_scratch_source(self.cur)])[0]["page_reads"], [])
 
     def test_schedule_view_can_be_scoped_and_merges_platform_defaults(self):
         other = insert_scratch_source(self.cur)

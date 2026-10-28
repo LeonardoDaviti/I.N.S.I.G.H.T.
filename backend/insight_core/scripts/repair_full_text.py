@@ -41,7 +41,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db import database as db  # noqa: E402
-from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PostsRepository  # noqa: E402
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, PostsRepository  # noqa: E402
 from insight_core.ingestion import full_text  # noqa: E402
 from insight_core.ingestion.http import KindHttp  # noqa: E402
 from insight_core.ingestion.kinds import KindRegistry  # noqa: E402
@@ -170,8 +170,7 @@ class Repair:
         article = await full_text.read_article(self.http, post["url"], current)
         if article is None:
             return None
-        html, text = article
-        return {"content": text, "content_html": html, "metadata": {FULL_TEXT_FLAG: True}}
+        return full_text.with_full_text({}, *article)   # content, content_html and metadata
 
     def _write(self, post_id: str, found: Optional[Dict[str, Any]]) -> None:
         checked = {FULL_TEXT_CHECKED: self.clock().isoformat()}

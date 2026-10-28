@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
 
 from psycopg import Cursor
 
+from insight_core.db.repo_posts import PAGE_READ_KEY
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.ingestion.types import FetchOutcome, OutcomeStatus, Trigger
 
@@ -28,6 +29,7 @@ FAST_BELOW_SECONDS = 12 * 3600
 MEDIUM_UP_TO_SECONDS = 7 * 24 * 3600
 
 MAX_ERROR_LENGTH = 2000
+PAGE_READS_IN_HEALTH = 8    # the newest page-read posts source health sums (issue 0032)
 
 
 @dataclass(frozen=True)
@@ -295,7 +297,9 @@ class FetchStateRepository:
     def load_schedule_view(
         self, cur: Cursor, source_ids: Optional[Sequence[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Every source with its cadence columns, added date, post count, newest post, folders and fetch state.
+        """Every source with its cadence columns, added date, post count, newest post, folders,
+        its newest page reads (`page_reads`: the metadata.page_read of its PAGE_READS_IN_HEALTH
+        newest page-read posts, newest first) and fetch state.
 
         For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
         `settings` is merged with the platform defaults exactly as the runner's source
@@ -324,6 +328,11 @@ class FetchStateRepository:
                        FROM source_folders sf JOIN folders f ON f.id = sf.folder_id
                        WHERE sf.source_id = s.id
                    ), '[]'::json) AS folders,
+                   (SELECT COALESCE(json_agg(r.page_read ORDER BY r.fetched_at DESC), '[]'::json)
+                      FROM (SELECT p.metadata -> '{PAGE_READ_KEY}' AS page_read, p.fetched_at
+                              FROM posts p
+                             WHERE p.source_id = s.id AND p.metadata ? '{PAGE_READ_KEY}'
+                             ORDER BY p.fetched_at DESC LIMIT {PAGE_READS_IN_HEALTH}) r) AS page_reads,
                    {state_columns}
             FROM sources s
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
@@ -335,7 +344,7 @@ class FetchStateRepository:
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
-            state_values = r[15:]
+            state_values = r[16:]
             rows.append(
                 {
                     "id": str(r[0]),
@@ -353,6 +362,8 @@ class FetchStateRepository:
                     "post_count": int(r[12] or 0),
                     "last_post_at": r[13],
                     "folders": [{"id": str(f["id"]), "name": f["name"]} for f in (r[14] or [])],
+                    # How the newest page-read posts were read, newest first (issue 0032).
+                    "page_reads": list(r[15] or []),
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
             )

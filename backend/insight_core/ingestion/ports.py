@@ -135,7 +135,8 @@ def slowed_line(data: dict) -> str:
 
 
 def _source_line(data: dict) -> str:
-    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", or why it failed."""
+    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", or why it failed; with
+    "· 2 of 3 pages lost most of their images" when pages read for it did (issue 0032)."""
     name, sources = data["display_name"], data["sources"]
     of_run = f"{sources['done']} of {sources['total']} source{'' if sources['total'] == 1 else 's'}"
     status = data.get("status")
@@ -143,7 +144,10 @@ def _source_line(data: dict) -> str:
         return f"{name}: failed, {(data.get('error') or 'error')[:160]} · {of_run}"
     if status == "unavailable":
         return f"{name}: unavailable, {(data.get('error') or 'not available')[:160]} · {of_run}"
-    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)} · {of_run}"
+    lost = data.get("pages_lost_images") or 0
+    images = (f" · {lost} of {data.get('pages_read') or lost} page{'' if data.get('pages_read') == 1 else 's'}"
+              f" lost most of their images" if lost else "")
+    return f"{name}: {data.get('new', 0)} new of {data.get('fetched', 0)}{images} · {of_run}"
 
 
 # --------------------------------------------------------------------------- catalog

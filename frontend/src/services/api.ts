@@ -371,6 +371,8 @@ export interface SourceHealthRow {
   unavailable_reason?: string | null;
   /** A kind that fetches less without a credential says so (Substack: teasers only). */
   credential_notice?: string | null;
+  /** How its newest page reads went (issue 0032): "Pages from this source lose most of their images (5 of the last 8)", or null. */
+  reading_notice?: string | null;
   status: HealthStatus;
   last_attempt_at: string | null;
   last_success_at: string | null;

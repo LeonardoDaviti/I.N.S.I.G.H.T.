@@ -544,6 +544,18 @@ describe('SourcesConfig', () => {
     expect(await screen.findByText('Road to VR')).toBeInTheDocument();
   });
 
+  it('the sheet says, quietly, when a source’s pages lose their images (issue 0032)', async () => {
+    const notice = 'Pages from this source lose most of their images (5 of the last 8)';
+    const lossy = healthRow({ source_id: 'apple', display_name: 'Apple Newsroom', reading_notice: notice, folders: [] });
+    const fine = healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [] });
+    setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([lossy, fine])) });
+    await userEvent.click(await screen.findByRole('button', { name: 'Apple Newsroom' }));
+    expect(within(await screen.findByRole('dialog')).getByText(notice)).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
+    expect(within(await screen.findByRole('dialog')).queryByText(/lose most of their images/)).not.toBeInTheDocument();
+  });
+
   it('an unavailable source links from its sheet to Connections', async () => {
     const getCredentials = vi.fn().mockResolvedValue(demoCredentials());
     const tg = healthRow({

@@ -97,6 +97,8 @@ function HealthSummary({ row, now, scheduler }: { row: SourceHealthRow; now: Dat
         <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.decision_detail}</p>
       ) : null}
       <ConnectionsLink row={row} />
+      {/* A quiet note: the reader keeps less of this source's pages than they show (issue 0032). */}
+      {row.reading_notice ? <p className="text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">{row.reading_notice}</p> : null}
       {row.last_error ? (
         <p className="text-[0.75rem] text-fg [overflow-wrap:anywhere]">
           <span aria-hidden="true" className="mr-1 font-semibold">×</span>

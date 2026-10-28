@@ -301,6 +301,20 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         await h.run(force=True)
         self.assertEqual(h.progress.phases, ["decided", "source", "saved"])
 
+    async def test_a_source_event_counts_the_pages_that_lost_their_images(self):
+        # Issue 0032: from each post's metadata.page_read, before the save releases the posts.
+        lost = {"page_images": 6, "kept_images": 1, "text_chars": 900, "short_opening": False}
+        fine = {**lost, "kept_images": 6}
+
+        def read_pages(source, limit):
+            return [{"url": f"{source['handle_or_url']}/p{i}", "title": "t", "content": "c",
+                     "metadata": {"page_read": read}} for i, read in enumerate([lost, fine, lost])] + \
+                   [{"url": f"{source['handle_or_url']}/feed", "title": "t", "content": "c"}]
+        h = _Harness([_source("https://a.test/rss")], [_rss_kind(read_pages)])
+        await h.run(force=True)
+        [event] = [data for phase, data in h.progress.events if phase == "source"]
+        self.assertEqual((event["pages_read"], event["pages_lost_images"]), (3, 2))
+
     async def test_each_source_is_saved_before_the_next_fetch_finishes(self):
         first, second = _source("https://first.test/rss", priority=1), _source("https://second.test/rss", priority=2)
         release_second = asyncio.Event()
@@ -427,6 +441,12 @@ class JobProgressLineTests(unittest.TestCase):
     def test_a_saved_source_says_how_many_posts_were_new(self):
         self.assertEqual(self._line(status="healthy", fetched=25, new=3),
                          ("r/viture: 3 new of 25 · 52 of 81 sources", "info"))
+
+    def test_a_source_whose_pages_lost_their_images_says_so(self):
+        self.assertEqual(self._line(status="healthy", fetched=4, new=3, pages_read=3, pages_lost_images=2),
+                         ("r/viture: 3 new of 4 · 2 of 3 pages lost most of their images · 52 of 81 sources", "info"))
+        self.assertEqual(self._line(status="healthy", fetched=4, new=3, pages_read=3, pages_lost_images=0)[0],
+                         "r/viture: 3 new of 4 · 52 of 81 sources")
 
     def test_a_failed_source_says_why(self):
         message, level = self._line(status="error", error="HTTP 403", fetched=0, new=0)

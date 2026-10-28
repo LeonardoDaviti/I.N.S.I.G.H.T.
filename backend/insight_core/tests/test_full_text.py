@@ -17,7 +17,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PostsRepository
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PAGE_READ_KEY, PostsRepository
 from insight_core.ingestion import full_text
 from insight_core.ingestion.kinds import KindRegistry, parsing
 from insight_core.ingestion.kinds.generic_rss import GenericRssKind
@@ -267,6 +267,10 @@ class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
         [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
         self.assertIn("Every paragraph of the article", post["content"])
         self.assertTrue(post["metadata"][FULL_TEXT_FLAG])
+        # How well the page was read (issue 0032).
+        self.assertEqual(post["metadata"][PAGE_READ_KEY], {"page_images": 0, "kept_images": 0,
+                                                          "text_chars": len(post["content"]), "short_opening": False})
+        self.assertEqual(full_text.pages_losing_images([post]), (1, 0))
 
     async def test_pages_of_one_feed_are_read_apart(self):
         http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "One."), ("https://news.example.com/b", "Two.")),
@@ -369,6 +373,16 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(metadata[FULL_TEXT_FLAG])
         self.assertEqual(metadata["feed"], "again")
 
+    def test_a_kept_body_keeps_how_its_page_was_read(self):
+        url = "https://news.example.com/read"
+        read = {"page_images": 6, "kept_images": 1, "text_chars": 2000, "short_opening": False}
+        post_id = self._upsert({"url": url, "content": ARTICLE_TEXT, "metadata": {FULL_TEXT_FLAG: True, PAGE_READ_KEY: read}})
+        self._upsert({"url": url, "content": "Short summary.", "metadata": {"feed": "again"}})
+        self.assertEqual(self._row(post_id)[1][PAGE_READ_KEY], read)
+        plain = self._upsert({"url": "https://news.example.com/plain-read", "content": "Body."})
+        self._upsert({"url": "https://news.example.com/plain-read", "content": "Body again."})
+        self.assertNotIn(PAGE_READ_KEY, self._row(plain)[1])
+
     def test_a_feed_body_still_updates_a_post_never_read_from_its_page(self):
         url = "https://news.example.com/plain"
         post_id = self._upsert({"url": url, "content": "Old body."})
@@ -385,6 +399,7 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Every paragraph of the article", content)
         self.assertTrue(metadata[FULL_TEXT_FLAG])
         self.assertEqual(metadata[FULL_TEXT_CHECKED], "2026-10-12T00:00:00+00:00")
+        self.assertEqual(metadata[PAGE_READ_KEY]["text_chars"], len(content))
 
         again = await self._repair(FakeHttp())
         self.assertEqual(again["candidates"], 0)

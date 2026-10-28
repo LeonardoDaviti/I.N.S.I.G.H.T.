@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
+from insight_core.db.repo_posts import PAGE_READ_KEY
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
@@ -241,7 +242,7 @@ def _title(page: str, url: str) -> str:
 
 def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime]) -> Optional[Dict[str, Any]]:
     """The post the page at url is, or None when it is no article (see the module docstring)."""
-    content_html = parsing.extract_article_html(page, base_url=url)
+    content_html, fidelity = parsing.read_article_page(page, base_url=url)
     content = parsing.strip_html(content_html)
     date = page_date(page)
     if not content or (date is None and parsing.meta_content(page, "og:type").lower() != "article"):
@@ -260,7 +261,7 @@ def post_from(page: str, source_url: str, url: str, lastmod: Optional[datetime])
         "date": date or lastmod or datetime.now(timezone.utc),
         "media_urls": media_urls,
         "categories": [],
-        "metadata": {"adapter": PageWatchKind.adapter_type},
+        "metadata": {"adapter": PageWatchKind.adapter_type, PAGE_READ_KEY: fidelity},
     }
 
 
