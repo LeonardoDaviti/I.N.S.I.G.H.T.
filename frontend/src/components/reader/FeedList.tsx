@@ -7,7 +7,7 @@ import { useFeed, type FeedFixture } from '../../hooks/useFeed';
 import { usePrefetchPost } from '../../hooks/usePost';
 import { useReaderMutations, type UnreadChange } from '../../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
-import { useShortcutPreference, type FeedDensity } from '../../hooks/useShortcutPreference';
+import { useShortcutPreference } from '../../hooks/useShortcutPreference';
 import { feedNavigation, initialNavState, type NavAction, type NavIntent } from '../../lib/feedNavigation';
 import { postHref, type FeedContext } from '../../lib/feedContext';
 import { errorMessage } from '../../lib/apiError';
@@ -26,7 +26,6 @@ export interface FeedListProps {
   scope: string;
   filter: FeedFilter;
   view: FeedView;
-  density: FeedDensity;
   fixture?: FeedFixture | null;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -49,7 +48,7 @@ const PREFETCH_DELAY_MS = 150;
  * more" button). Results are announced in the page's live region.
  */
 function FeedList({
-  scope, filter, view, density, fixture = null, emptyTitle, emptyDescription, emptyAction,
+  scope, filter, view, fixture = null, emptyTitle, emptyDescription, emptyAction,
   helpOpen, onHelpOpenChange, onUnreadDelta,
 }: FeedListProps) {
   const feed = useFeed({ scope, filter, view, fixture });
@@ -264,7 +263,6 @@ function FeedList({
 
   // ---- render ----
   const shared = {
-    density,
     selectedId,
     onSelect: select,
     onOpen: openItem,
@@ -299,7 +297,7 @@ function FeedList({
         ) : (
           // An ARIA feed owns articles only: the day headers are drawn for the eye
           // (aria-hidden) and each row reads its own day out with its time.
-          <div role="feed" aria-label="Posts" aria-busy={isFetchingNextPage} className={`flex flex-col ${density === 'compact' ? 'gap-1' : 'gap-2'}`}>
+          <div role="feed" aria-label="Posts" aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
             {items.map((item, index) => (
               <Fragment key={item.id}>
                 {days[index].first ? (

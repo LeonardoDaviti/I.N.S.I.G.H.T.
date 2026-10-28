@@ -65,12 +65,6 @@ export function useShortcutPreference(): [boolean, (enabled: boolean) => void] {
   return [value === 'on', setEnabled];
 }
 
-export type FeedDensity = 'comfortable' | 'compact';
-
-export function useDensityPreference(): [FeedDensity, (density: FeedDensity) => void] {
-  return useStoredChoice('insight.reader.density', ['comfortable', 'compact'] as const, 'comfortable');
-}
-
 export type ReadingFlow = 'continuous' | 'single';
 
 /** How the post page goes on after a post: the next one follows below, or one at a time (issue 0014). */

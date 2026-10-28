@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 
 import type { FeedGroup as FeedGroupData, FeedItem as FeedItemData } from '../../services/api';
-import type { FeedDensity } from '../../hooks/useShortcutPreference';
 import { scopePath } from '../../lib/feedContext';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { formatCount, middleTruncate, plural } from '../../lib/format';
@@ -9,7 +8,6 @@ import FeedItem from './FeedItem';
 
 export interface FeedGroupProps {
   group: FeedGroupData;
-  density: FeedDensity;
   selectedId: string | null;
   /** The id that carries tabIndex 0 (the selection, or the first item of the list). */
   tabbableId?: string | null;
@@ -22,7 +20,7 @@ export interface FeedGroupProps {
 }
 
 /** One source in the by-source view: up to 3 posts, then "N more from <source>". */
-export default function FeedGroup({ group, density, selectedId, tabbableId, itemHref, now, ...handlers }: FeedGroupProps) {
+export default function FeedGroup({ group, selectedId, tabbableId, itemHref, now, ...handlers }: FeedGroupProps) {
   const name = sourceLabel(group.source_display_name);
   const more = Math.max(0, group.count - group.items.length);
   const sourceHref = scopePath(`source:${group.source_id}`);
@@ -35,12 +33,11 @@ export default function FeedGroup({ group, density, selectedId, tabbableId, item
         </h2>
         <span className="shrink-0 whitespace-nowrap text-[0.8125rem] text-fg-3 tabular-nums">{plural(Math.max(group.count, group.items.length), 'post')}</span>
       </header>
-      <div className={`flex flex-col ${density === 'compact' ? 'gap-1' : 'gap-2'}`}>
+      <div className={"flex flex-col gap-2"}>
         {group.items.map((item) => (
           <FeedItem
             key={item.id}
             item={item}
-            density={density}
             selected={item.id === selectedId}
             tabbable={item.id === tabbableId}
             href={itemHref(item)}

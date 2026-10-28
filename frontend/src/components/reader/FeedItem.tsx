@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Circle, CircleCheck, PlayCircle, Star } from 'lucide-react';
 
 import type { FeedItem as FeedItemData } from '../../services/api';
-import type { FeedDensity } from '../../hooks/useShortcutPreference';
 import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
@@ -26,7 +25,6 @@ const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center ro
 
 export interface FeedItemProps {
   item: FeedItemData;
-  density: FeedDensity;
   selected: boolean;
   /** The one item in the list with tabIndex 0 (roving tabindex). */
   tabbable: boolean;
@@ -60,21 +58,20 @@ export interface FeedItemProps {
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
+  item, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
   const isStarred = Boolean(item.starred_at);
-  const compact = density === 'compact';
   const titleId = `${feedItemDomId(item.id)}-title`;
   // The API's title already falls back to the body (display_title), as on the post page.
   const title = item.title?.trim() || 'Untitled post';
   const length = lengthLabel(item);
   // The feed's own order key (published, else fetched), so the column and the day headers agree.
   const time = item.sort_at ?? item.published_at;
-  const showThumb = !compact && item.media_thumb && !thumbFailed;
+  const showThumb = item.media_thumb && !thumbFailed;
   const excerpt = item.excerpt?.trim();
-  const showExcerpt = !compact && excerpt && excerpt !== title && !title.startsWith(excerpt.slice(0, 40));
+  const showExcerpt = excerpt && excerpt !== title && !title.startsWith(excerpt.slice(0, 40));
 
   const selectFromClick = (event: MouseEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest('a, button')) return;
@@ -109,7 +106,7 @@ function FeedItem({
       data-read={isRead ? 'true' : 'false'}
       onClick={selectFromClick}
       onFocus={(event) => { if (event.target === event.currentTarget) onSelect(item.id); }}
-      className={`reader-row group relative flex scroll-mt-40 scroll-mb-24 items-start gap-3 rounded-md border pl-3 pr-1.5 sm:gap-4 sm:pl-4 ${compact ? 'py-1.5' : 'py-2'} outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg ${selected ? 'border-fg-3 bg-surface' : 'border-line hover:border-line-strong'}`}
+      className={`reader-row group relative flex scroll-mt-40 scroll-mb-24 items-start gap-3 rounded-md border pl-3 pr-1.5 sm:gap-4 sm:pl-4 py-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg ${selected ? 'border-fg-3 bg-surface' : 'border-line hover:border-line-strong'}`}
     >
       <time
         dateTime={time}
@@ -119,10 +116,10 @@ function FeedItem({
         {dayLabel && dateColumn === 'time' ? <span className="sr-only">{dayLabel}, </span> : null}
         {timeLabel}
       </time>
-      <div className={`min-w-0 flex-1 ${compact ? 'sm:flex sm:items-baseline sm:gap-3' : ''}`}>
+      <div className="min-w-0 flex-1">
         <h3
           dir="auto"
-          className={`line-clamp-2 min-w-0 text-[0.9375rem] leading-6 tracking-[-0.011em] [overflow-wrap:anywhere] ${compact ? 'sm:flex-1' : ''} ${isRead ? 'font-normal text-fg-2' : 'font-semibold text-fg'}`}
+          className={`line-clamp-2 min-w-0 text-[0.9375rem] leading-6 tracking-[-0.011em] [overflow-wrap:anywhere] ${isRead ? 'font-normal text-fg-2' : 'font-semibold text-fg'}`}
         >
           <Link
             id={titleId}
@@ -133,7 +130,7 @@ function FeedItem({
             {title}
           </Link>
         </h3>
-        <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
+        <p className="flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums">
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
           {showSource ? (
@@ -142,7 +139,7 @@ function FeedItem({
               title={item.source_display_name}
               className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3"
             >
-              {middleTruncate(source, compact ? 32 : 56)}
+              {middleTruncate(source, 56)}
             </TextLink>
           ) : null}
           {length ? (
