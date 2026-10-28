@@ -24,6 +24,7 @@ class GwernAdapter(BaseSourceAdapter):
 
     adapter_type = "gwern_site"
     available_basis = "estimate"   # sitemap candidates; a few may hold no article
+    watches = True                 # his pages are re-read for edits when the owner asks (issue 0039)
     HOSTS = {"gwern.net", "www.gwern.net"}
     PAGE_SIZE = 20
     PAGE_DELAY_SECONDS = 1
@@ -130,7 +131,12 @@ class GwernAdapter(BaseSourceAdapter):
             html, _ = await self.http.get_text(url)
         except Exception:
             return None
+        return self.page_post(source, url, html, listed_date)
 
+    def page_post(self, source: Dict[str, Any], url: str, html: str,
+                  listed_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The post a page's HTML is (its own dates and dcterms.modified, read by change
+        watching too), or None when it holds no text."""
         canonical_url = self._extract_canonical_url(html) or url
         title = (
             parsing.meta_content(html, "citation_title")

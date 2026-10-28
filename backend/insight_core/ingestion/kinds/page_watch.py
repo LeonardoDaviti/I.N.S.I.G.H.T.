@@ -27,6 +27,11 @@ A live fetch asks conditionally (issue 0044): when the listing page and every si
 last fetch read answer 304, nothing changed and the fetch is no posts. Validators are kept only
 when every address read gave some and the fetch left no candidate unread (otherwise the next
 fetch must look again, so it reads in full).
+
+Its stored pages can be watched for changes (issue 0039, page_changes): page_post reads one
+again as a fetch does, and article_post keeps the date the page says it changed (metadata
+modified). A post found only in the sitemap is marked as backlog (repo_posts.BACKLOG_KEY): it is
+never "new to you", so a fetch reading the site's history does not fill the top of the feed.
 """
 from __future__ import annotations
 
@@ -44,7 +49,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
-from insight_core.db.repo_posts import PAGE_READ_KEY
+from insight_core.db.repo_posts import BACKLOG_KEY, PAGE_READ_KEY
 from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
@@ -328,7 +333,9 @@ def article_post(page: str, source_url: str, url: str, date: Optional[datetime],
         "date": date or datetime.now(timezone.utc),
         "media_urls": media_urls,
         "categories": [],
-        "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity},
+        # When the page says it last changed: what a watched page is checked by (issue 0039).
+        "metadata": {"adapter": adapter, PAGE_READ_KEY: fidelity,
+                     **({"modified": modified} if (modified := parsing.page_modified(page)) else {})},
     }
 
 
@@ -396,6 +403,7 @@ async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
 class PageWatchKind(BaseSourceAdapter):
     adapter_type = "page_watch"
     conditional = True                  # fetch_latest takes memory= (issue 0044)
+    watches = True                      # its stored pages can be re-read for changes (issue 0039)
     available_basis = "estimate"        # discovered candidate pages; some may be no post
     PAGE_SIZE = 1                       # one article page per archive page: the host gate spaces them
     PAGE_DELAY_SECONDS = 2
@@ -439,6 +447,7 @@ class PageWatchKind(BaseSourceAdapter):
                   if self.stored_urls and candidates else set())
         posts: List[Dict[str, Any]] = []
         reads = skips = 0
+        listed = set(found.listed)
         for url in (url for url in candidates if url not in stored):
             if len(posts) >= limit or skips >= SKIP_READS:
                 if memory is not None:
@@ -453,8 +462,13 @@ class PageWatchKind(BaseSourceAdapter):
                 skips += 1
                 SKIPPED[url] = time.monotonic() + FAILED_RETRY_S if page is None else math.inf
             else:
+                if url not in listed:
+                    post[BACKLOG_KEY] = True   # from the sitemap: never "new to you" (issue 0039)
                 posts.append(post)
         return posts
+
+    def page_post(self, source: Source, url: str, page: str) -> Optional[Dict[str, Any]]:
+        return post_from(page, str(source["handle_or_url"]), url, None)
 
     async def inspect(self, source: Source) -> Inspection:
         found = await self._discover(source)

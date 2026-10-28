@@ -124,6 +124,20 @@ describe('FeedList', () => {
     expect(untouched.querySelector('[data-reading-progress]')).toBeNull();
   });
 
+  it('a changed page says what changed, a page new to you when it was published (issue 0039)', async () => {
+    const now = new Date();
+    const update = { at: now.toISOString(), words: 9000, words_added: 1400, words_removed: 0, sections_added: 2, sections_removed: 0 };
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Changed essay', sort_at: now.toISOString(), published_at: '2019-05-17T00:00:00Z', update }),
+      feedItem({ id: ID(2), title: 'Found late', sort_at: now.toISOString(), published_at: '2025-09-14T00:00:00Z' }),
+      feedItem({ id: ID(3), title: 'Plain post' }),
+    ])) });
+    const row = async (title: string) => (await screen.findByRole('link', { name: title })).closest('article') as HTMLElement;
+    expect(within(await row('Changed essay')).getByText('updated +2 sections, +1,400 words')).toBeInTheDocument();
+    expect(within(await row('Found late')).getByText('published Sep 14 ’25')).toBeInTheDocument();
+    expect((await row('Plain post')).querySelector('[data-page-note]')).toBeNull();
+  });
+
   it('coming back from a post selects and focuses the post read last', async () => {
     rememberSelection(ID(2));
     setup();

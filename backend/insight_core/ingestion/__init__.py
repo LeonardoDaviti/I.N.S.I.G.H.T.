@@ -46,6 +46,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     from insight_core.ingestion.kinds import KindRegistry
     from insight_core.ingestion.ports import (
         DbFetchStateStore,
+        DbPageWatchStore,
         DbPostSaver,
         DbSourceCatalog,
         PgAdvisoryRunLock,
@@ -82,6 +83,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
             http=KindHttp(timeout=5), registry=registry, clock=clock,
             store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),
         ),
+        watch=DbPageWatchStore(db_url),
     )
 
 

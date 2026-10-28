@@ -113,6 +113,8 @@ function Reader({ scope }: { scope: string }) {
   const stopped = activity?.stopped ?? false;
   const title = scopeLabel(scope, folders.data, sourceNames);
   const scopeCount = scopeUnreadCount(counts.data, scope);
+  // One source that watches its pages for changes offers its Updates (issue 0039).
+  const updates = oneSource && Boolean(health.data?.rows.find((row) => `source:${row.source_id}` === scope)?.watch_changes);
 
   const currentKey = useMemo(() => feedKey(scope, filter, view, fixture?.name), [filter, fixture?.name, scope, view]);
   const newPosts = useNewPosts(scopeCount, JSON.stringify(currentKey), scope);
@@ -162,6 +164,9 @@ function Reader({ scope }: { scope: string }) {
     if (filter === 'starred') {
       return { title: 'No kept posts', description: 'Press s on a post, or the star on a read one, to keep it here.', action: { label: 'Show all', onClick: showAll } };
     }
+    if (filter === 'updated') {
+      return { title: 'No updated pages yet', description: 'A page that changes comes back here with what changed.', action: { label: 'Show all', onClick: showAll } };
+    }
     if (scope === 'all') {
       return { title: 'No posts yet', description: 'Add a source to start reading. Ingestion collects its posts.', action: { label: 'Add a source', href: '/settings/sources' } };
     }
@@ -175,7 +180,7 @@ function Reader({ scope }: { scope: string }) {
 
   // The unread count says nothing about the Kept or Later lists; the Main feed's Later says what it costs.
   const later = laterSummary(counts.data);
-  let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' ? `${formatCount(scopeCount)} unread` : null;
+  let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' && filter !== 'updated' ? `${formatCount(scopeCount)} unread` : null;
   if (filter === 'later') subtitle = scope === 'all' ? later : null;
   // On the Main feed, one quiet line leads to Later while it holds anything.
   const laterLine = scope === 'all' && filter !== 'later' && later ? later : null;
@@ -197,6 +202,7 @@ function Reader({ scope }: { scope: string }) {
             subtitle={subtitle}
             filter={filter}
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
+            updates={updates || filter === 'updated'}
             view={view}
             onViewChange={(value) => setParam('view', value === 'stream' ? null : value)}
             onOpenNav={() => setNavOpen(true)}

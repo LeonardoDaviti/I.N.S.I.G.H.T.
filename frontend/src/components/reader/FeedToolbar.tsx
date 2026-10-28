@@ -15,6 +15,8 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'starred', label: 'Kept' },
   { value: 'all', label: 'All' },
 ];
+/** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
+const UPDATED = { value: 'updated' as const, label: 'Updated' };
 const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
@@ -46,6 +48,8 @@ export interface FeedToolbarProps {
   pill?: ReactNode;
   /** Search what is on screen (issue 0040): the field's Enter, with its words. */
   onSearch: (query: string) => void;
+  /** Offer Show Updated: one source that watches its pages for changes (issue 0039). */
+  updates?: boolean;
 }
 
 /**
@@ -59,7 +63,7 @@ export interface FeedToolbarProps {
  */
 export default function FeedToolbar({
   title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
-  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch,
+  onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
   return (
@@ -72,7 +76,7 @@ export default function FeedToolbar({
       field={<SearchField label={`Search ${title}`} onSearch={onSearch} className="w-32 sm:w-48 lg:w-56" />}
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
-        <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
+        <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />
         {oneSource ? null : <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />}
         {oneSource ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
         {pill ? <div className="ml-auto">{pill}</div> : null}

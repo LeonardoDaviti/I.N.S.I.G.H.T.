@@ -202,6 +202,9 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "credential_notice": _credential_notice(kind),
         # How its newest page-read posts were read (page watch, full text): None, or a note.
         "reading_notice": reading_notice(source.get("page_reads")),
+        # Watch for changes (issue 0039): whether its kind can re-read its pages, and whether it does.
+        "watchable": bool(getattr(kind, "watches", False)),
+        "watch_changes": bool(getattr(kind, "watches", False) and settings.get("watch_changes")),
         "status": health_status(enabled, decision, failures, state),
         "last_attempt_at": iso(state.last_attempt_at if state else None),
         "last_success_at": iso(state.last_success_at if state else None),

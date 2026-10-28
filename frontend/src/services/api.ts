@@ -8,6 +8,8 @@ export type { Envelope };
 export interface SourceSettings {
   display_name?: string;
   fetch_delay_seconds?: number;
+  /** Watch for changes (issue 0039): re-read its stored pages now and then; off by default. */
+  watch_changes?: boolean;
   archive?: Record<string, unknown>;
 }
 
@@ -79,8 +81,8 @@ export interface ReaderState {
 
 // ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
-/** `starred` is Keep, shown as "Kept" (issue 0022). */
-export type FeedFilter = 'all' | 'unread' | 'later' | 'starred';
+/** `starred` is Keep, shown as "Kept" (issue 0022); `updated`, a watched source's changed pages (issue 0039). */
+export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated';
 export type FeedView = 'stream' | 'by_source';
 
 export interface FeedItem {
@@ -96,8 +98,15 @@ export interface FeedItem {
   /** Search results only (issue 0040): the matching line, its words marked; null when the
    *  words matched only the title or the source's name. */
   snippet?: SnippetPart[] | null;
+  /** A watched page's last meaningful change (issue 0039); null or absent when it never changed. */
+  update?: PageUpdate | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
+/** What changed when a watched page was last re-read (posts.metadata.page_update). */
+export interface PageUpdate {
+  at: string; words: number; words_added: number; words_removed: number;
+  sections_added: number; sections_removed: number;
+}
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
 export interface FeedGroup {
   source_id: string; source_display_name: string; platform: string;
@@ -420,6 +429,9 @@ export interface SourceHealthRow {
   credential_notice?: string | null;
   /** How its newest page reads went (issue 0032): "Pages from this source lose most of their images (5 of the last 8)", or null. */
   reading_notice?: string | null;
+  /** Its kind can re-read its pages for changes, and whether the owner switched that on (issue 0039). */
+  watchable?: boolean;
+  watch_changes?: boolean;
   status: HealthStatus;
   last_attempt_at: string | null;
   last_success_at: string | null;

@@ -35,6 +35,18 @@ describe('PostDetailPage header', () => {
     expect(within(header).getByRole('link', { name: 'settings' })).toHaveAttribute('href', '/settings/sources?source=src-1');
   });
 
+  it('a watched page says, calmly, when it changed, what changed and its own status (issue 0039)', async () => {
+    render(baseApi(rssPost({ metadata: {
+      modified: '2025-10-21', status: 'finished', confidence: 'highly likely',
+      page_update: { at: '2025-10-22T08:00:00Z', words: 9000, words_added: 1400, words_removed: 0, sections_added: 2, sections_removed: 0 },
+    } })));
+    const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    const header = heading.closest('header')!;
+    expect(within(header).getByText(/^updated Oct 21 ’25/)).toHaveAttribute('dateTime', '2025-10-21T00:00:00.000Z');
+    expect(header.querySelector('[data-page-state]')).toHaveTextContent(
+      'Updated Oct 22 ’25: +2 sections, +1,400 words · finished · highly likely');
+  });
+
   it('a post with no source id keeps its source name as plain text', async () => {
     render(baseApi(rssPost({ source_id: undefined })));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });

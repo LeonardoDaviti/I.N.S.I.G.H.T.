@@ -50,6 +50,22 @@ def parse_datetime_value(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+# Where a page says when it was last changed, in the order read (issue 0039).
+MODIFIED_METAS = ("dcterms.modified", "article:modified_time", "og:updated_time", "last-modified")
+JSON_LD_MODIFIED_RE = re.compile(r'"dateModified"\s*:\s*"([^"]+)"')
+
+
+def page_modified(page: Optional[str]) -> Optional[str]:
+    """When the page says it last changed (meta dcterms.modified, article:modified_time,
+    og:updated_time, last-modified, then JSON-LD dateModified), as an ISO string so two reads
+    compare equal; None when it says nothing readable. Only a page's head is needed."""
+    json_ld = JSON_LD_MODIFIED_RE.search(page or "")
+    for value in (*(meta_content(page, name) for name in MODIFIED_METAS), json_ld and json_ld.group(1)):
+        if value and (date := parse_datetime_value(value.strip())) is not None:
+            return date.isoformat()
+    return None
+
+
 def local_name(tag: str) -> str:
     return tag.split("}", 1)[1] if "}" in tag else tag
 

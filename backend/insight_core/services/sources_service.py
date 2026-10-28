@@ -194,8 +194,11 @@ class SourcesService:
         """The settings a user may set, the numbers parsed. ValueError for a value that is not a number.
 
         Posts per fetch is not one of them: it is the kind's own number (issue 0027)."""
-        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "page_watch"}
+        valid_keys = {"display_name", "fetch_delay_seconds", "priority", "page_watch", "watch_changes"}
         validated = {k: v for k, v in settings.items() if k in valid_keys}
+        # Watch for changes (issue 0039): re-read its stored pages now and then. Off by default.
+        if "watch_changes" in validated and not isinstance(validated["watch_changes"], bool):
+            raise ValueError("watch_changes must be true or false")
         if "page_watch" in validated:
             validated["page_watch"] = _valid_page_watch(validated["page_watch"])
         for key in ("fetch_delay_seconds", "priority"):

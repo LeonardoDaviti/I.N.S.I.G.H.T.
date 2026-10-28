@@ -16,6 +16,7 @@ from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
 from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
+from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
 
 # metadata key of a body read from the article page (ingestion/full_text.py)
 FULL_TEXT_FLAG = "full_content_fetched"
@@ -52,12 +53,25 @@ def _transaction_is_poisoned(conn) -> bool:
     return conn.info.transaction_status == _PQ_INERROR
 
 
+# A post dict's key a kind sets on a page it read from its site's backlog (page watch's sitemap),
+# not from the site's own list of what is new: such a page is never "new to you" (issue 0039).
+BACKLOG_KEY = "_backlog"
+# A page first seen this long after its date is new to you: it sorts at when it was first seen.
+NEW_TO_YOU_AFTER = "2 days"
+
+
 @dataclass(frozen=True)
 class PostDraft:
-    """A normalized post dict (url, title, content, date, ...) before it is saved."""
+    """A normalized post dict (url, title, content, date, ...) before it is saved.
+
+    watch: its source watches its pages for changes (issue 0039): the text's hash is kept and
+    a meaningful change brings the post back. surface: a page-based source's live fetch, after
+    its first: a new post first seen long after its date sorts at when it was first seen."""
 
     source_id: str
     post: dict
+    watch: bool = False
+    surface: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,7 @@ class PostSaveFailure:
 class SaveBatchResult:
     inserted_ids: List[str] = field(default_factory=list)
     updated_ids: List[str] = field(default_factory=list)
+    resurfaced_ids: List[str] = field(default_factory=list)   # watched posts that changed meaningfully
     failures: List[PostSaveFailure] = field(default_factory=list)
     by_source: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
@@ -95,6 +110,7 @@ class SaveBatchResult:
         """Add another save's result to this one (the runner saves one source at a time)."""
         self.inserted_ids.extend(other.inserted_ids)
         self.updated_ids.extend(other.updated_ids)
+        self.resurfaced_ids.extend(other.resurfaced_ids)
         self.failures.extend(other.failures)
         for source_id, counts in other.by_source.items():
             for key, delta in counts.items():
@@ -112,6 +128,7 @@ class PostsRepository:
 
         self.logger = get_component_logger("repo_posts")
         self.logger.info(f"PostsRepository initialized")
+        self.watch = PageWatchRepository()
 
     # ===============================
     # WRITE OPERATIONS
@@ -447,7 +464,9 @@ class PostsRepository:
         # feed brings its summary again: the page is read once, when the post is new.
         keep = (f"({row}metadata ? '{FULL_TEXT_FLAG}' AND NOT "
                 f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{FULL_TEXT_FLAG}')")
-        metadata = metadata_expr or f"COALESCE(%(metadata)s::jsonb, {row}metadata)"
+        # The last meaningful change (issue 0039) is the saver's, not the kind's: a re-fetch keeps it.
+        metadata = (f"({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
+                    f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}'))")
         assignments: List[str] = []
         if set_url:
             assignments.append("url = %(url)s")
@@ -535,7 +554,9 @@ class PostsRepository:
             for index, draft in enumerate(drafts, start=1):
                 post = dict(draft.post)
                 post.pop("_source_id", None)
+                backlog = bool(post.pop(BACKLOG_KEY, False))
                 try:
+                    old = self._stored_text(cur, post["url"]) if draft.watch else None
                     post_id, was_inserted = self.upsert_post(cur, post, draft.source_id)
                 except Exception as exc:
                     result.failures.append(PostSaveFailure(post.get("url"), draft.source_id, "upsert", str(exc)))
@@ -552,6 +573,9 @@ class PostsRepository:
                 else:
                     post_id = str(post_id)
                     window.append((draft, post_id, was_inserted))
+                    if self._after_save(cur, draft, post, post_id, was_inserted, old,
+                                        surface=draft.surface and not backlog):
+                        result.resurfaced_ids.append(post_id)
                     if was_inserted:
                         result.inserted_ids.append(post_id)
                         result._count(draft.source_id, "inserted")
@@ -564,6 +588,34 @@ class PostsRepository:
         commit()
         return result
 
+    def _stored_text(self, cur: Cursor, url: str) -> Optional[Dict[str, Any]]:
+        """A stored post's text before a watched draft overwrites it, or None (a new post)."""
+        cur.execute("SELECT content, content_html FROM posts WHERE url = %s", (url,))
+        row = cur.fetchone()
+        return {"content": row[0], "content_html": row[1]} if row else None
+
+    def _after_save(self, cur: Cursor, draft: PostDraft, post: Dict[str, Any], post_id: str,
+                    was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool) -> bool:
+        """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
+        date sorts at when it was first seen (surface); a watched post keeps its text's hash and
+        comes back when it changed meaningfully. In its own savepoint: a failure here is logged
+        and costs neither the post nor the batch. Returns whether the post came back."""
+        if not (draft.watch or (surface and was_inserted)):
+            return False
+        try:
+            with self._savepoint(cur, "insight_after_save"):
+                if surface and was_inserted:
+                    cur.execute(
+                        f"""UPDATE posts SET surfaced_at = fetched_at
+                             WHERE id = %s::uuid AND published_at < fetched_at - interval '{NEW_TO_YOU_AFTER}'""",
+                        (post_id,),
+                    )
+                if draft.watch:
+                    return self.watch.saved(cur, post_id, draft.source_id, post, None if was_inserted else old)
+        except Exception as exc:  # noqa: BLE001 - the post is saved; only its watch state is not
+            self.logger.error("Could not record the watch state of post %s: %s", post_id, exc)
+        return False
+
     def _discard(self, result: SaveBatchResult, window: List[Tuple[PostDraft, str, bool]]) -> None:
         """Move every draft saved since the last commit into failures as `discarded`."""
         if not window:
@@ -571,6 +623,7 @@ class PostsRepository:
         lost_ids = {post_id for _, post_id, _ in window}
         result.inserted_ids = [i for i in result.inserted_ids if i not in lost_ids]
         result.updated_ids = [i for i in result.updated_ids if i not in lost_ids]
+        result.resurfaced_ids = [i for i in result.resurfaced_ids if i not in lost_ids]
         for draft, _post_id, was_inserted in window:
             result._count(draft.source_id, "inserted" if was_inserted else "updated", -1)
             result._count(draft.source_id, "failed")

@@ -233,9 +233,19 @@ class BaseKind:
     archive_refused: str | None = None
     # fetch_latest takes memory= (an http.AddressMemory) and fetches conditionally (issue 0044).
     conditional: bool = False
+    # Its posts are pages read from a site's own lists (page watch, the site adapters), not a
+    # feed's items: a new one first seen long after its date is new to you (issue 0039).
+    page_based: bool = False
+    # Its stored pages can be re-read for changes (page_post), when the owner switches it on.
+    watches: bool = False
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError
+
+    def page_post(self, source: Source, url: str, page: str) -> Optional[dict]:
+        """The post the page html at url is, read the way a fetch reads it; None when it is no
+        article. Kinds that set watches implement it (issue 0039)."""
+        return None
 
     def host_key(self, source: Source) -> str:
         return source_host_key(source)
