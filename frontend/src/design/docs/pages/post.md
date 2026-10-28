@@ -6,7 +6,7 @@ states: article, media, long-title, headings, missing-title, loading, error
 
 # Post
 
-Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`, `PostNav`), `components/ui/MarkdownRenderer.tsx`. The title comes from the backend's `display_title`.
+Code: `pages/PostDetailPage.tsx`, `components/post/*` (`PostActions`, `PostImages`, `PostNav`, `ReadingSettingsButton`, `ReadingSettingsPanel`), `lib/readingSettings.ts`, `components/ui/MarkdownRenderer.tsx`. The title comes from the backend's `display_title`.
 
 ## Purpose
 
@@ -19,6 +19,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - Dev-only `?data=worst|empty|missing|slow` swaps in fixtures.
 - The post loads through `usePost`, so a post the feed prefetched opens from cache with no skeleton.
 - **Flow** (`insight.reader.flow`, chosen in the reader toolbar, `continuous` by default): continuous needs a `?ctx=`; without one a post stands alone.
+- **Reading settings** (issue 0045, decision 033): font, size and width of the post text, per device (`insight.reader.font`, `.size`, `.width` in local storage, no backend). Set in the Aa popover here or from ⌘K anywhere.
 - **Read:** one at a time, opening a post marks it read. Continuous, a post is read once its end has passed the top half of the screen (an end already above the midline counts at once), the first post too. The feed's cached rows and counts follow.
 - **Finished** (decision 029): in either flow, once the post's end passes the top half of the screen (the same moment), a post in Later leaves it; so does marking it read (`m`). Opening it does not, even one at a time, where opening marks it read.
 - **Reading time** runs while the post is current and the tab is visible, and is sent when it stops being current (1 s or more).
@@ -26,7 +27,8 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Anatomy
 
-- **Post navigation** (`PostNav`, ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next. It is a sticky band under the top bar (`reader-material`, `top-topbar`, like the reader toolbar), on one line at every width, so leaving or moving on never needs a scroll up. It sticks without animation.
+- **Post navigation** (`PostNav`, ghost buttons, `sm`): Back / Back to feed; with a context, Previous and Next; at its right **Aa**, the reading settings. It is a sticky band under the top bar (`reader-material`, `top-topbar`, like the reader toolbar), on one line at every width (under 360px Previous and Next keep only their arrows, their words stay their names), so leaving or moving on never needs a scroll up. It sticks without animation.
+- **Aa popover** (not modal, 19rem, the raised overlay): three slash choices, Font `sans / serif`, Size `90% / 95% / 100% / 110% / 125%`, Width `narrow / standard / wide`. Each choice applies at once to the post behind it, the live preview. Its code loads on first open.
 - **After the post:** the same actions once more at `lg` (a tap target), below a hairline at the end of the column. Continuous, they come only after the last post of the feed, under "You’re all caught up" (Show unread) or "You’ve reached the end" (Later, Kept or All, as the list says).
 - **The stream** (continuous): near the end of the last post the feed's next post joins below (newest first, the same scope and filter, as Next), after a plain `border-strong` rule (its own header names its source and title). Only the first post's byline carries ` / settings`; a post that follows reads source / date (decision 027). Each post keeps its own actions, since star and copy act on that post. The post crossing the screen's midline is current: the URL follows it (replaced), and the sticky navigation, `m`, `s`, `l` and the tab title act on it. At most three posts are mounted (previous, current, next); one further away keeps its height. Room of half a screen under the last post lets it reach the midline. Images load lazily as they come near.
 - **Header:** one line of byline in `small` `text-2`: the source name (a quiet link to its feed, `/read/source/<id>`), ` / settings` in `text-3` (a quiet link to `/settings/sources?source=<id>`, P8), ` / date` (no platform: the source says it, P6; this year's dates without the year, the full date and time in its tooltip, decision 028) (each "/ part" wraps as one), then ` / updated Jun 23` when the page says it changed on another day (decision 032). Under the title, one `small` `text-3` line only where there is something to say: `Updated Nov 3: +2 sections, +1,400 words` for a watched page that changed, and the status and confidence a page states (`finished · highly likely`), never a version history. At its right the actions, icon-only with tooltips (P5): ↗ open original (when there is a URL), 💬 open discussion (when the feed names one, e.g. the Hacker News thread), 🕓 read later and ☆ keep (both offered whatever the read state; decision 029), ⧉ copy text (✓ "Copied" for a moment).
@@ -38,6 +40,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **YouTube posts:** the player, a line of duration / views / likes / transcript source, a "Watch progress" card (progress bar, position slider, Save progress, Mark complete), then the transcript in collapsed blocks with "Set progress here" and "Open at m:ss".
 - **Reddit posts:** a "Discussion" section with the stored comments, only when some are stored; there is no "Fetch comments": Reddit refuses it (issue 0012), and its backend is removed (issue 0029).
 - Column: `grid-cols-[minmax(0,42rem)]`, centred, page `max-w-6xl`, `pb-24`.
+- **What the reading settings may change** (decision 033): the font of the title and the text (the system serif, nothing downloaded), the text's size (it scales tables, figures, captions and code, which are in em), and the column (narrow 36rem / 58ch, standard 42rem / 68ch, wide 52rem / 84ch). Never the leading (1.7), the spacing or the one density (decision 026), and never the interface around the text: byline, actions, navigation and the top bar keep their type. The defaults set no CSS variable, so the page is exactly as before.
 
 ## States
 
@@ -51,6 +54,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Interactions & keys
 
+- **Aa:** Enter or a click opens it and focuses it; Tab reaches each choice, Enter or Space picks; Escape closes it back to Aa (it never leaves the post); a click outside or focus leaving closes it.
 - `j`/`k` next / previous post in the feed (with a context), `u`/Esc back, `m` toggle read, `l` toggle read later, `s` toggle keep (the star), `?` the shortcut table (without a context its post column has no `j`/`k`). In the stream, `j`/`k` (and Next / Previous) jump to a post already there, instantly (P12); past its ends they open the post, which starts a new stream at the top.
 - Prev/next and the stream replace the history entry, so Back leaves the post rather than walking every post read.
 - Read later is optimistic and rolls back on failure; keep shows once the server answers. Copy puts the stored text (or the HTML's text) on the clipboard.
@@ -71,7 +75,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Decisions
 
-- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources, 020 the byline's source name reads the source and the navigation sticks, 021 continuous reading, 025 continue where you stopped, 029 read later and keep, 027 `settings` on the stream's first post only, 028 the byline date without this year, 032 a watched page's update and its own state (`../decisions.md`).
+- 003 reading-only, 004 one centred column with icon actions, 007 no fetch in reading views, 011 the source name links into Sources, 020 the byline's source name reads the source and the navigation sticks, 021 continuous reading, 025 continue where you stopped, 029 read later and keep, 027 `settings` on the stream's first post only, 028 the byline date without this year, 032 a watched page's update and its own state, 033 reading settings (`../decisions.md`).
 
 ## Open issues
 

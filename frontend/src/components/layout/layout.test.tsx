@@ -8,6 +8,7 @@ import type { Api, JobRun } from '../../services/api';
 import { makeFakeApi } from '../../test/fakeApi';
 import { renderWithProviders } from '../../test/render';
 import AppShell from './AppShell';
+import { resetStoredChoices } from '../../hooks/useShortcutPreference';
 import { activeNavKey, destinations, filterDestinations, insideDesignFrame, NAV_ITEMS } from './navigation';
 
 function Where() {
@@ -232,6 +233,23 @@ describe('AppShell', () => {
     expect(screen.getByRole('option', { name: /switch to light theme/i })).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Enter}');
     expect(document.documentElement).toHaveClass('theme-light');
+  });
+
+  it('⌘K lists the reading settings (issue 0045): the same three choices, over a sample of the post text', async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem('insight.reader.font');
+    renderShell('/');
+    await user.keyboard('{Control>}k{/Control}');
+    await user.type(await screen.findByRole('combobox'), 'font');
+    expect(screen.getAllByRole('option')[0]).toHaveTextContent(/^Reading settings: font, size, width/);
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'Reading settings' });
+    await user.click(await within(dialog).findByRole('radio', { name: 'Serif' }));
+    expect(window.localStorage.getItem('insight.reader.font')).toBe('serif');
+    expect(dialog.querySelector<HTMLElement>('[data-reading-sample]')!.parentElement!.style.getPropertyValue('--reading-font')).toMatch(/serif$/);
+    expect(within(dialog).getAllByRole('radiogroup').map((group) => group.getAttribute('aria-label'))).toEqual(['Font', 'Size', 'Width']);
+    window.localStorage.removeItem('insight.reader.font');
+    resetStoredChoices();
   });
 
   it('⌘K opens the design studio', async () => {

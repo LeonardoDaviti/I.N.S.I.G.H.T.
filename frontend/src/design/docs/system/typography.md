@@ -24,3 +24,4 @@ Stack: `Inter, "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe
 - Text that may be in any script carries `dir="auto"` (feed titles, post title, excerpts).
 - `MarkdownRenderer` styles `h1`–`h6` on one scale (size, weight and spacing, never colour; `h6` is muted), so no heading level renders like body text.
 - A figure's caption and a table's caption sit under what they describe, at 0.875em in `text-2`, never italic or coloured.
+- **Reading settings** (decision 033, `lib/readingSettings.ts`) change the post text only, through CSS variables on the post page, none set by default: `--reading-font` (serif: `ui-serif, "Iowan Old Style", Charter, …, Georgia, serif`, system faces, 0 bytes, so still no webfont), `--reading-scale` (0.9, 0.95, 1, 1.1, 1.25 times the `reading` step) and `--reading-column` / `--reading-measure` (36rem / 58ch, 42rem / 68ch, 52rem / 84ch). The leading stays 1.7 at every size.
