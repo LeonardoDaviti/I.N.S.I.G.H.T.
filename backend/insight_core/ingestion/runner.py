@@ -15,6 +15,13 @@ session that cannot open makes that kind's sources unavailable. A fetch never ra
 the runner; a failing store write is logged and the run carries on. A source whose fetch
 failed is shown to the source doctor (issue 0036), outside the save lock: it may look for the
 source's replacement and switch it.
+
+A kind that fetches conditionally (kind.conditional, issue 0044: generic RSS, page watch) gets
+an AddressMemory holding its source's stored validators; "Fetch now" on one source reads in
+full. What it learned is kept only after a fetch that worked and whose posts were saved, so a
+failed save is fetched in full again. A fetch whose every address answered 304 is a success
+with 0 posts like any other (health green, backoff untouched, the doctor not woken); its event
+says "unchanged".
 """
 from __future__ import annotations
 
@@ -30,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 from insight_core.db.repo_posts import PostDraft, SaveBatchResult
 from insight_core.ingestion import full_text
 from insight_core.ingestion.gates import FetchGates, interleave_by_host
-from insight_core.ingestion.http import HttpError
+from insight_core.ingestion.http import AddressMemory, HttpError, Validators
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.base import KindSession, KindUnavailable, SourceKind
 from insight_core.ingestion.ports import (
@@ -74,6 +81,7 @@ class _Fetched:
     outcome: FetchOutcome
     posts: List[dict]
     error: Optional[BaseException] = None    # what the fetch raised, for the source doctor
+    memory: Optional[AddressMemory] = None   # a conditional kind's validators (issue 0044)
 
 
 class _RunSessions:
@@ -202,17 +210,20 @@ class IngestionRunner:
             return self._report(request, started, run_id=run_id, status="nothing_due",
                                 sources_considered=len(sources), decisions=counts)
 
+        validators = await self._safely("load validators", self.state.load_validators,
+                                        [s["id"] for s, kind, _ in due if getattr(kind, "conditional", False)])
         sessions = _RunSessions()
         try:
             return await self._fetch_and_save(request, progress, started, run_id, sources, due, counts,
-                                                 sessions)
+                                                 sessions, validators or {})
         finally:
             await sessions.close_all()
 
     async def _fetch_and_save(self, request: FetchRequest, progress: ProgressSink, started: datetime,
                                  run_id: str, sources: List[Dict[str, Any]],
                                  due: List[tuple[Dict[str, Any], SourceKind, FetchDecision]],
-                                 counts: Dict[str, int], sessions: _RunSessions) -> RunReport:
+                                 counts: Dict[str, int], sessions: _RunSessions,
+                                 validators: Dict[str, Dict[str, Validators]]) -> RunReport:
         # Fetch: priority first, then round-robin across hosts so tasks that start together
         # mostly want different gates.
         by_id = {source["id"]: (source, kind, decision) for source, kind, decision in due}
@@ -226,10 +237,12 @@ class IngestionRunner:
         failures: List[SourceFailure] = []
         save_lock = asyncio.Lock()
         done = 0
+        full = request.selector.kind == "source"   # "Fetch now" on one source reads every address in full
 
         async def fetch_and_save(source: Dict[str, Any]) -> _Fetched:
             nonlocal done
-            f = await self._fetch(*by_id[source["id"]], sessions, progress)
+            f = await self._fetch(*by_id[source["id"]], sessions, progress,
+                                  stored=validators.get(source["id"]), full=full)
             async with save_lock:
                 outcome = f.outcome
                 fetched_count, inserted_before = len(f.posts), saved.inserted
@@ -254,12 +267,19 @@ class IngestionRunner:
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
                     now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
                 )
+                if f.memory is not None and outcome.status.is_success:
+                    if (saved.by_source.get(source["id"]) or {}).get("failed"):
+                        f.memory.forget()   # a post that failed to save is read again next time
+                    if f.memory.changed:
+                        await self._safely("save validators", self.state.save_validators, source["id"],
+                                           f.memory.learned)
                 if outcome.status == OutcomeStatus.HEALTHY:
                     await self.inspections.refresh(source, f.kind, outcome.fetched)
                 done += 1
                 await self._safely("record progress", progress.event, "source", {
                     "source_id": source["id"], "display_name": _display_name(source),
                     "status": outcome.status.value, "error": outcome.error,
+                    "unchanged": bool(f.memory and outcome.status.is_success and f.memory.unchanged),
                     "fetched": fetched_count, "new": saved.inserted - inserted_before,
                     "pages_read": pages_read, "pages_lost_images": pages_lost_images,
                     "sources": {"done": done, "total": len(ordered)}, "new_posts": saved.inserted,
@@ -315,10 +335,19 @@ class IngestionRunner:
         return None
 
     async def _fetch(self, source: Dict[str, Any], kind: SourceKind, decision: FetchDecision,
-                     sessions: _RunSessions, progress: ProgressSink) -> _Fetched:
+                     sessions: _RunSessions, progress: ProgressSink, *,
+                     stored: Optional[Dict[str, Validators]] = None, full: bool = False) -> _Fetched:
         """Fetch one source under its gates. Never raises."""
         started = time.monotonic()
         posts: List[dict] = []
+        memory: Optional[AddressMemory] = None
+
+        async def fetch_latest() -> List[dict]:
+            nonlocal memory
+            if not getattr(kind, "conditional", False):
+                return list(await kind.fetch_latest(source, decision.post_limit) or [])
+            memory = AddressMemory(stored, now=self.clock(), full=full)
+            return list(await kind.fetch_latest(source, decision.post_limit, memory=memory) or [])  # type: ignore[call-arg]
         try:
             delay = (source.get("settings") or {}).get("fetch_delay_seconds") or 0
             host = kind.host_key(source)
@@ -326,7 +355,7 @@ class IngestionRunner:
                 await sessions.ensure(kind)
                 logger.info("Fetching up to %s posts from %s", decision.post_limit, _display_name(source))
                 try:
-                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                    posts = await fetch_latest()
                 except HttpError as exc:
                     if not exc.limiting:
                         raise
@@ -338,7 +367,7 @@ class IngestionRunner:
                         "source_id": source["id"], "display_name": _display_name(source),
                     })
                     await self.gates.sleep(wait)
-                    posts = list(await kind.fetch_latest(source, decision.post_limit) or [])
+                    posts = await fetch_latest()
                 self.gates.host_limiter.succeeded(host)
             outcome = FetchOutcome.from_fetch(source["id"], fetched=len(posts), error=None,
                                               duration_s=time.monotonic() - started)
@@ -353,7 +382,7 @@ class IngestionRunner:
             outcome = FetchOutcome.from_fetch(source["id"], fetched=0, error=str(exc) or type(exc).__name__,
                                               duration_s=time.monotonic() - started)
             return _Fetched(source, kind, outcome, [], exc)
-        return _Fetched(source, kind, outcome, posts)
+        return _Fetched(source, kind, outcome, posts, memory=memory)
 
     # ------------------------------------------------------------------ helpers
 

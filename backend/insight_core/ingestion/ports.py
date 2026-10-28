@@ -28,6 +28,7 @@ from typing import (
 from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
 from insight_core.db.repo_posts import PostDraft, PostsRepository, SaveBatchResult
+from insight_core.ingestion.http import Validators
 from insight_core.ingestion.schedule import FetchDecision, backoff_delay
 from insight_core.ingestion.types import FetchOutcome, SourceSelector, Trigger
 
@@ -57,6 +58,10 @@ class FetchStateStore(Protocol):
     def record_outcomes(self, outcomes: Sequence[FetchOutcome], *, trigger: Trigger | str,
                         now: Optional[datetime] = None,
                         backoff: Optional[Callable[[int], timedelta]] = None) -> List[FetchStateRow]: ...
+
+    def load_validators(self, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]: ...
+
+    def save_validators(self, source_id: str, validators: Mapping[str, Validators]) -> None: ...
 
 
 class PostSaver(Protocol):
@@ -138,7 +143,8 @@ def slowed_line(data: dict) -> str:
 
 
 def _source_line(data: dict) -> str:
-    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", or why it failed; with
+    """One source's event: "r/viture: 3 new of 25 · 52 of 81 sources", "Simon Willison: unchanged
+    · 3 of 81 sources" (its feed answered 304, issue 0044), or why it failed; with
     "· 2 of 3 pages lost most of their images" when pages read for it did (issue 0032)."""
     name, sources = data["display_name"], data["sources"]
     of_run = f"{sources['done']} of {sources['total']} source{'' if sources['total'] == 1 else 's'}"
@@ -147,6 +153,8 @@ def _source_line(data: dict) -> str:
         return f"{name}: failed, {(data.get('error') or 'error')[:160]} · {of_run}"
     if status == "unavailable":
         return f"{name}: unavailable, {(data.get('error') or 'not available')[:160]} · {of_run}"
+    if data.get("unchanged"):
+        return f"{name}: unchanged · {of_run}"
     lost = data.get("pages_lost_images") or 0
     images = (f" · {lost} of {data.get('pages_read') or lost} page{'' if data.get('pages_read') == 1 else 's'}"
               f" lost most of their images" if lost else "")
@@ -228,6 +236,16 @@ class DbFetchStateStore:
                 )
             conn.commit()
         return rows
+
+    def load_validators(self, source_ids: Sequence[str]) -> Dict[str, Dict[str, Validators]]:
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self.repo.load_validators(cur, source_ids)
+
+    def save_validators(self, source_id: str, validators: Mapping[str, Validators]) -> None:
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                self.repo.replace_validators(cur, source_id, validators)
+            conn.commit()
 
     def refresh_cadence(self) -> int:
         with db.connection(self.db_url) as conn:

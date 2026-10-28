@@ -8,7 +8,7 @@ from __future__ import annotations
 import inspect
 from typing import Any, Callable, Mapping
 
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import Conditional, KindHttp, Validators
 from insight_core.ingestion.kinds.base import (
     ArchivePage,
     BaseKind,
@@ -44,7 +44,9 @@ class RecordingSleeper:
         self.calls.append(seconds)
 
 
-Response = Any  # str | (str, headers) | Exception | dict (JSON) | callable(url) -> one of these (or awaits one)
+# str | (str, headers) | Exception | dict (JSON) | Conditional (get_conditional's answer as is)
+# | callable(url) -> one of these (or awaits one)
+Response = Any
 
 
 class FakeHttp(KindHttp):
@@ -65,6 +67,7 @@ class FakeHttp(KindHttp):
         self.posts: list[tuple[str, dict]] = []
         self.redirects = dict(redirects or {})   # url -> the final URL get_start reports
         self.byte_caps: dict[str, int] = {}      # url -> the max_bytes get_start was asked for
+        self.validators_sent: list[tuple[str, Validators | None]] = []   # get_conditional's
 
     def _answer(self, url: str) -> Response:
         if callable(self.responses):
@@ -97,6 +100,24 @@ class FakeHttp(KindHttp):
             answer = await answer
         body = answer[0] if isinstance(answer, tuple) else answer
         return str(body).encode("utf-8")[:max_bytes], self.redirects.get(url, url)
+
+    async def get_conditional(self, url: str, validators: Validators | None = None, *,
+                              max_bytes: int | None = None) -> Conditional:
+        """A Conditional answer as is; anything else a 200, its headers giving the validators."""
+        self.requests.append(url)
+        self.validators_sent.append((url, validators))
+        if max_bytes is not None:
+            self.byte_caps[url] = max_bytes
+        answer = self._answer(url)
+        if inspect.isawaitable(answer):
+            answer = await answer
+        if isinstance(answer, Conditional):
+            return answer
+        body, headers = answer if isinstance(answer, tuple) else (answer, {})
+        headers = {key.lower(): value for key, value in headers.items()}
+        data = str(body).encode("utf-8")
+        return Conditional(data[:max_bytes] if max_bytes is not None else data, self.redirects.get(url, url),
+                           headers, Validators.of(headers))
 
     def headers_for(self, url: str) -> dict[str, str]:
         """The extra headers of the last GET of url."""

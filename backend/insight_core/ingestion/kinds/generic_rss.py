@@ -1,5 +1,6 @@
 """generic_rss: any RSS/Atom feed (the fallback kind). A new post whose feed gave only a
-summary is expanded from its article page (ingestion/full_text.py)."""
+summary is expanded from its article page (ingestion/full_text.py). A live fetch asks for the
+feed conditionally (issue 0044): an unchanged feed answers 304 and is no posts."""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +8,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from insight_core.ingestion import full_text
-from insight_core.ingestion.http import KindHttp
+from insight_core.ingestion.http import AddressMemory, KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import (
     BaseKind,
@@ -29,6 +30,7 @@ StoredUrls = Callable[[Sequence[str]], set]
 class GenericRssKind(SingleShotArchive, BaseKind):
     name = "generic_rss"
     available_basis = "feed_window"
+    conditional = True
     profile = GENERIC_RSS_PROFILE
 
     def __init__(self, http: KindHttp, *, stored_urls: Optional[StoredUrls] = None) -> None:
@@ -38,9 +40,17 @@ class GenericRssKind(SingleShotArchive, BaseKind):
     def matches(self, source: Source) -> bool:
         return True  # the fallback
 
-    async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
+    async def fetch_latest(self, source: Source, limit: int, *,
+                           memory: Optional[AddressMemory] = None) -> List[Dict[str, Any]]:
+        """With memory (the runner's), the feed is asked conditionally: unchanged (304) is no posts."""
         url = str(source["handle_or_url"])
-        feed_text, _ = await self.http.get_text(url)
+        if memory is None:
+            feed_text, _ = await self.http.get_text(url)
+        else:
+            answer = await memory.get(self.http, url)
+            if answer.not_modified:
+                return []
+            feed_text = answer.text
         posts = parsing.parse_feed_posts(feed_text, url)[:limit]
         return await self._maybe_expand(source, posts)
 

@@ -231,6 +231,8 @@ class BaseKind:
     available_basis: AvailableBasis = "unknown"
     # Why this kind's host refuses every archive request (None: it can archive).
     archive_refused: str | None = None
+    # fetch_latest takes memory= (an http.AddressMemory) and fetches conditionally (issue 0044).
+    conditional: bool = False
 
     def matches(self, source: Source) -> bool:  # pragma: no cover - always overridden
         raise NotImplementedError

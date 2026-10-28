@@ -61,9 +61,18 @@ class InMemoryFetchStateStore:
         self.rows: dict[str, FetchStateRow] = dict(rows or {})
         self.decisions: list[tuple[str, Any]] = []
         self.outcome_calls: list[tuple[list, str]] = []
+        self.validators: dict[str, dict] = {}          # source_id -> {url: Validators} (issue 0044)
+        self.validator_saves: list[tuple[str, dict]] = []
 
     def load(self, source_ids):
         return {sid: self.rows[sid] for sid in source_ids if sid in self.rows}
+
+    def load_validators(self, source_ids):
+        return {sid: dict(self.validators[sid]) for sid in source_ids if sid in self.validators}
+
+    def save_validators(self, source_id, validators):
+        self.validator_saves.append((source_id, dict(validators)))
+        self.validators[source_id] = dict(validators)
 
     def record_decisions(self, decisions, *, now=None):
         for source_id, decision in decisions:
