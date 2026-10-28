@@ -48,6 +48,7 @@ export interface Destination {
 /** The fixed switcher entries; the tracks go in after the feed ones. Ingestion is a tab under sources (reading-finish R3). */
 export const DESTINATIONS: readonly Destination[] = [
   { id: 'feed-main', label: 'Main feed', group: 'feed', to: '/', keywords: 'home reader feed inbox new unread all posts' },
+  { id: 'feed-later', label: 'Later', group: 'feed', to: '/?filter=later', keywords: 'read later saved bookmarks queue' },
   { id: 'feed-by-source', label: 'By source', group: 'feed', to: '/?view=by_source', keywords: 'grouped sources view' },
   { id: 'sources', label: 'Sources', group: 'sources', to: '/settings/sources', keywords: 'settings feeds add source health cadence backoff failing due schedule' },
   { id: 'ingestion', label: 'Ingestion', group: 'sources', to: '/settings/sources?tab=ingestion', keywords: 'run cycle fetch jobs report' },

@@ -130,6 +130,10 @@ describe('navigation model', () => {
     expect(filterDestinations('health').map((d) => d.id)).toEqual(['sources']);
     // One Starred, in the Show filter; one All, the same filter (issue 0027).
     expect(filterDestinations('starred')).toEqual([]);
+    expect(filterDestinations('kept')).toEqual([]);
+    // Later is a list you go to: ⌘K reaches it (issue 0022).
+    expect(filterDestinations('read later').map((d) => d.id)).toEqual(['feed-later']);
+    expect(destinations().find((d) => d.id === 'feed-later')).toMatchObject({ label: 'Later', to: '/?filter=later' });
     expect(filterDestinations('unread').map((d) => d.id)).toEqual(['feed-main']);
     expect(destinations().find((d) => d.id === 'feed-main')).toMatchObject({ label: 'Main feed', to: '/' });
     expect(filterDestinations('zzz')).toEqual([]);

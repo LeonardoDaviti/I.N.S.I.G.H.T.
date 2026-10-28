@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Circle, CircleCheck, PlayCircle, Star } from 'lucide-react';
+import { Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
 import type { FeedItem as FeedItemData } from '../../services/api';
 import type { FeedDensity } from '../../hooks/useShortcutPreference';
@@ -35,6 +35,7 @@ export interface FeedItemProps {
   onOpen: (item: FeedItemData) => void;
   onToggleRead: (item: FeedItemData) => void;
   onToggleStar: (item: FeedItemData) => void;
+  onToggleLater: (item: FeedItemData) => void;
   /**
    * What the left column shows. `date` ("Sep 29", relative inside 24h) when the
    * row stands alone; `time` ("14:05") when it already sits under a day header,
@@ -53,18 +54,24 @@ export interface FeedItemProps {
 
 /**
  * One feed row (spec §F.6): an `<article>` whose links are the title and the
- * source name (which reads that source, issue 0019), with the read circle and the
- * star as sibling buttons (32px, 44px on touch). Laid out like
+ * source name (which reads that source, issue 0019), with the read circle and one
+ * save button as siblings (32px, 44px on touch): Read later (the clock) on an unread
+ * row, Keep (the star) on a read one (issue 0022); a save already on keeps its button,
+ * so it can be undone by hand. Laid out like
  * the news.smol.ai list: a hairline-bordered row, a muted date column ("Sep 29",
  * relative only inside 24h), a bold title when unread. Selection is a roving
  * tabIndex plus `aria-current`; no animation, since j/k runs hundreds of times a day.
  */
 function FeedItem({
-  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
+  item, density, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onToggleLater, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
   const isStarred = Boolean(item.starred_at);
+  const isLater = Boolean(item.later_at);
+  // Unread: "I want this, not now" (Later); read: "this mattered" (Keep).
+  const offerLater = !isRead || isLater;
+  const offerKeep = isRead || isStarred;
   const compact = density === 'compact';
   const titleId = `${feedItemDomId(item.id)}-title`;
   // The API's title already falls back to the body (display_title), as on the post page.
@@ -135,6 +142,7 @@ function FeedItem({
         </h3>
         <p className={`flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${compact ? 'sm:max-w-[14rem] sm:shrink-0' : ''}`}>
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
+          {isLater ? <Clock aria-hidden="true" className="h-3 w-3 shrink-0 text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
           {showSource ? (
             <TextLink
@@ -155,7 +163,8 @@ function FeedItem({
             </>
           ) : null}
           {!isRead ? <span className="sr-only">Unread</span> : null}
-          {isStarred ? <span className="sr-only">Starred</span> : null}
+          {isLater ? <span className="sr-only">In Later</span> : null}
+          {isStarred ? <span className="sr-only">Kept</span> : null}
         </p>
         {showExcerpt ? (
           <p dir="auto" className="mt-0.5 line-clamp-1 text-sm leading-5 text-fg-2 [overflow-wrap:anywhere]">
@@ -185,16 +194,30 @@ function FeedItem({
         >
           {isRead ? <CircleCheck aria-hidden="true" className="h-4 w-4" /> : <Circle aria-hidden="true" className="h-4 w-4" />}
         </button>
-        <button
-          type="button"
-          aria-label="Star"
-          aria-pressed={isStarred}
-          title={isStarred ? 'Unstar (s)' : 'Star (s)'}
-          onClick={() => onToggleStar(item)}
-          className={`${ICON_BUTTON} ${isStarred ? 'text-fg' : ''}`}
-        >
-          <Star aria-hidden="true" className="h-4 w-4" fill={isStarred ? 'currentColor' : 'none'} />
-        </button>
+        {offerLater ? (
+          <button
+            type="button"
+            aria-label="Read later"
+            aria-pressed={isLater}
+            title={isLater ? 'In Later: take it out (l)' : 'Read later (l)'}
+            onClick={() => onToggleLater(item)}
+            className={`${ICON_BUTTON} ${isLater ? 'text-fg' : ''}`}
+          >
+            <Clock aria-hidden="true" className="h-4 w-4" strokeWidth={isLater ? 2.75 : 2} />
+          </button>
+        ) : null}
+        {offerKeep ? (
+          <button
+            type="button"
+            aria-label="Keep"
+            aria-pressed={isStarred}
+            title={isStarred ? 'Kept: unkeep (s)' : 'Keep (s)'}
+            onClick={() => onToggleStar(item)}
+            className={`${ICON_BUTTON} ${isStarred ? 'text-fg' : ''}`}
+          >
+            <Star aria-hidden="true" className="h-4 w-4" fill={isStarred ? 'currentColor' : 'none'} />
+          </button>
+        ) : null}
       </div>
     </article>
   );

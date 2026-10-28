@@ -57,12 +57,12 @@ describe('ReaderNavRail', () => {
     expect(within(rail).getByRole('link', { name: /Main feed/ })).not.toHaveAttribute('aria-current');
   });
 
-  it('the scope is "Main feed"; Starred is only a Show choice, and /?filter=starred still opens it (issue 0027)', async () => {
+  it('the scope is "Main feed"; Kept and Later are only Show choices, and /?filter=starred still opens Kept (issues 0027, 0022)', async () => {
     setup('/?filter=starred');
     const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
-    expect(within(rail).queryByRole('link', { name: /Starred/ })).toBeNull();
+    expect(within(rail).queryByRole('link', { name: /Starred|Kept|Later/ })).toBeNull();
     expect(within(rail).getByRole('link', { name: /Main feed/ })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('radio', { name: 'Starred' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Kept' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Main feed/);
   });
 

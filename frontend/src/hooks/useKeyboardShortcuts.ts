@@ -3,11 +3,11 @@ import { useEffect, useRef } from 'react';
 import { isEditable, isInDialog } from '../lib/shortcuts';
 
 /** Every key the reader binds (spec §F.5). `A` means Shift+A. */
-export type ShortcutKey = 'j' | 'k' | 'o' | 'Enter' | 'm' | 's' | 'u' | 'Escape' | 'A' | '?';
+export type ShortcutKey = 'j' | 'k' | 'o' | 'Enter' | 'm' | 's' | 'l' | 'u' | 'Escape' | 'A' | '?';
 
 export type ShortcutBindings = Partial<Record<ShortcutKey, () => void>>;
 
-const BOUND = new Set<string>(['j', 'k', 'o', 'Enter', 'm', 's', 'u', 'Escape', 'A', '?']);
+const BOUND = new Set<string>(['j', 'k', 'o', 'Enter', 'm', 's', 'l', 'u', 'Escape', 'A', '?']);
 
 /**
  * Bind the reader's single-key shortcuts on `document` (spec §F.5). Ignored while

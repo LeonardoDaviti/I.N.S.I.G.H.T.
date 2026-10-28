@@ -18,6 +18,7 @@ export interface FeedGroupProps {
   onOpen: (item: FeedItemData) => void;
   onToggleRead: (item: FeedItemData) => void;
   onToggleStar: (item: FeedItemData) => void;
+  onToggleLater: (item: FeedItemData) => void;
   now?: Date;
 }
 

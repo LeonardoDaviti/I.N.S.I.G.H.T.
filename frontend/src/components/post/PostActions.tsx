@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ArrowUpRight, Check, Copy, MessageSquare, Star } from 'lucide-react';
+import { ArrowUpRight, Check, Clock, Copy, MessageSquare, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { buttonVariants } from '../ui';
 
 /**
  * The post's actions, icon-only, in the top-right corner of the title block:
  * open the original, open its discussion (when the feed names one, e.g. the
- * Hacker News thread), star, copy the text. Each has a tooltip and an
+ * Hacker News thread), read later (the clock) and keep (the star), both offered
+ * here whatever the read state (issue 0022), copy the text. Each has a tooltip and an
  * aria-label. Press feedback is the shared `scale(0.97)`, but only for a pointer
  * press: a key press (`:focus-visible`) does not move the button.
  */
@@ -44,11 +45,13 @@ export interface PostActionsProps {
   starred: boolean;
   starring: boolean;
   onStar: () => void;
+  later: boolean;
+  onLater: () => void;
   copied: boolean;
   onCopy: () => void;
 }
 
-export default function PostActions({ url, discussionUrl, starred, starring, onStar, copied, onCopy }: PostActionsProps) {
+export default function PostActions({ url, discussionUrl, starred, starring, onStar, later, onLater, copied, onCopy }: PostActionsProps) {
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={400}>
       <div role="group" aria-label="Post actions" className="-mr-2 -mt-1.5 flex shrink-0 items-center">
@@ -66,10 +69,21 @@ export default function PostActions({ url, discussionUrl, starred, starring, onS
             </a>
           </Action>
         ) : null}
-        <Action tip={starred ? 'Starred (s)' : 'Star (s)'}>
+        <Action tip={later ? 'In Later: take it out (l)' : 'Read later (l)'}>
           <button
             type="button"
-            aria-label="Star"
+            aria-label="Read later"
+            aria-pressed={later}
+            onClick={onLater}
+            className={later ? `${ICON_ACTION} !text-fg` : ICON_ACTION}
+          >
+            <Clock aria-hidden="true" strokeWidth={later ? 2.75 : 2} />
+          </button>
+        </Action>
+        <Action tip={starred ? 'Kept (s)' : 'Keep (s)'}>
+          <button
+            type="button"
+            aria-label="Keep"
             aria-pressed={starred}
             aria-busy={starring || undefined}
             onClick={() => { if (!starring) onStar(); }}

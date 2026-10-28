@@ -42,7 +42,7 @@ import { proxiedImage } from '../lib/mediaProxy';
 
 /**
  * The post reading view (/posts/:id): one centred column — source and date, the
- * title with three icon actions in its top-right corner (open original, star,
+ * title with its icon actions in its top-right corner (open original, read later, keep,
  * copy), the images, the text — and nothing beside it. Read continuously, the
  * next posts of the feed follow below (issue 0014).
  */
@@ -617,6 +617,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
   const [announcement, setAnnouncement] = useState('');
   const openRecordedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
+  /** Reaching the end: a post in Later leaves it (set each render, below). */
+  const finishRef = useRef(() => {});
   const mutations = useReaderMutations({ dryRun: Boolean(fixture) });
   const [shortcutsOn] = useShortcutPreference();
 
@@ -698,16 +700,18 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
     if (readOn === 'mount') recordOpen();
   }, [readOn, recordOpen]);
 
-  // In the stream: read once its end has passed the top half of the screen. The root
-  // reaches far above the viewport, so a fast scroll or a jump past the end still counts,
-  // and an end already above the midline counts at once.
+  // Finished once its end has passed the top half of the screen: in the stream that is when
+  // it is read, and in either flow a post in Later leaves it then (issue 0022; an open
+  // alone never does). The root reaches far above the viewport, so a fast scroll or a
+  // jump past the end still counts, and an end already above the midline counts at once.
   useEffect(() => {
     const node = endRef.current;
-    if (readOn !== 'end' || !node) return undefined;
+    if (!node || typeof IntersectionObserver === 'undefined') return undefined;
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry?.isIntersecting) return;
       observer.disconnect();
-      recordOpen();
+      if (readOn === 'end') recordOpen();
+      finishRef.current();
     }, { rootMargin: `${FAR} 0px -50% 0px` });
     observer.observe(node);
     return () => observer.disconnect();
@@ -758,7 +762,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
     // The feed shows the same star: keep its cached rows in step.
     const starred = response.reader_state?.is_favorited ?? response.favorited ?? nextFavorited;
     patchFeeds(queryClient, new Set([postId]), { starred_at: starred ? new Date().toISOString() : null });
-    setAnnouncement(starred ? 'Starred' : 'Removed star');
+    setAnnouncement(starred ? 'Kept' : 'No longer kept');
     setTogglingFavorite(false);
   };
 
@@ -826,28 +830,47 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
 
   const cachedItem = findFeedItems(queryClient, [postId]).get(postId);
   const isRead = Boolean(readerState?.read_at);
+  const isLater = Boolean(readerState?.later_at);
+  /** This post as a feed row, for the shared read and Later mutations. */
+  const asFeedItem = (): FeedItem => cachedItem ?? {
+    id: postId, title: post.title ?? '', excerpt: '', url: post.url ?? '',
+    source_id: post.source_id ?? '', source_display_name: post.source_display_name ?? '', platform: post.platform ?? '',
+    sort_at: postSortAt(queryClient, postId, post) ?? '', published_at: post.published_at ?? null, read_at: readerState?.read_at ?? null, starred_at: null,
+    reading_minutes: null, duration_seconds: null, media_thumb: null,
+  };
   const toggleRead = async () => {
     const read = !isRead;
-    const previous = readerState?.read_at ?? null;
-    const item: FeedItem = cachedItem ?? {
-      id: postId, title: post.title ?? '', excerpt: '', url: post.url ?? '',
-      source_id: post.source_id ?? '', source_display_name: post.source_display_name ?? '', platform: post.platform ?? '',
-      sort_at: postSortAt(queryClient, postId, post) ?? '', published_at: post.published_at ?? null, read_at: previous, starred_at: null,
-      reading_minutes: null, duration_seconds: null, media_thumb: null,
-    };
-    setReaderState((current) => ({ ...current, post_id: postId, read_at: read ? new Date().toISOString() : null }));
+    const previous = { read_at: readerState?.read_at ?? null, later_at: readerState?.later_at ?? null };
+    const item = asFeedItem();
+    // Marking read finishes the post, so it leaves Later too (issue 0022).
+    setReaderState((current) => ({ ...current, post_id: postId, read_at: read ? new Date().toISOString() : null, ...(read ? { later_at: null } : {}) }));
     try {
       await mutations.setRead(item, read);
       setAnnouncement(read ? 'Marked as read' : 'Marked as unread');
     } catch (failure) {
-      setReaderState((current) => ({ ...current, post_id: postId, read_at: previous }));
+      setReaderState((current) => ({ ...current, post_id: postId, ...previous }));
       setError(errorMessage(failure));
     }
+  };
+  const setLater = async (later: boolean) => {
+    const previous = readerState?.later_at ?? null;
+    setReaderState((current) => ({ ...current, post_id: postId, later_at: later ? new Date().toISOString() : null }));
+    try {
+      await mutations.setLater({ ...asFeedItem(), later_at: previous }, later);
+      setAnnouncement(later ? 'Saved for later' : 'Removed from Later');
+    } catch (failure) {
+      setReaderState((current) => ({ ...current, post_id: postId, later_at: previous }));
+      setError(errorMessage(failure));
+    }
+  };
+  finishRef.current = () => {
+    if (isLater) void setLater(false);
   };
 
   useKeyboardShortcuts({
     m: () => void toggleRead(),
     s: () => void handleToggleFavorite(),
+    l: () => void setLater(!isLater),
   }, { enabled: keysEnabled, singleKeys: shortcutsOn });
 
   return (
@@ -895,6 +918,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, k
             starred={isFavorited}
             starring={togglingFavorite}
             onStar={() => void handleToggleFavorite()}
+            later={isLater}
+            onLater={() => void setLater(!isLater)}
             copied={copyState === 'copied'}
             onCopy={() => void handleCopy()}
           />

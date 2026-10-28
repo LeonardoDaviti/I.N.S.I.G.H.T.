@@ -132,14 +132,64 @@ describe('FeedList', () => {
     expect(setPostsRead).not.toHaveBeenCalled();
   });
 
-  it('a row has one read toggle, the circle, and the star, also when selected (issue 0019)', async () => {
+  it('a row has one read toggle, the circle, and one save: Read later unread, Keep once read, also when selected (issues 0019, 0022)', async () => {
     const user = userEvent.setup();
-    setup();
+    const now = new Date().toISOString();
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Unread one' }),
+      feedItem({ id: ID(2), title: 'Read one', read_at: now }),
+      feedItem({ id: ID(3), title: 'Read, still in Later', read_at: now, later_at: now }),
+      feedItem({ id: ID(4), title: 'Unread, kept before', starred_at: now }),
+    ])) });
     await screen.findAllByRole('article');
     await user.keyboard('j');
-    const first = screen.getAllByRole('article')[0];
-    expect(first).toHaveAttribute('aria-current', 'true');
-    expect(within(first).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Mark read', 'Star']);
+    const rows = screen.getAllByRole('article');
+    expect(rows[0]).toHaveAttribute('aria-current', 'true');
+    const labels = (row: HTMLElement) => within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
+    expect(labels(rows[0])).toEqual(['Mark read', 'Read later']);
+    expect(labels(rows[1])).toEqual(['Mark unread', 'Keep']);
+    // A save already on keeps its button, so it can be undone by hand.
+    expect(labels(rows[2])).toEqual(['Mark unread', 'Read later', 'Keep']);
+    expect(labels(rows[3])).toEqual(['Mark read', 'Read later', 'Keep']);
+    expect(within(rows[2]).getByText('In Later')).toBeInTheDocument();
+    expect(within(rows[3]).getByText('Kept')).toBeInTheDocument();
+  });
+
+  it('l puts the selected row in Later and again takes it out', async () => {
+    const user = userEvent.setup();
+    const setPostsLater = vi.fn().mockResolvedValue({ success: true });
+    setup({ setPostsLater, getUnreadCounts: vi.fn().mockResolvedValue({ total: 3, by_source: {}, by_folder: {} }) });
+    await screen.findAllByRole('article');
+    await user.keyboard('jl');
+    const first = () => screen.getAllByRole('article')[0];
+    expect(within(first()).getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'true');
+    expect(setPostsLater).toHaveBeenCalledWith([ID(1)], true);
+    await waitFor(() => expect(liveRegion()).toHaveTextContent('Saved for later'));
+    await user.keyboard('l');
+    expect(setPostsLater).toHaveBeenLastCalledWith([ID(1)], false);
+    expect(within(first()).getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('m finishes a post: marked read, it leaves Later (issue 0022)', async () => {
+    const user = userEvent.setup();
+    const setPostsRead = vi.fn().mockResolvedValue({ success: true });
+    setup({ setPostsRead, getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), later_at: new Date().toISOString() })])) });
+    await screen.findAllByRole('article');
+    await user.keyboard('jm');
+    expect(setPostsRead).toHaveBeenCalledWith([ID(1)], true);
+    const row = screen.getAllByRole('article')[0];
+    expect(within(row).queryByText('In Later')).toBeNull();
+    expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Mark unread', 'Keep']);
+  });
+
+  it('the Later list has no day headers and refuses mark read up to here', async () => {
+    const user = userEvent.setup();
+    setup({}, { filter: 'later' });
+    await screen.findAllByRole('article');
+    expect(document.querySelectorAll('[data-day-header]')).toHaveLength(0);
+    await user.keyboard('j{Shift>}A{/Shift}');
+    await waitFor(() => expect(liveRegion()).toHaveTextContent('Mark read up to here does not work in Later.'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('an item the API gives no title reads "Untitled post"; thumbnails load lazily', async () => {
@@ -170,7 +220,7 @@ describe('FeedList', () => {
     expect(document.activeElement).toBe(articles[0]);
   });
 
-  it('o opens the selected post with ?ctx= and marks it read', async () => {
+  it('o opens the selected post with ?ctx= and marks it read, keeping it in Later (opening is not finishing)', async () => {
     const user = userEvent.setup();
     const setPostsRead = vi.fn().mockResolvedValue({ success: true });
     setup({ setPostsRead });
@@ -178,7 +228,7 @@ describe('FeedList', () => {
     await user.keyboard('jjo');
     const location = await screen.findByTestId('location');
     expect(location.textContent).toBe(`/posts/${ID(2)}?ctx=${encodeURIComponent('all:unread:')}`);
-    expect(setPostsRead).toHaveBeenCalledWith([ID(2)], true);
+    expect(setPostsRead).toHaveBeenCalledWith([ID(2)], true, { keepLater: true });
   });
 
   it('m marks read optimistically and announces it', async () => {
@@ -207,14 +257,15 @@ describe('FeedList', () => {
     expect(within(first).getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
   });
 
-  it('s toggles the star through the row button state', async () => {
+  it('s keeps the selected row, unread or read, through the row button state', async () => {
     const user = userEvent.setup();
     const setPostStarred = vi.fn().mockResolvedValue({ success: true });
     setup({ setPostStarred });
     await screen.findAllByRole('article');
     await user.keyboard('js');
     const first = screen.getAllByRole('article')[0];
-    expect(within(first).getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(first).getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(liveRegion()).toHaveTextContent('Kept'));
     expect(setPostStarred).toHaveBeenCalledWith(ID(1), true);
   });
 
