@@ -190,6 +190,61 @@ class ArticleExtractionTests(unittest.TestCase):
         for kept in ("from fastapi import FastAPI", "The captain bats."):
             self.assertIn(kept, text)
 
+    def test_a_data_table_is_kept_as_a_table_without_its_styles(self):
+        # gwern.net/spaced-repetition's comparison table read "Metric / Mnemosyne / Anki / …" as
+        # loose paragraphs, and a cell with no <p> was lost (issue 0042).
+        page = (f'<article>{PARAGRAPHS}<div class="table-small"><table class="wide" style="width:100%">'
+                '<colgroup><col style="width:30%"></colgroup><caption>As of 2011</caption>'
+                '<thead><tr class="header"><th style="text-align: center;"><p>Metric</p></th><th>Anki</th></tr></thead>'
+                '<tbody><tr><td onclick="steal()">Users</td><td bgcolor="#fff" colspan="2" rowspan="x">'
+                '<a href="https://ankisrs.net/" style="color:red">112k</a></td></tr></tbody></table></div>'
+                "<p>After the table.</p></article>")
+        html = parsing.extract_article_html(page)
+        self.assertIn('<table><caption>As of 2011</caption><thead><tr><th><p>Metric</p></th><th>Anki</th></tr></thead>'
+                      '<tbody><tr><td>Users</td><td colspan="2"><a href="https://ankisrs.net/">112k</a></td></tr>'
+                      "</tbody></table>", html)
+        for gone in ("style", "onclick", "bgcolor", "colgroup", "rowspan", "class="):
+            self.assertNotIn(gone, html)
+        self.assertLess(html.index("</table>"), html.index("After the table."))
+
+    def test_a_table_that_lays_out_the_page_is_unwrapped(self):
+        # A table holding a heading or another table, marked role="presentation", or with one
+        # cell lays the page out: its blocks are read like any others. A data table inside it is kept.
+        data = "<table><tr><th>Year</th><th>Users</th></tr><tr><td>2011</td><td>383k</td></tr></table>"
+        page = (f"<article><table><tr><td><h2>The post</h2>{PARAGRAPHS}</td><td>{data}</td></tr></table>"
+                '<table role="presentation"><tr><td><p>A boxed note.</p></td><td></td></tr></table>'
+                "<table><tr><td><p>One cell of prose.</p></td></tr></table></article>")
+        html = parsing.extract_article_html(page)
+        self.assertEqual(1, html.count("<table>"), html)
+        self.assertIn(data, html)
+        for kept in ("<h2>The post</h2>", "<p>Paragraph 11", "<p>A boxed note.</p>", "<p>One cell of prose.</p>"):
+            self.assertIn(kept, html)
+        self.assertNotIn("<td><p>", html)
+
+    def test_a_figure_keeps_its_image_and_caption_together(self):
+        # gwern.net, lilianweng.github.io: <figure> wrappers were dropped, the image and the
+        # caption kept as two loose blocks. A figure left with nothing it can keep goes.
+        page = (f'<article>{PARAGRAPHS}<figure class="wp-block-image" style="margin:0"><a href="/full.png"><picture>'
+                '<source srcset="/a.webp"><img src="https://cdn.example/a.png" alt="A chart"></picture></a>'
+                '<figure><figcaption class="caption"><p>Fig. 1. <em>Retention</em> over time.</p></figcaption></figure>'
+                '</figure><figure><img src="https://cdn.example/pixel.gif" width="1" height="1"></figure></article>')
+        html = parsing.extract_article_html(page)
+        self.assertIn('<figure><img src="https://cdn.example/a.png" alt="A chart"><figcaption><p>Fig. 1. '
+                      "<em>Retention</em> over time.</p></figcaption></figure>", html)
+        self.assertEqual(1, html.count("<figure>"), html)
+        self.assertTrue(html.endswith("</figure>"), html[-80:])
+
+    def test_a_heading_with_nothing_under_it_goes(self):
+        # gwern.net ends every page with "Backlinks", "Similar Links" and "Bibliography": section
+        # titles whose content a script fills in. A title over a same-level subtitle (gov.uk) or
+        # over a note's title (the PostgreSQL docs) stays: something follows before a higher heading.
+        page = ("<article><h1>Income Tax rates</h1><h1>Current rates</h1><h2>Bands</h2>"
+                f"<h3>Serial Types</h3><h3>Note</h3>{PARAGRAPHS}<h3>Empty</h3><h2>Popularity</h2><p>As of 2011.</p>"
+                "<h1>Backlinks</h1><h1>Similar Links</h1><h1>Bibliography</h1><h2>Nothing</h2></article>")
+        headings = [line for line in parsing.extract_article_html(page).split("\n") if line.startswith("<h")]
+        self.assertEqual(["<h1>Income Tax rates</h1>", "<h1>Current rates</h1>", "<h2>Bands</h2>",
+                          "<h3>Serial Types</h3>", "<h3>Note</h3>", "<h2>Popularity</h2>"], headings)
+
     def test_avatars_icons_empty_and_dark_mode_images_are_not_the_articles(self):
         page = (f"<article>{PARAGRAPHS}"
                 "<img class='avatar avatar-30 photo' src='https://secure.gravatar.com/avatar/x?s=30' width='30' height='30'>"

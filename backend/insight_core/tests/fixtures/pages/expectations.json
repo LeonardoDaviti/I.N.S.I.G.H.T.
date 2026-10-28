@@ -6,6 +6,7 @@
     "first": "Earlier this year, we shared an update on our election safeguards",
     "last": "which were reviewed against our election integrity policy.",
     "images": 4,
+    "figures": [3, 3],
     "must_not": ["Chapter 01", "01Connecting", "PublishedOct", "Claude console", "Our mission"]
   },
   "anthropic_research": {
@@ -15,6 +16,7 @@
     "first": "When experts hand their work to an AI agent",
     "last": "Vishakh Padmakumar for experimental design feedback.",
     "images": 5,
+    "figures": [4, 4],
     "must_not": ["Chapter 01", "01Study design", "PublishedOct", "Claude console"]
   },
   "deepmind": {
@@ -24,6 +26,7 @@
     "first": "New antibiotics are urgently needed",
     "last": "Special thanks to Stephanie Lo from EMBL-EBI for her valuable feedback.",
     "images": 8,
+    "figures": [8, 8],
     "must_not": ["Explore our next generation AI systems", "Our mission is to build AI responsibly"]
   },
   "meta_ai": {
@@ -51,6 +54,7 @@
     "first": "Up to 2.5x faster performance in apps like Microsoft Excel",
     "last": "media.help@apple.com",
     "images": 16,
+    "figures": [16, 0],
     "must_not": ["More from Apple Newsroom", "Shop and Learn", "The latest news and updates, direct from Apple"]
   },
   "blog_google": {
@@ -72,6 +76,7 @@
     "first": "The second update this year for the Nest Wifi router and point rolled out last week",
     "last": "The Nest Wifi Pro received its last notable update in March",
     "images": 1,
+    "figures": [1, 0],
     "must_not": ["FTC: We use income earning", "Check out 9to5Google on YouTube", "Editor-in-chief", "More on Google Nest"],
     "known_gaps": {
       "must_not": "The YouTube promo ('article__youtube-video') and the in-body 'More on Google Nest:' list carry no chrome name."
@@ -93,6 +98,7 @@
     "first": "We are still on an exponential curve of AI development.",
     "last": "(Zork is itself open source).",
     "images": 5,
+    "figures": [5, 1],
     "must_not": ["Discussion about this post", "Subscribe", "Ready for more?"]
   },
   "cloudflare": {
@@ -102,6 +108,7 @@
     "first": "A video player seeking to the middle of a movie asks for a few megabytes.",
     "last": "the edge handles the cache coordination and correctness requirements.",
     "images": 2,
+    "figures": [1, 0],
     "must_not": ["Related tags", "Follow on Social Media", "Subscribe to receive notifications"],
     "contains": ["\"mode\": \"on\""],
     "known_gaps": {
@@ -115,6 +122,8 @@
     "first": "Scaling laws are one of the most critical empirical findings in deep learning.",
     "last": "Insights from Training Gopher.” arXiv preprint arXiv:2112.11446, 2021.",
     "images": 16,
+    "tables": [14],
+    "figures": [16, 16],
     "must_not": ["Lil'Log", "Powered by Hugo"]
   },
   "miessler": {
@@ -160,6 +169,7 @@
     "first": "You know Groq runs small models.",
     "last": "upgrading to a GroqCloud paid tier.",
     "images": 1,
+    "figures": [1, 0],
     "must_not": ["Privacy Policy", "Contact Sales"]
   },
   "mistral": {
@@ -169,6 +179,7 @@
     "first": "Today we announce our new Agents API",
     "last": "create your first agent, and start building!",
     "images": 3,
+    "figures": [3, 0],
     "must_not": ["Back to Blog", "5 min read", "0%"],
     "known_gaps": {
       "must_not": "The category eyebrow, 'Back to Blog', the read time and a '0%' progress label sit in plain <div>s inside <article>."
@@ -181,6 +192,7 @@
     "first": "A winged Chinese spacecraft bearing a strong resemblance to the US military’s X-37B",
     "last": "before backing away, US officials said.",
     "images": 2,
+    "figures": [1, 1],
     "must_not": ["Most Read", "Ars Technica has been separating the signal from the noise"]
   },
   "guardian_gallery": {
@@ -190,6 +202,7 @@
     "first": "Maasai in Kenya are using their love for the game",
     "last": "Tony Kishoyian of the Masaai Cricket Warriors poses for the camera",
     "images": 11,
+    "figures": [11, 10],
     "must_not": ["Most viewed", "Explore more on these topics", "View image in fullscreen"]
   },
   "huggingface": {
@@ -238,5 +251,16 @@
     "images": 2,
     "must_not": ["BlockBee", "Made with Material for MkDocs"],
     "contains": ["from fastapi import FastAPI"]
+  },
+  "gwern_spaced_repetition": {
+    "url": "https://gwern.net/spaced-repetition",
+    "fetched": "2026-10-28",
+    "title": "Spaced Repetition for Efficient Learning",
+    "first": "Efficient memorization using the spacing effect",
+    "last": "Alan J. Perlis, “Epigrams in Programming”",
+    "images": 4,
+    "tables": [54],
+    "figures": [4, 4],
+    "must_not": ["Backlinks", "Similar Links", "Bibliography"]
   }
 }

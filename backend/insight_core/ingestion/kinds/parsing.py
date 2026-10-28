@@ -141,6 +141,16 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 #    (ai.meta.com). Its text blocks (TEXT_BLOCKS and list items) and images are kept in page
 #    order; an image keeps only its address and alt (_article_image), and pixels, icons,
 #    badges and avatars go.
+# 4. Its structure is kept, not only its words (_Structure, issue 0042): a data table as a
+#    table (header cells, rows and columns, no attributes but colspan and rowspan), a figure
+#    with its images and caption together. A table that lays out the page is unwrapped, its
+#    blocks read like any others: one holding a heading or another table, marked
+#    role="presentation", or with a single cell. Inside a table or a figure no tag keeps a
+#    style or an event attribute. A heading with nothing under it goes: no text or image
+#    before the next heading of a higher level, or the end (section titles whose content a
+#    script fills in, a closing "Related" title). Not the next of the same level: a title
+#    over a same-level subtitle or a note's title is no empty section (gov.uk, the
+#    PostgreSQL docs; the before/after on 50 pages, issue 0042).
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
 CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar",
                    "comments", "comment-", "ad-", "advert")
@@ -153,7 +163,14 @@ PART_ENDINGS = ("-share", "_share", "-guides", "-topics") + CHROME_ENDINGS
 DARK_COPY_PREFIX = "dark-mode"     # deepmind.google's <picture class="dark-mode-alternative">
 VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                        "param", "source", "track", "wbr"})
-TEXT_BLOCKS = "h1|h2|h3|p|blockquote|pre|figcaption"
+TEXT_BLOCKS = "h1|h2|h3|p|blockquote|pre"
+# Blocks read whole up to their own end tag: a table's cells and a figure's caption hold <p>s.
+STRUCTURE_BLOCKS = "table|figure|figcaption"
+TABLE_PARTS = frozenset({"table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td"})
+TABLE_WIDTHS = frozenset({"colgroup", "col"})      # column widths only: they go
+CELL_ATTRS = ("colspan", "rowspan")
+LAYOUT_ROLES = frozenset({"presentation", "none"})
+HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # A tag's attributes, quoted values and all: huggingface.co's class="max-md:[&>a]:hidden".
 ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
 MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
@@ -310,6 +327,113 @@ def _without_chrome(html_text: str) -> str:
     return "".join(stripper.kept)
 
 
+def _tag(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> str:
+    """A start tag rebuilt from its attributes, without styles and event handlers."""
+    kept = "".join(f' {name}="{html_lib.escape(value or "")}"' for name, value in attrs
+                   if name != "style" and not name.startswith("on"))
+    return f"<{tag}{kept}>"
+
+
+class _Structure(HTMLParser):
+    """Re-emits the article with its tables and figures as the reader keeps them (step 4).
+    A table is judged when it closes: `tables` are the open ones, each with the positions in
+    `kept` of its own parts (kept without attributes but CELL_ATTRS), emptied then when it
+    lays out the page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.kept: List[str] = []
+        self.tables: List[Dict[str, Any]] = []
+        self.figures = 0
+
+    def _keep(self, text: str) -> None:
+        self.kept.append(text)
+
+    def _starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> str:
+        if self.tables or self.figures:
+            return _tag(tag, attrs)
+        return self.get_starttag_text() or ""
+
+    def _part(self, text: str) -> None:
+        """One of the innermost open table's own parts, judged when the table closes."""
+        self.tables[-1]["parts"].append(len(self.kept))
+        self.kept.append(text)
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag == "table":
+            for table in self.tables:   # a table holding a table lays it out
+                table["layout"] = True
+            role = (dict(attrs).get("role") or "").strip().lower()
+            self.tables.append({"parts": [], "layout": role in LAYOUT_ROLES, "cells": 0})
+            self._part("<table>")
+        elif self.tables and tag in TABLE_PARTS:
+            self.tables[-1]["cells"] += tag in ("th", "td")
+            spans = "".join(f' {name}="{(value or "").strip()}"' for name, value in attrs
+                            if name in CELL_ATTRS and (value or "").strip().isdigit())
+            self._part(f"<{tag}{spans}>")
+        elif self.tables and tag in TABLE_WIDTHS:
+            pass
+        elif tag == "figure":
+            self._keep("" if self.figures else "<figure>")   # a figure in a figure is one figure
+            self.figures += 1
+        elif tag == "figcaption":
+            self._keep("<figcaption>")
+        else:
+            if tag in HEADING_TAGS:
+                for table in self.tables:
+                    table["layout"] = True
+            self._keep(self._starttag(tag, attrs))
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if not (self.tables and tag in TABLE_WIDTHS):
+            self._keep(self._starttag(tag, attrs))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "table":
+            if self.tables:
+                self._part("</table>")
+                self._close_table()
+        elif self.tables and tag in TABLE_PARTS:
+            self._part(f"</{tag}>")
+        elif self.tables and tag in TABLE_WIDTHS:
+            pass
+        elif tag == "figure":
+            if self.figures:
+                self.figures -= 1
+                self._keep("" if self.figures else "</figure>")
+        else:
+            self._keep(f"</{tag}>")
+
+    def _close_table(self) -> None:
+        table = self.tables.pop()
+        layout = table["layout"] or table["cells"] < 2
+        for index in table["parts"] if layout else ():
+            self.kept[index] = ""
+
+    def close(self) -> None:
+        super().close()
+        while self.tables:              # never closed: no table
+            self.tables[-1]["layout"] = True
+            self._close_table()
+        self.kept.append("</figure>" if self.figures else "")
+
+    def handle_data(self, data: str) -> None:
+        self._keep(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._keep(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._keep(f"&#{name};")
+
+
+def _with_structure(html_text: str) -> str:
+    structure = _Structure()
+    structure.feed(html_text)
+    structure.close()
+    return "".join(structure.kept)
+
+
 CONTENT_CLASSES = ("entry-content", "post-content", "article-content", "content-body", "prose", "single-post-content")
 CANDIDATES = (
     lambda tag, id_, classes: tag == "article",
@@ -390,9 +514,14 @@ def _article_image(tag: str, base_url: str) -> str:
     return f'<img src="{html_lib.escape(src)}" alt="{html_lib.escape(attrs.get("alt", ""))}">'
 
 
-# \b: "<li" must not match "<link", nor "<p" "<path".
-BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS}|li)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b{ATTRS}>")
-PAGE_BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS})\b{ATTRS}>.*?</(?:{TEXT_BLOCKS})>")
+# \b: "<li" must not match "<link", nor "<p" "<path". A structure block (a table, a figure,
+# a caption) first, read up to its own end tag.
+BLOCK_RE = re.compile(rf"(?is)<(?P<block>{STRUCTURE_BLOCKS})\b{ATTRS}>.*?</(?P=block)>"
+                      rf"|<(?:{TEXT_BLOCKS}|li)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|li)>|<img\b{ATTRS}>")
+PAGE_BLOCK_RE = re.compile(rf"(?is)<(?:{TEXT_BLOCKS}|figcaption)\b{ATTRS}>.*?</(?:{TEXT_BLOCKS}|figcaption)>")
+HEADING_RE = re.compile(r"(?is)<h([1-6])\b")
+# A figure left with no text and no image (its only image had no address it could keep).
+EMPTY_FIGURE_RE = re.compile(r"(?is)\n?<figure>(?:\s|<(?!img\b)[^>]*>)*</figure>")
 TAG_RE = re.compile(rf"<[a-zA-Z]{ATTRS}>")
 QUOTED_RE = re.compile(r""""[^"]*"|'[^']*'""")
 SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:")
@@ -405,6 +534,41 @@ def _escaped_attributes(html: str) -> str:
         lambda value: value.group(0).replace("<", "&lt;").replace(">", "&gt;"), tag.group(0)), html)
 
 
+def _blocks(html_text: str) -> List[str]:
+    """The article's blocks in page order (BLOCK_RE); a figure as its own blocks inside one
+    <figure>, gone when it holds none."""
+    blocks = []
+    for match in BLOCK_RE.finditer(html_text):
+        block = match.group(0)
+        if match.group("block") == "figure":
+            inner = [part.group(0) for part in BLOCK_RE.finditer(block[len("<figure>"):-len("</figure>")])]
+            if not inner:
+                continue
+            block = "<figure>" + "".join(inner) + "</figure>"
+        blocks.append(block)
+    return blocks
+
+
+def _with_headings_over_content(blocks: List[str]) -> List[str]:
+    """The blocks without a heading that has nothing under it: no block with text or an image
+    before the next heading of a higher level, or the end (step 4). Read from the end,
+    `content[level]` says whether such a block comes before the next heading above that level."""
+    content = [False] * 7
+    kept: List[str] = []
+    for block in reversed(blocks):
+        heading = HEADING_RE.match(block)
+        if not heading:
+            if strip_html(block).strip() or "<img" in block.lower():
+                content = [True] * 7
+            kept.append(block)
+            continue
+        level = int(heading.group(1))
+        if content[level]:
+            kept.append(block)
+        content[level + 1:] = [False] * (6 - level)
+    return kept[::-1]
+
+
 def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str, Any]]:
     """(the article's html, its reading fidelity). The html is extract_article_html's; the
     fidelity (read_fidelity) is {} when no article was found."""
@@ -415,12 +579,13 @@ def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str
     # main block only when no candidate matched: a short <article> is no article, not a reason
     # to read the page's other lists as one (issue 0029).
     for candidate in _candidates(cleaned):
-        blocks = BLOCK_RE.findall(candidate)
+        blocks = _blocks(_with_structure(candidate))
         if not blocks:  # list items count only inside the chosen candidate
             blocks = PAGE_BLOCK_RE.findall(cleaned)
+        blocks = _with_headings_over_content(blocks)
         if len(strip_html(" ".join(blocks))) >= ARTICLE_MIN_CHARS:
             html = IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url), "\n".join(blocks))
-            html = _escaped_attributes(html)
+            html = EMPTY_FIGURE_RE.sub("", _escaped_attributes(html))
             return html, read_fidelity(blocks, html)
     return "", {}
 
