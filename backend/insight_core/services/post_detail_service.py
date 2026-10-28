@@ -134,6 +134,11 @@ class PostDetailService:
             stored = self.interactions.record_post_interaction(cur, post_id, "reading_session", payload)
         return stored
 
+    def save_position(self, post_id: str, block: Optional[int], blocks: Optional[int]) -> None:
+        """Where a long post was left (issue 0030); block None clears it (the post was finished)."""
+        with self._post_write(post_id) as cur:
+            self.reader_repo.set_position(cur, post_id, block, blocks)
+
     def toggle_favorite(self, post_id: str, favorited: bool) -> Dict[str, Any]:
         interaction_type = "favorited" if favorited else "unfavorited"
         with self._post_write(post_id) as cur:

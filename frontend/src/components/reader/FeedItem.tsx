@@ -8,6 +8,7 @@ import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId } from '../../lib/feedItem';
 import { formatClock } from '../../lib/duration';
+import { resumeShare } from '../../hooks/useReadingPosition';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
@@ -67,6 +68,8 @@ function FeedItem({
   // The API's title already falls back to the body (display_title), as on the post page.
   const title = item.title?.trim() || 'Untitled post';
   const length = lengthLabel(item);
+  const share = resumeShare(item.resume_block, item.resume_blocks);
+  const progress = share === null ? null : Math.round(share * 100);
   // The feed's own order key (published, else fetched), so the column and the day headers agree.
   const time = item.sort_at ?? item.published_at;
   const showThumb = item.media_thumb && !thumbFailed;
@@ -149,6 +152,16 @@ function FeedItem({
                 {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
                 {length}
               </span>
+            </>
+          ) : null}
+          {progress !== null ? (
+            <>
+              <span aria-hidden="true" className="shrink-0">·</span>
+              {/* Started, not finished (issue 0030): a hairline track, filled as far as read. */}
+              <span aria-hidden="true" data-reading-progress className="h-px w-10 shrink-0 bg-line">
+                <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
+              </span>
+              <span className="sr-only">{progress}% read</span>
             </>
           ) : null}
           {!isRead ? <span className="sr-only">Unread</span> : null}

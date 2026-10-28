@@ -257,6 +257,12 @@ class PostFavoriteRequest(BaseModel):
     favorited: bool
 
 
+class PostPositionRequest(BaseModel):
+    """Where a long post was left: the top block in view of `blocks`. block None: finished."""
+    block: int | None = None
+    blocks: int | None = None
+
+
 class ReadStateRequest(BaseModel):
     """PUT /api/feed/read: either `ids` (one post or many, read or unread), or a mark-through:
     `through_cursor` and `newest_cursor` in `scope` (read only)."""
@@ -536,6 +542,13 @@ async def record_post_reading_session(post_id: str, request: PostReaderSessionRe
 @error_detail("update the star")
 async def toggle_post_favorite(post_id: str, request: PostFavoriteRequest):
     return {"success": True, **services().post_detail.toggle_favorite(post_id, bool(request.favorited))}
+
+
+@app.put("/api/posts/item/{post_id}/position")
+@error_detail("save where you stopped")
+async def save_post_position(post_id: str, request: PostPositionRequest):
+    services().post_detail.save_position(post_id, request.block, request.blocks)
+    return {"success": True}
 
 
 # ============= READER =============

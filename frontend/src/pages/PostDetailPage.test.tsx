@@ -684,3 +684,158 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalledWith(POST_ID, expect.anything()));
   });
 });
+
+// ---- issue 0030: continue where I stopped ----
+
+/** A long post: 40 paragraphs, about 5,000 characters (more than three screens). */
+const PARAGRAPHS = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1}. ${'Agents shipped everywhere this year and the tools got better. '.repeat(2)}`);
+function longPost(overrides: Partial<Post> = {}) {
+  return rssPost({
+    content: PARAGRAPHS.join('\n\n'),
+    content_html: PARAGRAPHS.map((text) => `<p>${text}</p>`).join(''),
+    ...overrides,
+  });
+}
+
+function positionApi(post: Post, resume: { resume_block?: number | null; resume_blocks?: number | null } = {}) {
+  return baseApi(post, {
+    getPostDetail: vi.fn().mockResolvedValue({
+      success: true, post, reader_state: { post_id: post.id, is_favorited: false, open_count: 1, ...resume },
+    }),
+    savePostPosition: vi.fn().mockResolvedValue({ success: true }),
+  });
+}
+
+const OFFER = /continue from where you stopped/i;
+
+/** Lay the body out as if scrolled so that paragraph `top` (0-based) is the first in view. */
+function scrollTo(top: number) {
+  const article = screen.getByRole('article', { name: 'Post content' });
+  article.getBoundingClientRect = () => ({ top: -top * 100 - 50, bottom: (40 - top) * 100 } as DOMRect);
+  article.querySelectorAll('p').forEach((node, i) => {
+    node.getBoundingClientRect = () => ({ top: (i - top) * 100, bottom: (i - top) * 100 + 90 } as DOMRect);
+  });
+  fireEvent.scroll(window);
+}
+
+describe('PostDetailPage continue where I stopped (issue 0030)', () => {
+  beforeEach(() => {
+    StubObserver.all = [];
+    vi.stubGlobal('IntersectionObserver', StubObserver);
+    window.localStorage.clear();
+    resetStoredChoices();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+  });
+
+  it('offers to continue a long post left part way, and only scrolls when asked', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const user = userEvent.setup();
+    render(positionApi(longPost(), { resume_block: 16, resume_blocks: 40 }));
+    const offer = await screen.findByRole('button', { name: 'Continue from where you stopped (40%)' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    await user.click(offer);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    const target = scrollIntoView.mock.contexts[0] as HTMLElement;
+    expect(target.textContent).toMatch(/^Paragraph 17\./);
+    expect(document.activeElement).toBe(target);
+    expect(screen.queryByRole('button', { name: OFFER })).toBeNull();
+  });
+
+  it.each([
+    ['barely started (under 5%)', longPost(), { resume_block: 1, resume_blocks: 40 }],
+    ['nearly finished (over 90%)', longPost(), { resume_block: 38, resume_blocks: 40 }],
+    ['never started', longPost(), {}],
+    ['a short post', rssPost(), { resume_block: 1, resume_blocks: 2 }],
+  ])('offers nothing for %s', async (_, post, resume) => {
+    render(positionApi(post, resume));
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByRole('button', { name: OFFER })).toBeNull();
+  });
+
+  it('saves the top block in view a few seconds after scrolling stops, not on every scroll', async () => {
+    const api = positionApi(longPost());
+    render(api);
+    await screen.findByRole('heading', { level: 1 });
+    vi.useFakeTimers();
+    scrollTo(8);
+    act(() => { vi.advanceTimersByTime(2000); });
+    scrollTo(10);
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(api.savePostPosition).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(1500); });
+    expect(api.savePostPosition).toHaveBeenCalledTimes(1);
+    expect(api.savePostPosition).toHaveBeenCalledWith(POST_ID, 10, 40);
+  });
+
+  it('saves at once on leaving: the tab hidden, or the post closed', async () => {
+    const api = positionApi(longPost());
+    const { unmount } = render(api);
+    await screen.findByRole('heading', { level: 1 });
+    scrollTo(12);
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    expect(api.savePostPosition).toHaveBeenLastCalledWith(POST_ID, 12, 40);
+
+    scrollTo(20);
+    unmount();
+    expect(api.savePostPosition).toHaveBeenLastCalledWith(POST_ID, 20, 40);
+  });
+
+  it('nothing is saved before you scroll: opening a post keeps where you stopped', async () => {
+    const api = positionApi(longPost(), { resume_block: 16, resume_blocks: 40 });
+    const { unmount } = render(api);
+    await screen.findByRole('button', { name: OFFER });
+    unmount();
+    expect(api.savePostPosition).not.toHaveBeenCalled();
+  });
+
+  it('while the offer stands, looking about above the old place keeps it; reading past it replaces it', async () => {
+    const api = positionApi(longPost(), { resume_block: 16, resume_blocks: 40 });
+    const { unmount } = render(api);
+    await screen.findByRole('button', { name: OFFER });
+    scrollTo(3);
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    expect(api.savePostPosition).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: OFFER })).toBeInTheDocument();
+
+    scrollTo(18);
+    unmount();
+    expect(api.savePostPosition).toHaveBeenCalledWith(POST_ID, 18, 40);
+  });
+
+  it('reaching the end clears the position, and reading back up does not store it again', async () => {
+    const api = positionApi(longPost(), { resume_block: 16, resume_blocks: 40 });
+    const { unmount } = render(api);
+    await screen.findByRole('button', { name: OFFER });
+    see(postEnd(POST_ID));
+    await waitFor(() => expect(api.savePostPosition).toHaveBeenCalledWith(POST_ID, null, null));
+    scrollTo(5);
+    unmount();
+    expect(api.savePostPosition).toHaveBeenCalledTimes(1);
+  });
+
+  it('in the stream only the post opened offers to continue, not one that joins below', async () => {
+    const posts: Record<string, Post> = { [POST_ID]: longPost(), [NEXT_ID]: longPost({ id: NEXT_ID, title: 'The older post' }) };
+    const api = contextApi({
+      getPostDetail: vi.fn((id: string) => Promise.resolve({
+        success: true, post: posts[id], reader_state: { post_id: id, resume_block: 16, resume_blocks: 40 },
+      })),
+      savePostPosition: vi.fn().mockResolvedValue({ success: true }),
+    });
+    renderStream(api);
+    expect(await screen.findByRole('button', { name: OFFER })).toBeInTheDocument();
+    await nextReady();
+    see(streamEnd());
+    await screen.findByRole('heading', { level: 1, name: 'The older post' });
+    expect(screen.getAllByRole('button', { name: OFFER })).toHaveLength(1);
+  });
+});

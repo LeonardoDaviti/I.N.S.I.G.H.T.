@@ -189,7 +189,8 @@ _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, 4000), p.url, p.source_id,
     COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
-    length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]')
+    length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
+    rs.resume_block, rs.resume_blocks
 """
 
 
@@ -218,6 +219,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "reading_minutes": None if is_video or not content_length else math.ceil(content_length / CHARS_PER_READING_MINUTE),
         "duration_seconds": duration_seconds if is_video else None,
         "media_thumb": feed_thumb(row[13], row[3]),
+        "resume_block": row[14],
+        "resume_blocks": row[15],
     }
 
 
@@ -442,6 +445,36 @@ class ReaderRepository:
                 "UPDATE post_reader_state SET starred_at = NULL, updated_at = now() WHERE post_id = %s",
                 (post_id,),
             )
+
+    def set_position(self, cur: Cursor, post_id: str, block: int | None, blocks: int | None) -> None:
+        """Where a long post was left: the top block in view of `blocks` (issue 0030). None clears it."""
+        post_id = _require_uuid(post_id, "post id")
+        if block is None:
+            self.clear_positions(cur, [post_id])
+            return
+        if blocks is None or blocks < 1 or not 0 <= block < blocks:
+            raise ValueError("block must be within 0 and blocks - 1")
+        cur.execute(
+            """
+            INSERT INTO post_reader_state (post_id, resume_block, resume_blocks)
+            SELECT p.id, %s, %s FROM posts p WHERE p.id = %s
+            ON CONFLICT (post_id) DO UPDATE
+                SET resume_block = EXCLUDED.resume_block, resume_blocks = EXCLUDED.resume_blocks, updated_at = now()
+            RETURNING post_id
+            """,
+            (block, blocks, post_id),
+        )
+        if cur.fetchone() is None:
+            raise LookupError(f"Post {post_id} not found")
+
+    def clear_positions(self, cur: Cursor, post_ids: Sequence[str]) -> None:
+        cur.execute(
+            """
+            UPDATE post_reader_state SET resume_block = NULL, resume_blocks = NULL, updated_at = now()
+            WHERE post_id = ANY(%s::uuid[]) AND resume_block IS NOT NULL
+            """,
+            (list(post_ids),),
+        )
 
     def mark_read_through(self, cur: Cursor, scope: FeedScope, through: FeedCursor, *, newest: FeedCursor,
                           now: datetime) -> List[str]:

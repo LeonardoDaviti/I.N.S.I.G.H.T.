@@ -39,7 +39,8 @@ class PostInteractionsRepository:
         }
 
     def get_post_reader_state(self, cur: Cursor, post_id: str) -> Dict[str, Any]:
-        """Interaction-log aggregates plus the read-state projection (read_at, starred_at).
+        """Interaction-log aggregates plus the read-state projection (read_at, starred_at, and
+        resume_block of resume_blocks: where a long post was left, issue 0030).
 
         `is_favorited` comes from the projection (post_reader_state.starred_at), which the
         favorite endpoint writes; the interaction log stays the audit trail.
@@ -57,11 +58,13 @@ class PostInteractionsRepository:
                     END
                 ), 0) AS total_read_seconds,
                 (SELECT rs.read_at FROM post_reader_state rs WHERE rs.post_id = %s) AS read_at,
-                (SELECT rs.starred_at FROM post_reader_state rs WHERE rs.post_id = %s) AS starred_at
+                (SELECT rs.starred_at FROM post_reader_state rs WHERE rs.post_id = %s) AS starred_at,
+                (SELECT rs.resume_block FROM post_reader_state rs WHERE rs.post_id = %s) AS resume_block,
+                (SELECT rs.resume_blocks FROM post_reader_state rs WHERE rs.post_id = %s) AS resume_blocks
             FROM post_interactions i
             WHERE i.post_id = %s
         """
-        cur.execute(query, (post_id, post_id, post_id))
+        cur.execute(query, (post_id, post_id, post_id, post_id, post_id))
         row = cur.fetchone()
         if not row:
             return {
@@ -73,6 +76,8 @@ class PostInteractionsRepository:
                 "total_read_seconds": 0,
                 "read_at": None,
                 "starred_at": None,
+                "resume_block": None,
+                "resume_blocks": None,
             }
         return {
             "post_id": post_id,
@@ -83,4 +88,6 @@ class PostInteractionsRepository:
             "total_read_seconds": int(row[3] or 0),
             "read_at": row[4],
             "starred_at": row[5],
+            "resume_block": row[6],
+            "resume_blocks": row[7],
         }

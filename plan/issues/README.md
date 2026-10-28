@@ -34,6 +34,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0027](0027-illogicalities.md) | Illogicalities: controls and words that contradict their place | built, not deployed |
 | [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, not deployed |
 | [0029](0029-review-fixes.md) | Review fixes: correctness and overengineering in today's work | built, not deployed |
+| [0030](0030-continue-where-i-stopped.md) | Continue where I stopped: a long post offers to go back to where it was left | built, not deployed |
 | [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | ready-for-agent |
 | [0033](0033-continuous-reading-design.md) | Continuous reading: one calm column of separate articles | built, not deployed |
 | [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built, not deployed |
