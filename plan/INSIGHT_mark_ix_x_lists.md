@@ -16,6 +16,13 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - Why skip rules: on the server, 41,000 of 41,128 posts are unread (0.3% read). Muting words would barely change that; search (v9.4) and "Show in Main feed: off" for firehose sources do.
   - Why skip tags: tracks, Keep and search already cover them.
 
+## The rest of Mark IX (owner, 2026-10-28)
+- **v9.6, read everywhere:** the PWA with a share sheet and offline reading; the Fever / Google Reader API; saved searches.
+- **v9.7, sources, deeper:** full arXiv (0037), PDF text (0038), Hacker News with comments (0017), release updates (0024), native Bluesky and Mastodon.
+- **v9.8, running it, and output:** a one-command install (API and ingestion merged), optional login, notifications (ntfy), a track published as RSS, "also discussed on HN / Reddit".
+- **Cut:** podcasts, read aloud, export to Obsidian, webhooks (a track published as RSS covers the last two).
+- **Then Mark X**, after living with 9.4 and 9.5 for a few weeks so the tuning and reading history are real.
+
 ## Mark IX, personal product: reading even better
 
 ### Sources
@@ -31,9 +38,9 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - ◐ v9.4:
   - paste a homepage, follow its blog (0041);
   - the Gwern reader reads only Gwern's writing (0043).
-- ⧗ Full arXiv papers (0037). ⧗ PDF text (0038).
-- ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
-- ○ Native Bluesky and Mastodon. ○ Podcasts.
+- ⧗ v9.7: full arXiv papers (0037), PDF text (0038).
+- ⧗ v9.7: Hacker News kind with comments (0017), release updates (0024).
+- ○ v9.7: native Bluesky and Mastodon. ✗ Cut: podcasts.
 - ◐ v9.5:
   - conditional fetching (ETag, Last-Modified): an unchanged feed costs nothing (0044);
   - page-change watching, per source, Gwern first (0039);
@@ -52,27 +59,27 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - **◐ v9.4:**
   - **search across everything (0040);**
   - the reader keeps tables, figures and captions (0042).
-- ○ Saved searches.
+- ○ v9.6: saved searches.
 - ◐ v9.5: reading settings (font, size, width) (0045).
-- ○ Read aloud.
+- ✗ Cut: read aloud.
 - ✗ Skipped: highlights, notes, post versions.
 
 ### Organisation
 - ✓ Tracks, the Main feed, Unread / Later / Kept / All, "Show in Main feed".
 - ◐ v9.5: source hygiene: quiet and never-opened sources, Tidy up with Keep and Remove (0046).
-- ○ "Also discussed on Hacker News or Reddit".
+- ○ v9.8: "also discussed on Hacker News or Reddit".
 - ✗ Skipped: rules, tags.
 
 ### Everywhere you read (personal use)
-- ○ An installable PWA with a share sheet; offline reading.
-- ○ The Fever or Google Reader API (Reeder, NetNewsWire).
-- ○ Notifications (ntfy). ○ Publish a track as RSS.
-- ○ Export to Obsidian. ○ Webhooks.
+- ○ v9.6: an installable PWA with a share sheet; offline reading.
+- ○ v9.6: the Fever or Google Reader API (Reeder, NetNewsWire).
+- ○ v9.8: notifications (ntfy); publish a track as RSS.
+- ✗ Cut: export to Obsidian, webhooks.
 
 ### Running it yourself (self-hosted)
 - ✓ The version line, useful logs, the faster `./update`.
-- ○ A one-command install, lighter by merging the API and ingestion.
-- ○ Optional login, needed once it's reachable beyond Tailscale.
+- ○ v9.8: a one-command install, lighter by merging the API and ingestion.
+- ○ v9.8: optional login, needed once it's reachable beyond Tailscale.
 
 ## Hosted product: giving other people access (later)
 - Login and accounts.
