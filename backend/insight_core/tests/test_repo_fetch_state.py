@@ -249,6 +249,32 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertIn("archive", view[0]["settings"])
         self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[]), [])
 
+    def test_schedule_view_counts_the_posts_opened_later_or_kept(self):
+        # Issue 0046: an open, a reading session, Later, Keep and a part-read post count;
+        # read_at alone ("mark read up to here") does not.
+        self.add_posts(self.source, [NOW - i * H for i in range(7)])
+        self.cur.execute("SELECT id FROM posts WHERE source_id = %s ORDER BY published_at DESC", (self.source,))
+        opened, session, later, kept, started, read_only, untouched = [str(r[0]) for r in self.cur.fetchall()]
+        for post_id, kind in ((opened, "opened"), (session, "reading_session"), (read_only, "favorited")):
+            self.cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, %s)",
+                             (post_id, kind))
+        self.cur.execute(
+            "INSERT INTO post_reader_state (post_id, read_at, later_at, starred_at, resume_block) VALUES "
+            "(%s, NULL, now(), NULL, NULL), (%s, NULL, NULL, now(), NULL), (%s, NULL, NULL, NULL, 3), "
+            "(%s, now(), NULL, NULL, NULL)",
+            (later, kept, started, read_only),
+        )
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertEqual(row["opened_posts"], 5, "opened, session, later, kept, started; not read_only or untouched")
+        self.assertIsNone(row["tidy_kept_at"])
+
+    def test_keep_source_writes_when_it_was_kept(self):
+        self.assertTrue(self.repo.keep_source(self.cur, self.source, NOW))
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertEqual(row["tidy_kept_at"], NOW)
+        self.assertEqual(row["opened_posts"], 0)
+        self.assertFalse(self.repo.keep_source(self.cur, "00000000-0000-4000-8000-000000000000", NOW))
+
     # set_cadence_override --------------------------------------------------------------
 
     def test_set_cadence_override_writes_and_clears_the_column(self):

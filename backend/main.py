@@ -877,6 +877,14 @@ async def dismiss_replacement(source_id: str):
     return {"success": True, "row": services().operations.dismiss_replacement(source_id)}
 
 
+@app.post("/api/sources/{source_id}/tidy/keep")
+@error_detail("keep the source")
+async def keep_source(source_id: str):
+    """Keep a source marked quiet or never opened (issue 0046): its marks hide for 90 days
+    and come back then only if still true. The fresh health row; 404 for no such source."""
+    return {"success": True, "row": services().operations.keep_source(source_id)}
+
+
 @app.get("/api/sources/{source_id}/folders")
 @error_detail("load the source's folders")
 async def get_source_folders(source_id: str):

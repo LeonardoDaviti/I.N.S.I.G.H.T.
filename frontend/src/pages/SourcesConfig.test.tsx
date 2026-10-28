@@ -668,6 +668,66 @@ describe('SourcesConfig', () => {
     expect(rowIds()).toEqual(['flaky', 'tg', 'simon']);
   });
 
+  describe('Tidy up (issue 0046)', () => {
+    const marked = () => [
+      ...rows(),
+      healthRow({ source_id: 'quiet', display_name: 'Quiet Blog', quiet: true, last_post_at: '2026-03-04T10:00:00Z', folders: [] }),
+      healthRow({ source_id: 'unread', display_name: 'Unread News', never_opened: true, stored_posts: 214, folders: [] }),
+    ];
+    const tidySetup = (route = '/settings/sources') => {
+      // The server: a kept source loses its marks.
+      const kept = new Set<string>();
+      return setup(route, {
+        getSourcesHealth: vi.fn().mockImplementation(() => Promise.resolve(healthResponse(marked().map((row) => (
+          kept.has(row.source_id) ? { ...row, quiet: false, never_opened: false } : row))))),
+        keepSource: vi.fn().mockImplementation((id: string) => { kept.add(id); return Promise.resolve({ success: true, row: {} }); }),
+      });
+    };
+
+    it('the notes sit in the note column, and a Tidy up chip lists only the marked sources', async () => {
+      tidySetup();
+      await screen.findByText('Quiet Blog');
+      expect(rowOf('quiet')).toHaveTextContent('Quiet: last post Mar 4');
+      expect(rowOf('unread')).toHaveTextContent('Never opened: 214 posts');
+      // The whole list offers no Keep or Remove: only the Tidy up view does.
+      expect(within(rowOf('quiet')).queryByRole('button', { name: 'Keep Quiet Blog' })).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: /^Tidy up/ }));
+      expect(where()).toContain('status=tidy');
+      expect(rowIds().sort()).toEqual(['quiet', 'unread']);
+    });
+
+    it('with nothing marked there is no Tidy up chip, and ?status=tidy says there is nothing to tidy', async () => {
+      const first = setup();
+      await screen.findByText('Road to VR');
+      expect(screen.queryByRole('button', { name: /^Tidy up/ })).not.toBeInTheDocument();
+      first.unmount();
+      setup('/settings/sources?status=tidy');
+      expect(await screen.findByText('Nothing to tidy up: no source went quiet or goes unopened.')).toBeInTheDocument();
+    });
+
+    it('Keep dismisses the mark: the row leaves the view and the server is told', async () => {
+      const { api } = tidySetup('/settings/sources?status=tidy');
+      await screen.findByText('Quiet Blog');
+      await userEvent.click(within(rowOf('quiet')).getByRole('button', { name: 'Keep Quiet Blog' }));
+      expect(api.keepSource).toHaveBeenCalledWith('quiet');
+      await waitFor(() => expect(rowIds()).toEqual(['unread']));
+      expect(api.deleteSource).not.toHaveBeenCalled();
+    });
+
+    it('Remove asks first, then deletes the source as any delete does', async () => {
+      const { api } = tidySetup('/settings/sources?status=tidy');
+      await screen.findByText('Unread News');
+      await userEvent.click(within(rowOf('unread')).getByRole('button', { name: 'Remove Unread News' }));
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog).toHaveTextContent('Delete "Unread News"?');
+      expect(api.deleteSource).not.toHaveBeenCalled();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Delete source' }));
+      await waitFor(() => expect(api.deleteSource).toHaveBeenCalledWith('unread'));
+      expect(api.keepSource).not.toHaveBeenCalled();
+    });
+  });
+
   it('with no unavailable source there is no "Unavailable 0" chip', async () => {
     setup('/settings/sources', { getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
       healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', folders: [ai] }),

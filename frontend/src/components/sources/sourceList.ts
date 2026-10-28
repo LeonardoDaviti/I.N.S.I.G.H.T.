@@ -15,7 +15,8 @@
 import type { Folder, HealthStatus, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
 import { HEALTH_STATUS_ORDER, backoffLabel, filterHealthRows, statusRank } from '../../lib/sourceSchedule';
-import { formatRelativeTime } from '../../lib/dates';
+import { feedDateLabel, formatRelativeTime } from '../../lib/dates';
+import { plural } from '../../lib/format';
 import { getPlatformLabel, sourceLabel } from '../../lib/sourceLabel';
 import { matchesSource, queryWords } from '../../lib/sourceSearch';
 
@@ -52,9 +53,10 @@ export const DEFAULT_DIR: Record<SortBy, SortDir> = {
   status: 'desc',
 };
 
-/** A status chip: one health status, or `enabled` (every source that is on). */
-export type StatusFilter = HealthStatus | 'enabled';
-const STATUS_FILTER_VALUES: readonly string[] = ['enabled', ...HEALTH_STATUS_ORDER];
+/** A status chip: one health status, `enabled` (every source that is on) or `tidy` (Tidy up:
+ *  the sources marked quiet or never opened, issue 0046). */
+export type StatusFilter = HealthStatus | 'enabled' | 'tidy';
+const STATUS_FILTER_VALUES: readonly string[] = ['enabled', 'tidy', ...HEALTH_STATUS_ORDER];
 
 export interface SourcesView {
   q: string;
@@ -119,9 +121,16 @@ export function rowName(row: Pick<SourceHealthRow, 'display_name' | 'source_id'>
   return sourceLabel(String(row.display_name || row.source_id));
 }
 
-/** The rows a status chip keeps: `enabled` is every source that is on, the rest as filterHealthRows. */
+/** Marked quiet or never opened (issue 0046): a source Tidy up lists. */
+export function isTidy(row: Pick<SourceHealthRow, 'quiet' | 'never_opened'>): boolean {
+  return Boolean(row.quiet || row.never_opened);
+}
+
+/** The rows a status chip keeps: `enabled` is every source that is on, `tidy` the marked ones,
+ *  the rest as filterHealthRows. */
 export function filterByStatus(rows: readonly SourceHealthRow[], status: StatusFilter | null): SourceHealthRow[] {
   if (status === 'enabled') return rows.filter((row) => row.enabled);
+  if (status === 'tidy') return rows.filter(isTidy);
   return filterHealthRows(rows, status);
 }
 
@@ -253,10 +262,24 @@ export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_lo
   return row.doctor_looked_at ? 'Broken: no replacement found' : null;
 }
 
+/**
+ * Source hygiene's notes (issue 0046), quiet first: "Quiet: last post Mar 4" (or "Quiet: no
+ * posts yet"), "Never opened: 214 posts". Empty for a source with neither mark.
+ */
+export function tidyNotes(row: Pick<SourceHealthRow, 'quiet' | 'never_opened' | 'last_post_at' | 'stored_posts'>, now: Date): string[] {
+  const notes: string[] = [];
+  if (row.quiet) notes.push(row.last_post_at ? `Quiet: last post ${feedDateLabel(row.last_post_at, now)}` : 'Quiet: no posts yet');
+  if (row.never_opened) notes.push(`Never opened: ${plural(row.stored_posts, 'post')}`);
+  return notes;
+}
+
 /** The one fact a row shows on the right: what happens next, or what went wrong. */
 export function rowFact(row: SourceHealthRow, now: Date): string {
   if (!row.enabled) return 'off';
   if (row.kind === 'saved') return 'pages you save';
+  // Never on a broken source (the doctor's note stays), so it may come before the status.
+  const [tidy] = tidyNotes(row, now);
+  if (tidy) return tidy;
   if (row.status === 'unavailable') return 'unavailable';
   const broken = brokenNote(row);
   if (broken) return broken;
@@ -279,6 +302,7 @@ export const STATUS_FILTERS: { value: StatusFilter; label: string; secondary?: b
   { value: 'unavailable', label: 'Unavailable', secondary: true },
   { value: 'due', label: 'Due', secondary: true },
   { value: 'deferred', label: 'Scheduled', secondary: true },
+  { value: 'tidy', label: 'Tidy up', secondary: true },
 ];
 
 /** Readable names for the backend's source kinds; an unknown kind falls back to the platform. */
