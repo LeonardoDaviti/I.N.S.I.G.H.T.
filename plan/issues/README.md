@@ -37,6 +37,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | ready-for-agent |
 | [0035](0035-add-many-sources.md) | Add many sources at once: a paste box and OPML | ready-for-agent |
 | [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | ready-for-agent |
+| [0037](0037-full-arxiv-papers.md) | Full arXiv papers, from their HTML version | future |
+| [0038](0038-pdf-text.md) | Reading the PDFs posts link to | future |
 
 ## Analysis archive
 
