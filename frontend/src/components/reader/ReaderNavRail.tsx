@@ -87,8 +87,8 @@ function SourceFilter({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
-function RailContent({ scope, counts, search, onNavigate }: {
-  scope: string; counts: UnreadCounts | undefined; search: string; onNavigate?: () => void;
+function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
+  scope: string; counts: UnreadCounts | undefined; search: string; scopeHref?: (scope: string) => string; onNavigate?: () => void;
 }) {
   const { folders } = useReaderDirectory();
   const [showAllSources, setShowAllSources] = useState(false);
@@ -96,7 +96,7 @@ function RailContent({ scope, counts, search, onNavigate }: {
   const words = useMemo(() => queryWords(query), [query]);
   const filtering = words.length > 0;
   const directory = useSourceDirectory(filtering);
-  const withSearch = (path: string) => `${path}${search}`;
+  const href = scopeHref ?? ((to: string) => `${scopePath(to)}${search}`);
   const unread = (id: string) => counts?.by_source?.[id] ?? 0;
 
   // Most unread first, then by name. A source the directory cannot name (deleted)
@@ -120,7 +120,7 @@ function RailContent({ scope, counts, search, onNavigate }: {
     <nav aria-label="Main feed, tracks and sources" className="flex min-h-0 flex-1 flex-col px-2 pb-4">
       <div className="space-y-0.5 pt-2">
         <RailLink
-          to={withSearch('/')}
+          to={href('all')}
           current={scope === 'all'}
           label="Main feed"
           count={counts?.total}
@@ -139,7 +139,7 @@ function RailContent({ scope, counts, search, onNavigate }: {
             return (
               <RailLink
                 key={folder.id}
-                to={withSearch(scopePath(folderScope))}
+                to={href(folderScope)}
                 current={scope === folderScope}
                 label={folder.name}
                 count={counts?.by_folder?.[folder.id]}
@@ -160,7 +160,7 @@ function RailContent({ scope, counts, search, onNavigate }: {
           return (
             <RailLink
               key={source.id}
-              to={withSearch(scopePath(sourceScope))}
+              to={href(sourceScope)}
               current={scope === sourceScope}
               label={source.label}
               count={unread(source.id)}
@@ -191,20 +191,23 @@ function RailContent({ scope, counts, search, onNavigate }: {
  * The sources section has a filter over every source (not only those with
  * unread), and "Show all" expands the full list inline. At md and up it
  * is a sticky rail; below md the same content is a drawer opened from the
- * toolbar, which slides in from the left and leaves the same way.
+ * toolbar, which slides in from the left and leaves the same way. On the search page
+ * each link narrows the search to its scope instead (`scopeHref`, issue 0040).
  */
-export default function ReaderNavRail({ scope, counts, search, drawerOpen, onDrawerOpenChange }: {
+export default function ReaderNavRail({ scope, counts, search, scopeHref, drawerOpen, onDrawerOpenChange }: {
   scope: string;
   counts: UnreadCounts | undefined;
   /** The query string kept on rail links (view etc.), with its leading "?" or empty. */
   search: string;
+  /** Where a scope's link goes, when not to that scope in the reader. */
+  scopeHref?: (scope: string) => string;
   drawerOpen: boolean;
   onDrawerOpenChange: (open: boolean) => void;
 }) {
   return (
     <>
       <aside className="reader-rail sticky top-topbar hidden h-[calc(100dvh-var(--topbar-h))] w-60 shrink-0 flex-col overflow-y-auto border-r border-line pt-2 md:flex lg:w-64">
-        <RailContent scope={scope} counts={counts} search={search} />
+        <RailContent scope={scope} counts={counts} search={search} scopeHref={scopeHref} />
       </aside>
       <Dialog.Root open={drawerOpen} onOpenChange={onDrawerOpenChange}>
         <Dialog.Portal>
@@ -228,7 +231,7 @@ export default function ReaderNavRail({ scope, counts, search, drawerOpen, onDra
                 <X aria-hidden="true" className="h-4 w-4" />
               </Dialog.Close>
             </div>
-            <RailContent scope={scope} counts={counts} search={search} onNavigate={() => onDrawerOpenChange(false)} />
+            <RailContent scope={scope} counts={counts} search={search} scopeHref={scopeHref} onNavigate={() => onDrawerOpenChange(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

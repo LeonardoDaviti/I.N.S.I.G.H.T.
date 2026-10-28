@@ -1,15 +1,15 @@
-import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import type { FeedFilter, FeedItem as FeedItemData, FeedView } from '../../services/api';
+import type { FeedFilter, FeedGroup as FeedGroupData, FeedItem as FeedItemData, FeedView } from '../../services/api';
 import { useFeed, type FeedFixture } from '../../hooks/useFeed';
 import { usePrefetchPost } from '../../hooks/usePost';
 import { useReaderMutations, type UnreadChange } from '../../hooks/useReaderMutations';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { useShortcutPreference } from '../../hooks/useShortcutPreference';
 import { feedNavigation, initialNavState, type NavAction, type NavIntent } from '../../lib/feedNavigation';
-import { postHref, type FeedContext } from '../../lib/feedContext';
+import { postHref, type ContextEntry, type FeedContext } from '../../lib/feedContext';
 import { errorMessage } from '../../lib/apiError';
 import { plural } from '../../lib/format';
 import { feedDayHeading, feedDayKey } from '../../lib/dates';
@@ -26,7 +26,7 @@ export interface FeedListProps {
   view: FeedView;
   fixture?: FeedFixture | null;
   emptyTitle?: string;
-  emptyDescription?: string;
+  emptyDescription?: ReactNode;
   emptyAction?: EmptyStateAction;
   /** Controlled shortcut help (the toolbar's ? button); uncontrolled when omitted. */
   helpOpen?: boolean;
@@ -43,22 +43,53 @@ const ShortcutHelp = lazy(() => import('./ShortcutHelp'));
 const ConfirmDialog = lazy(() => import('../ops/ConfirmDialog'));
 const PREFETCH_DELAY_MS = 150;
 
+/** What the list reads from its query: `useFeed`'s shape, and `useSearch`'s. */
+export interface PostListData {
+  items: FeedItemData[];
+  groups: FeedGroupData[];
+  entries: ContextEntry[];
+  data?: unknown;
+  error: Error | null;
+  isPending: boolean;
+  isError: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  isFetchNextPageError: boolean;
+  fetchNextPage: () => Promise<unknown>;
+  refetch: () => Promise<unknown>;
+}
+
+export interface PostListProps extends Omit<FeedListProps, 'fixture'> {
+  feed: PostListData;
+  /** The dev fixtures: nothing is written and nothing prefetched. */
+  dryRun?: boolean;
+  /**
+   * Search results (issue 0040): rows show their matching line and their date (no day
+   * headers), open with no feed context, and Shift+A does not mark through.
+   */
+  search?: boolean;
+}
+
+/** The reader list (spec §F.3, §F.5, §F.6): FeedList loads the feed; the search page hands its results to PostList. */
+function FeedList({ fixture = null, ...props }: FeedListProps) {
+  const feed = useFeed({ scope: props.scope, filter: props.filter, view: props.view, fixture });
+  return <PostList feed={feed} dryRun={Boolean(fixture)} {...props} />;
+}
+
 /**
- * The reader list (spec §F.3, §F.5, §F.6): renders the feed in either view, owns
- * the j/k selection (by post id, through the pure `feedNavigation` reducer), the
+ * The list itself: renders the posts in either view, owns the j/k selection (by post id, through the pure `feedNavigation` reducer), the
  * optimistic read, Later and Keep toggles, mark-read-through with its confirmation and Undo,
  * and infinite loading (an IntersectionObserver sentinel plus a visible "Load
  * more" button). Results are announced in the page's live region.
  */
-function FeedList({
-  scope, filter, view, fixture = null, emptyTitle, emptyDescription, emptyAction,
+function PostListBody({
+  feed, scope, filter, view, dryRun = false, search = false, emptyTitle, emptyDescription, emptyAction,
   helpOpen, onHelpOpenChange, onUnreadDelta,
-}: FeedListProps) {
-  const feed = useFeed({ scope, filter, view, fixture });
+}: PostListProps) {
   const announce = useAnnounce();
   const navigate = useNavigate();
   const prefetch = usePrefetchPost();
-  const mutations = useReaderMutations({ dryRun: Boolean(fixture), onUnreadDelta, scope });
+  const mutations = useReaderMutations({ dryRun, onUnreadDelta, scope });
   const [shortcutsOn] = useShortcutPreference();
   const [internalHelp, setInternalHelp] = useState(false);
   const help = helpOpen ?? internalHelp;
@@ -79,7 +110,7 @@ function FeedList({
   // Day headers for the stream: each row's day heading, and whether the row is the
   // first of its day (where the header is drawn), computed once per items array.
   // Later is in the order saved, not by day: no headers, and each row shows its date.
-  const byDay = filter !== 'later';
+  const byDay = filter !== 'later' && !search;
   const days = useMemo(() => {
     let previous: string | null = null;
     return items.map((item) => {
@@ -94,12 +125,13 @@ function FeedList({
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const pageCursorById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.pageCursor])), [entries]);
 
-  const contextFor = useCallback((item: FeedItemData): FeedContext => (
-    view === 'by_source'
-      // A group's posts are the newest of their source, so they sit on that source's first page.
-      ? { scope: `source:${item.source_id}`, filter, cursor: null }
-      : { scope, filter, cursor: pageCursorById.get(item.id) ?? null }
-  ), [filter, pageCursorById, scope, view]);
+  const contextFor = useCallback((item: FeedItemData): FeedContext | null => {
+    // A search result is not a place in a feed: it opens on its own.
+    if (search) return null;
+    // A group's posts are the newest of their source, so they sit on that source's first page.
+    if (view === 'by_source') return { scope: `source:${item.source_id}`, filter, cursor: null };
+    return { scope, filter, cursor: pageCursorById.get(item.id) ?? null };
+  }, [filter, pageCursorById, scope, search, view]);
   const itemHref = useCallback((item: FeedItemData) => postHref(item.id, contextFor(item)), [contextFor]);
 
   // ---- actions ----
@@ -148,9 +180,10 @@ function FeedList({
   }, [mutations]);
 
   const askMarkThrough = useCallback((item: FeedItemData) => {
-    if (view === 'by_source' || filter === 'later') {
-      // Later is in the order saved, not the feed's: "up to here" would mean something else.
-      const message = filter === 'later' ? 'Mark read up to here does not work in Later.' : 'Mark read up to here works in the Stream view.';
+    if (view === 'by_source' || filter === 'later' || search) {
+      // Later (and a search) is not in the feed's order: "up to here" would mean something else.
+      let message = filter === 'later' ? 'Mark read up to here does not work in Later.' : 'Mark read up to here works in the Stream view.';
+      if (search) message = 'Mark read up to here does not work in search results.';
       announce(message);
       toast(message);
       return;
@@ -163,7 +196,7 @@ function FeedList({
       return;
     }
     setConfirm({ through: item, count });
-  }, [announce, filter, view]);
+  }, [announce, filter, search, view]);
 
   const confirmMarkThrough = useCallback(async () => {
     const pending = confirm;
@@ -265,14 +298,14 @@ function FeedList({
   // fetching each of them would only churn the network and the query cache.
   const selectedId = nav.selectedId;
   useEffect(() => {
-    if (fixture || !selectedId) return undefined;
+    if (dryRun || !selectedId) return undefined;
     const timer = window.setTimeout(() => {
       prefetch(selectedId);
       const index = ids.indexOf(selectedId);
       if (index >= 0 && index + 1 < ids.length) prefetch(ids[index + 1]);
     }, PREFETCH_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [fixture, ids, prefetch, selectedId]);
+  }, [dryRun, ids, prefetch, selectedId]);
 
   // ---- infinite loading ----
   const sentinel = useRef<HTMLDivElement | null>(null);
@@ -300,9 +333,9 @@ function FeedList({
 
   let body;
   if (feed.isPending) {
-    body = <LoadingState label="Loading feed" rows={6} />;
+    body = <LoadingState label={search ? 'Searching' : 'Loading feed'} rows={6} />;
   } else if (feed.isError && !feed.data) {
-    body = <ErrorState title="Could not load the feed" error={feed.error} onRetry={() => void feed.refetch()} />;
+    body = <ErrorState title={search ? 'Could not search' : 'Could not load the feed'} error={feed.error} onRetry={() => void feed.refetch()} />;
   } else if (!items.length && !groups.length) {
     body = (
       <EmptyState
@@ -324,7 +357,7 @@ function FeedList({
         ) : (
           // An ARIA feed owns articles only: the day headers are drawn for the eye
           // (aria-hidden) and each row reads its own day out with its time.
-          <div role="feed" aria-label="Posts" aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
+          <div role="feed" aria-label={search ? 'Search results' : 'Posts'} aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
             {items.map((item, index) => (
               <Fragment key={item.id}>
                 {days[index].first ? (
@@ -342,6 +375,7 @@ function FeedList({
                   position={index + 1}
                   setSize={hasNextPage ? -1 : items.length}
                   showSource={!scope.startsWith('source:')}
+                  snippet={search ? item.snippet : undefined}
                   {...shared}
                 />
               </Fragment>
@@ -400,4 +434,5 @@ function FeedList({
 }
 
 /** Memoised: a counts refetch re-renders the reader page, not the whole list. */
+export const PostList = memo(PostListBody);
 export default memo(FeedList);

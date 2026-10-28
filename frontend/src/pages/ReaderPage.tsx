@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
 import type { FeedFilter, FeedView, UnreadCounts } from '../services/api';
@@ -21,6 +21,7 @@ import { formatCount, plural } from '../lib/format';
 import TextLink from '../components/ui/TextLink';
 import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
+import { searchHref } from '../lib/search';
 
 /**
  * How many posts arrived since the feed was loaded, from the scope's unread count.
@@ -93,6 +94,7 @@ export default function ReaderPage() {
 
 function Reader({ scope }: { scope: string }) {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const rawFilter = params.get('filter');
   const filter: FeedFilter = isFeedFilter(rawFilter) ? rawFilter : 'unread';
@@ -201,6 +203,8 @@ function Reader({ scope }: { scope: string }) {
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
             pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
+            // Scoped to what is on screen: this scope, and Later or Kept when that is the list shown.
+            onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' ? filter : 'all' }))}
           />
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
             <div className="min-w-0">

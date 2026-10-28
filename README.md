@@ -267,6 +267,7 @@ Reader and sources:
 
 - `GET /api/feed` (`scope=all|source:<id>|folder:<id>`, `filter=unread|starred|all`, `view=stream|by_source`, `cursor`, `days` or `date`)
 - `GET /api/feed/unread-counts`
+- `GET /api/search` (`q`; `scope` none for every post, or `all|source:<id>|folder:<id>`; `filter=later|starred`, `days`, `order=newest|best`, `cursor`)
 - `PUT /api/feed/read` (`{ids, read}`, or `{scope, through_cursor, newest_cursor}`)
 - `GET /api/sources`, `POST /api/sources`
 - `GET /api/sources/health`

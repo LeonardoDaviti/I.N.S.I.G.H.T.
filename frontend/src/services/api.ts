@@ -93,7 +93,11 @@ export interface FeedItem {
   resume_block?: number | null; resume_blocks?: number | null;
   /** In Later since (issue 0022); null or absent when not in Later. */
   later_at?: string | null;
+  /** Search results only (issue 0040): the matching line, its words marked; null when the
+   *  words matched only the title or the source's name. */
+  snippet?: SnippetPart[] | null;
 }
+export interface SnippetPart { text: string; mark: boolean; }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
 export interface FeedGroup {
   source_id: string; source_display_name: string; platform: string;
@@ -116,6 +120,35 @@ export interface FeedParams {
   limit?: number;
   days?: number;
   signal?: AbortSignal;
+}
+
+// ---- Search: GET /api/search (issue 0040) ----
+
+/** Search narrows to Later or Kept, never to read state. */
+export type SearchFilter = 'all' | 'later' | 'starred';
+export type SearchOrder = 'newest' | 'best';
+export interface SearchParams {
+  q: string;
+  /** No scope searches every post; `all` is the Main feed, `folder:<uuid>`, `source:<uuid>`. */
+  scope?: string | null;
+  filter?: SearchFilter;
+  /** The last N days. */
+  days?: number | null;
+  order?: SearchOrder;
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+function searchPath(params: SearchParams): string {
+  const qs = new URLSearchParams({ q: params.q });
+  if (params.scope) qs.set('scope', params.scope);
+  if (params.filter && params.filter !== 'all') qs.set('filter', params.filter);
+  if (params.days) qs.set('days', String(params.days));
+  if (params.order && params.order !== 'newest') qs.set('order', params.order);
+  if (params.cursor) qs.set('cursor', params.cursor);
+  if (params.limit) qs.set('limit', String(params.limit));
+  return `/api/search?${qs.toString()}`;
 }
 
 /** What a kind's available_posts means (backend kinds/base.py AvailableBasis). */
@@ -658,6 +691,8 @@ export function createApi() {
     getFeed: (params: FeedParams) => request<FeedPage>(feedPath(params, 'stream'), { signal: params.signal }),
     /** One page of the by-source view: one group per source, at most 3 items each. */
     getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
+    /** One page of search results (issue 0040): feed rows with their matching line. */
+    searchPosts: (params: SearchParams) => request<FeedPage>(searchPath(params), { signal: params.signal }),
     /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
     getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
     /** Mark one post or many (at most 500) read or unread. Marking read takes them out of

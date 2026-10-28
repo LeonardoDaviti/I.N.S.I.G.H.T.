@@ -6,12 +6,14 @@ import Kbd from '../ui/Kbd';
 import { useTheme } from '../ThemeProvider';
 import { cn } from '../../lib/utils';
 import { destinations, filterDestinations, insideDesignFrame, type Destination } from './navigation';
+import { searchHref } from '../../lib/search';
 import { useFolders } from '../../hooks/useReaderDirectory';
 
 type Option = Destination | { id: 'toggle-theme'; label: string; group: string; to?: undefined };
 
 /**
- * The quick switcher: navigation only, no post search (spec §F.2). It opens
+ * The quick switcher: the places to go, then "Search posts…", which searches every post
+ * for what was typed (issue 0040). It opens
  * many times a day, so it never animates (emil: frequency decides motion).
  * Combobox + listbox semantics; ↑/↓ move, Enter goes, Esc closes.
  */
@@ -37,6 +39,14 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
     if (!q || q.split(/\s+/).every((word) => `${themeOption.label.toLowerCase()} ${themeWords}`.includes(word))) {
       matches.push(themeOption);
     }
+    // Always last, so a typed place still comes first; with nothing else matching it is the one option.
+    const typed = query.trim();
+    matches.push({
+      id: 'search-posts',
+      label: typed ? `Search posts for “${typed}”` : 'Search posts…',
+      group: 'search',
+      to: searchHref({ q: typed }),
+    });
     return matches;
   }, [query, theme, items]);
 
@@ -104,31 +114,27 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
           <Kbd>esc</Kbd>
         </div>
         <ul ref={listRef} id={listId} role="listbox" aria-label="Destinations" className="max-h-[min(22rem,60dvh)] overflow-y-auto p-1.5">
-          {options.length === 0 ? (
-            <li className="px-3 py-6 text-center text-[0.875rem] text-fg-3">No page matches “{query}”.</li>
-          ) : (
-            options.map((option, index) => (
-              <li
-                key={option.id}
-                id={optionId(index)}
-                data-index={index}
-                role="option"
-                aria-selected={index === active}
-                onMouseMove={() => setActive(index)}
-                onClick={() => choose(option)}
-                className={cn(
-                  'flex min-h-[2.5rem] cursor-pointer items-center gap-3 rounded-md px-3 text-[0.875rem]',
-                  index === active ? 'bg-inverse text-inverse-fg' : 'text-fg',
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                <span className={cn('shrink-0 text-[0.75rem] lowercase', index === active ? 'text-inverse-fg/70' : 'text-fg-3')}>
-                  {option.group}
-                </span>
-                {index === active ? <CornerDownLeft aria-hidden="true" className="h-3.5 w-3.5 shrink-0" /> : null}
-              </li>
-            ))
-          )}
+          {options.map((option, index) => (
+            <li
+              key={option.id}
+              id={optionId(index)}
+              data-index={index}
+              role="option"
+              aria-selected={index === active}
+              onMouseMove={() => setActive(index)}
+              onClick={() => choose(option)}
+              className={cn(
+                'flex min-h-[2.5rem] cursor-pointer items-center gap-3 rounded-md px-3 text-[0.875rem]',
+                index === active ? 'bg-inverse text-inverse-fg' : 'text-fg',
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              <span className={cn('shrink-0 text-[0.75rem] lowercase', index === active ? 'text-inverse-fg/70' : 'text-fg-3')}>
+                {option.group}
+              </span>
+              {index === active ? <CornerDownLeft aria-hidden="true" className="h-3.5 w-3.5 shrink-0" /> : null}
+            </li>
+          ))}
         </ul>
       </DialogContent>
     </Dialog>
