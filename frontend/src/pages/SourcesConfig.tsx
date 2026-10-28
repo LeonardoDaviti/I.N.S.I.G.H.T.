@@ -7,6 +7,8 @@ import { Plus } from 'lucide-react';
 import { useApi } from '../services/ApiContext';
 import type { Envelope, SourceHealthRow, SourceWithSettings, SourcesHealthResponse } from '../services/api';
 import AddSourceModal from '../components/AddSourceModal';
+import type { AddedSource } from '../components/AddSeveralSources';
+import { apiUrl } from '../lib/request';
 import SourceSettingsEditor from '../components/SourceSettingsEditor';
 import ConfirmDialog from '../components/ops/ConfirmDialog';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
@@ -342,6 +344,15 @@ export default function SourcesConfig() {
     }
   };
 
+  // Several at once (issue 0035): each is fetched now, as a single add is.
+  const handleAddedMany = (added: AddedSource[], close: boolean) => {
+    if (close) setShowAddSource(false);
+    invalidate();
+    added.forEach((source) => {
+      void runFetch({ kind: 'source', id: source.id, name: sourceLabel(source.name, source.address) }, { startText: 'Added — fetching now' });
+    });
+  };
+
   const selectIds = (ids: string[], on: boolean) => setSelected((prev) => {
     const next = new Set(prev);
     ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
@@ -502,6 +513,11 @@ export default function SourcesConfig() {
             ) : null}
             {allRows.length ? <SourcesToolbar ref={searchRef} view={view} counts={counts.byStatus} total={counts.total} onChange={setView} /> : null}
             {body}
+            {allRows.length ? (
+              <p className="mt-6 text-[0.8125rem] text-fg-3">
+                <a href={apiUrl('/api/sources/export.opml')} download className="text-link text-fg-2">Export sources (OPML)</a>
+              </p>
+            ) : null}
           </div>
         </TabsContent>
         <TabsContent value="connections" className="pt-2">
@@ -540,6 +556,7 @@ export default function SourcesConfig() {
           existingAddresses={sourcesQuery.data?.map((source) => source.handle_or_url)}
           onClose={() => setShowAddSource(false)}
           onAdd={handleAddSource}
+          onAddMany={handleAddedMany}
         />
       ) : null}
 

@@ -340,6 +340,32 @@ describe('SourcesConfig', () => {
     expect(await screen.findByText('4 new posts from 1 source')).toBeInTheDocument();
   });
 
+  it('adding several fetches each added source straight away and closes the dialog (issue 0035)', async () => {
+    const fetchSourceNow = vi.fn().mockResolvedValue(runReport());
+    const addSource = vi.fn((payload: { handle_or_url: string }) => Promise.resolve({ success: true, source_id: `id:${payload.handle_or_url}` }));
+    const findFeed = vi.fn((url: string) => Promise.resolve({ success: true, status: 'feed', feeds: [{ url, title: url.toUpperCase() }] }));
+    setup('/settings/sources', { addSource, fetchSourceNow, findFeed });
+    await userEvent.click(await screen.findByRole('button', { name: 'Add source' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Add several…' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText(/^Addresses/), 'https://a.example/feed{enter}https://b.example/feed{enter}https://c.example/feed');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Find feeds' }));
+    await within(dialog).findByText('HTTPS://C.EXAMPLE/FEED');
+    await userEvent.click(within(screen.getByTestId('several-row:https://b.example/feed')).getByRole('checkbox'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add 2 sources' }));
+    await waitFor(() => expect(fetchSourceNow).toHaveBeenCalledTimes(2));
+    expect(fetchSourceNow.mock.calls.map(([id]) => id)).toEqual(['id:https://a.example/feed', 'id:https://c.example/feed']);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add several sources' })).not.toBeInTheDocument());
+  });
+
+  it('links the OPML export of every source (issue 0035)', async () => {
+    setup();
+    await screen.findByText('Road to VR');
+    const link = screen.getByRole('link', { name: 'Export sources (OPML)' });
+    expect(link).toHaveAttribute('href', '/api/sources/export.opml');
+    expect(link).toHaveAttribute('download');
+  });
+
   it('the Pipecraft template adds pipecraft.me, read by its adapter', async () => {
     const addSource = vi.fn().mockResolvedValue({ success: true, source_id: 'pc-1' });
     setup('/settings/sources', { addSource });

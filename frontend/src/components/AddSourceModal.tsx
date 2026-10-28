@@ -6,6 +6,8 @@ import { SubstackHowTo, cookieValue, isSubstackUrl, useConnections, useSaveCrede
 import { errorMessage } from '../lib/apiError';
 import { localDateISO, toDate } from '../lib/dates';
 import type { FeedFinding, FoundFeed, PageWatchPreview } from '../services/api';
+import AddSeveralSources, { type AddedSource } from './AddSeveralSources';
+import { sameAddress, shortAddress } from '../lib/addresses';
 
 interface Template {
   id: string;
@@ -19,6 +21,8 @@ interface Template {
   helperText: string;
   buildHandle: (value: string) => string;
   buildDisplayName: (value: string) => string;
+  /** A field value as "Added: …" names it under the field; the value itself when unset. */
+  addedName?: (value: string) => string;
   // Seconds to wait after fetching it; 1 when unset.
   fetchDelay?: number;
 }
@@ -88,6 +92,7 @@ const TEMPLATES: Template[] = [
       return `https://mshibanami.github.io/GitHubTrendingRSS/daily/${encodeURIComponent(language || 'all')}.xml`;
     },
     buildDisplayName: (value) => (value.trim() ? `GitHub Trending · ${value.trim()}` : 'GitHub Trending'),
+    addedName: (value) => (value === 'all' ? 'All languages' : value.charAt(0).toUpperCase() + value.slice(1).replace(/-/g, ' ')),
   },
   {
     id: 'deeplearning-batch',
@@ -118,9 +123,14 @@ function fixedHandle(template: Template): string | null {
   return template.variableName ? null : template.buildHandle('');
 }
 
-/** An address compared loosely: no scheme, www. or trailing slash, any case. */
-function sameAddress(address: string): string {
-  return address.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '');
+/** The field values of a template already among the addresses (GitHub Trending: All languages, Python). */
+function addedValues(template: Template, addresses: readonly string[]): string[] {
+  const marker = 'insightvalue';
+  const [head, tail = ''] = sameAddress(template.buildHandle(marker)).split(marker);
+  return addresses.map(sameAddress)
+    .filter((address) => address.length > head.length + tail.length && address.startsWith(head) && address.endsWith(tail))
+    .map((address) => decodeURIComponent(address.slice(head.length, address.length - tail.length)))
+    .map((value) => template.addedName?.(value) ?? value);
 }
 
 /** A path as the server keeps it: "news" -> "/news/"; "" stays "" (the server infers it). */
@@ -135,11 +145,6 @@ function calendarDate(value: string | null): string {
   return date ? localDateISO(date) : '';
 }
 
-/** An address as a line shows it: no scheme. */
-function shortAddress(address: string): string {
-  return address.replace(/^https?:\/\//, '');
-}
-
 interface AddSourceModalProps {
   /** The addresses already in the sources: a one-address template among them is not offered. */
   existingAddresses?: readonly string[];
@@ -150,9 +155,11 @@ interface AddSourceModalProps {
     fetch_delay_seconds: number;
     page_watch?: { prefix: string };
   }) => void;
+  /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
+  onAddMany?: (added: AddedSource[], close: boolean) => void;
 }
 
-export default function AddSourceModal({ existingAddresses = [], onClose, onAdd }: AddSourceModalProps) {
+export default function AddSourceModal({ existingAddresses = [], onClose, onAdd, onAddMany }: AddSourceModalProps) {
   const api = useApi();
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariable, setTemplateVariable] = useState('');
@@ -160,6 +167,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   const [fetchDelay, setFetchDelay] = useState(1);
+  const [several, setSeveral] = useState(false);
   // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
   const substack = isSubstackUrl(handleOrUrl);
   const connections = useConnections(substack);
@@ -307,6 +315,17 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
 
   const hint = 'mt-1 text-[0.75rem] text-fg-3';
   const label = 'mb-1.5 block text-[0.8125rem] font-medium text-fg';
+  const templateAdded = selectedTemplate?.variableName ? addedValues(selectedTemplate, existingAddresses) : [];
+
+  if (several && onAddMany) {
+    return (
+      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent title="Add several sources" className="w-[min(40rem,calc(100vw-2rem))]">
+          <AddSeveralSources existingAddresses={existingAddresses} onBack={() => setSeveral(false)} onClose={onClose} onAdded={onAddMany} />
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -348,6 +367,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
                   <p className="mt-1.5 font-mono text-[0.75rem] text-fg-2 [overflow-wrap:anywhere]">
                     → {selectedTemplate.buildHandle(templateVariable || (selectedTemplate.optionalVariable ? '' : `{${selectedTemplate.variableName}}`))}
                   </p>
+                  {templateAdded.length ? <p className={hint}>Added: {templateAdded.join(', ')}</p> : null}
                 </>
               ) : null}
               <p className={selectedTemplate.variableName ? hint : 'text-[0.8125rem] text-fg-2'}>{selectedTemplate.helperText}</p>
@@ -363,7 +383,14 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd 
           )}
 
           <div>
-            <label htmlFor="handle_or_url" className={label}>Feed URL or handle</label>
+            <div className="flex items-baseline justify-between gap-3">
+              <label htmlFor="handle_or_url" className={label}>Feed URL or handle</label>
+              {onAddMany ? (
+                <button type="button" className="text-[0.8125rem] text-fg-2 underline underline-offset-2 hover:text-fg" onClick={() => setSeveral(true)}>
+                  Add several…
+                </button>
+              ) : null}
+            </div>
             <Input
               id="handle_or_url"
               value={handleOrUrl}
