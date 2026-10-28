@@ -9,7 +9,7 @@ import { destinations, filterDestinations, insideDesignFrame, type Destination }
 import { searchHref } from '../../lib/search';
 import { useFolders } from '../../hooks/useReaderDirectory';
 
-type Option = Destination | { id: 'toggle-theme'; label: string; group: string; to?: undefined };
+type Option = Destination | { id: 'toggle-theme' | 'reading-settings'; label: string; group: string; to?: undefined };
 
 /**
  * The quick switcher: the places to go, then "Search posts…", which searches every post
@@ -17,7 +17,12 @@ type Option = Destination | { id: 'toggle-theme'; label: string; group: string; 
  * many times a day, so it never animates (emil: frequency decides motion).
  * Combobox + listbox semantics; ↑/↓ move, Enter goes, Esc closes.
  */
-export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export default function QuickSwitcher({ open, onOpenChange, onOpenReadingSettings }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Opens the reading settings (font, size, width; issue 0045). */
+  onOpenReadingSettings?: () => void;
+}) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState('');
@@ -39,6 +44,10 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
     if (!q || q.split(/\s+/).every((word) => `${themeOption.label.toLowerCase()} ${themeWords}`.includes(word))) {
       matches.push(themeOption);
     }
+    const readingWords = 'reading settings font size width text serif sans aa';
+    if (onOpenReadingSettings && (!q || q.split(/\s+/).every((word) => readingWords.includes(word)))) {
+      matches.push({ id: 'reading-settings', label: 'Reading settings: font, size, width', group: 'settings' });
+    }
     // Always last, so a typed place still comes first; with nothing else matching it is the one option.
     const typed = query.trim();
     matches.push({
@@ -48,7 +57,7 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
       to: searchHref({ q: typed }),
     });
     return matches;
-  }, [query, theme, items]);
+  }, [query, theme, items, onOpenReadingSettings]);
 
   useEffect(() => {
     if (!open) {
@@ -69,6 +78,7 @@ export default function QuickSwitcher({ open, onOpenChange }: { open: boolean; o
     if (!option) return;
     onOpenChange(false);
     if (option.id === 'toggle-theme') toggleTheme();
+    else if (option.id === 'reading-settings') onOpenReadingSettings?.();
     else if (option.to) navigate(option.to);
   };
 

@@ -6,6 +6,7 @@ import { ArrowUpRight, Check, Loader2 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
 import PostActions from '../components/post/PostActions';
 import PostNav from '../components/post/PostNav';
+import ReadingSettingsButton from '../components/post/ReadingSettingsButton';
 import { PostFigure, PostImageList } from '../components/post/PostImages';
 import { postMedia } from '../components/post/media';
 import { Button, Skeleton } from '../components/ui';
@@ -19,6 +20,8 @@ import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReade
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { LONG_POST_CHARS, useReadingPosition } from '../hooks/useReadingPosition';
 import { useFlowPreference, useShortcutPreference } from '../hooks/useShortcutPreference';
+import { useReadingSettings } from '../hooks/useReadingSettings';
+import { READING_TEXT_CLASS, readingStyle } from '../lib/readingSettings';
 import {
   decodeFeedContext, postHref, scopePath, sourceReadPath, sourceSettingsHref, type ContextEntry, type FeedContext,
 } from '../lib/feedContext';
@@ -269,8 +272,14 @@ function VideoPlayer({ videoId, title, className = '' }: { videoId: string; titl
 
 /** The page frame, shared by the loading skeleton and the loaded post. */
 const PAGE_CLASS = 'mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 sm:pt-8';
-/** One column of ~70ch at the body size, centred, nothing beside it. */
-const GRID_CLASS = 'grid grid-cols-[minmax(0,42rem)] justify-center';
+/** One column of ~70ch at the body size, centred, nothing beside it; the reading width may change it (issue 0045). */
+const GRID_CLASS = 'grid grid-cols-[minmax(0,var(--reading-column,42rem))] justify-center';
+
+/** The post page's frame: it carries the reading settings (CSS variables, none by default). */
+function ReadingFrame({ children }: { children: ReactNode }) {
+  const [settings] = useReadingSettings();
+  return <div data-reading-frame className="contents" style={readingStyle(settings)}>{children}</div>;
+}
 
 /** The sticky band under the top bar that holds the post navigation, over the reading column. */
 function NavBand({ children }: { children?: ReactNode }) {
@@ -302,7 +311,7 @@ function PostSkeleton() {
                 <Skeleton className="mt-2 h-7 w-11/12" />
                 <Skeleton className="mt-2 h-7 w-2/3" />
               </div>
-              <div className="max-w-[68ch] space-y-3">
+              <div className="max-w-[var(--reading-measure,68ch)] space-y-3">
                 {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/5'].map((width, index) => (
                   <Skeleton key={index} className={`h-3.5 ${width}`} />
                 ))}
@@ -328,8 +337,8 @@ export default function PostDetailPage() {
   const { api, fixture } = useDevFixtureApi(postFixtureApi);
   const query = usePost(postId, { api, fixture });
 
-  if (postId && query.data?.post) return <PostReader key={fixture ?? ''} postId={postId} api={api} fixture={fixture} />;
-  if (postId && query.isPending) return <PostSkeleton />;
+  if (postId && query.data?.post) return <ReadingFrame><PostReader key={fixture ?? ''} postId={postId} api={api} fixture={fixture} /></ReadingFrame>;
+  if (postId && query.isPending) return <ReadingFrame><PostSkeleton /></ReadingFrame>;
   return (
     <>
       <NavBand />
@@ -509,7 +518,10 @@ function PostReader({ postId, api, fixture }: { postId: string; api: Api; fixtur
   return (
     <>
       <NavBand>
-        <PostNav label="Post navigation" size="sm" backLabel={backLabel} onBack={goBack} step={step} />
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <PostNav label="Post navigation" size="sm" backLabel={backLabel} onBack={goBack} step={step} />
+          <ReadingSettingsButton />
+        </div>
       </NavBand>
       <div className={PAGE_CLASS}>
         <div className={GRID_CLASS}>
@@ -945,7 +957,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
             onCopy={() => void handleCopy()}
           />
         </div>
-        <h1 dir="auto" className="mt-2 break-words text-pretty text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
+        <h1 dir="auto" className="mt-2 break-words text-pretty [font-family:var(--reading-font)] text-[1.75rem] font-[650] leading-[1.15] tracking-[-0.025em] text-fg sm:text-[2rem]">
           {displayTitle}
         </h1>
         <span aria-live="polite" className="sr-only">{announcement}</span>
@@ -1078,7 +1090,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           </p>
         ) : null}
 
-        <div className="max-w-[68ch] text-[1.0625rem] leading-[1.7] text-fg sm:text-[1.125rem]">
+        <div className={READING_TEXT_CLASS}>
           {isYouTubePost ? (
             <div className="space-y-8">
               {youtubeMetadata?.description ? (
