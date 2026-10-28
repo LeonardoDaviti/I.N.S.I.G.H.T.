@@ -14,7 +14,6 @@ import { LoadingState } from '../components/states';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import type { EmptyStateAction } from '../components/states';
 import { feedKey, scopeUnreadCount, useUnreadCounts, type FeedFixture } from '../hooks/useFeed';
-import { useDensityPreference } from '../hooks/useShortcutPreference';
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { scopeDelta, type UnreadChange } from '../hooks/useReaderMutations';
 import { isFeedFilter, scopeFromRoute, scopeSettingsHref } from '../lib/feedContext';
@@ -74,7 +73,7 @@ function useDevFeedFixture(name: FeedFixtureName | null): { fixture: FeedFixture
 /**
  * The reader-first home (spec §F.3): `/` and `/read/:scopeKind/:scopeId?`. It
  * opens on the unread main feed. The rail picks the scope, the toolbar the filter,
- * view and density (all in the URL except density, which persists locally). It
+ * view and the post flow (all in the URL except the flow, which persists locally). It
  * owns the live region, the shortcut help and the "N new posts" pill.
  */
 export default function ReaderPage() {
@@ -94,7 +93,6 @@ function Reader({ scope }: { scope: string }) {
   const view: FeedView = !oneSource && params.get('view') === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
-  const [density, setDensity] = useDensityPreference();
   const [navOpen, setNavOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -183,8 +181,6 @@ function Reader({ scope }: { scope: string }) {
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
             view={view}
             onViewChange={(value) => setParam('view', value === 'stream' ? null : value)}
-            density={density}
-            onDensityChange={setDensity}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
@@ -208,7 +204,6 @@ function Reader({ scope }: { scope: string }) {
                 scope={scope}
                 filter={filter}
                 view={view}
-                density={density}
                 fixture={fixture}
                 emptyTitle={empty.title}
                 emptyDescription={empty.description}

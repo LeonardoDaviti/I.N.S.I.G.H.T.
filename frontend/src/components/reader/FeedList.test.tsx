@@ -37,7 +37,7 @@ function setup(methods: Partial<Record<keyof Api, unknown>> = {}, props: Partial
   const utils = renderWithProviders(
     <LiveRegionProvider>
       <Routes>
-        <Route path="/" element={<FeedList scope="all" filter="unread" view="stream" density="comfortable" {...props} />} />
+        <Route path="/" element={<FeedList scope="all" filter="unread" view="stream" {...props} />} />
         <Route path="/posts/:postId" element={<LocationProbe />} />
         <Route path="/read/:scopeKind/:scopeId" element={<LocationProbe />} />
       </Routes>

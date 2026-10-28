@@ -2,7 +2,7 @@
  * Setting a frame up before anything renders in it (Design Studio D4):
  * - its own `fetch` becomes the fixture transport for the scenario;
  * - its `localStorage` and `sessionStorage` become in-memory stores, so the
- *   frame's theme (seeded from `?theme=`), density and dev flags never leak
+ *   frame's theme (seeded from `?theme=`), reader choices and dev flags never leak
  *   into the studio or other frames, which share the origin;
  * - a report collects the unmocked requests and the faked writes for the bar.
  * Only the frame's window is touched: the studio's `fetch` stays the real one.

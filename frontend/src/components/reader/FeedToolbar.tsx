@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 import type { FeedFilter, FeedView } from '../../services/api';
-import { useFlowPreference, type FeedDensity, type ReadingFlow } from '../../hooks/useShortcutPreference';
+import { useFlowPreference, type ReadingFlow } from '../../hooks/useShortcutPreference';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
@@ -15,10 +15,6 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
 const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
-];
-const DENSITIES: ReadonlyArray<{ value: FeedDensity; label: string }> = [
-  { value: 'comfortable', label: 'Comfortable' },
-  { value: 'compact', label: 'Compact' },
 ];
 const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
   { value: 'continuous', label: 'Continuous' },
@@ -38,8 +34,6 @@ export interface FeedToolbarProps {
   onFilterChange: (filter: FeedFilter) => void;
   view: FeedView;
   onViewChange: (view: FeedView) => void;
-  density: FeedDensity;
-  onDensityChange: (density: FeedDensity) => void;
   /** Below md the title is the button that opens the drawer of the main feed, tracks and sources. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
@@ -52,7 +46,7 @@ export interface FeedToolbarProps {
 /**
  * The reader's sticky toolbar, under the app's one top bar: the scope title and
  * its unread count and the shortcut help as a labelled text action (fetching is
- * an ingestion job and lives in Sources), then the filter, view, density and how
+ * an ingestion job and lives in Sources), then the filter, view and how
  * the post page flows (stored here, read there) as slash-separated words; one
  * source's posts show neither the view nor the flow choice. The
  * theme toggle, the wordmark and the app menu live in the top bar only. Below md the title opens
@@ -60,7 +54,7 @@ export interface FeedToolbarProps {
  * up, a source or track title links to where it is managed in Sources.
  */
 export default function FeedToolbar({
-  title, titleHref, subtitle, filter, onFilterChange, view, onViewChange, density, onDensityChange,
+  title, titleHref, subtitle, filter, onFilterChange, view, onViewChange,
   onOpenNav, onOpenHelp, oneSource = false, pill,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
@@ -99,7 +93,6 @@ export default function FeedToolbar({
         <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
           <SlashChoice label="Show" value={filter} options={FILTERS} onChange={onFilterChange} />
           {oneSource ? null : <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />}
-          <div className="hidden md:block"><SlashChoice label="Density" value={density} options={DENSITIES} onChange={onDensityChange} /></div>
           {oneSource ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
           {pill ? <div className="ml-auto">{pill}</div> : null}
         </div>

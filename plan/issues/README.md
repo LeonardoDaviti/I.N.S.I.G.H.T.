@@ -35,6 +35,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, not deployed |
 | [0029](0029-review-fixes.md) | Review fixes: correctness and overengineering in today's work | built, not deployed |
 | [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | ready-for-agent |
+| [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built |
 
 ## Analysis archive
 

@@ -23,7 +23,6 @@ function renderGroup(data: FeedGroupData) {
   return renderWithProviders(
     <FeedGroup
       group={data}
-      density="comfortable"
       selectedId={null}
       itemHref={(item) => `/posts/${item.id}`}
       onSelect={vi.fn()}

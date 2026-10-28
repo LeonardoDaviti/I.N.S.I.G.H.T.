@@ -99,7 +99,7 @@ function realisticItems(now: Date): FeedItem[] {
       items.push(feedItem({
         id: `p-${source.slug.slice(2)}-${round + 1}`,
         title,
-        excerpt: `${title}. A short excerpt of the opening paragraph, as the feed row shows it in comfortable density.`,
+        excerpt: `${title}. A short excerpt of the opening paragraph, as the feed row shows it.`,
         url: `https://example.org/${source.slug.slice(2)}/${round + 1}`,
         source_id: sourceId(source.slug),
         source_display_name: source.name,
