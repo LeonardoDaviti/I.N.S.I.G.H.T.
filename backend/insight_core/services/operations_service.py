@@ -218,10 +218,11 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
 
 def _doctor_fields(state: Optional[FetchStateRow]) -> Dict[str, Any]:
     """The source doctor's finding (issue 0036): when it looked (None: it has not, in this
-    failure streak, or the owner dismissed it) and the replacement it found
+    failure streak, or the owner dismissed it, or the old address read again: a temporary
+    error, nothing to replace) and the replacement it found
     ({kind: feed|page_watch, url, title, found, prefix}; None: nothing found)."""
     finding = (state.doctor_finding if state else None) or {}
-    if state is None or state.doctor_checked_at is None or finding.get("dismissed"):
+    if state is None or state.doctor_checked_at is None or finding.get("dismissed") or finding.get("working_again"):
         return {"doctor_looked_at": None, "replacement": None}
     return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": finding.get("replacement")}
 

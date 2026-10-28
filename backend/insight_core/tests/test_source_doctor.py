@@ -31,7 +31,7 @@ from insight_core.ingestion.runner import IngestionRunner
 from insight_core.ingestion.source_doctor import SourceDoctor, failure_signal, section, should_look
 from insight_core.ingestion.types import FetchOutcome, FetchRequest, OutcomeStatus, SourceSelector, Trigger
 from insight_core.services import registry as services_registry
-from insight_core.services.operations_service import OperationsService
+from insight_core.services.operations_service import OperationsService, health_row
 from insight_core.services.source_config_sync_service import SourceConfigSyncService
 from insight_core.tests._asgi import call
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
@@ -48,6 +48,7 @@ from insight_core.tests._ingestion_fakes import (
 from insight_core.tests._kind_fakes import FakeHttp, FakeKind
 from insight_core.tests.test_feed_finder import page, rss
 from insight_core.tests.test_page_watch import LISTING, SITE, anthropic
+from insight_core.tests.test_page_watch import article as anthropic_article
 from insight_core.ingestion.schedule import Availability
 
 NOW = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
@@ -56,6 +57,10 @@ BLOG = "https://arena.ai/blog/"
 NEW_FEED = "https://arena.ai/blog/feed.xml"
 GONE = HttpError(f"HTTP 404 while fetching {OLD}: Not Found", status=404)
 FLAKY = HttpError(f"HTTP 500 while fetching {OLD}: oops", status=500)
+
+
+WORKING_AGAIN = {"replacement": None, "dismissed": False, "working_again": True,
+                 "note": "temporary error, working again"}
 
 
 def state(failures: int = 1, **fields) -> FetchStateRow:
@@ -221,10 +226,13 @@ class ActTests(unittest.TestCase):
         self.assertEqual(store.switches, [])
         self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
 
-    def test_the_old_address_itself_is_no_replacement(self):
-        # Answering again (flaky): the finder says the address is a feed; that is not a move.
-        store, _, _ = look({OLD: rss("Arena"), BLOG: page(), "https://arena.ai/": page()}, failures=3, error=FLAKY)
-        self.assertEqual(store.records[0][2]["replacement"], None)
+    def test_an_old_address_that_reads_as_a_feed_again_is_working_again(self):
+        # Answering again (flaky): the old address is checked first; that is no move, and
+        # nothing else is looked at.
+        store, http, _ = look({OLD: rss("Arena"), BLOG: page(), "https://arena.ai/": page()}, failures=3, error=FLAKY)
+        self.assertEqual(store.switches, [])
+        self.assertEqual(store.records, [("s1", NOW, WORKING_AGAIN)])
+        self.assertEqual(http.requests, [OLD])
 
     def test_a_switch_that_fails_is_suggested_instead(self):
         store, _, progress = look(blog_with(NEW_FEED), store=RecordingStore(ValueError("already a source")))
@@ -237,6 +245,82 @@ class ActTests(unittest.TestCase):
                 raise RuntimeError("database down")
 
         store, _, _ = look({OLD: GONE}, store=Broken())   # no exception
+
+
+# --------------------------------------------------------------------------- the server's dry run
+
+
+class DryRunCaseTests(unittest.TestCase):
+    """The three real cases of the dry run on the server's failing sources (2026-10-28)."""
+
+    OLD_NEW_THING = "https://devblogs.microsoft.com/oldnewthing/feed"
+    DEVBLOGS = "https://devblogs.microsoft.com/"
+    LANDING = "https://devblogs.microsoft.com/landing"
+
+    def _devblogs(self, **overrides):
+        # The home page links the feed of every Microsoft blog; the section page none.
+        responses = {self.DEVBLOGS: page(f'<link rel="alternate" type="application/rss+xml" href="{self.LANDING}">'),
+                     "https://devblogs.microsoft.com/oldnewthing/": page(),
+                     self.LANDING: rss("Microsoft Developer Blogs")}
+        responses.update(overrides)
+        return responses
+
+    def _source(self, handle, name):
+        return {"id": "s1", "platform": "rss", "handle_or_url": handle, "settings": {"display_name": name}}
+
+    def test_oldnewthing_a_temporary_error_that_reads_again_suggests_nothing(self):
+        ssl = HttpError(f"SSL: CERTIFICATE_VERIFY_FAILED while fetching {self.OLD_NEW_THING}")
+        store, http, progress = look(self._devblogs(**{self.OLD_NEW_THING: rss("The Old New Thing")}),
+                                     source=self._source(self.OLD_NEW_THING, "The Old New Thing"),
+                                     failures=3, error=ssl)
+        self.assertEqual((store.switches, progress.events), ([], []))
+        self.assertEqual(store.records, [("s1", NOW, WORKING_AGAIN)])
+        self.assertEqual(http.requests, [self.OLD_NEW_THING], "nothing else is looked at")
+
+    def test_working_again_shows_no_finding_on_the_health_row(self):
+        # Not "looked for a replacement and found none": there was nothing to replace.
+        row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.OLD_NEW_THING, "enabled": True,
+                          "settings": {}, "state": state(3, doctor_checked_at=NOW, doctor_finding=WORKING_AGAIN)},
+                         generic(), Availability(True, False), NOW)
+        self.assertEqual((row["doctor_looked_at"], row["replacement"]), (None, None))
+
+    def test_oldnewthing_gone_never_takes_the_whole_sites_feed(self):
+        store, _, _ = look(self._devblogs(**{self.OLD_NEW_THING: GONE}),
+                           source=self._source(self.OLD_NEW_THING, "The Old New Thing"))
+        self.assertEqual(store.switches, [])
+        self.assertEqual(store.records[0][2]["replacement"], None, "devblogs.microsoft.com/landing is all the blogs")
+
+    def test_a_feed_within_the_section_is_still_taken(self):
+        inside = "https://devblogs.microsoft.com/oldnewthing/feed/atom"
+        responses = self._devblogs(**{
+            self.OLD_NEW_THING: GONE,
+            "https://devblogs.microsoft.com/oldnewthing/": page(
+                f'<link rel="alternate" type="application/rss+xml" href="{self.LANDING}">'
+                f'<link rel="alternate" type="application/atom+xml" href="{inside}">'),
+            inside: rss("The Old New Thing")})
+        store, _, _ = look(responses, source=self._source(self.OLD_NEW_THING, "The Old New Thing"))
+        self.assertEqual(store.switches, [("s1", inside, None)])
+
+    def test_joanwestenberg_a_gone_root_feed_moves_to_the_home_pages_feed(self):
+        old, new = "https://joanwestenberg.com/rss", "https://www.joanwestenberg.com/feed"
+        responses = {old: GONE, "https://joanwestenberg.com/": page(f'<link rel="alternate" type="application/rss+xml" href="{new}">'),
+                     new: rss("Joan Westenberg")}
+        store, _, progress = look(responses, source=self._source(old, "Joan Westenberg"))
+        self.assertEqual(store.switches, [("s1", new, None)])
+        self.assertEqual(progress.events[-1][1]["line"], "Joan Westenberg: feed moved, now following joanwestenberg.com/feed")
+
+    def test_incompleteideas_a_page_that_is_no_feed_suggests_following_it(self):
+        home = "http://www.incompleteideas.net/"
+        essays = [f"/IncIdeas/Essay{n}.html" for n in range(12)]
+        listing = page(body="<main><h1>Rich Sutton</h1>" + "".join(f'<a href="{path}">Essay {n}</a>'
+                                                                  for n, path in enumerate(essays)) + "</main>")
+        responses = {home: listing, **{f"http://www.incompleteideas.net{path}": anthropic_article(f"Essay {n}")
+                                       for n, path in enumerate(essays)}}
+        store, _, _ = look(responses, source=self._source(home, "Rich Sutton"), error=ET.ParseError("not xml"))
+        self.assertEqual(store.switches, [])
+        replacement = store.records[0][2]["replacement"]
+        self.assertEqual((replacement["kind"], replacement["url"]), ("page_watch", home))
+        self.assertEqual(replacement["found"], 12)
 
 
 # --------------------------------------------------------------------------- the runner and the job

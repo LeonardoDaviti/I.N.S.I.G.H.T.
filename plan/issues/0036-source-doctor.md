@@ -24,9 +24,20 @@ Status: **built** (2026-10-28, not deployed; migration 0032). Decided by the own
   a row, or at once on HTTP 404/410 (`HttpError.status`) or an answer that does not parse as a
   feed (`ParseError`). At most once a day (`source_fetch_state.doctor_checked_at`), and not again
   in a streak whose finding was dismissed; a fetch that works clears the finding.
+- **First, the old address** (v9.3, from the dry run): it is read again (`reads_again`: a feed
+  that parses, by the finder's own proof; a followed page whose preview still lists articles).
+  When it reads, the error was temporary: the finding is `{replacement: null, working_again: true,
+  note: "temporary error, working again"}`, nothing is suggested, the health row shows no finding,
+  and nothing else is looked at (devblogs.microsoft.com/oldnewthing's SSL error on the server).
 - **Look:** `find_feeds` on the address (it reads the first-segment section and the home page
   itself) and on a deeper section (`/a/b/rss` -> `/a/b/`); the address itself is never its own
-  replacement. No feed: `page_watch.preview` of the section, which must read at least one article.
+  replacement. A feed on the source's site must stay within its section (`within_section`: the
+  address less its last segment, `/oldnewthing/` for `/oldnewthing/feed`; v9.3, from the dry
+  run), so the home page's `devblogs.microsoft.com/landing` (every Microsoft blog) is never taken
+  for one blog; a source at the site's root (`joanwestenberg.com/rss`) takes any feed of the
+  site (`www.joanwestenberg.com/feed`). No feed: `page_watch.preview` of the section, which must
+  read at least one article; for a feed source at the root that is the address itself, so a site
+  whose address answers a page (incompleteideas.net) is suggested as a page to follow.
 - **Act:** a feed on the same site (`www.` ignored) while the old address answered 404/410 is
   switched to: `handle_or_url` changes, `settings.page_watch` is removed, failures and backoff
   clear, the job gets the line "Arena: feed moved, now following arena.ai/blog/feed.xml" (and the
@@ -50,5 +61,7 @@ Status: **built** (2026-10-28, not deployed; migration 0032). Decided by the own
   (`blog.arena.ai` and `arena.ai` are different sites, so that is a suggestion). An answer that
   is well-formed XML but not a feed (XHTML) reads as an empty fetch, not a failure, so the doctor
   never sees it. Nothing is re-fetched after a switch.
-- Tests: `backend/insight_core/tests/test_source_doctor.py`;
+- Tests: `backend/insight_core/tests/test_source_doctor.py` (with the dry run's three cases:
+  oldnewthing working again, and never the whole site's feed; joanwestenberg.com switched;
+  incompleteideas.net followed as a page);
   `frontend/src/components/sources/replacementNotice.test.tsx`, `sourceList.test.tsx`.

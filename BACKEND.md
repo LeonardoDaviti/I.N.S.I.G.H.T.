@@ -337,9 +337,14 @@ save lock; it never raises).
   reads directly; at 3 failures in a row, or at once on HTTP 404/410 or an answer that does
   not parse as a feed. At most once a day per source (`source_fetch_state.doctor_checked_at`,
   migration 0032), and not again in a streak whose finding was dismissed.
+- **First:** the old address is read again; a feed that parses (a followed page that still
+  lists articles) was a temporary error: recorded as `working_again` ("temporary error, working
+  again"), nothing suggested, no finding on the health row, nothing else looked at.
 - **Look:** the feed finder on the address (it reads the section and home page itself) and
-  on a deeper section (`/a/b/rss` -> `/a/b/`), skipping the address itself; no feed: the
-  page-watch preview of the section, which must read at least one article.
+  on a deeper section (`/a/b/rss` -> `/a/b/`), skipping the address itself; a feed on the
+  source's site must stay within its section (`/oldnewthing/` for `/oldnewthing/feed`; a source
+  at the root takes any). No feed: the page-watch preview of the section (for a root source the
+  address itself), which must read at least one article.
 - **Act:** a feed on the same site (`www.` ignored) while the old address is gone (404/410)
   is switched to, with a `doctor` job event ("Arena: feed moved, now following
   arena.ai/blog/feed.xml"). Anything else is stored in `doctor_finding`

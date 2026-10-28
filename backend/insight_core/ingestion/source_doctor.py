@@ -9,9 +9,16 @@ FAILURES_BEFORE_LOOKING times in a row, or at once on a clear signal: HTTP 404/4
 an answer that does not parse as a feed. At most once a day per source, and not again in a
 streak whose finding the owner dismissed; a fetch that works clears the finding.
 
-It looks the way every source add does: the feed finder (issue 0026) on the source's address
-(which reads its section and home page too) and on a deeper section ("/a/b/rss" -> "/a/b/");
-no feed: page watching (issue 0028) previews the section. Then:
+First it reads the old address itself: when it reads again (a feed that parses; a followed
+page that still lists articles), the error was temporary. That is recorded ("temporary error,
+working again": no replacement, nothing to suggest) and nothing else is looked at.
+
+Otherwise it looks the way every source add does: the feed finder (issue 0026) on the source's
+address (which reads its section and home page too) and on a deeper section ("/a/b/rss" ->
+"/a/b/"); no feed: page watching (issue 0028) previews the section. A feed on the source's site
+must stay within its section (the address less its last segment: "/oldnewthing/" for
+"/oldnewthing/feed"), so the home page's feed of every blog on the site is never taken for one
+of them; a source at the site's root ("/rss") takes any feed of the site. Then:
   - a feed on the same site (www. ignored) while the old address is gone: switch the source
     to it (store.switch keeps its id, name, tracks, read state and posts, clears its failures
     and keeps sources.json in step) and say so in the job: "Arena: feed moved, now following
@@ -33,7 +40,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
-from insight_core.ingestion.feed_finder import find_feeds
+from insight_core.ingestion.feed_finder import FEED_BYTES, feed_title, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.parsing import path_segments
@@ -46,6 +53,9 @@ GONE_STATUSES = (404, 410)
 LOOK_EVERY = timedelta(days=1)
 
 Replacement = Dict[str, Any]   # {kind: feed|page_watch, url, title, found, prefix}
+# The finding when the old address reads again: nothing to replace, nothing to suggest.
+WORKING_AGAIN: Dict[str, Any] = {"replacement": None, "dismissed": False, "working_again": True,
+                                 "note": "temporary error, working again"}
 
 
 class DoctorStore(Protocol):
@@ -93,19 +103,46 @@ def _same(a: str, b: str) -> bool:
     return short_address(a) == short_address(b)
 
 
-async def find_replacement(http: KindHttp, registry: KindRegistry, address: str) -> Optional[Replacement]:
-    """A feed for the address's site (other than the address), else a page to follow, else None."""
+def within_section(candidate: str, address: str) -> bool:
+    """A feed on the source's site stays within its section ("/oldnewthing/" for
+    "/oldnewthing/feed"); for a source at the root ("/rss") that is the whole site. A feed on
+    another site is never switched to (only suggested), so it is not judged here."""
+    if site(candidate) != site(address):
+        return True
+    scope = urllib.parse.urlparse(section(address)).path
+    return (urllib.parse.urlparse(candidate).path or "/").startswith(scope)
+
+
+async def reads_again(http: KindHttp, address: str, page_watch_settings: Optional[Mapping[str, Any]]) -> bool:
+    """The old address reads now: a feed that parses, or a followed page that lists articles."""
+    try:
+        if page_watch_settings is not None:
+            preview = await page_watch.preview(http, address, page_watch_settings.get("prefix"))
+            return bool(preview["items"])
+        body, _ = await http.get_start(address, FEED_BYTES)
+        return feed_title(body) is not None
+    except Exception as exc:  # noqa: BLE001 - still failing: look for a replacement
+        logger.info("Source doctor: %s still fails (%s)", address, str(exc)[:200])
+        return False
+
+
+async def find_replacement(http: KindHttp, registry: KindRegistry, address: str, *,
+                           follows_page: bool = False) -> Optional[Replacement]:
+    """A feed for the address's site (other than the address, within its section), else a page
+    to follow, else None. `follows_page`: the source already follows the address as a page."""
     # The finder on the address reads its first-segment section and home page itself; a
     # deeper section ("/a/b/") needs a search of its own.
     pages: List[str] = [address] + ([section(address)] if len(path_segments(section(address))) >= 2 else [])
     for page in pages:
         finding = await find_feeds(http, registry, page)
-        feed = next((f for f in finding.feeds if not _same(f.url, address)), None)
+        feed = next((f for f in finding.feeds if not _same(f.url, address) and within_section(f.url, address)), None)
         if feed:
             return {"kind": "feed", "url": feed.url, "title": feed.title or short_address(feed.url),
                     "found": None, "prefix": None}
+    # The section's page; for a source at the root that is the address itself: a site whose
+    # address answers a page, not a feed (incompleteideas.net), is followed as that page.
     listing = section(address)
-    if _same(listing, address):
+    if follows_page and _same(listing, address):
         return None
     try:
         preview = await page_watch.preview(http, listing)
@@ -141,8 +178,15 @@ class SourceDoctor:
         if state is None or source.get("platform") != "rss" or not should_look(kind.name, state, signal, now):
             return
         address = str(source["handle_or_url"])
-        name = str((source.get("settings") or {}).get("display_name") or address)
-        replacement = await find_replacement(self.http, self.registry, address)
+        settings = source.get("settings") or {}
+        name = str(settings.get("display_name") or address)
+        followed = settings.get("page_watch") if isinstance(settings.get("page_watch"), dict) else None
+        if await reads_again(self.http, address, followed):
+            # A temporary error (devblogs.microsoft.com's SSL on the server): nothing to replace.
+            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=WORKING_AGAIN)
+            logger.info("Source doctor: %s: temporary error, working again (%s)", name, address)
+            return
+        replacement = await find_replacement(self.http, self.registry, address, follows_page=followed is not None)
         if (replacement and replacement["kind"] == "feed" and signal == "gone"
                 and site(replacement["url"]) == site(address)):
             try:
@@ -180,4 +224,5 @@ class DbDoctorStore:
         return self._switch(source_id, url, page_watch)
 
 
-__all__ = ["DbDoctorStore", "SourceDoctor", "failure_signal", "find_replacement", "should_look"]
+__all__ = ["DbDoctorStore", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
+           "should_look", "within_section"]

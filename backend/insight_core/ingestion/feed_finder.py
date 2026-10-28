@@ -206,6 +206,12 @@ def _around(here: str, url: str) -> List[str]:
     return [page for page in pages if page.rstrip("/") not in seen]
 
 
+def feed_title(start: bytes) -> Optional[str]:
+    """The feed's title when start (up to FEED_BYTES) begins a feed with an item, else None:
+    the finder's own proof, for the source doctor's re-check of an old address."""
+    return _feed_title(start)
+
+
 def _feed_title(start: bytes) -> Optional[str]:
     """The feed's title when start begins an RSS, Atom or RDF feed with an item, else None."""
     parser = ET.XMLPullParser(events=("start", "end"))
