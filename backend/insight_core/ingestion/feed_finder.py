@@ -14,7 +14,9 @@ One search, cheapest first, stopping at the first stage that finds something:
      same site), at most two, the same way: www.cloudflare.com leads to blog.cloudflare.com.
      A page that cannot be read (a feed gone) takes its home page's links instead. The ones
      that answer on the same site are reported as the finding's pages: with no feed, the
-     pages to follow instead of a home page (issue 0041).
+     pages to follow instead of a home page (issue 0041). With none named, the page's own menu
+     links (header and navigation, then footer) are reported instead, unread: the preview
+     chooses among them by their articles (issue 0047).
   4. Common feed paths, under those blogs first, then at the site's root: the first that is a feed.
 A candidate is proved by reading only its first FEED_BYTES into a pull parser: the root must
 be rss, feed or RDF, and it is accepted at its first item or entry. At most FAN_OUT requests
@@ -53,6 +55,11 @@ MAX_CANDIDATES = 6              # per stage, from the pages' links
 BLOG_LINK_TEXTS = frozenset({"blog", "the blog", "our blog", "news", "newsroom", "press", "engineering blog"})
 BLOG_HOSTS = ("blog.", "news.", "newsroom.")
 MAX_BLOG_LINKS = 2
+# A home page that names no blog may still have one under another word ("Now", "Latest"): its
+# own menu links, header and navigation before the footer, the shallowest first, at most twelve
+# (a menu may lead with ten sign-up, demo and product pages before its blog).
+MENU_TAGS = ("header", "nav", "footer")
+MAX_MENU_LINKS = 12
 COMMON_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml", "/feed.atom", "/feed.rss",
                 "/?feed=rss2", "/feeds/posts/default")
 
@@ -75,6 +82,7 @@ class FeedFinding:
     status: Status              # feed: the address is one; found: feeds for it; direct: a kind reads it
     feeds: Tuple[Feed, ...] = ()
     pages: Tuple[str, ...] = ()  # none: the site's own blog or news pages the search read (stage 3)
+    menu: Tuple[str, ...] = ()   # none, when no page is named so: the page's own menu links, unread
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFinding:
@@ -89,7 +97,7 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFi
         async with asyncio.timeout(BUDGET_S):
             finding = await search.run(address)
     except TimeoutError:
-        finding = FeedFinding("none", pages=search.pages)
+        finding = FeedFinding("none", pages=search.pages, menu=search.menu)
     logger.info("Feed finder: %s -> %s, %d feed(s), %d request(s), %.1fs", address, finding.status,
                 len(finding.feeds), search.requests, time.monotonic() - started)
     return finding
@@ -107,6 +115,7 @@ class _Search:
         self.tried: set[str] = set()
         self.requests = 0
         self.pages: Tuple[str, ...] = ()
+        self.menu: Tuple[str, ...] = ()
 
     async def run(self, url: str) -> FeedFinding:
         if urllib.parse.urlparse(url).scheme not in ("http", "https"):
@@ -134,11 +143,14 @@ class _Search:
         # An address that cannot be read (a feed gone) takes its home page's links instead.
         origin = origin_from_source(here, "")
         linking = page or dict(zip(around, pages)).get(f"{origin}/")
-        blogs = _blog_links(*linking) if linking else []
+        links = _links(linking[0]) if linking else _FeedLinks()
+        blogs = _blog_links(links, linking[1]) if linking else []
         blog_pages = await asyncio.gather(*(self._get(blog, PAGE_BYTES) for blog in blogs))
         site = _site(_host(here))
         self.pages = tuple(dict.fromkeys(got[1] for got in blog_pages if got and _site(_host(got[1])) == site
                                          and got[1].rstrip("/") != here.rstrip("/")))
+        if linking and not self.pages:
+            self.menu = tuple(_menu_links(links, linking[1]))
         if feeds := await self._prove([link for got in blog_pages if got for link in _feed_links(*got)]):
             return FeedFinding("found", feeds)
 
@@ -147,7 +159,7 @@ class _Search:
         guesses = [base + path for base in dict.fromkeys(bases) for path in COMMON_PATHS]
         if feeds := await self._prove(guesses, limit=None, first=True):
             return FeedFinding("found", feeds[:1])
-        return FeedFinding("none", pages=self.pages)
+        return FeedFinding("none", pages=self.pages, menu=self.menu)
 
     async def _get(self, url: str, max_bytes: int) -> Optional[Tuple[bytes, str]]:
         """(the start of the body, the final URL), or None when the request fails or is slow."""
@@ -262,31 +274,43 @@ def _feed_title(start: bytes) -> Optional[str]:
 
 def _feed_links(body: bytes, page_url: str) -> List[str]:
     """The page's feed candidates, absolute: <link rel="alternate"> feeds, then feed-like <a>."""
-    links = _FeedLinks()
-    try:
-        links.feed(body.decode("utf-8", errors="replace"))
-        links.close()
-    except Exception:  # noqa: BLE001 - keep what was read before the page broke the parser
-        pass
+    links = _links(body)
     base = (_absolute(page_url, links.base) if links.base else None) or page_url
     absolute = (_absolute(base, href) for href in links.alternates + links.anchors)
     return list(dict.fromkeys(url for url in absolute if url))
 
 
-def _blog_links(body: bytes, page_url: str) -> List[str]:
-    """The page's links to its own blog or newsroom (see BLOG_LINK_TEXTS), absolute, on the same
-    site (a blog./news. subdomain included), the shallowest first, at most MAX_BLOG_LINKS."""
+def _links(body: bytes) -> "_FeedLinks":
     links = _FeedLinks()
     try:
         links.feed(body.decode("utf-8", errors="replace"))
         links.close()
     except Exception:  # noqa: BLE001 - keep what was read before the page broke the parser
         pass
+    return links
+
+
+def _same_site(links: Iterable[str], page_url: str) -> List[str]:
+    """The links, absolute, on the page's site (a blog./news. subdomain included), less the
+    page itself, once each, the shallowest first: /blog before /blog/tag/research."""
     site = _site(_host(page_url))
-    absolute = (_absolute(page_url, href) for href in links.blogs)
-    same = (url for url in absolute if url and url != page_url and _site(_host(url)) == site)
-    # The section itself before a page within it: /blog before /blog/tag/research.
-    return sorted(dict.fromkeys(same), key=lambda url: len(path_segments(url)))[:MAX_BLOG_LINKS]
+    absolute = (_absolute(page_url, href) for href in links)
+    same = (url for url in absolute if url and url.rstrip("/") != page_url.rstrip("/") and _site(_host(url)) == site)
+    return sorted(dict.fromkeys(same), key=lambda url: len(path_segments(url)))
+
+
+def _blog_links(links: "_FeedLinks", page_url: str) -> List[str]:
+    """The page's links to its own blog or newsroom (see BLOG_LINK_TEXTS), at most MAX_BLOG_LINKS."""
+    return _same_site(links.blogs, page_url)[:MAX_BLOG_LINKS]
+
+
+def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
+    """The page's own menu links (MENU_TAGS), header and navigation before the footer, the
+    shallowest first, at most MAX_MENU_LINKS: the pages that may be its blog under another word."""
+    menu = [href for _, href in sorted(links.menu, key=lambda link: link[0])]
+    # A link with a query is the page in another state (a sign-up form), not a page of its own.
+    return [url for url in _same_site(menu, page_url)
+            if path_segments(url) and not urllib.parse.urlparse(url).query][:MAX_MENU_LINKS]
 
 
 def _host(url: str) -> str:
@@ -336,6 +360,8 @@ class _FeedLinks(HTMLParser):
         self.alternates: List[str] = []
         self.anchors: List[str] = []
         self.blogs: List[str] = []                   # links to the site's own blog or newsroom
+        self.menu: List[Tuple[int, str]] = []        # (0 header or navigation, 1 footer), href
+        self._regions: List[str] = []                # the open MENU_TAGS
         # [href, text so far, its first piece of text]: a menu item's label comes before its
         # description ("Blog", then "Product updates, insights…").
         self._anchor: Optional[List[str]] = None
@@ -348,8 +374,12 @@ class _FeedLinks(HTMLParser):
         elif (tag == "link" and href and "alternate" in values.get("rel", "").lower().split()
               and _is_feed_type(values.get("type", "")) and not _is_comments(href, values.get("title", ""))):
             self.alternates.append(href)
+        elif tag in MENU_TAGS:
+            self._regions.append(tag)
         elif tag == "a" and href:
             self._anchor = [href, "", ""]
+            if self._regions:
+                self.menu.append((int("footer" in self._regions), href))
 
     def handle_data(self, data: str) -> None:
         if self._anchor is not None:
@@ -357,6 +387,8 @@ class _FeedLinks(HTMLParser):
             self._anchor[2] = self._anchor[2] or data.strip()
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self._regions:
+            del self._regions[len(self._regions) - 1 - self._regions[::-1].index(tag):]
         if tag == "a" and self._anchor is not None:
             href, text, label = self._anchor
             self._anchor = None

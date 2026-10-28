@@ -35,8 +35,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.db.repo_posts import PAGE_READ_KEY
@@ -56,6 +56,10 @@ PREVIEW_ITEMS = 5
 PREVIEW_READS = 8         # the first candidates a preview reads, to show PREVIEW_ITEMS posts
 PREVIEW_FAN_OUT = 4
 OFFER_BUDGET_S = 15.0     # the previews of a site's blog or news pages, run at once (issue 0041)
+# A menu link is offered as an article list (issue 0047) when its preview read this many dated
+# posts (of the PREVIEW_READS read; a list may lead with its category pages), the newest this recent.
+MENU_POSTS = 3
+MENU_RECENT = timedelta(days=365)
 
 # The pages skipped by a live fetch (no post, or failed): url -> the time.monotonic() to read
 # it again. For the process's life: a run builds its own registry, so a kind's own set would
@@ -315,14 +319,36 @@ def is_home(url: str) -> bool:
     return not parsing.path_segments(parsing.web_address(url, "An address is needed"))
 
 
-async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
+async def offers(http: KindHttp, pages: Sequence[str], menu: Sequence[str] = ()) -> List[Dict[str, Any]]:
     """The pages that can be followed instead of a home page (issue 0041), each {url, **preview},
     the most articles first: the preview's count, among the pages it read an article from. The
-    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out."""
+    previews run at once; one that fails or is not done within OFFER_BUDGET_S is left out.
+    When none of them is offered, the home page's menu links (issue 0047) are previewed in what
+    is left of the budget, and only an article list is offered (see _article_list)."""
+    deadline = asyncio.get_running_loop().time() + OFFER_BUDGET_S
+    found = [offer for offer in await _previews(http, pages, deadline) if offer["items"]]
+    if not found:
+        started = datetime.now(timezone.utc)
+        found = [offer for offer in await _previews(http, [page for page in menu if page not in pages], deadline)
+                 if _article_list(offer["items"], started)]
+    return sorted(found, key=lambda offer: -offer["found"])
+
+
+def _article_list(items: Sequence[Mapping[str, Any]], started: datetime) -> bool:
+    """Whether a preview's posts read as a list of articles to follow: at least MENU_POSTS of them
+    dated, the newest within MENU_RECENT. A page of people or past work has dates too, old ones
+    (a leader's joining year). A post with no date of its own is dated when it was read, after
+    the preview started: it is left out."""
+    dates = [date for item in items if (date := parsing.parse_datetime_value(item["published_at"])) and date < started]
+    return len(dates) >= MENU_POSTS and max(dates) >= started - MENU_RECENT
+
+
+async def _previews(http: KindHttp, pages: Sequence[str], deadline: float) -> List[Dict[str, Any]]:
+    """{url, **preview} of each page, in page order, the ones done by the deadline."""
     tasks = {asyncio.create_task(preview(http, page)): page for page in dict.fromkeys(pages)}
     if not tasks:
         return []
-    done, pending = await asyncio.wait(tasks, timeout=OFFER_BUDGET_S)
+    done, pending = await asyncio.wait(tasks, timeout=max(0.0, deadline - asyncio.get_running_loop().time()))
     for task in pending:
         task.cancel()
     found = []
@@ -331,9 +357,9 @@ async def offers(http: KindHttp, pages: Sequence[str]) -> List[Dict[str, Any]]:
             logger.info("Page watch: %s not offered (no preview in %.0fs)", page, OFFER_BUDGET_S)
         elif task.exception() is not None:
             logger.info("Page watch: %s not offered (%s)", page, task.exception())
-        elif task.result()["items"]:
+        else:
             found.append({"url": page, **task.result()})
-    return sorted(found, key=lambda offer: -offer["found"])
+    return found
 
 
 class PageWatchKind(BaseSourceAdapter):
