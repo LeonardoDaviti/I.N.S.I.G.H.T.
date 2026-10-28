@@ -33,7 +33,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **Title:** `h1` at the display step (1.75rem, 2rem from sm), weight 650, `text-pretty`, `dir="auto"`. It is the API's short title, as given: the first line of the title (or of the body, when the title is empty or the body's start cut with "…"), cut over 120 characters at the first sentence end, else at a word with "…". The feed rows show the same title. The tab reads `<title> · INSIGHT`.
 - **Continue line** (only the post opened, not one joining the stream): between 5% and 90%, under the header, a quiet `text-link` button in `small` `text-2`: "Continue from where you stopped (40%)". It scrolls to that block and moves focus there; reading past the old place (or the end) removes it. Nothing scrolls by itself.
 - **Hero media:** the first image as a figure, or an embedded video in a reserved 16:9 frame.
-- **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own. A post with no HTML body shows its stored plain text read as markdown only: a literal `<details>` in it is text, never an element.
+- **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own. Tables keep their header cells, rows and columns, in a hairline frame; a figure keeps its image with its caption under it, in `text-2` at 0.875em (issue 0042). A post with no HTML body shows its stored plain text read as markdown only: a literal `<details>` in it is text, never an element.
 - **More images** after the body.
 - **YouTube posts:** the player, a line of duration / views / likes / transcript source, a "Watch progress" card (progress bar, position slider, Save progress, Mark complete), then the transcript in collapsed blocks with "Set progress here" and "Open at m:ss".
 - **Reddit posts:** a "Discussion" section with the stored comments, only when some are stored; there is no "Fetch comments": Reddit refuses it (issue 0012), and its backend is removed (issue 0029).
@@ -44,7 +44,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **article:** a text post: byline, title, prose.
 - **media:** a hero image, more images after the body, and a video (YouTube embed or watch mode).
 - **long-title:** a title of several lines (up to 120 characters from the API) wraps, never truncated further, and balances with `pretty`.
-- **headings:** a body using h1–h6, lists, quotes, tables and code, to check the prose scale.
+- **headings:** a body using h1–h6, lists, quotes, tables (one wide, with a caption), a captioned figure and code, to check the prose scale.
 - **missing-title:** a Telegram or commit post with no real title, or a tweet whose whole text is the title: the H1 is the text's first line or first sentence.
 - **loading:** a skeleton in the same frame and column as the loaded page, so nothing jumps on arrival.
 - **error:** "Post not found" with the error message and "Back to the feed". An action that fails (keep, Later, copy) shows an error `Notice` with Dismiss above the body.
@@ -57,7 +57,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 
 ## Worst cases
 
-- Unbroken URLs and long words wrap (`break-words`, `[overflow-wrap:anywhere]`); the column is `min-w-0`, and `<pre>` scrolls inside itself, so nothing widens the page past the viewport.
+- Unbroken URLs and long words wrap (`break-words`, `[overflow-wrap:anywhere]`); the column is `min-w-0`, and `<pre>` and a wide table scroll inside themselves, so nothing widens the page past the viewport.
 - The source name middle-truncates at 40 chars, full name in `title`.
 - RTL and mixed-script titles via `dir="auto"`.
 - A post with no content: an empty body, still readable header. A video with no transcript says so.

@@ -57,6 +57,10 @@ const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugi
     rehypeSanitize,
     {
       ...defaultSchema,
+      // The reader keeps an article's figures and a table's caption (issue 0042); GitHub's
+      // schema would unwrap them into loose text.
+      tagNames: [...(defaultSchema.tagNames || []), 'figure', 'figcaption', 'caption'],
+      ancestors: { ...defaultSchema.ancestors, caption: ['table'] },
       attributes: {
         ...defaultSchema.attributes,
         a: [
@@ -208,6 +212,24 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               />
             );
           },
+          // A figure keeps its image and caption together; the caption sits under it, small
+          // and muted like a byline (issue 0042).
+          figure: ({ children }) => (
+            <figure className="my-[1.25em] [&_img]:my-0">
+              {children}
+            </figure>
+          ),
+          figcaption: ({ children }) => (
+            <figcaption dir="auto" className="mt-[0.6em] text-[0.875em] leading-[1.5] text-fg-2 [&_p]:mb-[0.4em] [&_p]:text-fg-2">
+              {children}
+            </figcaption>
+          ),
+          caption: ({ children }) => (
+            <caption dir="auto" className="caption-bottom border-t border-line px-[0.85em] py-[0.6em] text-left text-fg-2">
+              {children}
+            </caption>
+          ),
+          // A wide table scrolls sideways inside the column; the page never does.
           table: ({ children }) => (
             <div className="my-[1.25em] max-w-full overflow-x-auto rounded-md border border-line">
               <table className="min-w-full border-collapse text-[0.875em] tabular-nums">
@@ -230,13 +252,14 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </tr>
           ),
-          th: ({ children }) => (
-            <th className="border-b border-line-strong px-[0.85em] py-[0.6em] text-left font-semibold text-fg">
+          // A cell keeps its span, so a row of a kept table lines up with its header.
+          th: ({ children, colSpan, rowSpan }) => (
+            <th colSpan={colSpan} rowSpan={rowSpan} className="border-b border-line-strong px-[0.85em] py-[0.6em] text-left font-semibold text-fg">
               {children}
             </th>
           ),
-          td: ({ children }) => (
-            <td className="px-[0.85em] py-[0.6em] align-top text-fg">
+          td: ({ children, colSpan, rowSpan }) => (
+            <td colSpan={colSpan} rowSpan={rowSpan} className="px-[0.85em] py-[0.6em] align-top text-fg">
               {children}
             </td>
           ),
