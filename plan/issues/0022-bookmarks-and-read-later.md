@@ -1,6 +1,6 @@
 # 0022 — Bookmarks: read later, keep, and what the star means
 
-Status: **discussion** (owner, 2026-10-27): decided 2026-10-28 (below); ready to spec. Nothing is built.
+Status: **built** 2026-10-28, not yet deployed (discussed 2026-10-27, decided 2026-10-28, below).
 
 ## The owner's observations
 - "Can you add a feature like bookmarks? But first discuss how bookmarks should work for each post and what bookmarks are needed for." (2026-10-16)
@@ -43,3 +43,10 @@ Status: **discussion** (owner, 2026-10-27): decided 2026-10-28 (below); ready to
 - **Finishing a post takes it out of Later** (only nothing *automatic*, like an expiry).
 - **A Later post stays in Unread too**: it shows in both lists.
 - The model is decided; ready to spec.
+
+## Built (2026-10-28)
+- **Storage:** `post_reader_state.later_at` (migration 0031, partial index like the starred one); Keep is the star, `starred_at`, unchanged, so today's stars are Kept. `ReaderRepository.set_later(ids, later, at=)` / `ReaderService.set_later` is the one Later write (0031's saved pages can call it with their saved time).
+- **API:** `PUT /api/feed/later {ids, later}`; `GET /api/feed?filter=later` is oldest saved first (cursor on `later_at`) and, on the Main feed, holds every source's; `filter=starred` is Kept; the unread counts carry `later: {count, minutes}` (the `N min read` estimates plus video lengths); the post's reader state has `later_at`.
+- **What clears Later:** finishing, only: the post's end past the top half of the screen on the post page (either flow), or an explicit mark read (`PUT /api/feed/read {ids, read: true}`: the circle, `m`). Opening never does (`/opened`, and the feed's own read-on-open sends `keep_later`); nor do `Shift+A` mark-through, marking unread, or any clock. `l` or the clock toggle it by hand.
+- **UI:** Show is Unread / Later / Kept / All. A row offers Read later (clock) while unread and Keep (star) once read, and keeps a save's button while it is on; the post page offers both. Keys `l` and `s`. The Main feed's quiet line and the Later list's header read `Later · 6 posts · 52 min`; ⌘K has "Later". No rail entry, no folders, tags or notes. Design decision 029.
+- **Limits:** a track's or source's Later list has no cost header (the count is global); the post page's prev/next in Later follow the loaded list, so after a reload a post that has left Later gets neighbours by date.

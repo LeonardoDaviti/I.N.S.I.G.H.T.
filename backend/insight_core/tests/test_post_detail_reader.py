@@ -103,6 +103,7 @@ class PostDetailReaderStateTests(unittest.TestCase):
         self.assertFalse(state["is_favorited"])
         self.assertIsNone(state["read_at"])
         self.assertEqual(state["open_count"], 0)
+        self.assertIsNone(state["later_at"])
 
 
 @requires_test_db
@@ -167,6 +168,12 @@ class ReadingPositionTests(unittest.TestCase):
         self.assertEqual(self._position(), (12, 30))
         call(main.app, "PUT", "/api/feed/read", json_body={"ids": [self.post_id], "read": True})
         self.assertEqual(self._position(), (None, None))
+
+    def test_the_feed_marking_what_it_opens_keeps_it(self):
+        # keep_later (issue 0022) is a read that is only an open: it finishes nothing.
+        self.service.save_position(self.post_id, 12, 30)
+        call(main.app, "PUT", "/api/feed/read", json_body={"ids": [self.post_id], "read": True, "keep_later": True})
+        self.assertEqual(self._position(), (12, 30))
 
     def test_a_position_outside_the_post_is_a_400_and_an_unknown_post_a_404(self):
         for json_body in ({"block": 30, "blocks": 30}, {"block": -1, "blocks": 30}, {"block": 1, "blocks": 0},

@@ -43,7 +43,7 @@ const PREFETCH_DELAY_MS = 150;
 /**
  * The reader list (spec §F.3, §F.5, §F.6): renders the feed in either view, owns
  * the j/k selection (by post id, through the pure `feedNavigation` reducer), the
- * optimistic read/star toggles, mark-read-through with its confirmation and Undo,
+ * optimistic read, Later and Keep toggles, mark-read-through with its confirmation and Undo,
  * and infinite loading (an IntersectionObserver sentinel plus a visible "Load
  * more" button). Results are announced in the page's live region.
  */
@@ -70,15 +70,17 @@ function FeedList({
   const ids = useMemo(() => (idsKey ? idsKey.split('\n') : []), [idsKey]);
   // Day headers for the stream: each row's day heading, and whether the row is the
   // first of its day (where the header is drawn), computed once per items array.
+  // Later is in the order saved, not by day: no headers, and each row shows its date.
+  const byDay = filter !== 'later';
   const days = useMemo(() => {
     let previous: string | null = null;
     return items.map((item) => {
       const key = feedDayKey(item.sort_at);
-      const first = key !== previous;
+      const first = byDay && key !== previous;
       previous = key;
       return { label: feedDayHeading(item.sort_at), first };
     });
-  }, [items]);
+  }, [byDay, items]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -107,7 +109,18 @@ function FeedList({
   const toggleStar = useCallback((item: FeedItemData) => {
     const starred = !item.starred_at;
     mutations.setStarred(item, starred).then(
-      () => announce(starred ? 'Starred' : 'Removed star'),
+      () => announce(starred ? 'Kept' : 'No longer kept'),
+      (error: unknown) => {
+        announce(errorMessage(error));
+        toast.error(errorMessage(error));
+      },
+    );
+  }, [announce, mutations]);
+
+  const toggleLater = useCallback((item: FeedItemData) => {
+    const later = !item.later_at;
+    mutations.setLater(item, later).then(
+      () => announce(later ? 'Saved for later' : 'Removed from Later'),
       (error: unknown) => {
         announce(errorMessage(error));
         toast.error(errorMessage(error));
@@ -119,16 +132,19 @@ function FeedList({
     // Coming back to the feed (u, Back) selects the post that was read last.
     rememberSelection(item.id);
     if (!item.read_at) {
-      mutations.setRead(item, true).catch(() => {
+      // Opening is not finishing: a post in Later stays there (issue 0022).
+      mutations.setRead(item, true, { keepLater: true }).catch(() => {
         // Opening the post records the open (and sets read_at) server-side as well.
       });
     }
   }, [mutations]);
 
   const askMarkThrough = useCallback((item: FeedItemData) => {
-    if (view === 'by_source') {
-      announce('Mark read up to here works in the Stream view.');
-      toast('Mark read up to here works in the Stream view.');
+    if (view === 'by_source' || filter === 'later') {
+      // Later is in the order saved, not the feed's: "up to here" would mean something else.
+      const message = filter === 'later' ? 'Mark read up to here does not work in Later.' : 'Mark read up to here works in the Stream view.';
+      announce(message);
+      toast(message);
       return;
     }
     const loaded = itemsRef.current;
@@ -139,7 +155,7 @@ function FeedList({
       return;
     }
     setConfirm({ through: item, count });
-  }, [announce, view]);
+  }, [announce, filter, view]);
 
   const confirmMarkThrough = useCallback(async () => {
     const pending = confirm;
@@ -173,8 +189,8 @@ function FeedList({
   // ---- keyboard selection ----
   const [nav, setNav] = useState(() => initialNavState());
   const navRef = useRef(nav);
-  const latest = useRef({ itemsById, itemHref, toggleRead, toggleStar, openItem, askMarkThrough, feed, navigate });
-  latest.current = { itemsById, itemHref, toggleRead, toggleStar, openItem, askMarkThrough, feed, navigate };
+  const latest = useRef({ itemsById, itemHref, toggleRead, toggleStar, toggleLater, openItem, askMarkThrough, feed, navigate });
+  latest.current = { itemsById, itemHref, toggleRead, toggleStar, toggleLater, openItem, askMarkThrough, feed, navigate };
 
   const runIntent = useCallback((intent: NavIntent | null) => {
     if (!intent) return;
@@ -196,6 +212,7 @@ function FeedList({
       ctx.navigate(ctx.itemHref(item));
     } else if (intent.kind === 'toggleRead') ctx.toggleRead(item);
     else if (intent.kind === 'toggleStar') ctx.toggleStar(item);
+    else if (intent.kind === 'toggleLater') ctx.toggleLater(item);
     else if (intent.kind === 'markThrough') ctx.askMarkThrough(item);
   }, []);
 
@@ -230,6 +247,7 @@ function FeedList({
     Enter: () => dispatch({ type: 'open' }),
     m: () => dispatch({ type: 'toggleRead' }),
     s: () => dispatch({ type: 'toggleStar' }),
+    l: () => dispatch({ type: 'toggleLater' }),
     A: () => dispatch({ type: 'markThrough' }),
     '?': () => setHelp(true),
   }, { enabled: !confirm && !help, singleKeys: shortcutsOn });
@@ -268,6 +286,7 @@ function FeedList({
     onOpen: openItem,
     onToggleRead: toggleRead,
     onToggleStar: toggleStar,
+    onToggleLater: toggleLater,
   };
   const tabbableId = selectedId ?? ids[0] ?? null;
 
@@ -310,8 +329,8 @@ function FeedList({
                   selected={item.id === selectedId}
                   tabbable={item.id === tabbableId}
                   href={itemHref(item)}
-                  dateColumn="time"
-                  dayLabel={days[index].label}
+                  dateColumn={byDay ? 'time' : 'date'}
+                  dayLabel={byDay ? days[index].label : undefined}
                   position={index + 1}
                   setSize={hasNextPage ? -1 : items.length}
                   showSource={!scope.startsWith('source:')}

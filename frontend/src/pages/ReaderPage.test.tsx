@@ -65,10 +65,18 @@ describe('ReaderPage', () => {
     expect(screen.getByRole('radio', { name: 'Unread' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('Show starred drops the scope’s unread count above the starred list (issue 0027)', async () => {
+  it('Show is Unread / Later / Kept / All (issue 0022)', async () => {
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])) }));
+    const show = await screen.findByRole('radiogroup', { name: 'Show' });
+    expect(within(show).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['Unread', 'Later', 'Kept', 'All']);
+  });
+
+  it('Show kept (?filter=starred) drops the scope’s unread count above the kept list (issues 0027, 0022)', async () => {
     const getUnreadCounts = vi.fn().mockResolvedValue({ total: 1890, by_source: {}, by_folder: {} });
-    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([])), getUnreadCounts }), '/?filter=starred');
-    expect(await screen.findByText('No starred posts')).toBeInTheDocument();
+    const getFeed = vi.fn().mockResolvedValue(feedPage([]));
+    render(base({ getFeed, getUnreadCounts }), '/?filter=starred');
+    expect(await screen.findByText('No kept posts')).toBeInTheDocument();
+    expect(getFeed).toHaveBeenCalledWith(expect.objectContaining({ filter: 'starred' }));
     await waitFor(() => expect(getUnreadCounts).toHaveBeenCalled());
     expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/unread/);
   });
@@ -156,8 +164,42 @@ describe('ReaderPage', () => {
     window.dispatchEvent(new Event('focus'));
     document.dispatchEvent(new Event('visibilitychange'));
     expect(getFeed).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole('radio', { name: 'Starred' }));
+    await user.click(screen.getByRole('radio', { name: 'Kept' }));
     await waitFor(() => expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'starred' })));
+    await user.click(screen.getByRole('radio', { name: 'Later' }));
+    await waitFor(() => expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'later' })));
+  });
+
+  it('the Main feed leads to Later with one quiet line saying what it costs; nothing when Later is empty (issue 0022)', async () => {
+    const user = userEvent.setup();
+    const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })]));
+    const counts = { total: 1, by_source: {}, by_folder: {}, later: { count: 6, minutes: 52 } };
+    render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue(counts) }));
+    const line = await screen.findByTestId('reader-later-line');
+    expect(line).toHaveTextContent('Later · 6 posts · 52 min');
+    await user.click(line);
+    await waitFor(() => expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'later' })));
+    // The Later list states its cost in its header, and does not repeat the line.
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Later · 6 posts · 52 min'));
+    expect(screen.queryByTestId('reader-later-line')).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Later' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('no Later line while Later is empty, nor on a track or source', async () => {
+    const empty = { total: 1, by_source: {}, by_folder: {}, later: { count: 0, minutes: 0 } };
+    const { unmount } = render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])), getUnreadCounts: vi.fn().mockResolvedValue(empty) }));
+    await screen.findAllByRole('article');
+    expect(screen.queryByTestId('reader-later-line')).toBeNull();
+    unmount();
+    const full = { ...empty, later: { count: 1, minutes: 4 } };
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])), getUnreadCounts: vi.fn().mockResolvedValue(full) }), `/read/source/${ID(9)}`);
+    await screen.findAllByRole('article');
+    expect(screen.queryByTestId('reader-later-line')).toBeNull();
+  });
+
+  it('an empty Later says how to fill it', async () => {
+    render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([])), getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }) }), '/?filter=later');
+    expect(await screen.findByText('Nothing in Later')).toBeInTheDocument();
   });
 
   it('says ingestion has stopped instead of "all caught up" when nothing was fetched for a day', async () => {

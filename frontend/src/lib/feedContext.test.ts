@@ -77,6 +77,18 @@ test('neighborsAt: prev/next by sort key, the current post found or not', () => 
   assert.equal(neighborsAt(entries, { id: 'bb', sortAt: '2026-10-10T11:00:00Z' }, null).next?.id, 'b');
 });
 
+test('neighborsAt: a loaded post goes by its place in the list, whatever its order (Later, issue 0022)', () => {
+  // Later is oldest saved first, so publish dates run in no order.
+  const later = [
+    { id: 'x', sortAt: '2026-10-01T00:00:00Z', pageCursor: null },
+    { id: 'y', sortAt: '2026-10-09T00:00:00Z', pageCursor: null },
+    { id: 'z', sortAt: '2026-10-05T00:00:00Z', pageCursor: null },
+  ];
+  assert.deepEqual(neighborsAt(later, { id: 'y', sortAt: '2026-10-09T00:00:00Z' }, null), {
+    prev: { id: 'x', pageCursor: null }, next: { id: 'z', pageCursor: null }, loadNext: null,
+  });
+});
+
 test('neighborsAt: at the first and the last loaded post', () => {
   const entries = [{ id: 'c', sortAt: '2026-10-10T12:00:00Z', pageCursor: null }, { id: 'a', sortAt: '2026-10-10T10:00:00Z', pageCursor: null }];
   assert.deepEqual(neighborsAt(entries, { id: 'c', sortAt: '2026-10-10T12:00:00Z' }, null), { prev: null, next: { id: 'a', pageCursor: null }, loadNext: null });

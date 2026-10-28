@@ -7,9 +7,11 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
 
+/** Kept is the star (`starred` in the URL and the API, issue 0022). */
 const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'unread', label: 'Unread' },
-  { value: 'starred', label: 'Starred' },
+  { value: 'later', label: 'Later' },
+  { value: 'starred', label: 'Kept' },
   { value: 'all', label: 'All' },
 ];
 const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
@@ -28,7 +30,7 @@ export interface FeedToolbarProps {
   title: string;
   /** Where this scope is managed (Sources); the title links there, quietly. */
   titleHref?: string | null;
-  /** e.g. "248 unread" (already formatted). */
+  /** e.g. "248 unread", or "Later · 6 posts · 52 min" (already formatted). */
   subtitle?: string | null;
   filter: FeedFilter;
   onFilterChange: (filter: FeedFilter) => void;

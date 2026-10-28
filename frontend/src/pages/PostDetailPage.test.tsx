@@ -90,27 +90,41 @@ describe('PostDetailPage header', () => {
     );
   });
 
-  it('stars the post and reflects it with aria-pressed', async () => {
+  it('keeps the post (the star) and reflects it with aria-pressed', async () => {
     const user = userEvent.setup();
     const togglePostFavorite = vi.fn().mockResolvedValue({ success: true, favorited: true });
     render(baseApi(rssPost(), { togglePostFavorite }));
-    const star = await screen.findByRole('button', { name: 'Star' });
+    const star = await screen.findByRole('button', { name: 'Keep' });
     expect(star).toHaveAttribute('aria-pressed', 'false');
     await user.click(star);
     expect(togglePostFavorite).toHaveBeenCalledWith(POST_ID, true);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'true'));
+  });
+
+  it('puts the post in Later with the clock or l, and takes it out again (issue 0022)', async () => {
+    const user = userEvent.setup();
+    const setPostsLater = vi.fn().mockResolvedValue({ success: true, updated: 1, ids: [POST_ID] });
+    render(baseApi(rssPost(), { setPostsLater, getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }) }));
+    const later = await screen.findByRole('button', { name: 'Read later' });
+    expect(later).toHaveAttribute('aria-pressed', 'false');
+    await user.click(later);
+    expect(setPostsLater).toHaveBeenCalledWith([POST_ID], true);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'true'));
+    await user.keyboard('l');
+    expect(setPostsLater).toHaveBeenLastCalledWith([POST_ID], false);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'false'));
   });
 
 });
 
 describe('PostDetailPage reading view', () => {
-  it('puts open original, star and copy as icon-only buttons in the title block, and no Inspect', async () => {
+  it('puts open original, read later, keep and copy as icon-only buttons in the title block, and no Inspect', async () => {
     render(baseApi(rssPost()));
     const heading = await screen.findByRole('heading', { level: 1 });
     const header = heading.closest('header')!;
     const actions = within(header).getByRole('group', { name: 'Post actions' });
     const controls = Array.from(actions.querySelectorAll('a, button'));
-    expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual(['Open original', 'Star', 'Copy text']);
+    expect(controls.map((control) => control.getAttribute('aria-label'))).toEqual(['Open original', 'Read later', 'Keep', 'Copy text']);
     for (const control of controls) {
       // Icon only: the name comes from aria-label, no visible words.
       expect(control.textContent).toBe('');
@@ -128,7 +142,7 @@ describe('PostDetailPage reading view', () => {
     expect(link).toHaveAttribute('href', 'https://news.ycombinator.com/item?id=1');
     const actions = screen.getByRole('group', { name: 'Post actions' });
     const labels = Array.from(actions.querySelectorAll('a, button')).map((control) => control.getAttribute('aria-label'));
-    expect(labels).toEqual(['Open original', 'Open discussion', 'Star', 'Copy text']);
+    expect(labels).toEqual(['Open original', 'Open discussion', 'Read later', 'Keep', 'Copy text']);
   });
 
   it('a Reddit post offers no Fetch comments (Reddit refuses it); comments stored with it still show', async () => {
@@ -149,14 +163,14 @@ describe('PostDetailPage reading view', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy text');
   });
 
-  it('stars with the s key as well as the button', async () => {
+  it('keeps with the s key as well as the button', async () => {
     const user = userEvent.setup();
     const togglePostFavorite = vi.fn().mockResolvedValue({ success: true, favorited: true });
     render(baseApi(rssPost(), { togglePostFavorite }));
     await screen.findByRole('heading', { level: 1 });
     await user.keyboard('s');
     expect(togglePostFavorite).toHaveBeenCalledWith(POST_ID, true);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'true'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Keep' })).toHaveAttribute('aria-pressed', 'true'));
   });
 
   it('renders no summary, inspector, notes, chat, story or tags, even from an old response that still carries them', async () => {
@@ -670,6 +684,42 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     await screen.findByRole('heading', { level: 1, name: 'The older post' });
     expect(await screen.findByText('You’ve reached the end')).toBeInTheDocument();
     expect(screen.queryByText('You’re all caught up')).toBeNull();
+  });
+
+  /** POST_ID is in Later; the Later write is recorded. */
+  function laterApi() {
+    const inLater = { success: true, post: rssPost(), reader_state: { post_id: POST_ID, is_favorited: false, later_at: '2026-10-20T09:00:00+00:00' } };
+    const api = contextApi({ setPostsLater: vi.fn().mockResolvedValue({ success: true, updated: 1, ids: [POST_ID] }) });
+    const detail = vi.mocked(api.getPostDetail);
+    const others = detail.getMockImplementation()!;
+    detail.mockImplementation((id: string) => (id === POST_ID ? Promise.resolve(inLater) : others(id)));
+    return api;
+  }
+
+  it.each(['continuous', 'single'])('%s: opening a post in Later keeps it there; reaching its end takes it out (issue 0022)', async (flow) => {
+    window.localStorage.setItem('insight.reader.flow', flow);
+    const api = laterApi();
+    renderStream(api);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    await nextReady();
+    expect(screen.getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'true');
+    if (flow === 'single') await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalledWith(POST_ID, expect.anything()));
+    expect(api.setPostsLater).not.toHaveBeenCalled();
+    expect(api.setPostsRead).not.toHaveBeenCalled();
+
+    see(postEnd(POST_ID));
+    await waitFor(() => expect(api.setPostsLater).toHaveBeenCalledWith([POST_ID], false));
+    expect(api.recordPostOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Read later' })).toHaveAttribute('aria-pressed', 'false'));
+  });
+
+  it('the end of a post not in Later writes nothing about Later', async () => {
+    const api = contextApi({ setPostsLater: vi.fn() });
+    renderStream(api);
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    see(postEnd(POST_ID));
+    await waitFor(() => expect(api.recordPostOpen).toHaveBeenCalled());
+    expect(api.setPostsLater).not.toHaveBeenCalled();
   });
 
   it('one post at a time renders a single article and records the open at once', async () => {

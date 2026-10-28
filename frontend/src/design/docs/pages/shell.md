@@ -22,7 +22,7 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 - **Skip link** "Skip to content" (visible on focus) to `main#main`.
 - **Top bar** (sticky, translucent material, 3.5rem): the inverted `INSIGHT` wordmark (links to `/`); beside it the activity sign; at the right the lowercase slash nav (`feed / sources / blog`), the current word bold with a solid underline; a `go to ⌘K` button (Ctrl+K off Mac); the theme toggle (☾/☀). Its hairline appears only once content scrolls under it.
 - **Activity sign** (P7): small `text-2` words beside the wordmark, on every page. While an ingestion run or archive job runs, the running glyph and `fetching · 3 of 41` (sources done of due; just `fetching` without a count); for an hour after the newest ingestion run failed, `last fetch failed`. It links to that job (`/settings/sources?tab=ingestion&sub=jobs&job=<id>`). Nothing when idle; the daily work doesn't count. It reads the operations overview, which polls every 5 seconds while a job runs and every 15 otherwise.
-- **Quick switcher:** a dialog at 18vh, 34rem wide: a "Go to…" combobox with `esc`, then a listbox of destinations, each with its group in `text-3` (feed, tracks, sources, theme). The active option is the inverted block with ↵. Main feed, By source, one entry per track (to `/read/folder/<id>`), Sources, Ingestion, Blog, Design studio, then "Switch to light/dark theme". Design studio is the last destination, and absent inside a studio frame. "No page matches “…”" when the filter finds nothing.
+- **Quick switcher:** a dialog at 18vh, 34rem wide: a "Go to…" combobox with `esc`, then a listbox of destinations, each with its group in `text-3` (feed, tracks, sources, theme). The active option is the inverted block with ↵. Main feed, Later (`/?filter=later`, decision 029), By source, one entry per track (to `/read/folder/<id>`), Sources, Ingestion, Blog, Design studio, then "Switch to light/dark theme". Design studio is the last destination, and absent inside a studio frame. "No page matches “…”" when the filter finds nothing.
 - **Keyboard help** (`?`): a dialog with the single-key switch and the key table (Feed / Post page columns).
 - **Design studio** (`/design`, ⌘K only, never in the top bar): its header, modes, Wall, walk, Bench and keys are described in `system/studio.md`.
 - **Dialogs and sheets:** `Dialog` centred with a scrim; `Sheet` from the right; `ConfirmDialog` for destructive actions; toasts bottom, monochrome, with an action (Undo) where reversible.
@@ -51,7 +51,7 @@ Wayfinding on every screen (P1): where am I (the current nav word), where can I 
 
 ## Decisions
 
-- 002 hub deleted, 003 reading-only bar, 006 per-track ⌘K entries, 007 (amended) the bar shows a running fetch, 010 track entries open the reader (`../decisions.md`); the studio's own decisions are listed in `system/studio.md`.
+- 002 hub deleted, 003 reading-only bar, 006 per-track ⌘K entries, 007 (amended) the bar shows a running fetch, 010 track entries open the reader, 029 Later in ⌘K (`../decisions.md`); the studio's own decisions are listed in `system/studio.md`.
 
 ## Open issues
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
-import type { FeedFilter, FeedView } from '../services/api';
+import type { FeedFilter, FeedView, UnreadCounts } from '../services/api';
 import FeedList from '../components/reader/FeedList';
 import FeedToolbar from '../components/reader/FeedToolbar';
 import NewPostsPill from '../components/reader/NewPostsPill';
@@ -17,7 +17,8 @@ import { feedKey, scopeUnreadCount, useUnreadCounts, type FeedFixture } from '..
 import { scopeLabel, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { scopeDelta, type UnreadChange } from '../hooks/useReaderMutations';
 import { isFeedFilter, scopeFromRoute, scopeSettingsHref } from '../lib/feedContext';
-import { formatCount } from '../lib/format';
+import { formatCount, plural } from '../lib/format';
+import TextLink from '../components/ui/TextLink';
 import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
 
@@ -45,6 +46,13 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
     setState((prev) => ({ ...prev, baseline: value }));
   }, []);
   return { count, onUnreadDelta, reset };
+}
+
+/** What Later costs (issue 0022): "Later · 6 posts · 52 min"; null when Later is empty. */
+function laterSummary(counts: UnreadCounts | undefined): string | null {
+  const later = counts?.later;
+  if (!later?.count) return null;
+  return ['Later', plural(later.count, 'post'), later.minutes ? `${formatCount(later.minutes)} min` : null].filter(Boolean).join(' · ');
 }
 
 /**
@@ -120,7 +128,8 @@ function Reader({ scope }: { scope: string }) {
 
   const railSearch = useMemo(() => {
     const keep = new URLSearchParams();
-    if (filter !== 'unread' && filter !== 'starred') keep.set('filter', filter);
+    // Later and Kept are the Main feed's lists, not a way to read a track or source.
+    if (filter === 'all') keep.set('filter', filter);
     if (view !== 'stream') keep.set('view', view);
     if (dataName) keep.set('data', dataName);
     const text = keep.toString();
@@ -145,8 +154,11 @@ function Reader({ scope }: { scope: string }) {
     if (filter === 'unread') {
       return { title: 'You’re all caught up', description: 'Nothing unread.', action: { label: 'Show all', onClick: showAll } };
     }
+    if (filter === 'later') {
+      return { title: 'Nothing in Later', description: 'Press l on a post, or its clock button, to read it later. Finishing it takes it out.', action: { label: 'Show all', onClick: showAll } };
+    }
     if (filter === 'starred') {
-      return { title: 'No starred posts', description: 'Press s on a post, or its star button, to keep it here.', action: { label: 'Show all', onClick: showAll } };
+      return { title: 'No kept posts', description: 'Press s on a post, or the star on a read one, to keep it here.', action: { label: 'Show all', onClick: showAll } };
     }
     if (scope === 'all') {
       return { title: 'No posts yet', description: 'Add a source to start reading. Ingestion collects its posts.', action: { label: 'Add a source', href: '/settings/sources' } };
@@ -159,8 +171,12 @@ function Reader({ scope }: { scope: string }) {
     };
   }, [filter, scope, showAll, stopped]);
 
-  // The unread count says nothing about the starred list, so Show starred leaves it out.
-  const subtitle = scopeCount !== null && filter !== 'starred' ? `${formatCount(scopeCount)} unread` : null;
+  // The unread count says nothing about the Kept or Later lists; the Main feed's Later says what it costs.
+  const later = laterSummary(counts.data);
+  let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' ? `${formatCount(scopeCount)} unread` : null;
+  if (filter === 'later') subtitle = scope === 'all' ? later : null;
+  // On the Main feed, one quiet line leads to Later while it holds anything.
+  const laterLine = scope === 'all' && filter !== 'later' && later ? later : null;
 
   return (
     <LiveRegionProvider>
@@ -198,6 +214,11 @@ function Reader({ scope }: { scope: string }) {
                     ? `The last fetch was ${formatRelativeTime(activity.lastAttemptAt)}. New posts arrive only once ingestion runs again.`
                     : 'No source has been fetched yet. New posts arrive only once ingestion runs.'}
                 />
+              ) : null}
+              {laterLine ? (
+                <p className="mb-3 px-1 text-[0.8125rem] tabular-nums">
+                  <TextLink to="/?filter=later" data-testid="reader-later-line" className="text-fg-2 decoration-transparent hover:decoration-fg-3">{laterLine}</TextLink>
+                </p>
               ) : null}
               {fixturePending ? <LoadingState label="Loading demo data" rows={6} /> : (
               <FeedList

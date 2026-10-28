@@ -3,7 +3,7 @@
  *
  * Selection is held by post id, never by index, so a page appended at the end or
  * new posts prepended on top never move it to a different item. Actions that need
- * the outside world (focus the row, load the next page, toggle read or star, open,
+ * the outside world (focus the row, load the next page, toggle read, Later or Keep, open,
  * mark read up to here) come back as one `intent` on the new state; the caller
  * performs it. A reducer cannot fire effects, and this keeps it testable.
  */
@@ -14,6 +14,7 @@ export type NavIntent =
   | { kind: 'open'; id: string }
   | { kind: 'toggleRead'; id: string }
   | { kind: 'toggleStar'; id: string }
+  | { kind: 'toggleLater'; id: string }
   | { kind: 'markThrough'; id: string };
 
 export type NavAction =
@@ -24,6 +25,7 @@ export type NavAction =
   | { type: 'open' }
   | { type: 'toggleRead' }
   | { type: 'toggleStar' }
+  | { type: 'toggleLater' }
   | { type: 'markThrough' };
 
 export interface NavState {
@@ -43,7 +45,7 @@ function moveTo(state: NavState, id: string): NavState {
   return { ...state, selectedId: id, pendingAdvance: false, intent: { kind: 'focus', id } };
 }
 
-function selectedIntent(state: NavState, kind: 'open' | 'toggleRead' | 'toggleStar' | 'markThrough'): NavState {
+function selectedIntent(state: NavState, kind: 'open' | 'toggleRead' | 'toggleStar' | 'toggleLater' | 'markThrough'): NavState {
   if (!state.selectedId) return { ...state, intent: null };
   return { ...state, intent: { kind, id: state.selectedId } };
 }
@@ -103,6 +105,8 @@ export function feedNavigation(state: NavState, action: NavAction): NavState {
       return selectedIntent(state, 'toggleRead');
     case 'toggleStar':
       return selectedIntent(state, 'toggleStar');
+    case 'toggleLater':
+      return selectedIntent(state, 'toggleLater');
     case 'markThrough':
       return selectedIntent(state, 'markThrough');
     default:

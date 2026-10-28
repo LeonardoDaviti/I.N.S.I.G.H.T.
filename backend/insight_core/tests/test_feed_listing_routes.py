@@ -166,6 +166,64 @@ class FeedListingRouteTests(unittest.TestCase):
         self.read(ids=marked["ids"], read=False)
         self.assertEqual(self.ids(scope=scope, filter="unread"), [p4, p3, p2, p1])
 
+    # ---- Later (issue 0022) ----------------------------------------------------------
+
+    def later(self, **payload):
+        status, _, body = call(main.app, "PUT", "/api/feed/later", json_body=payload)
+        self.assertEqual(status, 200, body)
+        return body
+
+    def test_finishing_takes_a_post_out_of_later_and_opening_does_not(self):
+        source = self._source()
+        scope = f"source:{source}"
+        p1, p2 = self._posts(source, *self._hours_ago(2, 1))
+        self.assertEqual(self.later(ids=[p1], later=True), {"success": True, "updated": 1, "ids": [p1]})
+        self.assertEqual(self.later(ids=[p1, p2], later=True)["ids"], [p2], "p1 is already in Later")
+        self.assertEqual(self.ids(scope=scope, filter="later"), [p1, p2], "oldest saved first: p1 was saved first")
+        self.assertEqual(self.ids(scope=scope, filter="unread"), [p2, p1], "a Later post stays in Unread")
+
+        # opening is not finishing: the post page's open, and the feed's own read on open
+        status, _, body = call(main.app, "POST", f"/api/posts/item/{p1}/opened", json_body={})
+        self.assertEqual(status, 200, body)
+        self.read(ids=[p1], read=True, keep_later=True)
+        self.assertEqual(self.ids(scope=scope, filter="later"), [p1, p2])
+        status, _, body = call(main.app, "GET", f"/api/posts/item/{p1}")
+        self.assertIsNotNone(body["reader_state"]["later_at"])
+
+        # mark read up to here is catching up, not finishing
+        items = {item["id"]: item for item in self.feed(scope=scope)["items"]}
+        cursor = lambda pid: main.FeedCursor(datetime.fromisoformat(items[pid]["sort_at"]), pid).encode()
+        self.read(scope=scope, through_cursor=cursor(p1), newest_cursor=cursor(p2))
+        self.assertEqual(self.ids(scope=scope, filter="later"), [p1, p2])
+
+        # an explicit mark read is finishing (read already or not)
+        self.read(ids=[p1], read=True)
+        self.assertEqual(self.ids(scope=scope, filter="later"), [p2])
+        # and marking unread again does not put it back
+        self.read(ids=[p1], read=False)
+        self.assertEqual(self.ids(scope=scope, filter="later"), [p2])
+
+        # the hand toggle
+        self.assertEqual(self.later(ids=[p2], later=False)["ids"], [p2])
+        self.assertEqual(self.ids(scope=scope, filter="later"), [])
+
+    def test_starred_is_kept(self):
+        source = self._source()
+        p1, p2 = self._posts(source, *self._hours_ago(2, 1))
+        status, _, body = call(main.app, "POST", f"/api/posts/item/{p1}/favorite", json_body={"favorited": True})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.ids(scope=f"source:{source}", filter="starred"), [p1])
+
+    def test_unread_counts_say_what_later_costs(self):
+        source = self._source()
+        before = call(main.app, "GET", "/api/feed/unread-counts")[2]["later"]
+        (post,) = self._posts(source, *self._hours_ago(1))
+        self.later(ids=[post], later=True)
+
+        after = call(main.app, "GET", "/api/feed/unread-counts")[2]["later"]
+
+        self.assertEqual((after["count"] - before["count"], after["minutes"] - before["minutes"]), (1, 1))
+
     def test_a_whole_text_title_comes_back_cut_from_the_feed_and_the_post(self):
         source = self._source()
         tweet = "Our new model is out today and it is better at everything. " + "And more besides, " * 50

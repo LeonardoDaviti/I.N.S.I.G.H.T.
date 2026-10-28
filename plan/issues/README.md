@@ -26,7 +26,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0019](0019-feed-row-read-and-source.md) | Feed rows: one read button, the source name reads the source | built |
 | [0020](0020-version-display.md) | The running version on the Ingestion tab, in the Mark scheme | built |
 | [0021](0021-useful-ingestion-logs.md) | Ingestion jobs that say what they delivered | built |
-| [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | discussion |
+| [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | built, not deployed |
 | [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | Trending built (RSS feed); Following later |
 | [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
 | [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |

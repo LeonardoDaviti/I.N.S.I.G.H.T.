@@ -73,11 +73,14 @@ export interface ReaderState {
   /** Where a long post was left (issue 0030): the top text block in view, of the body's blocks. */
   resume_block?: number | null;
   resume_blocks?: number | null;
+  /** In Later since (issue 0022); null when not in Later. */
+  later_at?: string | null;
 }
 
 // ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
-export type FeedFilter = 'all' | 'unread' | 'starred';
+/** `starred` is Keep, shown as "Kept" (issue 0022). */
+export type FeedFilter = 'all' | 'unread' | 'later' | 'starred';
 export type FeedView = 'stream' | 'by_source';
 
 export interface FeedItem {
@@ -88,6 +91,8 @@ export interface FeedItem {
   media_thumb: string | null;
   /** Where the post was left (issue 0030), as on the post's reader state. */
   resume_block?: number | null; resume_blocks?: number | null;
+  /** In Later since (issue 0022); null or absent when not in Later. */
+  later_at?: string | null;
 }
 export interface FeedPage { success: true; items: FeedItem[]; next_cursor: string | null; }
 export interface FeedGroup {
@@ -97,7 +102,11 @@ export interface FeedGroup {
 export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_cursor: string | null; }
 /** PUT /api/feed/read: `ids` are the posts whose read state changed. */
 export interface ReadStateResult { success: true; updated: number; ids: string[]; }
-export interface UnreadCounts { total: number; by_source: Record<string, number>; by_folder: Record<string, number>; }
+export interface UnreadCounts {
+  total: number; by_source: Record<string, number>; by_folder: Record<string, number>;
+  /** Every post in Later and its reading time in minutes (issue 0022). */
+  later?: { count: number; minutes: number };
+}
 
 export interface FeedParams {
   /** `all`, `folder:<uuid>` or `source:<uuid>`. */
@@ -621,9 +630,13 @@ export function createApi() {
     getFeedGroups: (params: FeedParams) => request<FeedGroupsPage>(feedPath(params, 'by_source'), { signal: params.signal }),
     /** Unread counts (all-time; INSIGHT_UNREAD_WINDOW_DAYS can narrow them): total, per source, per folder. */
     getUnreadCounts: () => request<UnreadCounts>('/api/feed/unread-counts'),
-    /** Mark one post or many (at most 500) read or unread. */
-    setPostsRead: (ids: string[], read: boolean) =>
-      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { ids, read } }),
+    /** Mark one post or many (at most 500) read or unread. Marking read takes them out of
+     *  Later unless `keepLater` (the read is only an open, issue 0022). */
+    setPostsRead: (ids: string[], read: boolean, { keepLater = false }: { keepLater?: boolean } = {}) =>
+      request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: keepLater ? { ids, read, keep_later: true } : { ids, read } }),
+    /** Put posts in Later or take them out (issue 0022). */
+    setPostsLater: (ids: string[], later: boolean) =>
+      request<ReadStateResult>('/api/feed/later', { method: 'PUT', body: { ids, later } }),
     /** Mark read every unread post in `scope` from `newest` down to `through` (both feed cursors). */
     markReadThrough: (scope: string, through: string, newest: string) =>
       request<ReadStateResult>('/api/feed/read', { method: 'PUT', body: { scope, through_cursor: through, newest_cursor: newest } }),

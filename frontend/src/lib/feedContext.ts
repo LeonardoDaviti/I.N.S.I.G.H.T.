@@ -10,7 +10,7 @@
  * padding), so the client can build one from any item it has loaded.
  */
 
-export type FeedFilter = 'all' | 'unread' | 'starred';
+export type FeedFilter = 'all' | 'unread' | 'later' | 'starred';
 
 export interface FeedContext {
   scope: string;
@@ -22,7 +22,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const CURSOR_RE = /^[A-Za-z0-9_-]+$/;
 
 export function isFeedFilter(value: unknown): value is FeedFilter {
-  return value === 'all' || value === 'unread' || value === 'starred';
+  return value === 'all' || value === 'unread' || value === 'later' || value === 'starred';
 }
 
 export function isValidScope(scope: string): boolean {
@@ -122,7 +122,10 @@ export function neighborsAt(
   nextCursor: string | null,
 ): Omit<ContextNeighbors, 'found'> {
   const others = entries.filter((entry) => entry.id !== current.id);
-  let index = others.findIndex((entry) => comesAfter(entry, current));
+  // A loaded post's neighbours are the entries around it, in whatever order the list has
+  // (Later is oldest saved first, issue 0022); one no longer loaded goes by its sort key.
+  const at = entries.findIndex((entry) => entry.id === current.id);
+  let index = at >= 0 ? at : others.findIndex((entry) => comesAfter(entry, current));
   if (index < 0) index = others.length;
   const strip = (entry: SortedEntry | undefined): ContextEntry | null => (entry ? { id: entry.id, pageCursor: entry.pageCursor } : null);
   return {

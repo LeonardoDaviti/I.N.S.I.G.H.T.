@@ -122,7 +122,7 @@ function sum(deltas: Map<string, number>) {
 }
 
 /**
- * Optimistic read, star and mark-read-through for the reader (spec §F.3): the
+ * Optimistic read, star, Later and mark-read-through for the reader (spec §F.3): the
  * cached feeds and counts change at once and the counts are refetched afterwards.
  * A failed request undoes only its own patch (the inverse change), so other
  * optimistic changes made meanwhile survive; the error is rethrown for the caller
@@ -147,22 +147,27 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
     if (isChange(change)) onUnreadDelta?.(change);
   }, [onUnreadDelta, queryClient, scopeFolderId]);
 
-  /** Mark `items` read or unread in the cache; resolves the undo for exactly this change. */
-  const applyRead = useCallback((items: FeedItem[], read: boolean) => {
+  /** Mark `items` read or unread in the cache; resolves the undo for exactly this change.
+   *  `finish`: the read is an explicit mark read, which also takes the posts out of Later. */
+  const applyRead = useCallback((items: FeedItem[], read: boolean, finish = false) => {
     const deltas = readDeltas(items, read);
-    const previous = items.map((item) => [item.id, item.read_at ?? null] as const);
-    patchFeeds(queryClient, new Set(items.map((item) => item.id)), { read_at: read ? new Date().toISOString() : null });
+    const previous = items.map((item) => [item.id, { read_at: item.read_at ?? null, later_at: item.later_at ?? null }] as const);
+    const patch: Partial<FeedItem> = { read_at: read ? new Date().toISOString() : null };
+    if (read && finish) patch.later_at = null;
+    patchFeeds(queryClient, new Set(items.map((item) => item.id)), patch);
     shiftCounts(deltas);
     return () => {
-      for (const [id, readAt] of previous) patchFeeds(queryClient, new Set([id]), { read_at: readAt });
+      for (const [id, state] of previous) patchFeeds(queryClient, new Set([id]), state);
       shiftCounts(negate(deltas));
     };
   }, [queryClient, shiftCounts]);
 
-  const setRead = useCallback(async (item: FeedItem, read: boolean) => {
-    const undo = applyRead([item], read);
+  /** Mark one post read or unread. Marking read finishes it, so it leaves Later too,
+   *  unless `keepLater`: the feed marking a post it opens (opening is not finishing). */
+  const setRead = useCallback(async (item: FeedItem, read: boolean, { keepLater = false }: { keepLater?: boolean } = {}) => {
+    const undo = applyRead([item], read, !keepLater);
     try {
-      if (!dryRun) await api.setPostsRead([item.id], read);
+      if (!dryRun) await (keepLater ? api.setPostsRead([item.id], read, { keepLater }) : api.setPostsRead([item.id], read));
     } catch (error) {
       undo();
       throw error;
@@ -181,6 +186,20 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
       throw error;
     }
   }, [api, dryRun, queryClient]);
+
+  /** Read later (issue 0022): put a post in Later or take it out. The Later count is refetched. */
+  const setLater = useCallback(async (item: FeedItem, later: boolean) => {
+    const previous = item.later_at ?? null;
+    patchFeeds(queryClient, new Set([item.id]), { later_at: later ? new Date().toISOString() : null });
+    try {
+      if (!dryRun) await api.setPostsLater([item.id], later);
+    } catch (error) {
+      patchFeeds(queryClient, new Set([item.id]), { later_at: previous });
+      throw error;
+    } finally {
+      refreshCounts();
+    }
+  }, [api, dryRun, queryClient, refreshCounts]);
 
   /** Mark read from `newest` (the first loaded item) down to `through`. Resolves the ids it marked. */
   const markReadThrough = useCallback(async (scope: string, through: FeedItem, newest: FeedItem, loaded: FeedItem[]) => {
@@ -227,7 +246,7 @@ export function useReaderMutations({ dryRun = false, onUnreadDelta, scope = 'all
   // A stable object: the list's toggle handlers depend on it, and a new one per
   // render would re-render every memoised row on each key press.
   return useMemo(
-    () => ({ setRead, setStarred, markReadThrough, markUnread, noteOpened }),
-    [setRead, setStarred, markReadThrough, markUnread, noteOpened],
+    () => ({ setRead, setStarred, setLater, markReadThrough, markUnread, noteOpened }),
+    [setRead, setStarred, setLater, markReadThrough, markUnread, noteOpened],
   );
 }

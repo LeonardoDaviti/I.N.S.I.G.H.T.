@@ -29,6 +29,7 @@ function renderGroup(data: FeedGroupData) {
       onOpen={vi.fn()}
       onToggleRead={vi.fn()}
       onToggleStar={vi.fn()}
+      onToggleLater={vi.fn()}
     />,
     { api: makeFakeApi({}) },
   );

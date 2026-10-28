@@ -268,9 +268,16 @@ class ReadStateRequest(BaseModel):
     `through_cursor` and `newest_cursor` in `scope` (read only)."""
     read: bool = True
     ids: List[str] | None = None
+    keep_later: bool = False   # a read that is only an open: the post stays in Later
     scope: str = "all"
     through_cursor: str | None = None
     newest_cursor: str | None = None
+
+
+class LaterRequest(BaseModel):
+    """PUT /api/feed/later: put posts in Later or take them out (issue 0022)."""
+    ids: List[str] = []
+    later: bool = True
 
 
 class NewSourceRequest(BaseModel):
@@ -575,7 +582,8 @@ async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream"
                    cursor: str | None = None, limit: int = 30, days: int | None = None,
                    date: str | None = None):
     """Every post list: newest first, keyset-paginated. FeedPage (stream) or FeedGroupsPage
-    (by_source). scope: all | source:<uuid> | folder:<uuid>; filter: all | unread | starred;
+    (by_source). scope: all | source:<uuid> | folder:<uuid>; filter: all | unread | later | starred
+    (starred is Keep; later is oldest saved first);
     days: the last N days, or date: one day (YYYY-MM-DD, UTC)."""
     query = FeedQuery.parse(scope=scope, filter=filter, view=view, cursor=cursor, limit=limit,
                             days=days, date=date)
@@ -592,7 +600,8 @@ async def get_feed_unread_counts():
 @error_detail("update read state")
 async def set_read_state(request: ReadStateRequest):
     """Read state, three ways, one answer {success, updated, ids} (ids: the posts changed):
-    - {ids, read}: one post or many (at most 500), read or unread;
+    - {ids, read}: one post or many (at most 500), read or unread; marking read also takes
+      them out of Later, unless keep_later (the read is only an open);
     - {scope, through_cursor, newest_cursor}: mark read every unread post in scope from
       newest down to through, bounded by the unread window. The answer's ids undo it."""
     if request.through_cursor is not None or request.newest_cursor is not None:
@@ -608,7 +617,16 @@ async def set_read_state(request: ReadStateRequest):
         return services().reader.mark_read_through(scope, through, newest)
     if request.ids is None:
         raise ValueError("send ids, or through_cursor and newest_cursor")
-    return services().reader.set_read(_require_post_ids(request.ids), bool(request.read))
+    return services().reader.set_read(_require_post_ids(request.ids), bool(request.read),
+                                      keep_later=bool(request.keep_later))
+
+
+@app.put("/api/feed/later")
+@error_detail("update Later")
+async def set_later_state(request: LaterRequest):
+    """Read later (issue 0022): {ids, later}, at most 500 ids; one answer {success, updated, ids}.
+    Nothing clears Later on a clock; an explicit mark read (PUT /api/feed/read) does."""
+    return services().reader.set_later(_require_post_ids(request.ids), bool(request.later))
 
 
 # An image is served with the headers a stranger's file needs on our origin: no sniffing,
