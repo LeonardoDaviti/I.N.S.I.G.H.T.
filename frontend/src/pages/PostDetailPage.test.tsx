@@ -365,6 +365,27 @@ describe('MarkdownRenderer', () => {
     ]);
   });
 
+  it('keeps a figure with its caption under it, and a table with its caption, scrolling inside the column (issue 0042)', () => {
+    const { container } = rtlRender(
+      <MarkdownRenderer
+        content={'<figure><img src="/chart.png" alt="A chart"><figcaption><p>Fig. 1. Retention.</p></figcaption></figure>'
+          + '<table><caption>As of 2011</caption><thead><tr><th>Metric</th><th>Anki</th></tr></thead>'
+          + '<tbody><tr><td>Users</td><td colspan="2">112k</td></tr></tbody></table>'}
+      />,
+    );
+    const figure = container.querySelector('figure')!;
+    expect(figure.querySelector('img')).not.toBeNull();
+    const caption = figure.querySelector('figcaption')!;
+    expect(caption).toHaveTextContent('Fig. 1. Retention.');
+    expect(caption.className).toContain('text-fg-2');
+    expect(figure.lastElementChild).toBe(caption);
+    const table = container.querySelector('table')!;
+    expect(table.parentElement!.className).toContain('overflow-x-auto');
+    expect(table.querySelector('caption')).toHaveTextContent('As of 2011');
+    expect(table.querySelector('th')).toHaveTextContent('Metric');
+    expect(table.querySelector('td[colspan="2"]')).toHaveTextContent('112k');
+  });
+
   it('dedents indented HTML so markdown does not read it as code', () => {
     expect(normalizeRendererContent('\n    <p>Hello</p>\n    <p>World</p>')).toBe('\n<p>Hello</p>\n<p>World</p>');
     // Plain markdown with an indented code block is left alone.

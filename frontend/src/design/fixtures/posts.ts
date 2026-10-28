@@ -61,6 +61,9 @@ const HEADINGS = `
 <h6>Heading level six</h6>
 <table><thead><tr><th>Model</th><th>Context</th><th>Price per Mtok</th></tr></thead>
 <tbody><tr><td>Large</td><td>1,000,000</td><td>$15.00</td></tr><tr><td>Medium</td><td>200,000</td><td>$3.00</td></tr><tr><td>Small</td><td>200,000</td><td>$0.80</td></tr></tbody></table>
+<table><caption>A wide table scrolls sideways inside the column, never the page.</caption><thead><tr><th>Metric</th><th>Mnemosyne</th><th>Mnemododo</th><th>Anki</th><th>iSRS</th><th>AnyMemo</th><th>SuperMemo</th><th>Quizlet</th></tr></thead>
+<tbody><tr><td>Homepage rank</td><td>383k</td><td>27.5m</td><td>112k</td><td></td><td>1,766k</td><td>94k</td><td>2k</td></tr><tr><td>Forum members</td><td>461</td><td></td><td>1,118</td><td>12</td><td>230</td><td>3,402</td><td>18,000</td></tr></tbody></table>
+<figure><img src="${picture(1600, 900, 'Figure 16:9')}" alt="A figure"><figcaption><p>Fig. 1. A caption sits under its figure, small and muted.</p></figcaption></figure>
 <pre><code class="language-python">import anthropic
 
 client = anthropic.Anthropic()

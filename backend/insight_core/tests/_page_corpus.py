@@ -2,7 +2,8 @@
 
 fixtures/pages/<name>.html is a real page, fetched once and trimmed of <script>, <style>,
 <noscript>, <svg> and inline base64 blobs (the reader drops those itself); the rest is
-verbatim. fixtures/pages/expectations.json says, per page:
+verbatim (gwern_spaced_repetition is also cut to some of its sections and its first ten
+footnotes, 107 KB of 370). fixtures/pages/expectations.json says, per page:
 
   url, fetched     where and when it was fetched
   title            page_watch's page_title for the page
@@ -13,6 +14,11 @@ verbatim. fixtures/pages/expectations.json says, per page:
                    never related cards, sidebars, avatars, logos or icons
   must_not         words of the page's chrome (menus, share bars, "Related", newsletter boxes)
   contains         optional: text that must be kept (a code block)
+  tables           the article's data tables, each as its number of cells (th and td); none
+                   when absent (issue 0042: a table is kept as a table, not loose paragraphs)
+  figures          [figures kept, of them with a caption]; [0, 0] when absent
+Every page is also checked never to end on a heading (heading_last): a section title whose
+content a script fills in is no part of the article.
   known_gaps       optional: {expectation: why the reader misses it}. A known gap must still
                    fail: when the reader starts meeting it, the corpus test says so, and the
                    gap is removed rather than left to hide a regression.
@@ -31,7 +37,7 @@ from insight_core.ingestion.kinds import page_watch, parsing
 PAGES_DIR = Path(__file__).resolve().parent / "fixtures" / "pages"
 EXPECTATIONS_FILE = PAGES_DIR / "expectations.json"
 EDGE_CHARS = 400
-CHECKS = ("title", "first", "last", "images", "must_not", "contains")
+CHECKS = ("title", "first", "last", "images", "must_not", "contains", "tables", "figures", "heading_last")
 
 
 TRIMMED_RE = re.compile(r"(?is)<(script|style|noscript|svg)\b.*?</\1\s*>")
@@ -53,12 +59,17 @@ def page_html(name: str) -> str:
 
 
 def read(page: str, url: str) -> Dict[str, Any]:
-    """What the reader keeps of a page: its title, normalised text and image count."""
+    """What the reader keeps of a page: its title, normalised text, image count, tables (their
+    cell counts), figures ([kept, with a caption]) and whether its last block is a heading."""
     html = parsing.extract_article_html(page, base_url=url)
+    figures = re.findall(r"(?is)<figure>.*?</figure>", html)
     return {
         "title": page_watch.page_title(page, url),
         "text": " ".join(parsing.strip_html(html).split()),
         "images": len(re.findall(r"<img\b", html)),
+        "tables": [len(re.findall(r"(?i)<t[dh]\b", table)) for table in re.findall(r"(?is)<table>.*?</table>", html)],
+        "figures": [len(figures), sum("<figcaption>" in figure for figure in figures)],
+        "heading_last": bool(re.match(r"(?i)<h[1-6]\b", html.strip().split("\n")[-1])),
     }
 
 
@@ -83,4 +94,10 @@ def problems(expected: Dict[str, Any], kept: Dict[str, Any]) -> Dict[str, Option
     if "contains" in expected:
         missing = [word for word in expected["contains"] if word not in text]
         found["contains"] = f"missing: {missing}" if missing else None
+    tables = expected.get("tables", [])
+    found["tables"] = None if kept["tables"] == tables else f"tables of {kept['tables']} cells kept, {tables} expected"
+    figures = expected.get("figures", [0, 0])
+    found["figures"] = (None if kept["figures"] == figures
+                        else f"{kept['figures']} figures (kept, with a caption), {figures} expected")
+    found["heading_last"] = "the article ends on a heading" if kept["heading_last"] else None
     return found
