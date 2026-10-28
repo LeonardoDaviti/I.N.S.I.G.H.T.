@@ -141,6 +141,23 @@ export function feedTimeLabel(value: string | Date | null | undefined, timeZone?
   return fmt.format(date);
 }
 
+const bylineFormatters = new Map<string, Intl.DateTimeFormat>();
+/** The post byline's date and time: "Oct 9, 11:30 PM", with the year only when it is not this year ("Oct 9, 2025, 11:30 PM"). */
+export function postBylineTime(value: string | Date | null | undefined, now: Date = new Date(), timeZone?: string): string {
+  const date = toDate(value);
+  if (!date) return '';
+  const withYear = parts(date, timeZone).year !== parts(now, timeZone).year;
+  const key = `${timeZone ?? ''}|${withYear}`;
+  let fmt = bylineFormatters.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat(undefined, {
+      timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(withYear ? { year: 'numeric' } : {}),
+    });
+    bylineFormatters.set(key, fmt);
+  }
+  return fmt.format(date);
+}
+
 const fullFormatters = new Map<string, Intl.DateTimeFormat>();
 /** The full local date and time ("Oct 9, 2026, 11:30 PM"): a row's tooltip, the post page's date. */
 export function feedFullTime(value: string | Date | null | undefined, timeZone?: string): string {
