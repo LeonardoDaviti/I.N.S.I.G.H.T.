@@ -7,11 +7,11 @@ Written 2026-10-28 from the owner's direction:
 
 Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `plan/INSIGHT_competitors_research.md`.
 
-✓ built and deployed · ◐ built for v9.3 or v9.4 (not deployed) or partial · ○ to do · ⧗ future issue
+✓ built and deployed · ◐ built for v9.3, v9.4 or v9.5 (not deployed) or partial · ○ to do · ⧗ future issue
 
 ## Focus (owner, 2026-10-28)
 - **The personal product now.** The hosted product waits, and **Mark X waits**: Mark IX first.
-- **v9.3** is built, not deployed. **v9.4** is the current release (being integrated): **search** (0040) and following a site's blog from its homepage (0041), the reader keeping tables and figures (0042), the Gwern reader cleanup (0043). **v9.5 = page-change watching (0039), reading settings, source hygiene, conditional fetching (ETag).**
+- **v9.3** and **v9.4** are built, not deployed: v9.4 is **search** (0040) and following a site's blog from its homepage (0041), the reader keeping tables and figures (0042), the Gwern reader cleanup (0043). **v9.5** is the current release (being integrated): **page-change watching (0039), reading settings (0045), source hygiene (0046), conditional fetching (0044)**, a blog under another name (0047) and the Gwern noise cleanup (0048).
 - **Skipped:** highlights, notes, post versions, rules (mute words, auto-read, auto-keep) and tags.
   - Why skip rules: on the server, 41,000 of 41,128 posts are unread (0.3% read). Muting words would barely change that; search (v9.4) and "Show in Main feed: off" for firehose sources do.
   - Why skip tags: tracks, Keep and search already cover them.
@@ -34,8 +34,11 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
 - ⧗ Full arXiv papers (0037). ⧗ PDF text (0038).
 - ⧗ Hacker News kind with comments (0017). ⧗ Release updates (0024).
 - ○ Native Bluesky and Mastodon. ○ Podcasts.
-- ○ v9.5: conditional fetching (ETag); it also lowers page watching's load.
-- ○ Page-change watching, per source, Gwern first (0039), v9.5.
+- ◐ v9.5:
+  - conditional fetching (ETag, Last-Modified): an unchanged feed costs nothing (0044);
+  - page-change watching, per source, Gwern first (0039);
+  - find a site's blog when it isn't called "Blog" (0047);
+  - remove the Gwern posts that aren't Gwern's writing (0048).
 - Only on a real case: email-in.
 
 ### Reading
@@ -50,12 +53,13 @@ Sources: the issues in `plan/issues/`, `plan/INSIGHT_feature_roadmap.md`, and `p
   - **search across everything (0040);**
   - the reader keeps tables, figures and captions (0042).
 - ○ Saved searches.
-- ○ v9.5: reading settings (font, size, width). ○ Read aloud.
+- ◐ v9.5: reading settings (font, size, width) (0045).
+- ○ Read aloud.
 - ✗ Skipped: highlights, notes, post versions.
 
 ### Organisation
 - ✓ Tracks, the Main feed, Unread / Later / Kept / All, "Show in Main feed".
-- ○ v9.5: source hygiene: "dead for 30 days", "never opened", with a prune suggestion.
+- ◐ v9.5: source hygiene: quiet and never-opened sources, Tidy up with Keep and Remove (0046).
 - ○ "Also discussed on Hacker News or Reddit".
 - ✗ Skipped: rules, tags.
 
