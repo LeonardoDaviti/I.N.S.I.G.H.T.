@@ -68,6 +68,12 @@ export interface PostListProps extends Omit<FeedListProps, 'fixture'> {
    * headers), open with no feed context, and Shift+A does not mark through.
    */
   search?: boolean;
+  /**
+   * A ranked list (News, issue 0051): its rows in the order given, under the headings
+   * `sectionOf` names (not days); each row shows its date and opens on its own (no feed
+   * context), and Shift+A does not mark through.
+   */
+  ranked?: { name: string; sectionOf: (item: FeedItemData) => string; storyLine: (item: FeedItemData) => string | undefined };
 }
 
 /** The reader list (spec §F.3, §F.5, §F.6): FeedList loads the feed; the search page hands its results to PostList. */
@@ -83,7 +89,7 @@ function FeedList({ fixture = null, ...props }: FeedListProps) {
  * more" button). Results are announced in the page's live region.
  */
 function PostListBody({
-  feed, scope, filter, view, dryRun = false, search = false, emptyTitle, emptyDescription, emptyAction,
+  feed, scope, filter, view, dryRun = false, search = false, ranked, emptyTitle, emptyDescription, emptyAction,
   helpOpen, onHelpOpenChange, onUnreadDelta,
 }: PostListProps) {
   const announce = useAnnounce();
@@ -111,28 +117,30 @@ function PostListBody({
   // first of its day (where the header is drawn), computed once per items array.
   // Later is in the order saved, not by day: no headers, and each row shows its date.
   // History's `sort_at` is the last open (issue 0052), so it groups by the day you opened it.
-  const byDay = filter !== 'later' && !search;
+  // A ranked list (News) heads its own sections instead.
+  const byDay = filter !== 'later' && !search && !ranked;
+  const sectionOf = ranked?.sectionOf;
   const days = useMemo(() => {
     let previous: string | null = null;
     return items.map((item) => {
-      const key = feedDayKey(item.sort_at);
-      const first = byDay && key !== previous;
+      const key = sectionOf ? sectionOf(item) : feedDayKey(item.sort_at);
+      const first = (byDay || Boolean(sectionOf)) && key !== previous;
       previous = key;
-      return { label: feedDayHeading(item.sort_at), first };
+      return { label: sectionOf ? key : feedDayHeading(item.sort_at), first };
     });
-  }, [byDay, items]);
+  }, [byDay, items, sectionOf]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const pageCursorById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.pageCursor])), [entries]);
 
   const contextFor = useCallback((item: FeedItemData): FeedContext | null => {
-    // A search result is not a place in a feed: it opens on its own.
-    if (search) return null;
+    // A search result, or a News story, is not a place in a feed: it opens on its own.
+    if (search || ranked) return null;
     // A group's posts are the newest of their source, so they sit on that source's first page.
     if (view === 'by_source') return { scope: `source:${item.source_id}`, filter, cursor: null };
     return { scope, filter, cursor: pageCursorById.get(item.id) ?? null };
-  }, [filter, pageCursorById, scope, search, view]);
+  }, [filter, pageCursorById, ranked, scope, search, view]);
   const itemHref = useCallback((item: FeedItemData) => postHref(item.id, contextFor(item)), [contextFor]);
 
   // ---- actions ----
@@ -181,13 +189,14 @@ function PostListBody({
   }, [mutations]);
 
   const askMarkThrough = useCallback((item: FeedItemData) => {
-    if (view === 'by_source' || filter === 'later' || filter === 'history' || search) {
-      // Later, History (by when you opened it) and a search are not in the feed's order:
+    if (view === 'by_source' || filter === 'later' || filter === 'history' || search || ranked) {
+      // Later, History (by when you opened it), a search and News are not in the feed's order:
       // "up to here" would mean something else.
       let message = 'Mark read up to here works in the Stream view.';
       if (filter === 'later') message = 'Mark read up to here does not work in Later.';
       if (filter === 'history') message = 'Mark read up to here does not work in History.';
       if (search) message = 'Mark read up to here does not work in search results.';
+      if (ranked) message = `Mark read up to here does not work in ${ranked.name}.`;
       announce(message);
       toast(message);
       return;
@@ -200,7 +209,7 @@ function PostListBody({
       return;
     }
     setConfirm({ through: item, count });
-  }, [announce, filter, search, view]);
+  }, [announce, filter, ranked, search, view]);
 
   const confirmMarkThrough = useCallback(async () => {
     const pending = confirm;
@@ -361,7 +370,7 @@ function PostListBody({
         ) : (
           // An ARIA feed owns articles only: the day headers are drawn for the eye
           // (aria-hidden) and each row reads its own day out with its time.
-          <div role="feed" aria-label={search ? 'Search results' : 'Posts'} aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
+          <div role="feed" aria-label={search ? 'Search results' : ranked?.name ?? 'Posts'} aria-busy={isFetchingNextPage} className={"flex flex-col gap-2"}>
             {items.map((item, index) => (
               <Fragment key={item.id}>
                 {days[index].first ? (
@@ -380,6 +389,7 @@ function PostListBody({
                   setSize={hasNextPage ? -1 : items.length}
                   showSource={!scope.startsWith('source:')}
                   snippet={search ? item.snippet : undefined}
+                  storyLine={ranked?.storyLine(item)}
                   {...shared}
                 />
               </Fragment>

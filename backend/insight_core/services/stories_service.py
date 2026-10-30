@@ -7,6 +7,8 @@ once when the backend starts (main.py, in the background):
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
    A story that began before the window is frozen. The first run (no `stories` setting yet)
    groups every post.
+4. it refreshes News (the names surging in titles join stories, for News only) and Classics
+   (issue 0051, services/news_service.py), on the same transaction.
 It is deterministic and idempotent: a second run over the same posts writes nothing. One job at a
 time (an advisory lock); a job that finds one running skips. No AI, no fetch.
 """
@@ -22,6 +24,7 @@ from typing import Any, Callable, Dict, Optional
 from insight_core.db import database as db
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
+from insight_core.services.news_service import NewsService
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import StoryPost, group, suggestions
 
@@ -34,16 +37,14 @@ DISCOVER_ARTICLES_SHOWN = 20
 _TAGS = re.compile(r"<[^>]+>")
 
 
-def _voice_name(voice: str, sources: SourceFacts, source_id: str) -> str:
-    return "u/" + voice.split(":", 1)[1] if voice.startswith("reddit:") else sources.name.get(source_id, "")
-
-
 class StoriesService:
     def __init__(self, db_url: str, *, repo: StoriesRepository | None = None,
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None, news: NewsService | None = None):
         self.db_url = db_url
         self.repo = repo or StoriesRepository()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        # News and Classics (issue 0051) are refreshed by this job, on its transaction.
+        self.news = news or NewsService(db_url, clock=self.clock)
 
     # ---- the job ------------------------------------------------------------------------
 
@@ -85,7 +86,9 @@ class StoriesService:
         posts = [self._story_post(row, sources) for row in self.repo.load_posts(cur, sources, cutoff)]
         stories = group(posts)
         changed = self.repo.write_stories(cur, stories, post_ids=[p.id for p in posts], cutoff=cutoff)
-        return {"posts": len(posts), "stories": len(stories), "changed": changed, "boilerplate_changed": boilerplate}
+        news = self.news.refresh(cur, posts=posts, stories=stories, sources=sources, full=cutoff is None)
+        return {"posts": len(posts), "stories": len(stories), "changed": changed, "boilerplate_changed": boilerplate,
+                **news}
 
     @staticmethod
     def _story_post(row: Dict[str, Any], sources: SourceFacts) -> StoryPost:
@@ -117,6 +120,7 @@ class StoriesService:
             sources = SourceFacts(cur)
             links = self.repo.kept_links(cur, sources)
             hidden = self.repo.hidden(cur)
+            classic_urls = set(self.news.classic_urls(cur))
         pairs = []
         names: Dict[str, str] = {}
         linked_by: Dict[str, set] = defaultdict(set)
@@ -124,13 +128,16 @@ class StoriesService:
         for link in links:
             post = StoryPost(id="", source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
                              own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"])
-            names.setdefault(post.voice, _voice_name(post.voice, sources, link["source_id"]))
+            names.setdefault(post.voice, sources.voice_name(post.voice, link["source_id"]))
             pairs.append((post.voice, link["url"]))
             linked_by[link["url"]].add(post.voice)
             if link["text"]:
                 texts[link["url"]][link["text"]] += 1
         found = suggestions(pairs, followed=sources.followed(), hidden=hidden,
                             followed_accounts=sources.followed_accounts())
+        # A suggestion that holds classics (issue 0051) comes first; the order stays within each part.
+        held = {s.key: len(s.addresses & classic_urls) for s in found}
+        found = sorted(found, key=lambda s: held[s.key] == 0)
         out = []
         for s in found:
             articles = sorted(s.articles, key=lambda url: (-len(linked_by[url]), url))[:DISCOVER_ARTICLES_SHOWN]
@@ -141,6 +148,7 @@ class StoriesService:
                 "voice_names": sorted(names[v] for v in s.voices),
                 "article_count": len(s.articles),
                 "link_count": s.links,
+                "classics": held[s.key],
                 "articles": [{
                     "url": url,
                     "title": texts[url].most_common(1)[0][0] if texts[url] else None,

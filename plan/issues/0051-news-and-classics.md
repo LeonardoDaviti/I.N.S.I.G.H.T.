@@ -1,6 +1,6 @@
 # 0051 — News and Classics: what many of my sources cover now, and what they keep citing
 
-Status: **spec** (2026-10-30) for v9.7, with 0050 (owner, 2026-10-30: "yes we can go"). It needs 0050's post links and stories. It replaces 0013's idea of ranking by what I read: only 0.3% of the server's posts are read, so there is nothing to learn from yet.
+Status: **built, not deployed** (2026-10-30, migration 0040; design decision 036) for v9.7, with 0050 (owner, 2026-10-30: "yes we can go"). It needs 0050's post links and stories. It replaces 0013's idea of ranking by what I read: only 0.3% of the server's posts are read, so there is nothing to learn from yet.
 
 ## The idea (owner, 2026-10-30)
 INSIGHT is for two things: **news** (what is happening now) and **classics** (what lasts). Both can be measured from your own sources, without AI and without reading history:
@@ -113,3 +113,48 @@ News and Classics can be opened for a track:
 - HN points and Reddit scores.
 - Trend charts ("3× the usual volume").
 - Stories told in different words, and entities: Mark X. The name rule is the cheap first step toward Mark X's trend detection.
+
+## Built
+- **The rules** (pure, ported from the prototype): `backend/insight_core/utils/news_rules.py`. **Every 0051 threshold is at its top** (`NEWS_DAYS`, `NEWS_RECENT`, the weights, `NAME_*`, `CLASSIC_*`, `BACKGROUND_SHOWN`, the `REFERENCE` vocabulary): tuning on the server is a one-line change.
+  - Names: a 1-3 word phrase of a title, every word capitalised or with a digit, not starting or ending on a small word; one word only when it mixes letters and digits. A surge as the prototype judges it: a name's **first** burst (3+ posts, 2+ voices, 48 hours, 4x the usual rate, at least 0.5) is the one judged, and a source added in the 30 days before it means the name does not surge. Only the longest name is kept when a shorter one's posts are a subset of it. arXiv left out.
+  - News stories: 0050's stories joined by the surging names, kept with 2+ voices (0050's `count_voices`: copies of one text are one voice). Roles are 0050's `roles` over the joined group; each voice once in its strongest role, report, share, then roundup mention (0050's `story_mentions`).
+  - Classics: as the prototype (anchors of kept links, no home pages; a stored post counts from its date, less its own voice; outside pages through the reference filter), voices are 0050's (a Reddit poster, not a subreddit); a link from the Saved source is no voice; a stored post counts from the earlier of its date and its first link (so a classic you saved does not vanish).
+- **Migration 0040** (`0040_news_and_classics.sql`): `news_stories` (id = first post, first_at, voices, reports, shares, mentions, score), `news_posts` (post, story, role, voice, the joining name), `classics` (target_url, post_id, voices, first_at, last_at, title, citers jsonb), `classic_hidden`. All derived but the last.
+- **The job:** `services/news_service.py` `refresh`, called by 0050's story job (`StoriesService.regroup`) on its transaction: names over the last 32 days of titles (every title on a full run), News over the job's window (the tables hold that window), every classic over all kept links; writes only what differs. Its counts join the job summary (`names`, `news`, `classics`, `*_changed`).
+- **API:** `GET /api/news?scope=all|folder:<id>` (a FeedPage of leads, each with `story` and `news` {part, first_at, reports, shares, mentions, score}; the lead is the story's first report among the scope's posts); `GET /api/classics?scope=…`; `POST /api/classics/hide {url}`; `background` (at most 2) in `GET /api/posts/item/{id}`; Discover's suggestions carry `classics` and those holding some come first.
+- **UI** (design decision 036; `pages/reader.md`, `post.md`, `sources.md`): `View stream / by source / news / classics` on the Main feed and tracks (Show, Posts, the unread count, the Later line and the pill are left out there). News reuses the feed's list and row (`PostList` `ranked`: two part headers, rows open on their own, no Shift+A) and 0050's story line in its own words; Classics is its own list (title reads, Later, Hide). Both views are lazy chunks. The post page has the Background line; Discover's line ends ` · 2 classics`.
+- **Tests:**
+  - Backend `test_news.py` (28): the score and the lead; names (what is one); each part of the name rule with a must and a must-not (too few posts, voices, too slow; a lowercase word; a new source's archive; below the rate at 20, 12 and 5 posts; a shorter name inside a longer one; arXiv); News joining by a name for News only, two independent voices, roundup mentions; classics' spread, a stored post's date and own voice, the reference filter, the order; on the database: News in two parts, a week later nothing, track scoping (led by the track's post, scored over all), reading from News, a second run changing nothing, classics cited again first with no reference page, Hide (and after a rerun), Background (at most 2; none without a classic), a track's classics; Discover's order (committed rows); the routes. 0049's table check knows the new tables. **Suite: 941 tests, OK.**
+  - Frontend: `ReaderPage.news.test.tsx` (8), `PostDetailPage.background.test.tsx` (2), `lib/news.test.ts`, `lib/classics.test.ts`, `lib/story.test.ts`. Typecheck, lint, **174 node + 631 vitest tests**, build OK.
+  - The reader's initial JS: **479,521 bytes**, +0.94% on the 475,065 baseline (+1,875 on 0050's 477,646). News and Classics are lazy chunks (1.3 KB, 4.2 KB); their helpers live apart from `lib/story.ts` so the feed row does not carry them. No ⌘K entries: they did not fit the budget and the spec asks for nothing more.
+- **Screens** (dev server against the copy of the preview, light and dark; not committed): `~/.cache/insight-checks/0051-shots/` — `0051-news-track-*` (Smart Glasses Development, News read at 2026-09-24 09:00), `0051-news-open-*` (a story's posts opened), `0051-news-main-*`, `0051-news-empty-week-*` (now: nothing in the last 7 days), `0051-classics-*`, `0051-post-background-*` ("2026 in LLMs (so far)").
+
+### Reproduction on a copy of the preview (2026-10-30)
+`insight_preview` copied by pg_dump into a `_test` database, migrations 0038 to 0040, then a full job (0.6 s; a second run: 0 rows changed).
+
+| | prototype (`expected-report.txt`, `names.py`) | built |
+|---|---|---|
+| W36 | GPT-6 Astra 3.0, Claude Fable 5.1 3.0 | **GPT-6 (6 posts) 3.0**, Claude Fable 5.1 3.0 (tied; News orders ties newest first: GPT-6) |
+| W38 | Snap Specs 4.5 (4r 0s 1m, 6 posts) | **Snap Specs 4.0** (4r, 6 posts), Half-Life: Alyx 2.0 |
+| W39 | Meta Connect 11.5 (11r 1s, 29 posts), Opus 5.5 / GPT-6 Sol 3.0 | **Meta Connect 11.5 (11r 1s, 29 posts), Opus 5.5 / GPT-6 Sol 3.0 (6 posts)** |
+| W41 | XREAL Aura 3.5 | **XREAL Aura 3.5** |
+| W42 | XREAL 1 Pro+ 3.0 | **XREAL 1 Pro+ 3.0** |
+| name surges | 20 (after the prototype's filters and longest-name) | **the same 20** (`hugging face` … `1 pro`), "18 Pro Max" the known miss |
+| classics | 25 | **the same 25, same voices and days**, the six named among them; no docs or product page |
+| News stories (all weeks) | | 32 |
+
+A lead's title is 0050's lead (its first report), so a row may read differently from the prototype's pick (the longest site post): W39 is led by "Meta Connect 2026: 6 devices and AI services we expect to see".
+
+The differences, explained:
+- **Each voice once, mentions included:** a roundup by a channel that already reported the story no longer adds ½ (W38 Snap Specs 4.5 → 4.0; W28 "Rewriting Bun in Rust" 2.5 → 2.0; W30 HuggingFace 3.5 → 2.5).
+- **Copies are one voice:** a report and its verbatim copy alone are not News (0050's voices; the spec's "independent"): the prototype's W29 "Две новости в утро воскресенья" (1r 1s 5m) and "Andon Labs" (1r 1s) are not stories here.
+- 0038's merged Simon Willison copies make some stories one post smaller ("hugging face" 5 → 3 posts, W32 6 → 4).
+- On the preview the XR sources are a track out of the Main feed: the Main feed's News holds only the AI stories; the track's News holds Meta Connect (as the screens show).
+
+### Left open
+- **The name rule, read literally, finds 24 surges, not 20.** "Every source involved was followed for those whole 30 days" checked on every window (not only a name's first burst) lets later windows through: `steam frame`, `smart glasses`, `18 pro`, `android xr`. `smart glasses` then joins 15 posts into one W38 "story" that outranks Snap Specs. Built as the prototype (the first burst decides), which gives the spec's 20; the alternative is one line in `surges`.
+- **Classic titles from link words are often poor** ("over 100,000 commits", "Kaplan et al.", "on March 24th"): the spec's "most common link text" (we keep only link words of 3+ words). Reading the page's own title would need a fetch; left for tuning.
+- **News lead:** the first report (0050's), not the prototype's longest site post; in a track, the first report among the track's posts.
+- **The News tables hold the job's window:** a windowed run drops News older than 30 days (News shows 7); a full run fills every week (the reproduction).
+- **The 32 days of titles:** a surge 5 days ago is judged on 25 days of baseline in a windowed run.
+- No ⌘K entries for News and Classics (budget, and "nothing more").

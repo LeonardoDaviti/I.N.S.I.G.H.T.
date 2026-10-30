@@ -255,6 +255,7 @@ class Suggestion:
     voices: List[str]                # the voices that link it
     articles: List[str]              # its article-like addresses linked
     links: int                       # every address of it linked
+    addresses: Set[str] = field(default_factory=set)   # those addresses (0051 counts its classics)
 
 
 def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden: Set[str],
@@ -294,7 +295,7 @@ def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden:
         if is_article(url):
             articles.add(url)
     out = [
-        Suggestion(key, sorted(voices), sorted(articles), len(every))
+        Suggestion(key, sorted(voices), sorted(articles), len(every), set(every))
         for key, (voices, articles, every) in found.items()
         if len(voices) >= DISCOVER_MIN_VOICES and len(articles) >= DISCOVER_MIN_ARTICLES
         and len(articles) >= DISCOVER_ARTICLE_SHARE * len(every)

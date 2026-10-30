@@ -80,6 +80,13 @@ class SourceFacts:
         """The platform accounts you follow (source_account): on a platform, only these are followed."""
         return {a for a in self.account.values() if a}
 
+    def voice_name(self, voice: str, source_id: str) -> str:
+        """A voice as you know it: u/<author> on Reddit, else its source's name."""
+        return "u/" + voice.split(":", 1)[1] if voice.startswith("reddit:") else self.name.get(source_id, "")
+
+    def of_kind(self, *kinds: str) -> List[str]:
+        return [source_id for source_id, kind in self.kind.items() if kind in kinds]
+
     def html_sources(self) -> List[str]:
         return [source_id for source_id, kind in self.kind.items() if kind in HTML_KINDS]
 

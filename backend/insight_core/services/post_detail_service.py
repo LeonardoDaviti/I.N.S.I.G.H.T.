@@ -13,6 +13,7 @@ from insight_core.db import database as db
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_reader import ReaderRepository
+from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
 from insight_core.utils.post_fields import display_title
 
@@ -25,6 +26,7 @@ class PostDetailService:
         self.logger = get_component_logger("post_detail_service")
         self.interactions = PostInteractionsRepository()
         self.reader_repo = ReaderRepository()
+        self.news = NewsService(db_url)
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         with db.connection(self.db_url) as conn:
@@ -63,6 +65,8 @@ class PostDetailService:
                     (post_id,),
                 )
                 row = cur.fetchone()
+                # The classics this post builds on (issue 0051): at most 2, none without one.
+                background = self.news.background(cur, post_id) if row else []
 
         if not row:
             return None
@@ -96,6 +100,7 @@ class PostDetailService:
             "platform": row[21],
             "source": row[22],
             "source_display_name": source_settings.get("display_name") or row[22],
+            "background": background,
         }
 
     def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:

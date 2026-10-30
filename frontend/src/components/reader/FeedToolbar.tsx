@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-import type { FeedFilter, FeedView } from '../../services/api';
+import type { FeedFilter, ReaderView } from '../../services/api';
 import { useFlowPreference, type ReadingFlow } from '../../hooks/useShortcutPreference';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import SearchField from './SearchField';
@@ -18,9 +18,12 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
 ];
 /** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };
-const VIEWS: ReadonlyArray<{ value: FeedView; label: string }> = [
+/** News and Classics are views next to the feed (issue 0051), of the Main feed or a track. */
+const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
+  { value: 'news', label: 'News' },
+  { value: 'classics', label: 'Classics' },
 ];
 const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
   { value: 'continuous', label: 'Continuous' },
@@ -38,8 +41,8 @@ export interface FeedToolbarProps {
   subtitle?: string | null;
   filter: FeedFilter;
   onFilterChange: (filter: FeedFilter) => void;
-  view: FeedView;
-  onViewChange: (view: FeedView) => void;
+  view: ReaderView;
+  onViewChange: (view: ReaderView) => void;
   /** Below md the title is the button that opens the drawer of the main feed, tracks and sources. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
@@ -67,6 +70,8 @@ export default function FeedToolbar({
   onOpenNav, onOpenHelp, oneSource = false, pill, onSearch, updates = false,
 }: FeedToolbarProps) {
   const [flow, setFlow] = useFlowPreference();
+  // News and Classics rank stories and pages: Show (a read-state filter) and Posts say nothing there.
+  const ranked = view === 'news' || view === 'classics';
   return (
     <ReaderToolbar
       title={title}
@@ -77,9 +82,9 @@ export default function FeedToolbar({
       field={<SearchField label={`Search ${title}`} onSearch={onSearch} className="w-32 sm:w-48 lg:w-56" />}
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
-        <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />
+        {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
         {oneSource ? null : <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />}
-        {oneSource ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
+        {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
         {pill ? <div className="ml-auto">{pill}</div> : null}
       </div>
     </ReaderToolbar>

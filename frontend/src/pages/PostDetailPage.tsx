@@ -25,8 +25,9 @@ import { READING_TEXT_CLASS, readingStyle } from '../lib/readingSettings';
 import {
   decodeFeedContext, postHref, scopePath, sourceReadPath, sourceSettingsHref, type ContextEntry, type FeedContext,
 } from '../lib/feedContext';
-import TextLink from '../components/ui/TextLink';
+import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
+import { classicTitle } from '../lib/classics';
 import { postSourceName } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
@@ -1154,6 +1155,23 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       </article>
 
       <PostImageList images={moreImages} postId={postId} />
+
+      {/* ---- Background (issue 0051): the classics this post builds on, at most 2, quiet ---- */}
+      {post.background?.length ? (
+        <div data-background className="mt-8 flex flex-col gap-1 text-[0.8125rem] leading-5 text-fg-3">
+          {post.background.map((classic) => (
+            <p key={classic.url} className="min-w-0 [overflow-wrap:anywhere]">
+              Builds on:{' '}
+              {classic.post_id ? (
+                <TextLink to={`/posts/${encodeURIComponent(classic.post_id)}`} className="text-fg-2">{classicTitle(classic)}</TextLink>
+              ) : (
+                <ExternalLink href={classic.url} className="text-fg-2">{classicTitle(classic)}</ExternalLink>
+              )}
+              {` · cited by ${classic.voices} of your sources`}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       {/* ---- Reddit discussion ---- */}
       {isRedditPost && comments.length > 0 && (
