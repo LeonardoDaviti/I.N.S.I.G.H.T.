@@ -76,6 +76,8 @@ class NameTests(unittest.TestCase):
         self.assertNotIn("valve", names("Valve Steam Frame"), "one word without a digit")
         self.assertEqual(names("the first pc with ai"), set(), "lowercase words are not names")
         self.assertEqual(names("2026 10 5"), set(), "pure numbers")
+        self.assertEqual(names("128GB laptop, 30B model"), set(), "a word starting with a digit is a size")
+        self.assertIn("k3", names("Kimi K3 is out"))
         self.assertNotIn("frame of", names("Frame Of Mind"), "a name never ends on a small word")
 
     def burst(self, title="Steam Frame is here", *, sources=("s1", "s2", "s3"), hours=(0, 5, 30), kind="site"):

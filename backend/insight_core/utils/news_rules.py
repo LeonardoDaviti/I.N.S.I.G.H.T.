@@ -89,7 +89,9 @@ def names(title: Optional[str]) -> Set[str]:
             if n == 1:
                 letters = [c for c in w[0] if c.isalpha()]
                 if not (letters and any(c.isdigit() for c in w[0])):
-                    continue   # one word is a name only when it mixes letters and digits
+                    continue   # one word is a name only when it mixes letters and digits ...
+                if w[0][0].isdigit():
+                    continue   # ... and doesn't start with one: "30b", "128gb", "2m" are sizes (server data, 2026-10-30)
             out.add(" ".join(_lower(w)))
     return out
 

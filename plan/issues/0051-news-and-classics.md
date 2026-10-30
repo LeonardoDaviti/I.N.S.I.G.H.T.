@@ -165,6 +165,7 @@ Measured in the lab on a copy of the server's 41,543 posts:
   - never: 105 surges, ~88% real (26 of 30 sampled);
   - once: 26, ~75% (6 of 8);
   - twice or more: 60, ~27% (3 of 11). Generic phrases like "has been", "world cup", "open weights" and "time series" all came from this group.
+  - A one-word name can't start with a digit: of 27 one-word surges, the 5 that did were sizes ("30b", "128gb", "2m"), and no real name did.
   - The rule is now "at most once". Its cost: an ongoing story whose name was already in use isn't found by name (RTX Spark, Le Chonk; the preview's Steam Frame launch day).
 - **Classics:** 1,244 under the 30-day rule, and all of the top 30 were "cited again this week".
   - **Most were news with legs,** not classics: the Hugging Face incident, Navier–Stokes, "We Must Pace the Frontier". By citation spread, a random sample of each bucket held about 15% real classics at 30–60 days, ~45% at 90–180 days and ~80% at a year or more.
