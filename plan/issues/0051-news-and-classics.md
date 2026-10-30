@@ -52,7 +52,7 @@ Posts that share a surging name join one story **for News only**. A name never f
 - **A name** is a phrase from a title of 2+ words that are all capitalized or have a digit ("Steam Frame", "Meta VR Glasses", "Opus 5.5"), or one word mixing letters and digits ("GPT-6", "a01"). Pure numbers and lowercase words are not names.
 - **It surges when:**
   - within 48 hours, 3+ posts from 2+ voices use it;
-  - that is at least 4× its usual 48-hour rate over the 30 days before (counted as at least 0.5);
+  - it was said at most once in the 30 days before. Changed 2026-10-30 from "4× its usual 48-hour rate", measured on the server's 41k posts: names never said before were real stories ~88% of the time, said once ~75%, said twice or more ~27% (see "Real data" below);
   - and every source involved was followed for those whole 30 days, so a newly added source's archive isn't a burst.
 - **Only the longest name is kept** when a shorter one covers the same posts.
 - **arXiv titles are left out.**
@@ -158,3 +158,12 @@ The differences, explained:
 - **The News tables hold the job's window:** a windowed run drops News older than 30 days (News shows 7); a full run fills every week (the reproduction).
 - **The 32 days of titles:** a surge 5 days ago is judged on 25 days of baseline in a windowed run.
 - No ⌘K entries for News and Classics (budget, and "nothing more").
+
+## Real data (the server copy, 2026-10-30)
+Measured in the lab on a copy of the server's 41,543 posts:
+- **Names:** 191 surges under the 4× rule. By how often the name was said in the 30 days before:
+  - never: 105 surges, ~88% real (26 of 30 sampled);
+  - once: 26, ~75% (6 of 8);
+  - twice or more: 60, ~27% (3 of 11). Generic phrases like "has been", "world cup", "open weights" and "time series" all came from this group.
+  - The rule is now "at most once". Its cost: an ongoing story whose name was already in use isn't found by name (RTX Spark, Le Chonk; the preview's Steam Frame launch day).
+- **Classics and Discover:** the rehearsal found problems; they're measured separately before any change.

@@ -102,14 +102,17 @@ class NameTests(unittest.TestCase):
         self.assertEqual([s.name for s in surges(posts, followed("s1", "s2", "s3", since=T0 - timedelta(days=31)))],
                          ["steam frame"])
 
-    def test_a_phrase_below_its_usual_rate(self):
-        # One source kept saying it, every 30 hours, until two days before the burst.
-        usual = [post(f"u{n}", "s1", hours=-78 - 30 * n, title="Steam Frame rumours") for n in range(20)]
+    def test_a_name_already_in_use_does_not_surge(self):
+        # Measured on the server's data: a name said twice or more in the 30 days before its burst
+        # was a real story about a quarter of the time ("has been", "world cup", "open weights").
+        said = [post(f"u{n}", "s1", hours=-78 - 30 * n, title="Steam Frame rumours") for n in range(2)]
         everyone = followed("s1", "s2", "s3")
-        self.assertEqual(surges(usual + self.burst(), everyone), [], "20 in 30 days: 1.33 per 48 hours, 3 is not 4x")
-        self.assertEqual(surges(usual[:12] + self.burst(), everyone), [], "12: 0.8 per 48 hours, 3 is not 3.2")
-        self.assertEqual([s.name for s in surges(usual[:5] + self.burst(), everyone)], ["steam frame"],
-                         "5: 0.33, counted as 0.5: 3 is at least 2")
+        self.assertEqual(surges(said + self.burst(), everyone), [], "said twice before")
+        self.assertEqual([s.name for s in surges(said[:1] + self.burst(), everyone)], ["steam frame"], "said once")
+        long_ago = [post("old", "s1", hours=-24 * 40, title="Steam Frame rumours"),
+                    post("old2", "s2", hours=-24 * 35, title="Steam Frame rumours")]
+        self.assertEqual([s.name for s in surges(long_ago + self.burst(), everyone)], ["steam frame"],
+                         "more than 30 days before does not count")
 
     def test_a_shorter_name_inside_a_longer_one_is_dropped(self):
         posts = self.burst("Meta VR Glasses are here")

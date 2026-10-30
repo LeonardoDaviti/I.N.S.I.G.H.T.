@@ -12,9 +12,8 @@ place**: tuning on the server is a one-line change.
 - **A name** is a phrase of 1 to 3 words from a title, every word capitalised or holding a digit,
   not starting or ending on a small word ("the", "of"); one word only when it mixes letters and
   digits ("GPT-6"). Pure numbers and lowercase words are not names.
-- **A name surges** when, within 48 hours, 3+ posts of 2+ voices use it, at least 4x its usual
-  48-hour rate over the 30 days before (counted as at least 0.5), and every source involved was
-  followed for those whole 30 days. As the prototype: a name's first burst is the one judged; if a
+- **A name surges** when, within 48 hours, 3+ posts of 2+ voices use it, it was said at most once
+  in the 30 days before, and every source involved was followed for those whole 30 days. As the prototype: a name's first burst is the one judged; if a
   source in it is new, the name does not surge. A shorter name whose posts a longer one covers is
   dropped.
   arXiv titles are left out.
@@ -44,9 +43,9 @@ MENTION_WEIGHT = 0.5
 NAME_WINDOW = timedelta(hours=48)   # a name surges within 48 hours ...
 NAME_MIN_POSTS = 3                  # ... in 3+ posts ...
 NAME_MIN_VOICES = 2                 # ... of 2+ voices ...
-NAME_RATIO = 4                      # ... at 4x its usual 48-hour rate ...
-NAME_MIN_RATE = 0.5                 # ... the rate counted as at least 0.5 ...
-NAME_BASELINE = timedelta(days=30)  # ... over the 30 days before, every source followed for all of them
+NAME_MAX_USUAL = 1                  # ... said at most once in the 30 days before (measured on the server's data,
+NAME_BASELINE = timedelta(days=30)  # 2026-10-30: never before ~88% real, once ~75%, twice or more ~27%) ...
+                                    # ... every source followed for all of those 30 days
 NAME_TITLE_DAYS = 32                # the job reads the titles of the last 32 days (a full run: every one)
 NAME_MAX_WORDS = 3
 NAME_SKIP_KINDS = frozenset({"arxiv"})
@@ -131,8 +130,7 @@ def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> L
             if len(near) < NAME_MIN_POSTS or len({p.place for p in near}) < NAME_MIN_VOICES:
                 continue
             usual = bisect.bisect_left(times, start.t) - bisect.bisect_left(times, start.t - NAME_BASELINE)
-            rate = usual * (NAME_WINDOW / NAME_BASELINE)
-            if len(near) < NAME_RATIO * max(rate, NAME_MIN_RATE):
+            if usual > NAME_MAX_USUAL:
                 continue
             # Its first burst. A source added within the 30 days before it makes the burst its
             # archive, not news: the name does not surge (as the prototype; a later burst of the
