@@ -56,10 +56,16 @@ def fill_search_vectors() -> None:
         logger.exception("Search: could not index the posts stored before search")
 
 
+def recompute_stories() -> None:
+    """The posts stored before stories (issue 0050) get their links and stories, in the background."""
+    services().stories.recompute_safely()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
+    threading.Thread(target=recompute_stories, name="stories", daemon=True).start()
     yield
     database.close_all()
 
@@ -338,6 +344,10 @@ class FolderSourceRequest(BaseModel):
 
 class PostOpenRequest(BaseModel):
     metadata: Dict[str, Any] | None = None
+
+
+class DiscoverHideRequest(BaseModel):
+    key: str = ""
 
 
 
@@ -820,6 +830,23 @@ async def save_page(request: SavePageRequest):
     400 when url is empty or not http(s). A POST from INSIGHT's own save page: a website cannot
     save silently."""
     return await services().saved.save(FEED_FINDER_HTTP, request.url, request.title)
+
+
+@app.get("/api/sources/suggested")
+@error_detail("load the suggested sources")
+async def get_suggested_sources():
+    """Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like
+    pages, that you don't follow. Each {key, url, voices, voice_names, article_count,
+    link_count, articles [{url, title, linked_by}]}, most voices first. Nothing is fetched:
+    following one goes through the feed finder."""
+    return await asyncio.to_thread(services().stories.discover)
+
+
+@app.post("/api/sources/suggested/hide")
+@error_detail("hide the suggestion")
+async def hide_suggested_source(request: DiscoverHideRequest):
+    """Not interested: {key} is never suggested again."""
+    return services().stories.hide(request.key)
 
 
 @app.put("/api/sources/{source_id}/settings")

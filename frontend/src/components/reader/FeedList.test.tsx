@@ -381,4 +381,29 @@ describe('FeedList', () => {
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findAllByRole('article')).toHaveLength(3);
   });
+  it('a story shows once: "covered by" opens its other posts, each opening as a post (issue 0050)', async () => {
+    const user = userEvent.setup();
+    const story = {
+      id: ID(1), voices: 3,
+      sources: [{ id: 's1', name: 'Anthropic News' }, { id: 's2', name: 'Simon Willison' }, { id: 's3', name: 'https://tg.i-c-a.su/rss/denissexy?limit=50' }],
+      posts: [
+        { id: ID(7), title: 'My notes on the model', url: 'https://simonwillison.net/x', source_id: 's2', source_display_name: 'Simon Willison',
+          platform: 'rss', sort_at: '2026-10-01T12:00:00Z', published_at: null, read_at: null, role: 'report' as const },
+        { id: ID(8), title: 'Вышел новый Claude', url: 'https://t.me/denissexy/1', source_id: 's3', source_display_name: 'https://tg.i-c-a.su/rss/denissexy?limit=50',
+          platform: 'rss', sort_at: '2026-10-01T13:00:00Z', published_at: null, read_at: '2026-10-01T14:00:00Z', role: 'share' as const },
+      ],
+    };
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1), title: 'Introducing the model', story })])) });
+    const toggle = await screen.findByRole('button', { name: 'covered by 3 · Anthropic News, Simon Willison, +1' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const list = document.querySelector('[data-story-posts]') as HTMLElement;
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      expect.stringContaining('Simon Willison·My notes on the model'),
+      expect.stringContaining('@denissexy·Вышел новый Claude· share'),
+    ]);
+    await user.click(within(list).getByRole('link', { name: 'My notes on the model' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/posts/${ID(7)}`);
+  });
 });

@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 
 from insight_core.utils.json_safe import json_safe
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.db.repo_stories import StoriesRepository
 
 class SourcesRepository:
     """Database access layer for sources table."""
@@ -98,7 +99,8 @@ class SourcesRepository:
         return source_id
     
     def delete_source(self, cur: Cursor, source_id: str) -> bool:
-        """Delete source (cascade deletes posts)."""
+        """Delete source (cascade deletes posts). A removed source is never suggested again (issue 0050)."""
+        StoriesRepository().hide_removed_source(cur, source_id)
         query = "DELETE FROM sources WHERE id = %s RETURNING id"
         cur.execute(query, (source_id,))
         row = cur.fetchone()

@@ -103,6 +103,22 @@ export interface FeedItem {
   snippet?: SnippetPart[] | null;
   /** A watched page's last meaningful change (issue 0039); null or absent when it never changed. */
   update?: PageUpdate | null;
+  /** The Main feed and a track (issue 0050): the story this row leads, its other posts folded
+   *  under it; null or absent when the post is in no story (or the view shows every post). */
+  story?: FeedStory | null;
+}
+/** One story, many sources (issue 0050). `sources` in the order they covered it. */
+export interface FeedStory {
+  id: string;
+  voices: number;
+  sources: { id: string; name: string }[];
+  posts: StoryPost[];
+}
+export interface StoryPost {
+  id: string; title: string; url: string; source_id: string; source_display_name: string; platform: string;
+  sort_at: string; published_at: string | null; read_at: string | null;
+  /** report: its own writing; share: a copy, a forward or a link post. */
+  role: 'report' | 'share';
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */
@@ -612,6 +628,20 @@ export interface FoundFeed {
   title: string;
 }
 
+/** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
+export interface SuggestedSource {
+  /** A site (`openai.com`) or an account on a platform (`x.com/karpathy`). */
+  key: string;
+  url: string;
+  voices: number;
+  voice_names: string[];
+  article_count: number;
+  link_count: number;
+  /** The most linked of its articles (up to 20): the link's own words when it had some. */
+  articles: { url: string; title: string | null; linked_by: string[] }[];
+}
+export interface SuggestedSourcesResponse { success: true; suggestions: SuggestedSource[]; }
+
 /** What the feed finder made of an address: a feed already, feeds found for it, a site INSIGHT reads itself, or nothing. */
 export interface FeedFinding extends Envelope {
   status?: 'feed' | 'found' | 'direct' | 'none';
@@ -796,6 +826,11 @@ export function createApi() {
     /** Keep a source marked quiet or never opened (issue 0046): its mark hides for 90 days; the fresh row. */
     keepSource: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/tidy/keep`, { method: 'POST' }),
+    /** Discover (issue 0050): what your sources keep linking that you don't follow. Fetches nothing. */
+    getSuggestedSources: () => request<SuggestedSourcesResponse>('/api/sources/suggested'),
+    /** Not interested: the suggestion is never shown again. */
+    hideSuggestedSource: (key: string) =>
+      request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
     /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(

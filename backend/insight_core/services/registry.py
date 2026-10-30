@@ -30,6 +30,7 @@ class Services:
     credentials: Any
     media_proxy: Any
     saved: Any
+    stories: Any
 
 
 def build_services(db_url: Optional[str] = None) -> Services:
@@ -45,6 +46,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.source_fetch_service import SourceFetchService
     from insight_core.services.sources_service import SourcesService
+    from insight_core.services.stories_service import StoriesService
     from insight_core.services.system_logs_service import SystemLogsService
     from insight_core.services.youtube_service import YouTubeService
 
@@ -71,6 +73,7 @@ def build_services(db_url: Optional[str] = None) -> Services:
         media_proxy=MediaProxyService(db_url),
         saved=SavedService(db_url, sources=sources, source_config_sync=source_config_sync, kinds=source_fetch.kinds,
                            reader=reader),
+        stories=StoriesService(db_url),
     )
 
 

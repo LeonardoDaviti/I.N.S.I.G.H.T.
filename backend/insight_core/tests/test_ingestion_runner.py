@@ -290,6 +290,15 @@ class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.posts_updated, 1)
         self.assertEqual(report.inserted_by_source[0].inserted, 2)
 
+    async def test_the_story_job_runs_after_a_run_that_saved_posts(self):
+        calls = []
+        for count, expected in ((2, 1), (0, 0)):
+            h = _Harness([_source("https://stories.test/rss")], [_rss_kind(_posts_for(count))])
+            h.runner.stories = lambda: calls.append("stories")
+            calls.clear()
+            await h.run(force=True)
+            self.assertEqual(len(calls), expected, f"{count} posts saved")
+
     async def test_inspections_refresh_only_sources_that_fetched_posts(self):
         full, empty = _source("https://full.test/rss"), _source("https://empty.test/rss")
         h = _Harness([full, empty], [_rss_kind(lambda s, n: _posts_for(3 if "full" in s["handle_or_url"] else 0)(s, n))])

@@ -8,8 +8,8 @@ recording, save isolation and the archive-metadata record.
 
 Steps: run lock (selector all only) -> load sources -> load fetch state -> decide ->
 record decisions -> per source: fetch under the gates, save, record its outcome and its
-archive metadata -> report. Nothing runs after the last save: a run never measures its
-sources (issue 0015). Kind sessions (B8, telegram_mtproto) are opened lazily inside the
+archive metadata -> the story job (issue 0050, when posts were saved) -> report. Nothing else
+runs after the last save: a run never measures its sources (issue 0015). Kind sessions (B8, telegram_mtproto) are opened lazily inside the
 gate slot of a kind's first due source and closed in a finally at the end of the run; a
 session that cannot open makes that kind's sources unavailable. A fetch never raises out of
 the runner; a failing store write is logged and the run carries on. A source whose fetch
@@ -154,6 +154,7 @@ class IngestionRunner:
         rand: Callable[[], float] = random.random,
         doctor: Optional[Any] = None,
         watch: Optional[PageWatchStore] = None,
+        stories: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.catalog = catalog
         self.state = state
@@ -167,6 +168,7 @@ class IngestionRunner:
         self.rand = rand
         self.doctor = doctor    # SourceDoctor (ingestion/source_doctor.py), or None
         self.watch = watch      # watched pages (issue 0039), or None: nothing is re-checked
+        self.stories = stories  # the story job (issue 0050), run after a run that saved posts, or None
 
     async def run(self, request: FetchRequest, *, progress: ProgressSink = NULL_PROGRESS) -> RunReport:
         started = self.clock()
@@ -321,6 +323,10 @@ class IngestionRunner:
             "outcomes": self._outcome_counts([f.outcome for f in fetched]),
             "inserted": saved.inserted, "updated": saved.updated, "failed": saved.failed,
         })
+
+        if self.stories is not None and (saved.inserted or saved.updated):
+            # Posts were written: their stories are recomputed (issue 0050). It never raises.
+            await asyncio.to_thread(self.stories)
 
         failed_sources = {f.source_id for f in failures}
         if failed_sources and len(failed_sources) >= len(fetched):

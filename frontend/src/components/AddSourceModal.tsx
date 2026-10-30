@@ -158,13 +158,15 @@ interface AddSourceModalProps {
   }) => void;
   /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
   onAddMany?: (added: AddedSource[], close: boolean) => void;
+  /** An address to start from (Follow… on a suggested source, issue 0050): looked up as if typed. */
+  initialAddress?: string;
 }
 
-export default function AddSourceModal({ existingAddresses = [], onClose, onAdd, onAddMany }: AddSourceModalProps) {
+export default function AddSourceModal({ existingAddresses = [], onClose, onAdd, onAddMany, initialAddress }: AddSourceModalProps) {
   const api = useApi();
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateVariable, setTemplateVariable] = useState('');
-  const [handleOrUrl, setHandleOrUrl] = useState('');
+  const [handleOrUrl, setHandleOrUrl] = useState(initialAddress ?? '');
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
   const [fetchDelay, setFetchDelay] = useState(1);
