@@ -120,12 +120,10 @@ class SourceAnatomyService:
 
     def _load(self, since: Any) -> tuple:
         """The schedule view (as source health reads it) and every column group, in one read-only
-        transaction. JIT off: these are small aggregates the planner overestimates, and compiling
-        them cost about 300 ms of a 350 ms schedule view on the server's data (measured on the lab)."""
+        transaction (JIT is off for every pooled connection: db.database)."""
         repo = SourceAnatomyRepository
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("SET TRANSACTION READ ONLY")
-            cur.execute("SET LOCAL jit = off")
             view = FetchStateRepository().load_schedule_view(cur)
             reading = repo.reading(cur)
             counts: Dict[str, Dict[str, Sequence[int]]] = {

@@ -43,6 +43,13 @@ class DatabaseTests(unittest.TestCase):
             cur.execute("SHOW statement_timeout")
             self.assertEqual(cur.fetchone()[0], "5min")
 
+    def test_jit_is_off_for_pooled_connections(self):
+        """Measured on the server's data: JIT compiling cost ~300 ms of the Sources list."""
+        database = self.make()
+        with database.connection() as conn, conn.cursor() as cur:
+            cur.execute("SHOW jit")
+            self.assertEqual(cur.fetchone()[0], "off")
+
     def test_the_pool_hands_back_a_usable_connection_after_an_error(self):
         database = self.make(min_size=1, max_size=1)
         with self.assertRaises(psycopg.errors.UndefinedTable):

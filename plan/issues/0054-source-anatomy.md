@@ -58,7 +58,8 @@ Status: **built, not deployed** (2026-10-30; design decision 037) for v9.6 (owne
 - **Screens** (the dev server against an own API container on a `_test` copy of the lab, light and dark, wide and narrow; not committed): `~/.cache/insight-checks/0054-shots/` (`0054-anatomy-wide-*`, `-narrow-*`, `-narrow-scrolled-*`, `-sorted-first-*`, `-sheet-*`).
 
 ## Left open
-- **Source health pays the same JIT cost.** `GET /api/sources/health` (the Sources list) runs the same schedule view with JIT on: about 350 ms on the lab copy where 35 ms is the query. Turning JIT off there, or for the whole pool, is a one-line change; it was left out to keep this issue to its view.
+- **Done after the merge (2026-10-30): JIT is off for every pooled connection** (`db/database.py`). Measured on the lab with JIT off for the whole database: `/api/sources/health` 368 → 75 ms, search 47 → 34 ms, every other endpoint the same or faster.
+- **Discover takes 2.6 s on the server's data:** it reads every kept link (138k) in Python per request. Not fixed here.
 - **"Read" is opened,** not `read_at`: a bulk mark read is no reading (as 0052 decided). The spec named the read state; say if `read_at` is meant.
 - **The 30 days go by a post's feed date,** so an archive backfill of old posts counts in all time, not in the window.
 - **Full text `in feed` for a feed with full text on** means no post needed its page so far; a feed whose page reads all failed reads the same (its reading notice on the sheet says so).

@@ -70,10 +70,13 @@ class Database:
         self._lock = threading.Lock()
 
     def _connect_kwargs(self) -> dict:
-        kwargs: dict = {"connect_timeout": CONNECT_TIMEOUT_SECONDS}
+        # JIT off: INSIGHT's queries are small aggregates the planner overestimates. Measured on the
+        # server's data (the lab, 2026-10-30): compiling cost ~300 ms of the Sources list's 370 ms, and
+        # no endpoint got slower without it.
+        options = ["-c jit=off"]
         if self.statement_timeout_ms > 0:
-            kwargs["options"] = f"-c statement_timeout={self.statement_timeout_ms}"
-        return kwargs
+            options.append(f"-c statement_timeout={self.statement_timeout_ms}")
+        return {"connect_timeout": CONNECT_TIMEOUT_SECONDS, "options": " ".join(options)}
 
     def _ensure_open(self) -> None:
         if not self._opened:
