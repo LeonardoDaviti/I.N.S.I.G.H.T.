@@ -28,6 +28,12 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - one story, many sources (0050): the links inside posts, a story shown once with "covered by N", and Discover from what your sources link;
   - News and Classics (0051): what many of your sources cover now, and what they keep citing, ranked without AI;
   - saved searches; tuning watch, Tidy up, search and 0051's thresholds after weeks of real use.
+- **v9.8, reading what INSIGHT already knows** (owner, 2026-10-31):
+  - "covered by" on the post page (0055);
+  - search finds stories, with version names, folded results, News and Classics (0056);
+  - links to stored posts open in INSIGHT (0057);
+  - known news isn't "new to you" (0058).
+  - Classics are under discussion (0059).
 - **Mark IX is the groundwork for Mark X** (owner, 2026-10-30): search, post links and stories are the base that Mark X's dedup by meaning, entities, the first reporter and trends build on, not a second system.
 - **Only on a real case:** release updates (0024), native Bluesky and Mastodon, email-in.
 - **Cut** (features for their own sake, owner 2026-10-28): the installable app (PWA), the Fever / Google Reader API, a one-command install, optional login, notifications, a track published as RSS, podcasts, read aloud, export to Obsidian, webhooks.
