@@ -71,13 +71,17 @@ Posts that share a surging name join one story **for News only**. A name never f
 ### 4. Classics
 - **A classic is a page linked by 2+ of your voices** (not counting the page's own site), with links at least 30 days apart. It can be a stored post or an outside page.
 - **Reference pages aren't classics:** an address with a path segment like `docs`, `documentation`, `product(s)`, `pricing`, `support`, `help`, `api`, `reference`, `release-notes`, `changelog`, `wiki`, `articles`, `collections`, `download`, `login` or `signup`, and home pages. This is a vocabulary of page kinds, not a list of sites.
-- **Ordered by voices, then by how long it has been cited.**
+- **Ordered by voices, then by how long it has been cited.** A page's age never counts against it.
+- **Cited again comes first:** a classic one of your sources cited in the last 7 days goes to the top, marked "cited again this week". Old doesn't mean unimportant: it can be the foundation of something new.
 - **Each card shows:**
   - its title: the stored post's title, or the most common link text;
   - who cited it and when ("Simon Willison, Aug 2025 · …");
   - Read: a stored post opens in the reader, and an outside page through Save any page (0031), fetched only on click;
-  - Later.
+  - Later;
+  - Hide: one control for both "I know it" and "not for me". A hidden classic never comes back. Reading one through INSIGHT stores it, and it then counts as read like any post.
 - **A view next to Main and News.**
+- **Background under a post:** when a post you read links a classic, one quiet line under it: "Builds on: Scaling Laws for Neural Language Models · cited by 3 of your sources". It shows at most 2, and nothing when there are none.
+- **Discover leans on it:** a suggested site that holds classics comes first, and its card says "2 classics". No new section.
 
 ### 5. Tracks
 News and Classics can be opened for a track:
@@ -94,12 +98,14 @@ News and Classics can be opened for a track:
   - the score;
   - each part of the name rule, with a case that must and one that must not: a lowercase word, a new source's archive, a phrase below the rate, a shorter name inside a longer one;
   - Classic's spread and the reference filter;
+  - cited again first, Hide, Background (at most 2; none without a classic), Discover's order;
   - track scoping.
 - **On a copy of the preview data:**
   - the weekly top stories above;
   - the name rule's 20 surges, with "18 Pro Max" allowed to stay a known miss;
   - Classics that include the six named above and none of the docs or product pages.
-- **Screens** of News and Classics, light and dark, plus an empty week.
+- **Screens** of News and Classics, light and dark, plus an empty week, and a post with its Background line.
+- **Nothing more:** no new settings, no badges beyond these lines, no extra views.
 - **Thresholds in one place,** so tuning on the server is a one-line change.
 
 ## Not in this issue
