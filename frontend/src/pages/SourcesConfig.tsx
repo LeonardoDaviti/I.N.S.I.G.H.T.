@@ -79,7 +79,7 @@ const SHEET_PUSHED = 'sourceSheetPushed';
 const TRACK_HIGHLIGHT_MS = 1600;
 
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
-const EXTRA_TABS = ['suggested', 'connections', 'ingestion'] as const;
+const EXTRA_TABS = ['discover', 'connections', 'ingestion'] as const;
 type ExtraTab = (typeof EXTRA_TABS)[number];
 const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
 
@@ -101,11 +101,16 @@ export default function SourcesConfig() {
   // Three tabs: the list, Connections (?tab=connections, spec §10.1) and
   // Ingestion (?tab=ingestion, reading-finish R3). The legacy Health tab URL
   // becomes the list view (readSourcesView).
-  const tabParam = searchParams.get('tab');
+  // `?tab=suggested` (the tab's name until 2026-10-31) is Discover.
+  const tabParam = searchParams.get('tab') === 'suggested' ? 'discover' : searchParams.get('tab');
   const tab = isExtraTab(tabParam) ? tabParam : 'sources';
   useEffect(() => {
     const legacy = searchParams.get('tab');
-    if (legacy !== null && !isExtraTab(legacy)) setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
+    if (legacy === 'suggested') {
+      const params = new URLSearchParams(searchParams);
+      params.set('tab', 'discover');
+      setSearchParams(params, { replace: true });
+    } else if (legacy !== null && !isExtraTab(legacy)) setSearchParams(writeSourcesView(searchParams, readSourcesView(searchParams)), { replace: true });
   }, [searchParams, setSearchParams]);
   const setTab = (next: string) => {
     const params = new URLSearchParams(searchParams);
@@ -531,7 +536,7 @@ export default function SourcesConfig() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList aria-label="Sources page" className="mb-4">
           <TabsTrigger value="sources">sources</TabsTrigger>
-          <TabsTrigger value="suggested">suggested</TabsTrigger>
+          <TabsTrigger value="discover">discover</TabsTrigger>
           <TabsTrigger value="connections">connections</TabsTrigger>
           <TabsTrigger value="ingestion">ingestion</TabsTrigger>
         </TabsList>
@@ -552,7 +557,7 @@ export default function SourcesConfig() {
             ) : null}
           </div>
         </TabsContent>
-        <TabsContent value="suggested" className="pt-0">
+        <TabsContent value="discover" className="pt-0">
           <div className="pb-24">
             <SuggestedSources onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} />
           </div>

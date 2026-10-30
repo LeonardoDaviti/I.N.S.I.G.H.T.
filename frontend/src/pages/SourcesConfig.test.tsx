@@ -71,7 +71,7 @@ describe('SourcesConfig', () => {
   it('is one flat list by default: sources, suggested, connections and ingestion tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'suggested', 'connections', 'ingestion']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'discover', 'connections', 'ingestion']);
     expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
     expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
@@ -1013,6 +1013,28 @@ describe('SourcesConfig deep links', () => {
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://openai.com'));
     expect(await within(dialog).findByText('Found the feed for this page: openai.com/news/rss.xml')).toBeInTheDocument();
+  });
+
+  it('Discover is its own tab, and one box searches sites, the sources linking them and their articles', async () => {
+    const one = {
+      key: 'openai.com', url: 'https://openai.com', voices: 2, article_count: 1, link_count: 1, classics: 0,
+      voice_names: ['Simon Willison', 'Sean Goedecke'],
+      articles: [{ url: 'https://openai.com/index/introducing-gpt-live', title: 'Introducing GPT Live', linked_by: ['Simon Willison'] }],
+    };
+    const two = { ...one, key: 'metr.org', url: 'https://metr.org', voice_names: ['Zvi'], articles: [{ url: 'https://metr.org/blog/long-tasks', title: 'Measuring long tasks', linked_by: ['Zvi'] }] };
+    setup('/settings/sources?tab=discover', { getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [one, two] }) });
+    expect(await screen.findByRole('tab', { name: 'discover', selected: true })).toBeInTheDocument();
+    const box = await screen.findByRole('searchbox', { name: 'Search Discover' });
+    await userEvent.type(box, 'zvi');
+    expect(screen.getByText('metr.org')).toBeInTheDocument();
+    expect(screen.queryByText('openai.com')).toBeNull();
+    await userEvent.clear(box);
+    await userEvent.type(box, 'gpt live');
+    expect(screen.getByText('openai.com')).toBeInTheDocument();
+    expect(screen.queryByText('metr.org')).toBeNull();
+    await userEvent.clear(box);
+    await userEvent.type(box, 'nothing like this');
+    expect(screen.getByText('Nothing in Discover matches “nothing like this”.')).toBeInTheDocument();
   });
 
   it('an unknown track shows the list with a quiet note', async () => {
