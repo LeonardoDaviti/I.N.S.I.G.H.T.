@@ -13,8 +13,8 @@ from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, reddit_author, site_of,
-                                          source_kind)
+from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, is_article, reddit_author,
+                                          site_of, source_kind)
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
 
@@ -317,6 +317,17 @@ class StoriesRepository:
                 authors[post_id] = reddit_author(content_html) if content_html else None
             out.append({"source_id": str(source_id), "url": url, "text": text, "author": authors[post_id]})
         return out
+
+    @staticmethod
+    def linked_articles(cur: Cursor, host: str) -> List[str]:
+        """The article-like addresses on a host (www. aside) your sources' kept links point to,
+        once each, in address order: what a site's findings are ranked by (issue 0060)."""
+        host = (host or "").lower().removeprefix("www.")
+        if not host:
+            return []
+        cur.execute("SELECT DISTINCT target_url FROM post_links WHERE target_site = %s AND NOT boilerplate",
+                    (site_of(host),))
+        return sorted(url for (url,) in cur.fetchall() if host_of(url).removeprefix("www.") == host and is_article(url))
 
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:

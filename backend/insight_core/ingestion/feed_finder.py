@@ -32,7 +32,7 @@ import logging
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from typing import Iterable, List, Literal, Optional, Sequence, Tuple
 
@@ -75,6 +75,8 @@ Status = Literal["feed", "found", "direct", "none"]
 class Feed:
     url: str
     title: str                  # the feed's own <title>; "" when it has none
+    # The item addresses in the part of the feed read to prove it (issue 0060: what it holds).
+    items: Tuple[str, ...] = field(default=(), compare=False)
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,12 @@ class FeedFinding:
     feeds: Tuple[Feed, ...] = ()
     pages: Tuple[str, ...] = ()  # none: the site's own blog or news pages the search read (stage 3)
     menu: Tuple[str, ...] = ()   # none, when no page is named so: the page's own menu links, unread
+    landed: str = field(default="", compare=False)   # where the address itself landed, when it was read
+    # A section address read, with its home page read beside it (stage 2): the home page's own
+    # blog or news links, else its menu links, unread. Follow from a section (issue 0060) offers
+    # them when the section gives nothing, without looking at the home page again.
+    home_pages: Tuple[str, ...] = field(default=(), compare=False)
+    home_menu: Tuple[str, ...] = field(default=(), compare=False)
 
 
 async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFinding:
@@ -98,9 +106,31 @@ async def find_feeds(http: KindHttp, registry: KindRegistry, url: str) -> FeedFi
             finding = await search.run(address)
     except TimeoutError:
         finding = FeedFinding("none", pages=search.pages, menu=search.menu)
+    if search.landed:
+        finding = replace(finding, landed=search.landed, home_pages=search.home_pages, home_menu=search.home_menu)
     logger.info("Feed finder: %s -> %s, %d feed(s), %d request(s), %.1fs", address, finding.status,
                 len(finding.feeds), search.requests, time.monotonic() - started)
     return finding
+
+
+async def page_feeds(http: KindHttp, url: str) -> Tuple[Feed, ...]:
+    """The feeds the page at url names itself (stage 1 only): the page when it is one, else its
+    feed links that are feeds. Never raises for a site's failure or slowness. Follow from a
+    section (issue 0060) reads the home page's feeds beside the section's: a newspaper's tech
+    feed may hold fewer of the linked articles than its feed of everything."""
+    search = _Search(http)
+    try:
+        async with asyncio.timeout(BUDGET_S):
+            page = await search._get(_normalise(url), PAGE_BYTES)
+            if not page:
+                return ()
+            body, here = page
+            title = _feed_title(body)
+            if title is not None:
+                return (Feed(here, title, _feed_items(body, here)),)
+            return await search._prove(_feed_links(body, here))
+    except TimeoutError:
+        return ()
 
 
 def _normalise(url: str) -> str:
@@ -116,6 +146,9 @@ class _Search:
         self.requests = 0
         self.pages: Tuple[str, ...] = ()
         self.menu: Tuple[str, ...] = ()
+        self.landed = ""
+        self.home_pages: Tuple[str, ...] = ()
+        self.home_menu: Tuple[str, ...] = ()
 
     async def run(self, url: str) -> FeedFinding:
         if urllib.parse.urlparse(url).scheme not in ("http", "https"):
@@ -128,10 +161,11 @@ class _Search:
         here = url
         if page:
             body, here = page
+            self.landed = here
             self.tried.update({url, here})
             title = _feed_title(body)
             if title is not None:
-                return FeedFinding("feed", (Feed(here, title),))
+                return FeedFinding("feed", (Feed(here, title, _feed_items(body, here)),))
             if feeds := await self._prove(_feed_links(body, here)):
                 return FeedFinding("found", feeds)
 
@@ -142,7 +176,12 @@ class _Search:
 
         # An address that cannot be read (a feed gone) takes its home page's links instead.
         origin = origin_from_source(here, "")
-        linking = page or dict(zip(around, pages)).get(f"{origin}/")
+        home = dict(zip(around, pages)).get(f"{origin}/")
+        linking = page or home
+        if page and home:
+            home_links = _links(home[0])
+            self.home_pages = tuple(_blog_links(home_links, home[1]))
+            self.home_menu = () if self.home_pages else tuple(_menu_links(home_links, home[1]))
         links = _links(linking[0]) if linking else _FeedLinks()
         blogs = _blog_links(links, linking[1]) if linking else []
         blog_pages = await asyncio.gather(*(self._get(blog, PAGE_BYTES) for blog in blogs))
@@ -178,7 +217,7 @@ class _Search:
         if got is None:
             return None
         title = _feed_title(got[0])
-        return None if title is None else (got[1], Feed(url, title))
+        return None if title is None else (got[1], Feed(url, title, _feed_items(got[0], got[1])))
 
     async def _prove(self, candidates: Iterable[str], limit: Optional[int] = MAX_CANDIDATES,
                      first: bool = False) -> Tuple[Feed, ...]:
@@ -270,6 +309,39 @@ def _feed_title(start: bytes) -> Optional[str]:
     except ET.ParseError:
         return None
     return None
+
+
+def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
+    """The item addresses in start (as far as it reads), absolute, once each, in feed order: an
+    RSS item's <link> (else a permalink <guid>), an Atom entry's alternate <link href>."""
+    parser = ET.XMLPullParser(events=("start", "end"))
+    found: List[str] = []
+    depth = 0           # inside an item or entry
+    link: Optional[str] = None
+    try:
+        for offset in range(0, len(start), PARSE_CHUNK):
+            parser.feed(start[offset:offset + PARSE_CHUNK])
+            for event, element in parser.read_events():
+                name = local_name(element.tag).lower()
+                if name in ("item", "entry"):
+                    if event == "start":
+                        depth, link = depth + 1, None
+                    else:
+                        depth -= 1
+                        if link and (url := _absolute(feed_url, link)):
+                            found.append(url)
+                elif depth and event == "end" and link is None:
+                    if name == "link":
+                        href = element.get("href")
+                        value = (href if href is not None else element.text or "").strip()
+                        if element.get("rel", "alternate") == "alternate" and value:
+                            link = value
+                    elif name == "guid" and element.get("isPermaLink", "true") != "false":
+                        text = (element.text or "").strip()
+                        link = text if text.startswith(("http://", "https://")) else None
+    except ET.ParseError:
+        pass
+    return tuple(dict.fromkeys(found))
 
 
 def _feed_links(body: bytes, page_url: str) -> List[str]:
@@ -403,4 +475,4 @@ def _is_comments(href: str, label: str) -> bool:
     return "comment" in f"{href} {label}".lower()
 
 
-__all__ = ["Feed", "FeedFinding", "find_feeds"]
+__all__ = ["Feed", "FeedFinding", "find_feeds", "page_feeds"]

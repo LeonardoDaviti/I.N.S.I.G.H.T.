@@ -19,14 +19,15 @@ import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db import database as db
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
-from insight_core.utils.post_links import reddit_author
+from insight_core.utils.post_links import host_of, reddit_author
 from insight_core.utils.story_rules import StoryPost, group, suggestions
+from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,13 @@ class StoriesService:
         result = {"success": True, "suggestions": out}
         self._discovered = (inputs, result)
         return result
+
+    def linked_articles(self, address: str) -> List[str]:
+        """The articles on an address's host your sources linked (issue 0060): Follow ranks the
+        site's findings by how many of them each holds. Read only."""
+        host = host_of(normalize_url(address) or "")
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self.repo.linked_articles(cur, host)
 
     def hide(self, key: str) -> Dict[str, Any]:
         """Not interested: the suggestion is never shown again."""

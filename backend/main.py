@@ -24,12 +24,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from insight_core.db import database
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope
 from insight_core.db.repo_search import SearchQuery
-from insight_core.ingestion import run_ingestion
-from insight_core.ingestion.feed_finder import find_feeds
+from insight_core.ingestion import run_ingestion, where_linked
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import page_watch
 from insight_core.ingestion.kinds import saved as saved_kind
 from insight_core.ingestion.kinds.base import KindUnavailable
+from insight_core.ingestion.kinds.parsing import web_address
 from insight_core.ingestion.ports import JobProgressSink
 from insight_core.ingestion.types import FetchRequest, SourceSelector, Trigger
 from insight_core.services.credentials_service import LoginFailed
@@ -810,12 +810,17 @@ async def find_feed(request: FindFeedRequest):
     None for a site's home page (issue 0041): homepage true, and pages, the site's own blog or
     news pages the finder read that can be followed instead, each with its page-watch preview
     ({url, prefix, found, sitemap, items}), the most articles first; with none, its menu links
-    that read as an article list (issue 0047)."""
-    finding = await find_feeds(FEED_FINDER_HTTP, services().source_fetch.kinds, request.url)
-    homepage = finding.status == "none" and page_watch.is_home(request.url)
-    return {"success": True, "status": finding.status,
-            "feeds": [{"url": feed.url, "title": feed.title} for feed in finding.feeds],
-            "homepage": homepage, "pages": await page_watch.offers(FEED_FINDER_HTTP, finding.pages, finding.menu) if homepage else []}
+    that read as an article list (issue 0047).
+    When your sources linked the site's articles (issue 0060): linked is how many, a home page
+    starts at the section most of them are under (start, else null), and every feed and page
+    carries holds, how many of them it holds, the most first."""
+    address = web_address(request.url, "An address is needed to look for its feed")
+    try:
+        linked = await asyncio.to_thread(services().stories.linked_articles, address)
+    except Exception:  # noqa: BLE001 - no links read: Follow as before
+        logger.exception("Find feed: the linked articles of %s could not be read", address)
+        linked = []
+    return {"success": True, **await where_linked.follow(FEED_FINDER_HTTP, services().source_fetch.kinds, address, linked)}
 
 
 @app.post("/api/sources/page-watch/preview")

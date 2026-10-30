@@ -50,6 +50,10 @@ def found(*feeds: tuple[str, str]) -> FeedFinding:
     return FeedFinding("found", tuple(Feed(url, title) for url, title in feeds))
 
 
+# The stories service of a library whose sources linked nothing (issue 0060).
+NO_LINKS = SimpleNamespace(linked_articles=lambda _address: [])
+
+
 async def hang(_url: str) -> str:
     await asyncio.sleep(3600)
     return ""
@@ -291,7 +295,7 @@ class FindFeedRouteTests(unittest.TestCase):
         self.http = FakeHttp({"https://x.example/": page('<link rel="alternate" type="application/rss+xml" href="/feed">'),
                               "https://x.example/feed": rss("X")})
         kinds = KindRegistry.default(self.http, None)
-        self.addCleanup(services_registry.use, services_registry.use(SimpleNamespace(source_fetch=SimpleNamespace(kinds=kinds))))
+        self.addCleanup(services_registry.use, services_registry.use(SimpleNamespace(source_fetch=SimpleNamespace(kinds=kinds), stories=NO_LINKS)))
         patcher = mock.patch.object(main, "FEED_FINDER_HTTP", self.http)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -300,7 +304,7 @@ class FindFeedRouteTests(unittest.TestCase):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": "x.example"})
         self.assertEqual(status, 200)
         self.assertEqual(body, {"success": True, "status": "found", "feeds": [{"url": "https://x.example/feed", "title": "X"}],
-                                "homepage": False, "pages": []})
+                                "homepage": False, "pages": [], "linked": 0, "start": None})
 
     def test_an_empty_address_is_a_400(self):
         status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": " "})
@@ -326,7 +330,7 @@ class FollowTheBlogTests(unittest.TestCase):
     def ask(self, responses, url: str, **fake) -> dict:
         http = FakeHttp(responses, **fake)
         kinds = KindRegistry.default(http, None)
-        self.addCleanup(services_registry.use, services_registry.use(SimpleNamespace(source_fetch=SimpleNamespace(kinds=kinds))))
+        self.addCleanup(services_registry.use, services_registry.use(SimpleNamespace(source_fetch=SimpleNamespace(kinds=kinds), stories=NO_LINKS)))
         with mock.patch.object(main, "FEED_FINDER_HTTP", http):
             status, _, body = call(main.app, "POST", "/api/sources/find-feed", json_body={"url": url})
         self.assertEqual(status, 200)
