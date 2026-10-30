@@ -173,6 +173,22 @@ class FeedListingRouteTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return body
 
+    def test_history_lists_what_you_opened_last_open_first(self):
+        source = self._source()
+        scope = f"source:{source}"
+        p1, p2, p3 = self._posts(source, *self._hours_ago(3, 2, 1))
+        for post in (p1, p2, p1):   # p1 opened again, after p2
+            status, _, body = call(main.app, "POST", f"/api/posts/item/{post}/opened", json_body={})
+            self.assertEqual(status, 200, body)
+        self.read(ids=[p3], read=True)   # read, never opened
+
+        body = self.feed(scope=scope, filter="history", limit=1)
+        self.assertEqual([i["id"] for i in body["items"]], [p1])
+        self.assertEqual(body["items"][0]["sort_at"], body["items"][0]["opened_at"])
+        self.assertEqual(self.ids(scope=scope, filter="history"), [p1, p2], "once each; p3 was only marked read")
+        rest = self.feed(scope=scope, filter="history", limit=1, cursor=body["next_cursor"])
+        self.assertEqual([i["id"] for i in rest["items"]], [p2])
+
     def test_finishing_takes_a_post_out_of_later_and_opening_does_not(self):
         source = self._source()
         scope = f"source:{source}"

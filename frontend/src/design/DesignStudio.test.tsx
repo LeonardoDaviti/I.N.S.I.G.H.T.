@@ -88,7 +88,7 @@ describe('the Handbook', () => {
     renderStudio('/design/pages/reader');
     const states = screen.getByRole('radiogroup', { name: 'State' });
     expect(within(states).getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
-      'normal', 'empty', 'empty-scope', 'loading', 'error', 'worst', 'search', 'search-empty',
+      'normal', 'empty', 'empty-scope', 'loading', 'error', 'worst', 'search', 'search-empty', 'history', 'history-empty',
     ]);
     expect(screen.getByRole('figure', { name: 'reader · normal · 1400 · dark' })).toBeInTheDocument();
     await user.click(within(states).getByRole('radio', { name: 'loading' }));

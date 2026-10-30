@@ -132,8 +132,9 @@ function Reader({ scope }: { scope: string }) {
 
   const railSearch = useMemo(() => {
     const keep = new URLSearchParams();
-    // Later and Kept are the Main feed's lists, not a way to read a track or source.
-    if (filter === 'all') keep.set('filter', filter);
+    // Later and Kept are the Main feed's lists, not a way to read a track or source; History
+    // is a way to look back in each (issue 0052), so it stays as All does.
+    if (filter === 'all' || filter === 'history') keep.set('filter', filter);
     if (view !== 'stream') keep.set('view', view);
     if (dataName) keep.set('data', dataName);
     const text = keep.toString();
@@ -167,6 +168,9 @@ function Reader({ scope }: { scope: string }) {
     if (filter === 'updated') {
       return { title: 'No updated pages yet', description: 'A page that changes comes back here with what changed.', action: { label: 'Show all', onClick: showAll } };
     }
+    if (filter === 'history') {
+      return { title: 'Posts you open show up here', description: 'Each post once, at the last time you opened it, newest first.', action: { label: 'Show all', onClick: showAll } };
+    }
     if (scope === 'all') {
       return { title: 'No posts yet', description: 'Add a source to start reading. Ingestion collects its posts.', action: { label: 'Add a source', href: '/settings/sources' } };
     }
@@ -180,7 +184,7 @@ function Reader({ scope }: { scope: string }) {
 
   // The unread count says nothing about the Kept or Later lists; the Main feed's Later says what it costs.
   const later = laterSummary(counts.data);
-  let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' && filter !== 'updated' ? `${formatCount(scopeCount)} unread` : null;
+  let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' && filter !== 'updated' && filter !== 'history' ? `${formatCount(scopeCount)} unread` : null;
   if (filter === 'later') subtitle = scope === 'all' ? later : null;
   // On the Main feed, one quiet line leads to Later while it holds anything.
   const laterLine = scope === 'all' && filter !== 'later' && later ? later : null;

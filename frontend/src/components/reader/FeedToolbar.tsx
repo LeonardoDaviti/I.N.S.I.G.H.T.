@@ -8,12 +8,13 @@ import SearchField from './SearchField';
 import SlashChoice from './SlashChoice';
 import TextLink from '../ui/TextLink';
 
-/** Kept is the star (`starred` in the URL and the API, issue 0022). */
+/** Kept is the star (`starred` in the URL and the API, issue 0022); History, what you opened (issue 0052). */
 const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
   { value: 'unread', label: 'Unread' },
   { value: 'later', label: 'Later' },
   { value: 'starred', label: 'Kept' },
   { value: 'all', label: 'All' },
+  { value: 'history', label: 'History' },
 ];
 /** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };

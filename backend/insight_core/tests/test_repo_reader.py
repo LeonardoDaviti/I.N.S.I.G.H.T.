@@ -287,6 +287,112 @@ class ReaderRepositoryTests(unittest.TestCase):
 
         self.assertEqual([i["id"] for i in items], [recent])
 
+    # ---- History (issue 0052) ------------------------------------------------------
+
+    def _open(self, post: str, at: datetime, kind: str = "opened") -> None:
+        self.cur.execute(
+            "INSERT INTO post_interactions (post_id, interaction_type, created_at) VALUES (%s, %s, %s)",
+            (post, kind, at),
+        )
+
+    def test_history_is_ordered_by_last_open_not_by_date(self):
+        source = self._source()
+        old = self._post(source, self.now - timedelta(days=7))
+        new = self._post(source, self.now - timedelta(hours=2))
+        self._posts(source, 2)   # never opened
+        self._open(old, self.now - timedelta(hours=1))
+        self._open(new, self.now - timedelta(days=1), "reading_session")
+
+        items, cursor = self._page(FeedScope("source", source), filter="history")
+
+        self.assertEqual([i["id"] for i in items], [old, new], "a week-old post opened an hour ago leads")
+        self.assertEqual(items[0]["sort_at"], self.now - timedelta(hours=1), "the row's time is the open")
+        self.assertEqual(items[0]["opened_at"], items[0]["sort_at"])
+        self.assertEqual(items[1]["published_at"], self.now - timedelta(hours=2))
+        self.assertIsNone(cursor)
+
+    def test_a_post_opened_twice_appears_once_at_its_last_open(self):
+        source = self._source()
+        a, b = self._posts(source, 2)
+        self._open(a, self.now - timedelta(days=3))
+        self._open(b, self.now - timedelta(days=2))
+        self._open(a, self.now - timedelta(days=1), "reading_session")
+        self._open(a, self.now - timedelta(days=4))
+
+        items, _ = self._page(FeedScope("source", source), filter="history")
+
+        self.assertEqual([i["id"] for i in items], [a, b])
+        self.assertEqual(items[0]["opened_at"], self.now - timedelta(days=1))
+
+    def test_posts_marked_read_in_bulk_are_not_history(self):
+        source = self._source()
+        opened, cleared, starred = self._posts(source, 3)
+        self._open(opened, self.now)
+        self.repo.set_read(self.cur, [opened, cleared], True)
+        self.repo.set_starred(self.cur, starred, True)
+        self.cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'favorited')", (starred,))
+
+        items, _ = self._page(FeedScope("source", source), filter="history")
+
+        self.assertEqual([i["id"] for i in items], [opened])
+
+    def test_history_pages_by_last_open(self):
+        source = self._source()
+        ids = self._posts(source, 7)
+        # Opened in the reverse of their order, two at the same instant (broken by id).
+        for minutes, post in zip([10, 9, 8, 8, 7, 6, 5], reversed(ids)):
+            self._open(post, self.now - timedelta(minutes=minutes))
+        scope = FeedScope("source", source)
+
+        seen, cursor, pages = [], None, 0
+        while True:
+            items, cursor = self._page(scope, filter="history", limit=3, cursor=cursor)
+            seen += items
+            pages += 1
+            if cursor is None:
+                break
+
+        self.assertEqual(pages, 3)
+        self.assertEqual(sorted(i["id"] for i in seen), sorted(ids), "every post once, none skipped")
+        keys = [(i["opened_at"], i["id"]) for i in seen]
+        self.assertEqual(keys, sorted(keys, reverse=True))
+        self.assertEqual(seen[0]["id"], ids[0], "the post opened last leads")
+
+    def test_history_works_in_every_scope_and_ignores_main_feed_off(self):
+        shown, hidden, elsewhere = self._source(), self._source(in_main_digest=False), self._source()
+        (a,), (b,), (c,) = self._posts(shown, 1), self._posts(hidden, 1), self._posts(elsewhere, 1)
+        for post in (a, b, c):
+            self._open(post, self.now)
+        folder = self._folder(shown, hidden)
+
+        main, _ = self._page(FeedScope("all"), filter="history", limit=100)
+        track, _ = self._page(FeedScope("folder", folder), filter="history")
+        one, _ = self._page(FeedScope("source", hidden), filter="history")
+
+        self.assertTrue({a, b, c} <= {i["id"] for i in main}, "Main feed: off still shows what you opened")
+        self.assertEqual({i["id"] for i in track}, {a, b})
+        self.assertEqual([i["id"] for i in one], [b])
+
+    def test_history_days_bound_the_open(self):
+        source = self._source()
+        old_post_opened_today = self._post(source, self.now - timedelta(days=30))
+        new_post_opened_long_ago = self._post(source, self.now - timedelta(hours=1))
+        self._open(old_post_opened_today, self.now - timedelta(hours=1))
+        self._open(new_post_opened_long_ago, self.now - timedelta(days=10))
+
+        items, _ = self._page(FeedScope("source", source), filter="history", days=3)
+
+        self.assertEqual([i["id"] for i in items], [old_post_opened_today])
+
+    def test_history_by_source_groups_what_you_opened(self):
+        source = self._source()
+        a, b = self._posts(source, 2)
+        self._open(b, self.now)
+
+        groups, _ = self._groups(FeedScope("source", source), filter="history")
+
+        self.assertEqual([(g["count"], [i["id"] for i in g["items"]]) for g in groups], [(1, [b])])
+
     # ---- read / star --------------------------------------------------------------
 
     def test_set_read_and_unread(self):

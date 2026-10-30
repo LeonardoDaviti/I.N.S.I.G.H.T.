@@ -226,6 +226,24 @@ describe('FeedList', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
+  it('History refuses mark read up to here, and comes back fresh with what you just opened (issue 0052)', async () => {
+    const user = userEvent.setup();
+    const read = new Date().toISOString();
+    const getFeed = vi.fn().mockResolvedValue(feedPage(items().map((item) => ({ ...item, read_at: read }))));
+    const { api, queryClient, unmount } = setup({ getFeed }, { filter: 'history' });
+    await screen.findAllByRole('article');
+    expect(document.querySelectorAll('[data-day-header]').length).toBeGreaterThan(0);
+    await user.keyboard('j{Shift>}A{/Shift}');
+    await waitFor(() => expect(liveRegion()).toHaveTextContent('Mark read up to here does not work in History.'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(getFeed).toHaveBeenCalledTimes(1);
+
+    // Coming back to History (a post read meanwhile) loads it again; other lists keep their cache.
+    unmount();
+    renderWithProviders(<LiveRegionProvider><FeedList scope="all" filter="history" view="stream" /></LiveRegionProvider>, { api, queryClient });
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(2));
+  });
+
   it('an item the API gives no title reads "Untitled post"; thumbnails load lazily', async () => {
     setup();
     expect(await screen.findByRole('link', { name: 'Untitled post' })).toBeInTheDocument();

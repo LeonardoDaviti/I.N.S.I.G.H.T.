@@ -69,10 +69,50 @@ describe('ReaderPage', () => {
     expect(screen.getByRole('radio', { name: 'Unread' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('Show is Unread / Later / Kept / All (issue 0022)', async () => {
+  it('Show is Unread / Later / Kept / All / History (issues 0022, 0052)', async () => {
     render(base({ getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(1) })])) }));
     const show = await screen.findByRole('radiogroup', { name: 'Show' });
-    expect(within(show).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['Unread', 'Later', 'Kept', 'All']);
+    expect(within(show).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['Unread', 'Later', 'Kept', 'All', 'History']);
+  });
+
+  it('History asks for what you opened, by the day you opened it, without the unread count (issue 0052)', async () => {
+    const user = userEvent.setup();
+    // Local noon, `days` ago: in its day whatever the hour the test runs.
+    const at = (days: number) => {
+      const date = new Date();
+      date.setHours(12, 0, 0, 0);
+      date.setDate(date.getDate() - days);
+      return date.toISOString();
+    };
+    const getFeed = vi.fn().mockImplementation(({ filter }: { filter: string }) => Promise.resolve(feedPage(filter === 'history'
+      ? [
+        // A week-old post opened today, then a post opened yesterday.
+        feedItem({ id: ID(1), title: 'Opened today', sort_at: at(0), opened_at: at(0), published_at: at(7), read_at: at(0) }),
+        feedItem({ id: ID(2), title: 'Opened yesterday', sort_at: at(1), opened_at: at(1), published_at: at(1), read_at: at(1) }),
+      ]
+      : [feedItem({ id: ID(3) })])));
+    render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue({ total: 1890, by_source: {}, by_folder: {} }) }));
+    await screen.findAllByRole('article');
+    await user.click(screen.getByRole('radio', { name: 'History' }));
+    await screen.findByText('Opened yesterday');
+    expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ filter: 'history' }));
+    expect(screen.getByText('Today')).toBeInTheDocument();
+    expect(screen.getByText('Yesterday')).toBeInTheDocument();
+    // The row's time column is when you opened it; the week-old post says when it was published.
+    const today = screen.getByRole('article', { name: 'Opened today' });
+    expect(within(today).getByText(/published/)).toBeInTheDocument();
+    expect(today.querySelector('time')).toHaveAttribute('dateTime', at(0));
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/unread/);
+    // The rail keeps History, so a track or a source opens on what you read there.
+    const main = screen.getAllByRole('link').find((link) => link.getAttribute('href')?.startsWith('/?'));
+    expect(main).toHaveAttribute('href', '/?filter=history');
+  });
+
+  it('an empty History says what fills it (issue 0052)', async () => {
+    const getFeed = vi.fn().mockResolvedValue(feedPage([]));
+    render(base({ getFeed, getUnreadCounts: vi.fn().mockResolvedValue({ total: 0, by_source: {}, by_folder: {} }) }), `/read/source/${ID(9)}?filter=history`);
+    expect(await screen.findByText('Posts you open show up here')).toBeInTheDocument();
+    expect(getFeed).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${ID(9)}`, filter: 'history' }));
   });
 
   it('Show kept (?filter=starred) drops the scope’s unread count above the kept list (issues 0027, 0022)', async () => {

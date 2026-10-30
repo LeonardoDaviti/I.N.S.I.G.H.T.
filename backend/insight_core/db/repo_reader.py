@@ -11,7 +11,8 @@ Every feed is ordered by the sort key `(COALESCE(surfaced_at, published_at, fetc
 descending, which `posts_feed_order_idx` / `posts_source_feed_order_idx` serve directly (no Sort
 node). surfaced_at (0037, issue 0039) is set only for a page that was new to you long after its
 date, or a watched page that changed: it sorts at when it reached you, every other post as before;
-the Later list (issue 0022) instead by when each post was saved, oldest first.
+the Later list (issue 0022) instead by when each post was saved, oldest first; History (issue
+0052) by when you last opened or read each post, newest first, from the interaction log.
 "Unread" means no read_at, over every post the source ever gave us: an archived post from
 2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
 grouped "all" view) back to the last N days; unset or 0 means no window.
@@ -33,9 +34,9 @@ from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.post_fields import display_title
 
-FeedFilter = Literal["all", "unread", "later", "starred", "updated"]   # starred is Keep ("Kept")
+FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
-FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred", "updated")
+FEED_FILTERS: Tuple[str, ...] = ("all", "unread", "later", "starred", "updated", "history")
 FEED_VIEWS: Tuple[str, ...] = ("stream", "by_source")
 SCOPE_KINDS: Tuple[str, ...] = ("all", "folder", "source")
 
@@ -58,6 +59,18 @@ MINUTES_SQL = (
     " THEN ceil((p.metadata->>'duration_seconds')::numeric / 60) ELSE 0 END"
     f" ELSE ceil(COALESCE(length(p.content), 0)::numeric / {CHARS_PER_READING_MINUTE}) END"
 )
+# History (issue 0052): what you opened or read, never what "mark read" cleared in bulk.
+HISTORY_SQL = (
+    "EXISTS (SELECT 1 FROM post_interactions i WHERE i.post_id = p.id"
+    " AND i.interaction_type IN ('opened', 'reading_session'))"
+)
+# Each post once, at its last open or reading session.
+HISTORY_CTE = (
+    "SELECT post_id, MAX(created_at) AS opened_at FROM post_interactions"
+    " WHERE interaction_type IN ('opened', 'reading_session') GROUP BY post_id"
+)
+# Lists that ignore "Show in Main feed: off": a post you saved, or opened, is yours whatever its source.
+_EVERY_SOURCE_FILTERS = ("later", "history")
 
 
 def unread_window_days_from_env() -> Optional[int]:
@@ -259,7 +272,7 @@ class ReaderRepository:
     @staticmethod
     def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
         if scope.kind == "all":
-            return ("TRUE" if filter == "later" else "s.in_main_digest"), []
+            return ("TRUE" if filter in _EVERY_SOURCE_FILTERS else "s.in_main_digest"), []
         if scope.kind == "folder":
             return "p.source_id IN (SELECT sf.source_id FROM source_folders sf WHERE sf.folder_id = %s)", [scope.id]
         return "p.source_id = %s", [scope.id]
@@ -274,6 +287,8 @@ class ReaderRepository:
             return "rs.later_at IS NOT NULL", []
         if filter == "updated":   # a watched page that changed (issue 0039), latest change first
             return "p.metadata ? 'page_update'", []
+        if filter == "history":   # opened or read (issue 0052); the stream orders it by last open
+            return HISTORY_SQL, []
         if filter == "all":
             return "TRUE", []
         raise ValueError(f"invalid feed filter: {filter!r}")
@@ -281,13 +296,14 @@ class ReaderRepository:
     # ---- the post listing ----------------------------------------------------------
 
     @staticmethod
-    def _bounds_sql(since: datetime | None, until: datetime | None) -> Tuple[str, List[Any]]:
+    def _bounds_sql(since: datetime | None, until: datetime | None, key: str = SORT_KEY
+                    ) -> Tuple[str, List[Any]]:
         where, params = ["TRUE"], []
         if since is not None:
-            where.append(f"{SORT_KEY} >= %s")
+            where.append(f"{key} >= %s")
             params.append(since)
         if until is not None:
-            where.append(f"{SORT_KEY} < %s")
+            where.append(f"{key} < %s")
             params.append(until)
         return " AND ".join(where), params
 
@@ -297,7 +313,49 @@ class ReaderRepository:
         since, until = query.bounds(now)
         if query.view == "by_source":
             return self._by_source(cur, query, since=since, until=until)
+        if query.filter == "history":
+            return self._history(cur, query, since=since, until=until)
         return self._stream(cur, query, since=since, until=until)
+
+    def _history(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
+                 ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
+        """What you opened or read (issue 0052): each post once, latest open first.
+
+        A row's `sort_at` is that last open, so the day headers, the time column and the
+        cursor all follow it; `opened_at` says so by name. A time bound bounds the open.
+        """
+        scope_sql, params = self._scope_sql(query.scope, "history")
+        bounds_sql, bounds_params = self._bounds_sql(since, until, "h.opened_at")
+        where = [scope_sql, bounds_sql]
+        params += bounds_params
+        if query.cursor is not None:
+            where.append("(h.opened_at, p.id) < (%s, %s::uuid)")
+            params += [query.cursor.sort_at, query.cursor.post_id]
+        limit = query.limit
+        cur.execute(
+            f"""
+            WITH h AS ({HISTORY_CTE})
+            SELECT {_ITEM_COLUMNS}, h.opened_at
+            FROM h
+            JOIN posts p ON p.id = h.post_id
+            JOIN sources s ON s.id = p.source_id
+            LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            WHERE {' AND '.join(where)}
+            ORDER BY h.opened_at DESC, p.id DESC
+            LIMIT %s
+            """,
+            [*params, limit + 1],
+        )
+        rows = cur.fetchall()
+        items = []
+        for row in rows[:limit]:
+            item = _item(row)
+            item["sort_at"] = item["opened_at"] = row[-1]
+            items.append(item)
+        next_cursor = None
+        if len(rows) > limit:
+            next_cursor = FeedCursor(items[-1]["opened_at"], items[-1]["id"])
+        return items, next_cursor
 
     def _stream(self, cur: Cursor, query: FeedQuery, *, since: datetime | None, until: datetime | None
                 ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
