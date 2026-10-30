@@ -17,6 +17,27 @@ SENTENCE_END_RE = re.compile(r"[.!?…](?=\s|$)")
 TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.|\[(?:…|\.\.\.)\])\s*$")
 
 
+_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
+
+
+def _glued_first_line(cut: str, content: str | None) -> str | None:
+    """A cut title that is the body's start with its line breaks dropped (the Telegram bridge joins
+    "…у SpaceX" and "Датацентр…" into "SpaceXДатацентр"): the body up to the first space the title
+    lacks, which is where the post's first line ended. None when the title keeps every space."""
+    title, body = clean_text(cut), clean_text(content)
+    i = j = 0
+    while i < len(title) and j < len(body):
+        if title[i] == body[j]:
+            i, j = i + 1, j + 1
+        elif body[j].isspace() and not title[i].isspace():
+            if len(_WORD_RE.findall(body[:j])) >= 2:
+                return body[:j].rstrip()
+            j += 1   # a space after a leading emoji or one word ("🌸 Релизим"), not a line's end
+        else:
+            return None
+    return None
+
+
 def display_title(title: str | None, content: str | None) -> str:
     """The title the feed and the post page show; the stored title is never changed.
 
@@ -28,11 +49,12 @@ def display_title(title: str | None, content: str | None) -> str:
     """
     stored = (title or "").strip()
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
+    glued = _glued_first_line(cut, content) if cut != stored and cut else None
     from_body = not stored or (
         cut != stored and bool(cut) and clean_text(content).startswith(clean_text(cut))
     )
     text = content if from_body else stored
-    line = next((plain for plain in (clean_text(raw) for raw in (text or "").splitlines()) if plain), "")
+    line = glued or next((plain for plain in (clean_text(raw) for raw in (text or "").splitlines()) if plain), "")
     if len(line) <= TITLE_MAX_CHARS:
         return line
     sentence = SENTENCE_END_RE.search(line, TITLE_MIN_SENTENCE_CHARS - 1)

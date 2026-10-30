@@ -110,6 +110,21 @@ class DisplayTitleTests(unittest.TestCase):
             self.assertEqual(display_title(cut, body),
                              "🤖 Забавный диалог произошел у канцлера Германии Мерца с Хуангом насчет «суверенного ей».")
 
+    def test_a_title_the_bridge_glued_from_two_lines_ends_where_the_first_line_did(self):
+        """Server data, 2026-10-30: the Telegram bridge joins a post's lines with no space ("SpaceXДатацентр"),
+        the stored body keeps it; 3,360 titles. The first line ends where the space is missing."""
+        body = "Anthropic арендуют Colossus у SpaceX Датацентр Маска на 200+ тысяч видеокарт в итоге оказался не нужен"
+        self.assertEqual(display_title("Anthropic арендуют Colossus у SpaceXДатацентр Маска на 200+ тысяч [...]", body),
+                         "Anthropic арендуют Colossus у SpaceX")
+        body = "Mistral выпустили Le Chaton Fat Le Chonk Mistral Large 4 это модель на триллион параметров"
+        self.assertEqual(display_title("Mistral выпустили Le Chaton Fat Le ChonkMistral Large 4 это [...]", body),
+                         "Mistral выпустили Le Chaton Fat Le Chonk")
+        self.assertEqual(display_title("🌸Релизим Muse Glimmer 30B 🌸Впервые за [...]",
+                                       "🌸 Релизим Muse Glimmer 30B 🌸 Впервые за долгое время"),
+                         "🌸 Релизим Muse Glimmer 30B 🌸", "a leading emoji's space is not the line's end")
+        self.assertEqual(display_title("A short note [...]", "A short note that goes on"), "A short note that goes on",
+                         "a cut title with every space kept is the body's first line, as before")
+
     def test_plain_text_is_never_read_as_html(self):
         # Stored titles and bodies are plain text, already decoded: "<T>" is text, not a tag.
         self.assertEqual(display_title("Option<T> in Rust", ""), "Option<T> in Rust")
