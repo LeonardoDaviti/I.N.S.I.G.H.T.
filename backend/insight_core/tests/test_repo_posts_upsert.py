@@ -108,6 +108,47 @@ class UpsertPostCollisionTests(unittest.TestCase):
         self.assertEqual(post_id, same_id)
         self.assertFalse(inserted_again, "second upsert of the same url must be an update")
 
+    # ---- issue 0049: one post, one address ----
+
+    def _url_of(self, post_id: str) -> str:
+        self.cur.execute("SELECT url FROM posts WHERE id = %s", (post_id,))
+        return self.cur.fetchone()[0]
+
+    def test_another_form_of_the_url_updates_the_first_row(self):
+        first = "https://simon.test/2026/Aug/10/openclaw/#atom-everything"
+        post_id, inserted = self.repo.upsert_post(self.cur, self._post(first), self.source_a)
+        self.assertTrue(inserted)
+        for form in ("https://simon.test/2026/Aug/10/openclaw/",
+                     "https://simon.test/2026/Aug/10/openclaw/?utm_source=rss",
+                     "http://www.simon.test/2026/Aug/10/openclaw"):
+            same_id, inserted = self.repo.upsert_post(self.cur, self._post(form, title="New"), self.source_a)
+            self.assertEqual((same_id, inserted), (post_id, False), form)
+        self.cur.execute("SELECT count(*) FROM posts WHERE source_id = %s", (self.source_a,))
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        self.assertEqual(self._url_of(post_id), first, "the kept row keeps its url")
+        self.assertTrue(self._transaction_is_usable())
+
+    def test_address_fragments_stay_two_posts(self):
+        one, _ = self.repo.upsert_post(self.cur, self._post("https://app.test/#!/post/1"), self.source_a)
+        two, inserted = self.repo.upsert_post(self.cur, self._post("https://app.test/#!/post/2"), self.source_a)
+        self.assertTrue(inserted)
+        self.assertNotEqual(one, two)
+
+    def test_same_exact_url_on_another_source_updates_the_first_row(self):
+        post_id, _ = self.repo.upsert_post(self.cur, self._post("https://x.test/shared"), self.source_a)
+        same_id, inserted = self.repo.upsert_post(self.cur, self._post("https://x.test/shared"), self.source_b)
+        self.assertEqual((same_id, inserted), (post_id, False))
+        self.cur.execute("SELECT source_id::text FROM posts WHERE id = %s", (post_id,))
+        self.assertEqual(self.cur.fetchone()[0], self.source_a, "the row stays with its source")
+
+    def test_another_form_on_another_source_updates_the_first_row(self):
+        post_id, _ = self.repo.upsert_post(self.cur, self._post("https://x.test/moved/#top"), self.source_a)
+        same_id, inserted = self.repo.upsert_post(
+            self.cur, self._post("https://x.test/moved", external_id="B1"), self.source_b
+        )
+        self.assertEqual((same_id, inserted), (post_id, False))
+        self.assertTrue(self._transaction_is_usable())
+
     # ---- the 2026-07-22 incident ----
 
     def test_same_external_id_at_a_new_url_does_not_raise(self):

@@ -452,5 +452,102 @@ class GwernNoiseMigrationTests(unittest.TestCase):
             conn.close()
 
 
+@unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
+class OnePostOneAddressMigrationTests(unittest.TestCase):
+    """0038 merges the posts stored twice under one normalized_url (issue 0049)."""
+
+    @requires_test_db
+    def test_0038_merges_copies_and_keeps_the_owners_state(self):
+        sql = (MIGRATIONS_DIR / "0038_one_post_one_address.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            # The copies predate the index; this transaction is rolled back.
+            cur.execute("DROP INDEX posts_normalized_url_unique")
+            source = insert_scratch_source(cur)
+            tag = os.urandom(4).hex()
+            base = f"https://simon.test/{tag}"
+            posts = {}
+            for name, url, normalized, days_ago in [
+                ("only_new_old", f"{base}/a/#atom-everything", f"{base}/a", 2),
+                ("only_new_new", f"{base}/a/", f"{base}/a", 1),
+                ("both_old", f"{base}/b/#atom-everything", f"{base}/b", 2),
+                ("both_new", f"{base}/b/", f"{base}/b", 1),
+                ("none_old", f"{base}/c/#atom-everything", f"{base}/c", 2),
+                ("none_new", f"{base}/c/?utm_source=rss", f"{base}/c", 1),
+                # Stored by the old normalizer: http kept, an address fragment dropped.
+                ("http_old", f"http://www.simon.test/{tag}/d", f"http://simon.test/{tag}/d", 2),
+                ("http_new", f"{base}/d", f"{base}/d", 1),
+                ("spa_1", f"{base}/#!/post/1", f"{base}/", 2),
+                ("spa_2", f"{base}/#!/post/2", f"{base}/", 1),
+            ]:
+                cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, fetched_at) "
+                            "VALUES (%s, %s, %s, 't', 'c', now() - make_interval(days => %s)) RETURNING id",
+                            (source, url, normalized, days_ago))
+                posts[name] = cur.fetchone()[0]
+            cur.execute("INSERT INTO post_reader_state (post_id, read_at) VALUES (%s, now())",
+                        (posts["only_new_new"],))
+            cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'opened')",
+                        (posts["only_new_new"],))
+            cur.execute("INSERT INTO post_watch (post_id, source_id, text_hash, next_check_at) "
+                        "VALUES (%s, %s, 'h', now())", (posts["only_new_old"], source))
+            cur.execute("INSERT INTO post_reader_state (post_id, read_at, resume_block, resume_blocks) "
+                        "VALUES (%s, now(), 3, 10)", (posts["both_old"],))
+            cur.execute("INSERT INTO post_reader_state (post_id, later_at, resume_block, resume_blocks) "
+                        "VALUES (%s, now(), 7, 10)", (posts["both_new"],))
+            cur.execute("INSERT INTO post_notes (post_id, notes_markdown) VALUES (%s, 'my note')",
+                        (posts["both_new"],))
+
+            cur.execute(sql)
+
+            cur.execute("SELECT id FROM posts WHERE id = ANY(%s)", (list(posts.values()),))
+            left = {r[0] for r in cur.fetchall()}
+            kept = {name for name, post_id in posts.items() if post_id in left}
+            self.assertEqual(kept, {"only_new_new", "both_old", "none_old", "http_old", "spa_1", "spa_2"})
+            cur.execute("SELECT url FROM posts WHERE id = %s", (posts["both_old"],))
+            self.assertEqual(cur.fetchone(), (f"{base}/b/#atom-everything",), "the kept row keeps its url")
+            cur.execute("SELECT normalized_url FROM posts WHERE id = ANY(%s) ORDER BY url",
+                        ([posts["spa_1"], posts["spa_2"]],))
+            self.assertEqual([r[0] for r in cur.fetchall()], [f"{base}/#!/post/1", f"{base}/#!/post/2"])
+
+            cur.execute("SELECT read_at IS NOT NULL FROM post_reader_state WHERE post_id = %s",
+                        (posts["only_new_new"],))
+            self.assertEqual(cur.fetchone(), (True,))
+            cur.execute("SELECT count(*) FROM post_interactions WHERE post_id = %s", (posts["only_new_new"],))
+            self.assertEqual(cur.fetchone(), (1,))
+            cur.execute("SELECT text_hash FROM post_watch WHERE post_id = %s", (posts["only_new_new"],))
+            self.assertEqual(cur.fetchone(), ("h",), "the page watch moves to the kept row")
+            cur.execute("SELECT read_at IS NOT NULL, later_at IS NOT NULL, resume_block, resume_blocks "
+                        "FROM post_reader_state WHERE post_id = %s", (posts["both_old"],))
+            self.assertEqual(cur.fetchone(), (True, True, 7, 10), "read, Later and the furthest position")
+            cur.execute("SELECT notes_markdown FROM post_notes WHERE post_id = %s", (posts["both_old"],))
+            self.assertEqual(cur.fetchone(), ("my note",))
+
+            # Every table pointing at posts is one the migration merges; a new one needs a look.
+            cur.execute("SELECT conrelid::regclass::text FROM pg_constraint "
+                        "WHERE contype = 'f' AND confrelid = 'posts'::regclass")
+            self.assertEqual({r[0] for r in cur.fetchall()},
+                             {"post_reader_state", "post_notes", "post_interactions", "post_watch"})
+            for table in ("post_reader_state", "post_interactions", "post_notes", "post_watch"):
+                cur.execute(f"SELECT count(*) FROM {table} t WHERE NOT EXISTS "
+                            "(SELECT 1 FROM posts p WHERE p.id = t.post_id)")
+                self.assertEqual(cur.fetchone()[0], 0, f"{table} has no orphans")
+
+            def snapshot():
+                cur.execute("SELECT p.id, p.normalized_url, r.read_at, r.later_at, r.resume_block, "
+                            "n.notes_markdown FROM posts p "
+                            "LEFT JOIN post_reader_state r ON r.post_id = p.id "
+                            "LEFT JOIN post_notes n ON n.post_id = p.id WHERE p.source_id = %s ORDER BY p.id",
+                            (source,))
+                return cur.fetchall()
+
+            before = snapshot()
+            cur.execute(sql)  # a second run changes nothing
+            self.assertEqual(snapshot(), before)
+        finally:
+            conn.rollback()
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

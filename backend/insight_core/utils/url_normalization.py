@@ -88,7 +88,9 @@ def _normalize_url(value: str | None) -> NormalizedURL:
         host = host[4:]
     path = _normalize_path(parsed.path, host, parsed.query)
     query = _normalize_query(host, parsed.query, parsed.path)
-    fragment = ""
+    # A fragment is dropped (#atom-everything, #comments) unless it is the page's own address:
+    # a single-page site routes on #/post/1 or #!/post/1.
+    fragment = parsed.fragment if parsed.fragment[:1] in ("/", "!") else ""
 
     if host == "youtube.com":
         video_id = _extract_youtube_video_id(parsed)
@@ -105,7 +107,8 @@ def _normalize_url(value: str | None) -> NormalizedURL:
         netloc = f"{host}:{parsed.port}"
 
     canonical = urlunparse((scheme, netloc, path, "", query, fragment))
-    normalized = canonical
+    # http and https name the same post: a source moving to https must not save it again.
+    normalized = urlunparse(("https" if scheme == "http" else scheme, netloc, path, "", query, fragment))
     return NormalizedURL(canonical, normalized, host)
 
 
