@@ -57,6 +57,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | in progress, paused (v9.7): branch `issue-0050-one-story-many-sources` at 884448a, unverified |
 | [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | spec (v9.7; needs 0050) |
 | [0052](0052-what-i-read.md) | What I read: find again a post I read yesterday | built, not deployed (v9.6) |
+| [0053](0053-reader-gaps.md) | Reader gaps: pages built from tables, code in figures, and the gaps nobody has listed yet | spec (v9.6) |
 
 ## Analysis archive
 
