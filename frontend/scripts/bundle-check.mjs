@@ -1,33 +1,41 @@
-// The reader's JS budget (Design Studio D8), run after `vite build`.
-//   node scripts/bundle-check.mjs           fail when the reader's initial JS grew >1% or the studio is not lazy
-//   node scripts/bundle-check.mjs --update  record the current size as the new baseline (say why in the commit)
+// The reader's download budget (Design Studio D8, issue 0061), run after `vite build`.
+//   node scripts/bundle-check.mjs           fail when the feed or the post route grew >1% over its baseline (gzip),
+//                                           went over its ceiling (110% of the v9.8 base), or the studio is not lazy
+//   node scripts/bundle-check.mjs --update  record the current sizes as the release's baseline (say why in the commit);
+//                                           the ceiling base is never touched
 // Rules: src/lib/bundleBudget.ts. Node >= 22.18 strips the TypeScript types.
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
-import { budgetProblems, initialFiles, readerBytes, READER_ENTRIES } from '../src/lib/bundleBudget.ts';
+import { budgetProblems, initialFiles, routeBytes, ROUTES } from '../src/lib/bundleBudget.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const baselinePath = join(root, 'bundle-baseline.json');
 
 const manifest = JSON.parse(readFileSync(join(dist, '.vite', 'manifest.json'), 'utf8'));
-const files = initialFiles(manifest, READER_ENTRIES);
-const sizes = Object.fromEntries(files.map((file) => [file, statSync(join(dist, file)).size]));
-const bytes = readerBytes(manifest, sizes);
+// Level 9, as Vite's build report measures gzip.
+const files = initialFiles(manifest, ROUTES.post);
+const sizes = Object.fromEntries(files.map((file) => [file, gzipSync(readFileSync(join(dist, file)), { level: 9 }).length]));
+const bytes = routeBytes(manifest, sizes);
+const saved = JSON.parse(readFileSync(baselinePath, 'utf8'));
 
 if (process.argv.includes('--update')) {
-  writeFileSync(baselinePath, `${JSON.stringify({ readerInitialJsBytes: bytes, files: files.length }, null, 2)}\n`);
-  console.log(`bundle baseline: the reader's initial JS is ${bytes} bytes in ${files.length} files`);
+  const ceilingBase = saved.ceilingBase ?? { release: 'v9.8', ...bytes };
+  writeFileSync(baselinePath, `${JSON.stringify({ gzipBytes: bytes, ceilingBase }, null, 2)}\n`);
+  console.log(`bundle baseline: the feed route is ${bytes.feed} gzip bytes, the post route ${bytes.post}`);
   process.exit(0);
 }
 
-const baselineBytes = JSON.parse(readFileSync(baselinePath, 'utf8')).readerInitialJsBytes;
-const problems = budgetProblems({ manifest, sizes, baselineBytes });
-const delta = (((bytes - baselineBytes) / baselineBytes) * 100).toFixed(2);
+const problems = budgetProblems({ manifest, sizes, baseline: saved.gzipBytes, ceilingBase: saved.ceilingBase });
 if (problems.length) {
   console.error(`bundle check failed:\n  ${problems.join('\n  ')}`);
   process.exit(1);
 }
-console.log(`bundle check: the reader's initial JS is ${bytes} bytes (${delta}% against ${baselineBytes}); the studio is its own chunk`);
+const delta = (route) => (((bytes[route] - saved.gzipBytes[route]) / saved.gzipBytes[route]) * 100).toFixed(2);
+console.log(
+  `bundle check (gzip): the feed route is ${bytes.feed} bytes (${delta('feed')}% against ${saved.gzipBytes.feed}), `
+  + `the post route ${bytes.post} (${delta('post')}% against ${saved.gzipBytes.post}); the studio is its own chunk`,
+);

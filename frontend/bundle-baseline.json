@@ -1,4 +1,11 @@
 {
-  "readerInitialJsBytes": 475065,
-  "files": 16
+  "gzipBytes": {
+    "feed": 169520,
+    "post": 308512
+  },
+  "ceilingBase": {
+    "release": "v9.8",
+    "feed": 169520,
+    "post": 308512
+  }
 }
