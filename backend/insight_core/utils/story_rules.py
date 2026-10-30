@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import account_key, bare, is_article, is_home, site_of
+from insight_core.utils.post_links import PLATFORM_SITES, account_key, bare, is_article, is_home, site_of
 
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
@@ -38,7 +38,12 @@ SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source'
 DISCOVER_MIN_VOICES = 3
 DISCOVER_MIN_ARTICLES = 2
 DISCOVER_ARTICLE_SHARE = 0.4
-PLATFORM_MIN_SEGMENTS = 8         # a host whose links reach 8+ first path segments, none half
+# The sites where INSIGHT follows one account, not the whole site: its source kinds (Reddit, X,
+# Telegram, YouTube) and the feed finder's platform feeds (GitHub, Medium). Measured on the
+# server's data, 2026-10-30: a test by "8+ first path segments" called 249 hosts platforms, split
+# publishers by year or section (nytimes.com/2026) and hid blogs whose posts sit at the root.
+DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube")))
+                               | {"github.com", "medium.com"})
 # First path segments of a platform that name a kind of page, not an account.
 NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "search", "hashtag", "intent",
                          "share", "home", "explore", "wiki", "posts", "in"})
@@ -267,20 +272,10 @@ def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden:
     following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
     keys or sites). `links`: (voice, address) for every kept outside link. Most voices first."""
     links = list(links)
-    segments: Dict[str, Counter] = defaultdict(Counter)
-    for _, url in links:
-        host, _, rest = bare(url).partition("/")
-        segments[host][rest.split("/")[0].lower()] += 1
-
-    def platform(host: str) -> bool:
-        seen = segments[host]
-        return len(seen) >= PLATFORM_MIN_SEGMENTS and seen.most_common(1)[0][1] < 0.5 * sum(seen.values())
-
-    platforms = {host for host in segments if platform(host)}
     found: Dict[str, Tuple[Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set()))
     for voice, url in links:
         host, _, rest = bare(url).partition("/")
-        if host in platforms:
+        if site_of(host) in DISCOVER_PLATFORMS:
             if rest.split("/")[0].lower() in NOT_ACCOUNT:
                 continue
             key = account_key(url)

@@ -176,3 +176,18 @@ On `insight_preview` it gives `7735 | 2546 | 466` (posts_with_links counts any l
 - **A frozen story** (begun more than 30 days ago) takes no new posts; a late copy of a month-old post starts a new story.
 - **Discover's platform test is measured:** a host with few links (fewer than 8 first segments) is treated as a site, so following one account there still hides the host.
 - A post that joins an old story under Show unread can lead it (it is the first unread report shown); nothing marks late shares of a story already read.
+
+## Real data (the server copy, 2026-10-30)
+Measured in the lab on a copy of the server's 41,543 posts (`backups/lab/`, `insight_lab`):
+- **Two bugs, fixed:**
+  - one LessWrong link whose "port" was a sentence made the URL parser raise, and the whole story job stopped: no stories at all on the server;
+  - a cited stored post with a one-segment address (`blog.cloudflare.com/yandex-outage`) was taken for a profile page, so citations of it never joined.
+- **The Cloudflare scenario passes:** adding the Cloudflare blog folds @denissexy's post (2.8 h later, citation) under Cloudflare's "Yandex outage" post. Every check a–g held.
+- **Stories:** 572, about 2% of Main-feed rows folded.
+  - Joins through links, text, titles and citations are precise.
+  - Joins through a roundup's first link are right about 85% of the time (34 of 40 sampled). The errors are multi-topic digests (AINews "not much happened today", weekly digests, "Links (N)").
+  - Two rules were tested: roundups join nothing, and digests (anchors in 2+ stories) join nothing. Each removed about as many right joins as wrong ones, so no change. Telling a digest from a single-topic post with many links needs to know what the post is about: Mark X's "same story?" check.
+- **Discover:** the "platform" test (8+ first path segments) fired on 249 hosts. It split publishers by year or section (nytimes.com/2026, reuters.com/world) and hid blogs whose posts sit at the root: blog.cloudflare.com, linked by 16 voices, was never suggested.
+  - It now uses the sites where INSIGHT follows one account: its kinds (Reddit, X, Telegram, YouTube) and the feed finder's platforms (GitHub, Medium).
+  - That removes 100+ fragments and keeps publishers whole. The article rule was right; it wasn't the cause.
+  - **Still noise:** web.archive.org, app links (claude.ai, chatgpt.com).

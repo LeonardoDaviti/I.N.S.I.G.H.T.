@@ -197,19 +197,25 @@ class DiscoverRulesTests(unittest.TestCase):
         self.assertEqual((len(found[0].voices), len(found[0].articles), found[0].links), (3, 2, 2))
 
     def test_a_platform_suggests_accounts(self):
-        links = []
-        for n in range(8):   # eight accounts: the host is a platform
-            links += self.links("social.example", ["v1"], [f"user{n}/status/1"])
-        links += self.links("social.example", ["v1", "v2", "v3"], ["karpathy/2026-10-a-long-post-here",
-                                                                  "karpathy/notes-on-a-new-model-today"])
-        links += self.links("social.example", ["v1", "v2", "v3"], ["status/what-a-day-it-has-been"])
+        links = self.links("x.com", ["v1", "v2", "v3"], ["karpathy/2026-10-a-long-post-here",
+                                                          "karpathy/notes-on-a-new-model-today"])
+        links += self.links("x.com", ["v1", "v2", "v3"], ["status/what-a-day-it-has-been"])
         found = suggestions(links, followed=set(), hidden=set())
-        self.assertEqual([s.key for s in found], ["social.example/karpathy"])
+        self.assertEqual([s.key for s in found], ["x.com/karpathy"])
+
+    def test_a_blog_with_posts_at_its_root_is_one_site(self):
+        """On the server's data blog.cloudflare.com (16 voices) was never suggested: its root-level
+        posts made it look like a platform of one-post "accounts". Publishers by year, likewise."""
+        links = []
+        for n in range(10):
+            links += self.links("blog.cloudflare.com", ["v1", "v2", "v3"], [f"post-number-{n}-about-something"])
+        links += self.links("nytimes.com", ["v1", "v2", "v3"], ["2026/10/01/tech/a-story-about-it",
+                                                                "2025/03/02/world/another-story-here"])
+        self.assertEqual(sorted(s.key for s in suggestions(links, followed=set(), hidden=set())),
+                         ["blog.cloudflare.com", "nytimes.com"])
 
     def test_on_a_platform_only_the_account_you_follow_is_followed(self):
         links = []
-        for n in range(8):   # t.me is a platform: links to eight channels
-            links += self.links("t.me", ["v1"], [f"channel{n}/1"])
         for channel in ("seeallochnaya", "denissexy"):
             links += self.links("t.me", ["v1", "v2", "v3"], [f"{channel}/2026-10-a-long-post-here",
                                                              f"{channel}/notes-on-a-new-model-today"])
