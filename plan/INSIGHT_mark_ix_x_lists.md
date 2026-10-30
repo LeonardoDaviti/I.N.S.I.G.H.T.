@@ -32,7 +32,8 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - "covered by" on the post page (0055);
   - search finds stories, with version names, folded results, News and Classics (0056);
   - links to stored posts open in INSIGHT (0057);
-  - known news isn't "new to you" (0058).
+  - known news isn't "new to you" (0058);
+  - Follow from Discover starts where your sources' links point, findings ranked by coverage (0060).
   - Classics are under discussion (0059).
 - **Mark IX is the groundwork for Mark X** (owner, 2026-10-30): search, post links and stories are the base that Mark X's dedup by meaning, entities, the first reporter and trends build on, not a second system.
 - **Only on a real case:** release updates (0024), native Bluesky and Mastodon, email-in.
