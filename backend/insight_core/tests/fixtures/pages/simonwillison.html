@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en-gb">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="https://simonwillison.net/2026/Jul/13/doomql/">
+<title>DOOMQL</title>
+
+<link rel="alternate" type="application/atom+xml" title="Atom" href="/atom/everything/">
+<link rel="stylesheet" type="text/css" href="/static/css/all.d8050490c5db.css">
+<link rel="webmention" href="https://webmention.io/simonwillison.net/webmention">
+<link rel="pingback" href="https://webmention.io/simonwillison.net/xmlrpc">
+<meta name="author" content="Simon Willison">
+<meta property="og:site_name" content="Simon Willison’s Weblog">
+
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://static.simonwillison.net/static/2026/doomql-datasette-app.png">
+<meta name="twitter:creator" content="@simonw">
+<meta property="og:url" content="https://simonwillison.net/2026/Jul/13/doomql/">
+<meta property="og:title" content="DOOMQL">
+<meta property="og:image" content="https://static.simonwillison.net/static/2026/doomql-datasette-app.png">
+<meta property="og:type" content="article">
+<meta property="og:description" content="Peter Gostev built this using GPT-5.6 Sol. This is a lot of fun: DOOMQL started with a deliberately unreasonable question: what if SQLite were the game engine, not merely the …">
+<meta property="og:updated_time" content="1783982081">
+
+
+
+
+
+</head>
+<body class="smallhead">
+
+<div id="smallhead">
+  <div id="smallhead-inner">
+    <h1><a href="/">Simon Willison’s Weblog</a></h1>
+    <a id="smallhead-about" href="/newsletters/">Newsletter</a>
+  </div>
+</div><!-- #smallhead -->
+
+
+<div id="sponsored-banner" class="sponsor-scheme-sky">
+  <div id="sponsored-banner-inner">
+    <strong class="sponsored-label">Sponsored by:</strong> WorkOS Airlock &mdash; intent-based access control for AI agents. <a class="sponsor-learn-more-label" href="https://10xn.link/simon-workos" rel="sponsored noopener" target="_blank">Request early access</a>
+  </div>
+</div>
+
+
+<div id="wrapper">
+<div id="primary">
+
+<div class="entry entryPage">
+
+
+<p class="mobile-date-eyebrow">13th July 2026 - Link Blog</p>
+
+<div data-permalink-context="/2026/Jul/13/doomql/">
+<p><strong><a href="https://github.com/petergpt/doomql">DOOMQL</a></strong> (<a href="https://twitter.com/petergostev/status/2076692164310884468" title="@petergostev">via</a>) Peter Gostev built this using GPT-5.6 Sol. This is a <em>lot</em> of fun: </p>
+<blockquote>
+<p>DOOMQL started with a deliberately unreasonable question: what if SQLite were the game engine, not merely the place where a game stores data?</p>
+<p>The result is a small, original Doom-like game in which SQL owns movement, collision, enemies, combat, progression and every RGB pixel on screen.</p>
+</blockquote>
+<p>It's implemented as a Python terminal script - I tried it out like this:</p>
+<pre><code>cd /tmp
+git clone https://github.com/petergpt/doomql
+cd doomql
+uv run host/doomql.py
+</code></pre>
+<p><img alt="Screenshot of a macOS terminal window titled &quot;doomql — python3.14 ◂ uv run host/doomql.py — 134×31&quot; showing a retro Doom-style game rendered as text-mode pixel art. The scene is a pixelated first-person corridor with gray paneled walls, dark red doors on the far left and right, a floating cyan-and-gold coin pickup on the right side, a white crosshair near the center, and a dark weapon barrel rising from the bottom center. A status bar below the scene reads &quot;HP 100/100 AMMO 037 SCORE 00225 INDEX MISSING TICK 0028450&quot;, followed by an orange line &quot;FIND THE INDEX TOKEN&quot; and a cyan controls line &quot;WASD MOVE J/L OR ARROWS TURN SPACE FIRE E USE P PAUSE CTRL-C EXIT&quot;." src="https://static.simonwillison.net/static/2026/doomql-window.png" /></p>
+<p>Here's <a href="https://github.com/petergpt/doomql/blob/main/sql/003_render.sql">the huge SQL query</a> that implements a full ray tracer in SQLite using a recursive CTE.</p>
+<p>Running the above script creates a <code>/tmp/doomql/.doomql/doomql.sqlite</code> SQLite database, which you can explore using Datasette like this:</p>
+<pre><code>uvx --prerelease=allow  --with datasette-apps datasette \
+  /tmp/doomql/.doomql/doomql.sqlite \
+  -p 4444 --root --secret 1 --internal internal.db
+</code></pre>
+<p>The <code>--with datasette-apps</code> option installs the new <a href="https://simonwillison.net/2026/Jun/18/datasette-apps/">Datasette Apps</a> plugin, which supports creating custom HTML+JavaScript apps that can run SQL queries directly within the Datasette interface.</p>
+<p>I created a new app, pasted the copy-paste prompt into Claude chat (Fable 5) <a href="https://claude.ai/share/c793280c-2ef1-4555-a7c2-31281abfdf78">and told it</a>:</p>
+<blockquote>
+<p><code>Build an app that displays the current state of the screen using the frame_pixels view with its x, y, r, g, b columns. have it refresh once a second.</code></p>
+</blockquote>
+<p>This got me a working HTML+JavaScript app inside Datasette that could reflect the current state while I played the game in my terminal. Then I added:</p>
+<blockquote>
+<p><code>add a minimap</code></p>
+</blockquote>
+<p>And now my Datasette App looks like this:</p>
+<p><img alt="Screenshot of a dark-themed web app running a retro Doom-style game rendered from SQL queries. The page header reads &quot;DOOMQL&quot; with buttons &quot;All apps&quot;, &quot;Edit app&quot;, &quot;Pin&quot;, and &quot;Full screen&quot;. Inside the game panel, the title &quot;DOOMQL&quot; sits above the subtitle &quot;auto-refreshing once a second · frame and tactical map straight from SQL&quot;. The left side shows a pixelated first-person corridor view with gray walls, dark red doors, a floating cyan-and-gold coin pickup, a white crosshair, and a weapon barrel at bottom center. A status bar below reads &quot;HP 100/100 AMMO 037 SCORE 00225 INDEX MISSING TICK 0027847&quot;. On the right, a panel titled &quot;TACTICAL MAP&quot; shows a top-down grid map with a player triangle, a red enemy circle, yellow pickup dots, red wall markers, and a green exit square, with a legend reading &quot;you&quot;, &quot;enemy&quot;, &quot;pickup&quot;, &quot;locked door&quot;, &quot;door&quot;, &quot;exit&quot;. Below the game view, an orange banner reads &quot;FIND THE INDEX TOKEN&quot;, followed by the cyan line &quot;READ-ONLY VIEWER · SELECT x, y, r, g, b FROM frame_pixels&quot;. At the bottom, a green &quot;RUNNING&quot; badge appears beside the stats &quot;160×54 · 8,640 pixels · 3 hostiles · query 89 ms · refreshing every 1 s&quot;." src="https://static.simonwillison.net/static/2026/doomql-datasette-app.png" /></p>
+<p>Here's <a href="https://gist.github.com/simonw/7c78184476fccd4b70b02f7f9048dffa">the HTML app code</a> - paste that into your own Datasette instance (using the <code>uvx --with datasette-apps</code> recipe from above) to try it yourself.</p>
+</div>
+<div class="entryFooter">Posted <a href="/2026/Jul/13/">13th July 2026</a> at 10:34 pm</div>
+<p class="edit-page-link" data-admin-url="/admin/blog/blogmark/9546/" style="display: none;"></p>
+
+</div>
+
+
+<div class="recent-articles">
+<h2>Recent articles</h2>
+<ul class="bullets">
+  
+    <li><a href="/2026/Oct/28/vibe-game-development/">The October inflection point for vibe game development</a> - 28th October 2026</li>
+  
+    <li><a href="/2026/Oct/20/battledrones/">Battle Drones - a vibe coded RTS with audio-based multiplayer</a> - 20th October 2026</li>
+  
+    <li><a href="/2026/Oct/12/python-3-15/">Hello Python 3.15, goodbye 3.10, and now I can use 3.11</a> - 12th October 2026</li>
+  
+    <li><a href="/2026/Oct/9/built-using-my-voice/">A new feature for my blog, built using my voice</a> - 9th October 2026</li>
+  
+</ul>
+</div>
+
+
+
+</div> <!-- #primary -->
+
+<div id="secondary">
+
+<div class="metabox">
+<p class="this-is">This is a <strong>link post</strong> by Simon Willison, posted on <a href="/2026/Jul/13/">13th July 2026</a>.</p>
+
+
+    
+        <a class="item-tag" href="/tags/games/" rel="tag">
+            games
+            <span>25</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/sql/" rel="tag">
+            sql
+            <span>117</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/sqlite/" rel="tag">
+            sqlite
+            <span>489</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai/" rel="tag">
+            ai
+            <span>2,303</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/datasette/" rel="tag">
+            datasette
+            <span>1,551</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/generative-ai/" rel="tag">
+            generative-ai
+            <span>2,043</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/llms/" rel="tag">
+            llms
+            <span>2,008</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai-assisted-programming/" rel="tag">
+            ai-assisted-programming
+            <span>407</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/gpt/" rel="tag">
+            gpt
+            <span>135</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/datasette-apps/" rel="tag">
+            datasette-apps
+            <span>9</span>
+        </a>
+    
+
+
+
+
+<section style="
+    /* .promo */
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    padding: 1rem 1.25rem;
+    /* .variant-a */
+    border: 2px solid #6c3eb9;
+  ">
+  <h3 style="
+      /* h3 */
+      margin: 0 0 0.5rem;
+      font-size: 1.25rem;
+    ">
+    Monthly briefing
+  </h3>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Sponsor me for <strong>$10/month</strong> and get a curated email digest of the month's most important LLM developments.
+  </p>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Pay me to send you less!
+  </p>
+  <a href="https://github.com/sponsors/simonw/" style="
+      /* a.button */
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      background: #6c3eb9;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: 600;
+    ">
+    Sponsor &amp; subscribe
+  </a>
+</section>
+  
+</div> <!-- .metabox -->
+
+</div> <!-- #secondary -->
+</div> <!-- #wrapper -->
+
+
+
+
+
+
+
+
+
+<div id="ft">
+    <ul>
+      <li><a href="/about/#disclosures">Disclosures</a></li>
+      <li><a href="/about/#about-site">Colophon</a></li>
+      <li>&copy;</li>
+      <li><a href="/2002/">2002</a></li>
+      <li><a href="/2003/">2003</a></li>
+      <li><a href="/2004/">2004</a></li>
+      <li><a href="/2005/">2005</a></li>
+      <li><a href="/2006/">2006</a></li>
+      <li><a href="/2007/">2007</a></li>
+      <li><a href="/2008/">2008</a></li>
+      <li><a href="/2009/">2009</a></li>
+      <li><a href="/2010/">2010</a></li>
+      <li><a href="/2011/">2011</a></li>
+      <li><a href="/2012/">2012</a></li>
+      <li><a href="/2013/">2013</a></li>
+      <li><a href="/2014/">2014</a></li>
+      <li><a href="/2015/">2015</a></li>
+      <li><a href="/2016/">2016</a></li>
+      <li><a href="/2017/">2017</a></li>
+      <li><a href="/2018/">2018</a></li>
+      <li><a href="/2019/">2019</a></li>
+      <li><a href="/2020/">2020</a></li>
+      <li><a href="/2021/">2021</a></li>
+      <li><a href="/2022/">2022</a></li>
+      <li><a href="/2023/">2023</a></li>
+      <li><a href="/2024/">2024</a></li>
+      <li><a href="/2025/">2025</a></li>
+      <li><a href="/2026/">2026</a></li>
+      <li>
+        <button id="theme-toggle" type="button" aria-label="Toggle theme">
+          <!-- Auto/System icon (default) -->
+          
+          <!-- Light icon -->
+          
+          <!-- Dark icon -->
+          
+        </button>
+      </li>
+    </ul>
+</div>
+
+
+
+
+
+
+
+
+</body>
+</html>

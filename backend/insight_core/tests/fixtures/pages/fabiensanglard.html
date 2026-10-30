@@ -1,0 +1,180 @@
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml"  title="RSS Feed for fabiensanglard.net" href="/rss.xml" />
+  
+  <title>How DOOM fire was done</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=12.0, minimum-scale=1.0, user-scalable=yes">
+</head>  
+  <body><br><center>
+    <div style="display: inline-block; vertical-align:middle;">
+<a href="/" class="title"><b>FABIEN SANGLARD'S WEBSITE</b><br>
+</a><hr/><div style="text-align: justify;display: inline-block; width: 100%;">
+
+<a class="title" href="mailto:fabiensanglard.net@gmail.com">CONTACT</a> &nbsp;&nbsp;&nbsp;<a class="title" href="/rss.xml">RSS</a> &nbsp;&nbsp;&nbsp;&nbsp;<a class="title" href="https://paypal.me/fabiensanglard">DONATE</a></div></div>
+
+</center><br><br>
+<div style="margin-bottom: 2ch;text-transform: none;">
+Dec 28, 2018</div>
+<div class='heading'>How DOOM fire was done</div><hr/>
+<p>
+  <canvas class="pixel" id="shower" width="400" height="316" style="width:40%;height:auto; margin-left: 2%; margin-bottom: 5px; float:right; border: 1px solid black;"></canvas>
+
+ The <a href="../gebbdoom">Game Engine Black Book: DOOM</a> features a whole chapter about DOOM console ports and the challenges they encountered. The utter failure of the 3DO, the difficulties of the Saturn due to its affine texture mapping, and the amazing "reverse-engineering-from- scratch" by Randy Linden on Super Nintendo all have rich stories to tell.<br/>
+ <br/>
+  Once heading towards disaster<a name="back_1" style="text-decoration: none;" href="#footnote_1"><sup>[1]</sup></a>, the Playstation 1 (PSX) devteam managed to rectify course to produce a critically and commercially acclaimed conversion. <a href="https://www.youtube.com/watch?v=p85npx14HUI">Final DOOM</a> was the most faithful port when compared to the PC version. The alpha blended colored sectors not only improved visual quality, they also made gameplay better by indicating the required key color. Sound was also improved via reverberation effects taking advantage of the PSX's Audio Processing Unit.<br/>
+ <br/>
+ The devteam did such a good job that they found themselves with a few extra CPU cycles they decided to use to generate animated fire both during both the <a href="https://www.youtube.com/watch?v=YJB0gfP-GRY&feature=youtu.be&t=10">intro</a> and the <a href="psx_screen_sky.png">gameplay</a>. Mesmerized, I tried to find out how it was done. After an initial calling found no answer, I was about to dust off my MIPS book to rip open the PSX executable when Samuel Villarreal replied on Twitter to tell me he had already reverse-engineered the Nintendo 64 version<a name="back_2" style="text-decoration: none;" href="#footnote_2"><sup>[2]</sup></a>. I only had to clean, simplify, and optimize it a little  bit.<br/>
+ <br/>
+ It was interesting to re-discover this classic demoscene effect; the underlying idea is similar to the first <a href="http://agilerepose.weebly.com/water-ripple.html">water ripple</a> many developers implemented as a programming kata in the 90's. The fire effect is a vibrant testimony to a time when judiciously picked palette colors combined with a simple trick were the only way to get things done.
+</p>
+
+
+<div class='heading'>Core idea</div><hr/><p style="margin-bottom: 2ch;">
+At its core, the fire effect relies on a simple array (a.k.a framebuffer) covering the whole screen. Each value in the framebuffer is within [0, 36]. These values are associated with a palette where colors range from white to black, using yellow, orange, and red along the way. The idea is to model the fire particle's temperature as it elevates and cools down.<br/>
+<br/>
+    <table width=100% border="1" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>
+            <td style="background-color: #070707">&nbsp;</td>
+            <td style="background-color: #1f0707">&nbsp;</td>
+            <td style="background-color: #2f0f07">&nbsp;</td>
+            <td style="background-color: #470f07">&nbsp;</td>
+            <td style="background-color: #571707">&nbsp;</td>
+            <td style="background-color: #671f07">&nbsp;</td>
+            <td style="background-color: #771f07">&nbsp;</td>
+            <td style="background-color: #8f2707">&nbsp;</td>
+            <td style="background-color: #9f2f07">&nbsp;</td>
+            <td style="background-color: #af3f07">&nbsp;</td>
+            <td style="background-color: #bf4707">&nbsp;</td>
+            <td style="background-color: #c74707">&nbsp;</td>
+
+            <td style="background-color: #DF4F07">&nbsp;</td>
+            <td style="background-color: #DF5707">&nbsp;</td>
+            <td style="background-color: #DF5707">&nbsp;</td>
+
+            <td style="background-color: #D75F07">&nbsp;</td>
+            <td style="background-color: #D7670F">&nbsp;</td>
+
+            <td style="background-color: #cf6f0f">&nbsp;</td>
+            <td style="background-color: #cf770f">&nbsp;</td>
+            <td style="background-color: #cf7f0f">&nbsp;</td>
+            <td style="background-color: #CF8717">&nbsp;</td>
+            <td style="background-color: #C78717">&nbsp;</td>
+            <td style="background-color: #C78F17">&nbsp;</td>
+            <td style="background-color: #C7971F">&nbsp;</td>
+            <td style="background-color: #BF9F1F">&nbsp;</td>
+            <td style="background-color: #BF9F1F">&nbsp;</td>
+            <td style="background-color: #BFA727">&nbsp;</td>
+            <td style="background-color: #BFA727">&nbsp;</td>
+            <td style="background-color: #BFAF2F">&nbsp;</td>
+            <td style="background-color: #B7AF2F">&nbsp;</td>
+            <td style="background-color: #B7B72F">&nbsp;</td>
+            <td style="background-color: #B7B737">&nbsp;</td>
+            <td style="background-color: #CFCF6F">&nbsp;</td>
+            <td style="background-color: #DFDF9F">&nbsp;</td>
+            <td style="background-color: #EFEFC7">&nbsp;</td>
+            <td style="background-color: #FFFFFF">&nbsp;</td>   
+        </tr>                         
+        </table>
+        <p style="margin-bottom: 1ch;">
+The framebuffer is initialized full black (with zeros) with a single line of white pixels at the bottom (36) which will be the "source" of the fire.<br/>
+<picture style="margin-bottom: 1ch;">
+    <source srcset="basis.webp" type="image/webp">
+  <img loading="lazy" src="basis.png" class="pixel" width="900" height="128" style="width: 100%; height: auto; margin-bottom: 2ch; margin-top: 2ch;"/>  </picture> <br/>
+ The array is draw on screen such that the top-left pixel is at array index zero and the bottom-right pixel is at index FIRE_HEIGHT * FIRE_WIDTH - 1. In other worlds, screen-space origin is at the top-left corner.
+<br/>
+<br/>
+For each pixel, the "heat" is propagated to the pixel directly above.
+<br/>
+
+
+<!-- // Done with tohtml.com -->
+
+<pre style="color:#000000;background:#ffffff;"><span style="color:#800000; font-weight:bold; ">function</span> doFire<span style="color:#808030; ">(</span><span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+    <span style="color:#800000; font-weight:bold; ">for</span><span style="color:#808030; ">(</span>x <span style="color:#808030; ">=</span> <span style="color:#008c00; ">0</span> <span style="color:#800080; ">;</span> x <span style="color:#808030; ">&lt;</span> FIRE_WIDTH<span style="color:#800080; ">;</span> x<span style="color:#808030; ">++</span><span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+        <span style="color:#800000; font-weight:bold; ">for</span> <span style="color:#808030; ">(</span>y <span style="color:#808030; ">=</span> <span style="color:#008c00; ">1</span><span style="color:#800080; ">;</span> y <span style="color:#808030; ">&lt;</span> FIRE_HEIGHT <span style="color:#800080; ">;</span> y<span style="color:#808030; ">++</span><span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+            spreadFire<span style="color:#808030; ">(</span>y <span style="color:#808030; ">*</span> FIRE_WIDTH <span style="color:#808030; ">+</span> x<span style="color:#808030; ">)</span><span style="color:#800080; ">;</span>
+        <span style="color:#800080; ">}</span>
+    <span style="color:#800080; ">}</span>
+ <span style="color:#800080; ">}</span>
+
+ <span style="color:#800000; font-weight:bold; ">function</span> spreadFire<span style="color:#808030; ">(</span>from<span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+    <span style="color:#800000; font-weight:bold; ">var</span> to <span style="color:#808030; ">=</span> from <span style="color:#808030; ">-</span> FIRE_WIDTH<span style="color:#800080; ">;</span>
+    firePixels<span style="color:#808030; ">[</span>to<span style="color:#808030; ">]</span> <span style="color:#808030; ">=</span> firePixels<span style="color:#808030; ">[</span>from<span style="color:#808030; ">]</span> <span style="color:#808030; ">-</span> <span style="color:#008c00; ">1</span><span style="color:#800080; ">;</span>
+ <span style="color:#800080; ">}</span>
+</pre>
+
+
+
+
+
+
+
+<p style="margin-bottom: 2ch;">
+Notice that the bottom screen line is never updated. This line, populated with zeros, is the constant "generator" of fire. This simple version with linear cooling (-=1) yields a boring uniform output.<br/>
+<picture>
+    <source srcset="propagate_boring.webp" type="image/webp">
+  <img loading="lazy" src="propagate_boring.png" class="pixel" width="900" height="140" style="width: 100%; height: auto; margin-bottom: 2ch; margin-top: 2ch;"/>  </picture> <br/>
+We can tweak the spreadFire() function a little bit and change how fast a heat points decays. Adding randomness works well.<br/>
+
+<!-- // Done with tohtml.com -->
+
+<pre style="color:#000000;background:#ffffff;"> <span style="color:#800000; font-weight:bold; ">function</span> spreadFire<span style="color:#808030; ">(</span>from<span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+    <span style="color:#800000; font-weight:bold; ">var</span> rand <span style="color:#808030; ">=</span> <span style="color:#797997; ">Math</span><span style="color:#808030; ">.</span><span style="color:#800000; font-weight:bold; ">round</span><span style="color:#808030; ">(</span><span style="color:#797997; ">Math</span><span style="color:#808030; ">.</span><span style="color:#800000; font-weight:bold; ">random</span><span style="color:#808030; ">(</span><span style="color:#808030; ">)</span> <span style="color:#808030; ">*</span> <span style="color:#008000; ">3.0</span><span style="color:#808030; ">)</span> <span style="color:#808030; ">&amp;</span> <span style="color:#008c00; ">3</span><span style="color:#800080; ">;</span>
+    <span style="color:#800000; font-weight:bold; ">var</span> to <span style="color:#808030; ">=</span> from <span style="color:#808030; ">-</span> FIRE_WIDTH<span style="color:#800080; ">;</span>
+    firePixels<span style="color:#808030; ">[</span>to<span style="color:#808030; ">]</span> <span style="color:#808030; ">=</span> firePixels<span style="color:#808030; ">[</span>from<span style="color:#808030; ">]</span> <span style="color:#808030; ">-</span> <span style="color:#808030; ">(</span>rand <span style="color:#808030; ">&amp;</span> <span style="color:#008c00; ">1</span><span style="color:#808030; ">)</span><span style="color:#800080; ">;</span>
+ <span style="color:#800080; ">}</span>
+</pre>
+
+
+
+
+
+
+<p style="margin-bottom: 2ch;">
+   
+  <img loading="lazy" src="variable_decay.png" class="pixel" width="900" height="128" style="width: 100%; height: auto; margin-bottom: 2ch; margin-top: 2ch;"/><br/>
+That's better. To improve the illusion further, the heat can be randomly propagated to go not only above but also left and right.<br/>
+
+
+<!-- // Done with tohtml.com -->
+
+<pre style="color:#000000;background:#ffffff;"> <span style="color:#800000; font-weight:bold; ">function</span> spreadFire<span style="color:#808030; ">(</span>from<span style="color:#808030; ">)</span> <span style="color:#800080; ">{</span>
+    <span style="color:#800000; font-weight:bold; ">var</span> rand <span style="color:#808030; ">=</span> <span style="color:#797997; ">Math</span><span style="color:#808030; ">.</span><span style="color:#800000; font-weight:bold; ">round</span><span style="color:#808030; ">(</span><span style="color:#797997; ">Math</span><span style="color:#808030; ">.</span><span style="color:#800000; font-weight:bold; ">random</span><span style="color:#808030; ">(</span><span style="color:#808030; ">)</span> <span style="color:#808030; ">*</span> <span style="color:#008000; ">3.0</span><span style="color:#808030; ">)</span> <span style="color:#808030; ">&amp;</span> <span style="color:#008c00; ">3</span><span style="color:#800080; ">;</span>
+    <span style="color:#800000; font-weight:bold; ">var</span> to <span style="color:#808030; ">=</span> from <span style="color:#808030; ">-</span> FIRE_WITH <span style="color:#808030; ">-</span> rand <span style="color:#808030; ">+</span> <span style="color:#008c00; ">1</span> <span style="color:#800080; ">;</span>
+    firePixels<span style="color:#808030; ">[</span>to<span style="color:#808030; ">]</span> <span style="color:#808030; ">=</span> firePixels<span style="color:#808030; ">[</span>from<span style="color:#808030; ">]</span> <span style="color:#808030; ">-</span> <span style="color:#808030; ">(</span>rand <span style="color:#808030; ">&amp;</span> <span style="color:#008c00; ">1</span><span style="color:#808030; ">)</span><span style="color:#800080; ">;</span>
+ <span style="color:#800080; ">}</span>
+</pre>
+
+
+
+<canvas class="pixel" id="frontbuffer" width="400" height="250" style="width:100%;border: 1px solid black; margin-left: auto; margin-right: auto;display: block"></canvas><br/>
+<p>
+Et voila! Notice that by adjusting how the fire propagates up, wind can also be simulated. I will leave that as an exercise for the readers who had the courage to read up to here.
+    
+
+
+
+<div class='heading'>Full Source Code</div><hr/>Samuel's <a href="https://codepen.io/svkaiser/pen/xXmOvY">version</a> (logically) looked a lot like assembly. If you want to take a look, here is a <a href="https://github.com/fabiensanglard/DoomFirePSX/blob/master/flames.html">cleaned up and simplified version</a>.
+<br/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<canvas class="pixel" id="mainCanvas" width="320" height="168" style="border: 1px solid black;" hidden=true></canvas>
+<img class="pixel" id='doom' src="doom.png" width="379" height="260" hidden=true/>
+
+
+</p>
+<div class='heading'>References</div><hr/><p id='paperbox' style='text-align:left;'><table><tbody style='vertical-align: top;'><tr><td class='ref' style='width:1ch;'><a name="footnote_1"></a><a href="#back_1">^</a></td><td  class='ref' style='width:4ch;font-variant-numeric: tabular-nums;text-align: right;white-space: pre;'>[1]</td><td style='width:100%;text-align:left;' class='ref'><a href="../gebbdoom">The full story is detailed in Game Engine Black Book: DOOM</a></td>
+</tr><tr><td class='ref' style='width:1ch;'><a name="footnote_2"></a><a href="#back_2">^</a></td><td  class='ref' style='width:4ch;font-variant-numeric: tabular-nums;text-align: right;white-space: pre;'>[2]</td><td style='width:100%;text-align:left;' class='ref'><a href="https://twitter.com/fabynou/status/936329655308632064">Twitter post, March 25th 2018</a></td>
+</tr></tbody></table></p> <hr>
+ <center>*

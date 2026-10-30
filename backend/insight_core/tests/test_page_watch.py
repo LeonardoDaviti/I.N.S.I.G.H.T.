@@ -177,6 +177,15 @@ class PageWatchKindTests(unittest.TestCase):
         self.assertEqual(titles["claude-2"], "Claude 2")
         self.assertEqual(titles["100k-context-windows"], "Claude 2 - the next model")
 
+    def test_an_og_title_that_names_the_site_or_repeats_the_title_tag(self):
+        # vuzix.com's blog: og:title is the shop's name; lesswrong.com: og:title is the <title>.
+        shop = ('<meta property="og:site_name" content="Vuzix Corporation"><meta property="og:title" content="Vuzix Corporation">'
+                "<title>How AI Workers Help &ndash; Vuzix Corporation</title>")
+        same = ('<meta property="og:title" content="AGI Ruin: A List of Lethalities — LessWrong">'
+                "<title>AGI Ruin: A List of Lethalities — LessWrong</title>")
+        self.assertEqual(page_watch.page_title(shop, "https://www.vuzix.com/blogs/x"), "How AI Workers Help")
+        self.assertEqual(page_watch.page_title(same, "https://www.lesswrong.com/posts/x"), "AGI Ruin: A List of Lethalities")
+
     def test_a_page_without_a_date_of_its_own_takes_the_lastmod(self):
         posts = run(self.kind().fetch_latest(source(), 10))
         undated = next(p for p in posts if p["url"].endswith("100k-context-windows"))

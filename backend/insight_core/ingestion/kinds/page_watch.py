@@ -309,9 +309,17 @@ def _written_date(text: str) -> Optional[datetime]:
 
 def page_title(page: str, url: str) -> str:
     """og:title, else <title>, else the first <h1>; less a " | Site" suffix: the og:site_name's
-    (or one that starts with it: "| Mistral AI" for "Mistral"), or any short one on a <title>."""
+    (or one that starts with it: "| Mistral AI" for "Mistral"), or any short one on a <title>.
+    An og:title that is only the site's name (a shop's blog: "Vuzix Corporation") is no
+    title; one that is the <title> word for word is read as the <title> (issue 0053)."""
     site = html.unescape(parsing.meta_content(page, "og:site_name")).strip()
     title, from_title_tag = html.unescape(parsing.meta_content(page, "og:title")).strip(), False
+    tag = TITLE_RE.search(page)
+    tag_title = parsing.strip_html(tag.group(1)) if tag else ""
+    if title and site and title.casefold() == site.casefold():
+        title = ""
+    if title and title == tag_title:
+        from_title_tag = True
     if not title:
         for pattern in (TITLE_RE, H1_RE):
             match = pattern.search(page)

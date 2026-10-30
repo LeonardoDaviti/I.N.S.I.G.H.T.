@@ -288,8 +288,9 @@ class ArticleExtractionTests(unittest.TestCase):
     def test_the_reading_fidelity_counts_the_articles_images_and_what_was_kept(self):
         # Related cards dropped as chrome never count (blogs.nvidia.com); an image with an
         # address the reader can't fetch (relative, with no base) counts as lost; a data:
-        # placeholder with no address is no image.
-        page = (f'<article><p>Share:</p>{PARAGRAPHS}<img src="/a.jpg"><img src="/b.jpg"><img src="/c.jpg">'
+        # placeholder with no address is no image. A short first sentence is the hint (a label
+        # like "Share:" is no longer left in: the edge rule drops it).
+        page = (f'<article><p>Read on, then.</p>{PARAGRAPHS}<img src="/a.jpg"><img src="/b.jpg"><img src="/c.jpg">'
                 '<img src="https://cdn.example/d.jpg"><img src="data:image/gif;base64,R0lG">'
                 '<div class="related-news-section"><img src="https://cdn.example/card.jpg"></div></article>')
         html, fidelity = parsing.read_article_page(page)
@@ -317,6 +318,132 @@ class ArticleExtractionTests(unittest.TestCase):
         self.assertTrue(text.endswith("AIL 1: Daniel dictated this post."), text[-80:])
         for chrome in ("Main Navigation", "telos", "Newsletter", "Related Reading", "Metaverse", "rights reserved"):
             self.assertNotIn(chrome, text)
+
+
+SENTENCES = " ".join(f"Sentence {n} of a paragraph the author wrote with no tag around it." for n in range(6))
+
+
+class ReaderGapsTests(unittest.TestCase):
+    """Issue 0053: the classes of page the reader missed, each as small as it can be."""
+
+    def test_loose_text_broken_by_double_brs_is_read_as_paragraphs(self):
+        # paulgraham.com: a layout table, one cell, a <font> around everything, <br><br> breaks.
+        page = ('<html><body><table><tr><td><img src="nav.gif" width="69" height="357"></td>'
+                '<td><font size="2" face="verdana">July 2023<br /><br />'
+                f'{SENTENCES}<br /><br />{SENTENCES} <a href="#f1n"><font>1</font></a><br /><br /></font></td></tr></table></body></html>')
+        html = parsing.extract_article_html(page)
+        self.assertEqual(html.count(f"<p>{SENTENCES}"), 2, html)
+        self.assertNotIn("<font size", html)
+        # incompleteideas.net: the same, straight in <body> under its headings.
+        page = f"<html><body><span><h1>The Bitter Lesson<br></h1>{SENTENCES}<br>\n<br>{SENTENCES}<br>\n<br></span></body></html>"
+        self.assertEqual(parsing.extract_article_html(page).count("<p>Sentence 0"), 2)
+
+    def test_an_element_without_a_double_br_keeps_its_text_out(self):
+        page = (f'<article><div class="byline">By Ada<br>Oct 30</div>{PARAGRAPHS}'
+                '<div class="address">1 Main St<br>Springfield</div></article>')
+        text = _text(page)
+        self.assertNotIn("By Ada", text)
+        self.assertNotIn("Springfield", text)
+
+    def test_a_lone_code_element_is_a_code_block(self):
+        # fasterthanli.me: <figure><code> with highlighting tags and no <pre>.
+        page = (f'<article>{PARAGRAPHS}<figure class="code-block"><span class="language-tag"></span>'
+                '<code class="scroll-wrapper"><a-k>package</a-k> main\n\n<a-k>func</a-k> main() {}\n</code></figure>'
+                '<p>Run <code>go build</code> first, then a one-liner:</p><div><code>make all</code></div></article>')
+        html = parsing.extract_article_html(page)
+        self.assertIn('<figure><pre><code class="scroll-wrapper">', html)
+        self.assertIn("package</a-k> main", html)
+        self.assertIn("<p>Run <code>go build</code> first", html)       # inline code stays inline
+        self.assertEqual(html.count("<pre>"), 1)                         # one line outside a figure is no block
+
+    def test_chrome_before_the_first_paragraph_goes_but_the_cover_stays(self):
+        # mistral.ai: an eyebrow, the title again, a date, "Back to Blog", a read time.
+        page = ('<html><head><title>Build agents | Mistral AI</title></head><body><article>'
+                '<p>Product</p><h1>Build agents</h1><p>May 27, 2025</p><p><a href="/news">Back to Blog</a></p>'
+                '<p>5 min read</p><figure><img src="https://cdn.example/cover.jpg" alt="Cover"></figure>'
+                f'{PARAGRAPHS}<h2>Get started.</h2><p>To get started, check out our <a href="/docs">docs</a>.</p>'
+                '<p>0%</p></article></body></html>')
+        html = parsing.extract_article_html(page)
+        text = parsing.strip_html(html)
+        for chrome in ("Product", "Build agents", "May 27", "Back to Blog", "5 min read", "0%"):
+            self.assertNotIn(chrome, text)
+        self.assertTrue(html.startswith('<figure><img src="https://cdn.example/cover.jpg"'), html[:80])
+        self.assertTrue(text.strip().endswith("check out our docs ."), text[-60:])
+
+    def test_a_link_to_another_site_opens_a_link_post(self):
+        # simonwillison.net: the post's subject, linked, comes first; it is the post's own.
+        page = (f'<article><p><a href="https://doomql.example/">DOOMQL</a> (<a href="https://x.example/via">via</a>)</p>'
+                f'{PARAGRAPHS}</article>')
+        self.assertTrue(_text(page).startswith("DOOMQL ( via )"))
+
+    def test_a_tail_of_related_links_goes_with_its_labels(self):
+        # 9to5google, techcrunch, tomsguide: "More on …" lists and related cards end the post.
+        related = "".join(f'<li><a href="https://news.example/2026/{n}/">Another story number {n} from us</a></li>'
+                          for n in range(3))
+        page = (f'<article>{PARAGRAPHS}<h2>More on Nest:</h2><ul>{related}</ul>'
+                '<p><a href="https://video.example/c/news"><i>Check out our channel for more news:</i></a></p></article>')
+        text = _text(page)
+        self.assertTrue(text.endswith(parsing.strip_html(PARAGRAPHS)[-30:]), text[-80:])
+        self.assertNotIn("More on Nest", text)
+        # Cards: a link around a picture and a title, an excerpt under it (github.blog, huggingface.co).
+        cards = "".join(f'<a href="/blog/post-{n}"><img src="https://cdn.example/{n}.jpg" alt=""><h3>Post {n}</h3></a>'
+                        f"<p>The excerpt of post {n}, a sentence or two long.</p>" for n in range(3))
+        page = f'<main><article>{PARAGRAPHS}</article><h2>Related posts</h2>{cards}</main>'
+        html = parsing.extract_article_html(page, base_url="https://news.example/post")
+        self.assertNotIn("Related posts", html)
+        self.assertNotIn("<img", html)
+        self.assertNotIn("excerpt", html)
+
+    def test_an_articles_own_closing_links_and_references_stay(self):
+        # nvidia: one closing link line; lilianweng: references that are mostly a linked title;
+        # vuzix: a whole sentence linking to another site; fabiensanglard: notes in a table.
+        refs = "".join(f'<p>[{n}] Author et al. <a href="https://arxiv.org/abs/{n}">“A Paper Title {n}.”</a> ICLR 2020.</p>'
+                       for n in range(3))
+        page = (f'<article>{PARAGRAPHS}<p>Watch the keynote <a href="https://www.example.com/k">in replay</a>.</p>{refs}'
+                '<p><a href="https://partner.example/ai">Learn more about how the partner is driving decisions in the '
+                'warehouse using AI.</a></p><p><a href="/blog">See All Posts</a></p></article>')
+        text = _text(page)
+        self.assertIn("Watch the keynote in replay", text)
+        self.assertIn("[2] Author et al.", text)
+        self.assertIn("Learn more about how the partner", text)
+        self.assertNotIn("See All Posts", text)
+
+    def test_notes_after_the_article_are_read(self):
+        # blog.google: the footnotes follow the <article>, linked from its superscripts.
+        page = (f'<main><article>{PARAGRAPHS}<p>A claim.<sup><a href="#footnote-1">1</a></sup></p></article>'
+                '<div id="footnote-1"><a href="#footnote-source-1">1</a><p>The source of the claim.</p></div>'
+                '<div id="comments"><p>A reader wrote this.</p></div></main>')
+        text = _text(page)
+        self.assertTrue(text.endswith("The source of the claim."), text[-60:])
+        self.assertNotIn("A reader wrote", text)
+
+    def test_a_chrome_name_around_the_article_does_not_drop_it(self):
+        # lesswrong.com: the post inside "MultiToCLayout-tableOfContents", comments outweighing it.
+        comments = "".join(f"<p>Comment {n}: {SENTENCES}</p>" for n in range(4))
+        page = (f'<body><div class="Layout-tableOfContents"><div class="PostsPage-postContent instapaper_body">'
+                f'{PARAGRAPHS}</div></div><div class="CommentsListSection-root">{comments}</div></body>')
+        text = _text(page)
+        self.assertTrue(text.startswith("Paragraph 0 of what the author wrote"), text[:60])
+        self.assertNotIn("Comment 1:", text)
+
+    def test_a_short_post_over_a_product_grid_is_still_the_post(self):
+        products = "".join(f'<li><a href="/products/p{n}">Argon {n} Smartglasses | solos AirGo 3</a></li><p>S/M</p>'
+                           for n in range(12))
+        summary = "<p>" + "A short summary of an article elsewhere, with a link to it. " * 4 + "</p>"
+        page = (f'<title>Which glasses?</title><article><h1>Which glasses?</h1>{summary}<h2>SHOP SMARTGLASSES</h2>'
+                f'<ul>{products}</ul></article>')
+        text = _text(page)
+        self.assertTrue(text.startswith("A short summary"), text[:40])
+        self.assertNotIn("Argon", text)
+
+    def test_icons_sized_by_their_style_a_table_of_no_words_and_a_bottom_nav_go(self):
+        page = (f'<article><div class="entry-meta"><img src="https://cdn.example/x.png" style="max-width:24px" alt="Share on X">'
+                f'</div>{PARAGRAPHS}<table><tr><td style="background:#f00">&nbsp;</td><td>&nbsp;</td></tr></table>'
+                '<div class="bottom-nav"><p>Here is another article just for you: a long teaser of it.</p></div></article>')
+        html = parsing.extract_article_html(page, base_url="https://blog.example/post")
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<table", html)
+        self.assertNotIn("another article", html)
 
 
 class _StubYouTube:
