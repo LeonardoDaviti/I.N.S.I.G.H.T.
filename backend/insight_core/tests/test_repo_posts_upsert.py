@@ -116,12 +116,14 @@ class UpsertPostCollisionTests(unittest.TestCase):
 
     def test_another_form_of_the_url_updates_the_first_row(self):
         first = "https://simon.test/2026/Aug/10/openclaw/#atom-everything"
-        post_id, inserted = self.repo.upsert_post(self.cur, self._post(first), self.source_a)
+        post_id, inserted = self.repo.upsert_post(
+            self.cur, self._post(first, title="OpenClaw &amp; friends"), self.source_a)
         self.assertTrue(inserted)
-        for form in ("https://simon.test/2026/Aug/10/openclaw/",
-                     "https://simon.test/2026/Aug/10/openclaw/?utm_source=rss",
-                     "http://www.simon.test/2026/Aug/10/openclaw"):
-            same_id, inserted = self.repo.upsert_post(self.cur, self._post(form, title="New"), self.source_a)
+        # The same title under post_title_key: case, whitespace and HTML entities aside.
+        for form, title in (("https://simon.test/2026/Aug/10/openclaw/", "OpenClaw & friends"),
+                            ("https://simon.test/2026/Aug/10/openclaw/?utm_source=rss", "  openclaw &#38;\nfriends "),
+                            ("http://www.simon.test/2026/Aug/10/openclaw", "OPENCLAW&nbsp;&amp; FRIENDS")):
+            same_id, inserted = self.repo.upsert_post(self.cur, self._post(form, title=title), self.source_a)
             self.assertEqual((same_id, inserted), (post_id, False), form)
         self.cur.execute("SELECT count(*) FROM posts WHERE source_id = %s", (self.source_a,))
         self.assertEqual(self.cur.fetchone()[0], 1)
@@ -133,6 +135,76 @@ class UpsertPostCollisionTests(unittest.TestCase):
         two, inserted = self.repo.upsert_post(self.cur, self._post("https://app.test/#!/post/2"), self.source_a)
         self.assertTrue(inserted)
         self.assertNotEqual(one, two)
+
+    def _count(self, source_id: str) -> int:
+        self.cur.execute("SELECT count(*) FROM posts WHERE source_id = %s", (source_id,))
+        return self.cur.fetchone()[0]
+
+    def test_daring_fireball_posts_under_one_address_stay_apart(self):
+        """The server's data: different posts at one normalized_url, told apart only by a
+        footnote fragment, a text fragment or utm_campaign. Their titles differ."""
+        shapes = [
+            [("https://df.test/2026/08/what_is_the_point_of_the_dma", "★ What Is the Point of the DMA?"),
+             ("https://df.test/2026/08/what_is_the_point_of_the_dma#fn1-2026-08-24",
+              "Footnote Regarding the GDPR and Cookie Permission Prompts")],
+            [("https://df.test/2026/09/the_iphones_18_pro", "★ The iPhones 18 Pro"),
+             ("https://df.test/2026/09/the_iphones_18_pro#:~:text=OR%20IS%20IT%20BIGGER",
+              "One More Thing About the iPhones 18 Pro: the Bigger/Smaller Dynamic Island")],
+            [("https://workos.test/auth-md?utm_source=df&utm_medium=newsletter&utm_campaign=q22026",
+              "Auth.md — an Open Protocol for Agent Registration From WorkOS"),
+             ("https://workos.test/auth-md?utm_source=df&utm_medium=newsletter&utm_campaign=q32026",
+              "WorkOS: Agents Can Now Sign Up for Your App"),
+             ("https://workos.test/auth-md?utm_source=df&utm_medium=newsletter&utm_campaign=q42026",
+              "[Sponsor] WorkOS: Let Agents Sign Up for Your App Without a Browser")],
+        ]
+        ids = []
+        for shape in shapes:
+            for url, title in shape:
+                post_id, inserted = self.repo.upsert_post(self.cur, self._post(url, title=title), self.source_a)
+                self.assertTrue(inserted, url)
+                ids.append(post_id)
+        self.assertEqual(len(set(ids)), 7)
+        self.assertEqual(self._count(self.source_a), 7)
+        # A re-fetch of each updates its own row and never another's.
+        for shape in shapes:
+            for url, title in shape:
+                post_id, inserted = self.repo.upsert_post(
+                    self.cur, self._post(url, title=title, content="Again"), self.source_a)
+                self.assertFalse(inserted, url)
+                self.assertEqual(self._url_of(post_id), url)
+        self.assertEqual(self._count(self.source_a), 7)
+        self.cur.execute("SELECT count(DISTINCT title) FROM posts WHERE source_id = %s", (self.source_a,))
+        self.assertEqual(self.cur.fetchone()[0], 7, "no post overwrote another's title")
+        self.assertTrue(self._transaction_is_usable())
+
+    def test_another_form_with_another_title_is_a_new_post(self):
+        one, _ = self.repo.upsert_post(self.cur, self._post("https://x.test/p", title="One"), self.source_a)
+        two, inserted = self.repo.upsert_post(self.cur, self._post("https://x.test/p#later", title="Two"),
+                                              self.source_a)
+        self.assertTrue(inserted)
+        self.assertNotEqual(one, two)
+        # A third form with the first title goes to the first post.
+        same, inserted = self.repo.upsert_post(self.cur, self._post("https://x.test/p/?utm_source=rss", title="one"),
+                                               self.source_a)
+        self.assertEqual((same, inserted), (one, False))
+
+    def test_the_address_lock_is_taken_only_for_a_url_not_stored(self):
+        self.repo.upsert_post(self.cur, self._post("https://x.test/locked"), self.source_a)
+
+        def address_locks() -> int:
+            self.cur.execute("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()")
+            return self.cur.fetchone()[0]
+
+        self.assertEqual(address_locks(), 1, "a new post locks its address until the commit")
+        self.conn.commit()
+        try:
+            self.repo.upsert_post(self.cur, self._post("https://x.test/locked"), self.source_a)
+            self.assertEqual(address_locks(), 0, "a re-fetch of a stored url takes no lock")
+        finally:
+            self.conn.rollback()
+            self.cur.execute("DELETE FROM posts WHERE url = 'https://x.test/locked'")
+            self.cur.execute("DELETE FROM sources WHERE id IN (%s, %s)", (self.source_a, self.source_b))
+            self.conn.commit()
 
     def test_same_exact_url_on_another_source_updates_the_first_row(self):
         post_id, _ = self.repo.upsert_post(self.cur, self._post("https://x.test/shared"), self.source_a)

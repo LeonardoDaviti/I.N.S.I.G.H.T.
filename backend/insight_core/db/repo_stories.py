@@ -54,7 +54,7 @@ class SourceFacts:
     """What the rules need of every source: its kind, its own site and its name."""
 
     def __init__(self, cur: Cursor) -> None:
-        cur.execute("SELECT id, platform, handle_or_url, COALESCE(settings->>'display_name', handle_or_url) FROM sources")
+        cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
         rows = cur.fetchall()
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
@@ -207,7 +207,8 @@ class StoriesRepository:
         cur.execute(
             """
             SELECT pl.post_id, pl.target_url, t.id
-            FROM post_links pl LEFT JOIN posts t ON t.normalized_url = pl.target_url
+            FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
+                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[])
             ORDER BY pl.post_id, pl.position
             """,

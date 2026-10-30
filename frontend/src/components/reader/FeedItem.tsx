@@ -49,7 +49,7 @@ function StoryPosts({ story, label, leadId, now }: { story: FeedStory; label: st
           {story.posts.map((post) => (
             <li key={post.id} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
               {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-              <span className="max-w-[40%] shrink-0 truncate" title={post.source_display_name}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
+              <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
               <span aria-hidden="true" className="shrink-0">·</span>
               <Link
                 to={postHref(post.id, null)}

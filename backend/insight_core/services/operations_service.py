@@ -570,7 +570,7 @@ class OperationsService:
                       jr.status,
                       jr.trigger,
                       jr.source_id,
-                      COALESCE(s.settings->>'display_name', s.handle_or_url),
+                      COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                       s.platform,
                       jr.message,
                       -- Only project the handful of payload keys the list view reads.
@@ -638,7 +638,7 @@ class OperationsService:
                       jr.status,
                       jr.trigger,
                       jr.source_id,
-                      COALESCE(s.settings->>'display_name', s.handle_or_url),
+                      COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url),
                       s.platform,
                       jr.message,
                       jr.payload,

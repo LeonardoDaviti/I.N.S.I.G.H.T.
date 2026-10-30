@@ -235,7 +235,7 @@ def _excerpt(content: str | None) -> str:
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
 _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, 4000), p.url, p.source_id,
-    COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform,
+    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update'
@@ -366,7 +366,7 @@ class ReaderRepository:
         cur.execute(
             f"""
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
-                   COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
+                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
@@ -545,7 +545,7 @@ class ReaderRepository:
                 GROUP BY p.source_id
             )
             SELECT g.source_id, g.newest_sort_at, g.n,
-                   COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform
+                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform
             FROM g JOIN sources s ON s.id = g.source_id
             WHERE {group_where}
             ORDER BY g.newest_sort_at DESC, g.source_id DESC

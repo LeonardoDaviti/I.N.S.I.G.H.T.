@@ -286,6 +286,27 @@ class NewsJobTests(unittest.TestCase):
         self.cur.execute("SELECT count(*) FROM story_posts WHERE post_id = ANY(%s::uuid[])", (self.fresh,))
         self.assertEqual(self.cur.fetchone()[0], 0, "a name never folds rows in the Main feed")
 
+    def test_a_source_without_a_name_is_named_by_its_address(self):
+        """An empty display name falls back like a missing one: the reader derives a name from the
+        address (sourceLabel), never a blank."""
+        from insight_core.db.repo_stories import SourceFacts
+        name = f"Quux{self.mark[:4]} 7"
+        empty, missing, named = self._source(""), self._source("x"), self._source("Gamma")
+        self.cur.execute("UPDATE sources SET settings = settings - 'display_name' WHERE id = %s", (missing,))
+        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', '  ') WHERE id = %s",
+                         (empty,))
+        self.cur.execute("SELECT id::text, handle_or_url FROM sources WHERE id = ANY(%s::uuid[])", ([empty, missing],))
+        address = dict(self.cur.fetchall())
+        fresh = [self._post(s, site=n, hours_ago=h, title=f"{name} is out") for s, n, h in
+                 ((empty, "alpha", 10), (missing, "beta", 9), (named, "gamma", 8))]
+        self._job()
+        items = [i for i in self._mine(self.news.news_on(self.cur, "all")["items"]) if i["id"] == fresh[0]]
+        self.assertEqual([s["name"] for s in items[0]["story"]["sources"]],
+                         [address[empty], address[missing], "Gamma"])
+        self.assertEqual(items[0]["source_display_name"], address[empty])
+        facts = SourceFacts(self.cur)
+        self.assertEqual((facts.name[empty], facts.name[missing]), (address[empty], address[missing]))
+
     def test_a_story_older_than_a_week_is_not_news(self):
         self._week()
         self.now += timedelta(days=8)
@@ -363,6 +384,34 @@ class NewsJobTests(unittest.TestCase):
         reader = self._post(self.z, site="zinc", hours_ago=1, html="".join(self._link(p) for p in pages))
         self._job()
         self.assertEqual(len(self.news.background(self.cur, reader)), 2)
+
+    def test_two_posts_at_one_address_are_one_anchor(self):
+        """Issue 0049: normalized_url is not unique (one address, two titles: Daring Fireball's
+        footnote post). A link to it joins one stored post, the first seen, everywhere."""
+        from insight_core.db.repo_stories import SourceFacts
+        self._classics()
+        essays = self._source("Essays")
+        first = self._post(essays, site="essays", url=self.essay, title="Machines of Loving Grace")
+        second = self._post(essays, site="essays", url=self.essay + "#fn1-2026", title="A footnote")
+        self.cur.execute("UPDATE posts SET fetched_at = fetched_at + interval '1 minute' WHERE id = %s", (second,))
+        self._job()
+
+        loaded = {p["id"]: p for p in StoriesRepository.load_posts(self.cur, SourceFacts(self.cur), None)}
+        for post in loaded.values():
+            targets = [t for t, _ in post["links"]]
+            self.assertEqual(len(targets), len(set(targets)), "each link once")
+            if normalize_url(self.essay) in targets:
+                self.assertEqual(dict(post["links"])[normalize_url(self.essay)], first)
+        citations = [c for c in self.news.repo.citations(self.cur, reddit=[], saved=[])
+                     if c["target"] == normalize_url(self.essay)]
+        self.assertEqual(len(citations), 2, "one row per citing post")
+        self.assertEqual({c["stored"] for c in citations}, {first})
+        essay = [c for c in self._mine_classics() if c["url"] == normalize_url(self.essay)]
+        self.assertEqual([c["post_id"] for c in essay], [first])
+        citer = self._post(self.z, site="zinc", hours_ago=1, html=self._link(self.essay))
+        self._job()
+        background = [b for b in self.news.background(self.cur, citer) if b["url"] == normalize_url(self.essay)]
+        self.assertEqual([b["post_id"] for b in background], [first])
 
     def test_a_track_shows_classics_its_sources_cited(self):
         self._classics()

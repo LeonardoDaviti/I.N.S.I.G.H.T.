@@ -154,8 +154,11 @@ class SavedService:
         urls = list(urls)
         normalized = [n for n in map(normalize_url, urls) if n]
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
-            cur.execute("SELECT id, title FROM posts WHERE url = ANY(%s) OR normalized_url = ANY(%s) LIMIT 1",
-                        (urls, normalized))
+            # normalized_url is not unique (issue 0049: one address can hold posts with other
+            # titles): an exact url first, else the first seen.
+            cur.execute("SELECT id, title FROM posts WHERE url = ANY(%s) OR normalized_url = ANY(%s) "
+                        "ORDER BY url = ANY(%s) DESC, fetched_at, created_at, id LIMIT 1",
+                        (urls, normalized, urls))
             row = cur.fetchone()
         return {"post_id": str(row[0]), "title": row[1] or ""} if row else None
 

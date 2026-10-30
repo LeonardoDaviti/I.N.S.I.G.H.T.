@@ -1,17 +1,32 @@
 -- 0038_one_post_one_address.sql (issue 0049)
 --
--- Two URLs with the same normalized_url are the same post. Until now the saver only compared
+-- Two posts are the same post when their normalized_url is equal AND their titles are equal
+-- under post_title_key (case, whitespace, HTML entities). Until now the saver only compared
 -- the exact url, so a source changing how it writes a link (Simon Willison's feed dropping
 -- #atom-everything on 13 Aug) saved every post in the feed window a second time. This merges
--- the copies already stored into one row and adds the unique index that keeps them from
--- coming back (the saver resolves it, repo_posts.upsert_post).
+-- the copies already stored into one row; the saver keeps them from coming back
+-- (repo_posts.upsert_post).
 --
+-- The address alone is not enough: on the server's data Daring Fireball links different
+-- posts under one address, told apart only by a footnote fragment (#fn1-...), a text fragment
+-- (#:~:text=...) or utm_campaign (WorkOS sponsor posts). Their titles differ; they stay apart.
+--
+-- Edited in place before deploying (2026-10-30). The first version merged on normalized_url
+-- alone and made it a unique index (posts_normalized_url_unique); it ran only on
+-- insight_preview and insight_lab. There 0041 defines post_title_key and drops that unique
+-- index; what the first version merged stays merged. Everywhere else this file runs as
+-- written here and never creates the unique index.
+--
+-- 0. post_title_key(title): the one title rule, used here and by the saver. 0041 repeats this
+--    definition (CREATE OR REPLACE) for the databases that ran the first version; the
+--    migration test checks the two are the same.
 -- 1. normalized_url follows the normalizer of this issue: http is written https, and a
 --    fragment starting with / or ! (#/post/1, #!/post/1: a single-page site's address) is
 --    kept. Both run before the merge, so two such pages are never merged as one.
--- 2. Each group sharing a normalized_url keeps one row: the one the owner touched (Later,
---    Keep, read, a position, a note, an open or any logged interaction), else the oldest
---    (first seen). Its url and id stay, so links, read state and positions stay valid.
+-- 2. Each group sharing a normalized_url and a post_title_key keeps one row: the one the
+--    owner touched (Later, Keep, read, a position, a note, an open or any logged
+--    interaction), else the oldest (first seen). Its url and id stay, so links, read state
+--    and positions stay valid.
 -- 3. The others' state moves to it: read, Later and Keep if any row has them (the earliest
 --    time), the furthest reading position, notes (joined, the kept row's first), the
 --    interaction log, and a page watch when the kept row has none. Then the others are
@@ -20,6 +35,40 @@
 --    fails when a new one appears.
 --
 -- Nothing to do on a database without copies; a second run changes nothing.
+
+-- post_title_key: HTML entities decoded (the named ones feeds use, and every numeric one),
+-- non-breaking spaces as spaces, whitespace runs as one space, trimmed, lower case; no title
+-- is ''. '&' is decoded last, through a placeholder, so '&amp;lt;' gives '&lt;' as one
+-- unescape does.
+CREATE OR REPLACE FUNCTION post_title_key(title text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+DECLARE
+  t text := replace(coalesce(title, ''), chr(1), '');
+  m text[];
+  code bigint;
+BEGIN
+  t := replace(replace(replace(replace(replace(replace(t,
+         '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&apos;', ''''), '&nbsp;', ' '), '&AMP;', '&amp;');
+  t := replace(replace(replace(replace(replace(replace(replace(t,
+         '&hellip;', '…'), '&mdash;', '—'), '&ndash;', '–'), '&lsquo;', '‘'), '&rsquo;', '’'),
+         '&ldquo;', '“'), '&rdquo;', '”');
+  LOOP
+    m := regexp_match(t, '&#([xX][0-9a-fA-F]{1,6}|[0-9]{1,7});');
+    EXIT WHEN m IS NULL;
+    IF m[1] ~ '^[xX]' THEN
+      code := ('x' || lpad(substr(m[1], 2), 8, '0'))::bit(32)::bigint;
+    ELSE
+      code := m[1]::bigint;
+    END IF;
+    t := replace(t, '&#' || m[1] || ';',
+                 CASE WHEN code = 38 THEN chr(1)
+                      WHEN code BETWEEN 1 AND 1114111 AND code NOT BETWEEN 55296 AND 57343 THEN chr(code::int)
+                      ELSE '' END);
+  END LOOP;
+  t := replace(replace(t, '&amp;', chr(1)), chr(1), '&');
+  RETURN lower(btrim(regexp_replace(translate(t, chr(160), ' '), '\s+', ' ', 'g')));
+END
+$fn$;
 
 UPDATE posts SET normalized_url = 'https://' || substr(normalized_url, 8)
 WHERE normalized_url LIKE 'http://%';
@@ -33,7 +82,7 @@ CREATE TEMP TABLE post_merge_0038 AS
 WITH grouped AS (
   SELECT p.id,
          first_value(p.id) OVER (
-           PARTITION BY p.normalized_url
+           PARTITION BY p.normalized_url, post_title_key(p.title)
            ORDER BY (
              EXISTS (SELECT 1 FROM post_reader_state r
                      WHERE r.post_id = p.id
@@ -43,7 +92,7 @@ WITH grouped AS (
              OR EXISTS (SELECT 1 FROM post_interactions i WHERE i.post_id = p.id)
            ) DESC, p.fetched_at, p.created_at, p.id
          ) AS keep_id,
-         count(*) OVER (PARTITION BY p.normalized_url) AS n
+         count(*) OVER (PARTITION BY p.normalized_url, post_title_key(p.title)) AS n
     FROM posts p
    WHERE p.normalized_url IS NOT NULL
 )
@@ -108,7 +157,5 @@ DELETE FROM posts p USING post_merge_0038 m WHERE p.id = m.drop_id;
 DROP VIEW post_merge_0038_rows;
 DROP TABLE post_merge_0038;
 
--- The unique index serves the lookups the plain one did. NULLs stay allowed (a post without
--- a parseable url has none).
-DROP INDEX IF EXISTS posts_normalized_url_idx;
-CREATE UNIQUE INDEX IF NOT EXISTS posts_normalized_url_unique ON posts (normalized_url);
+-- posts_normalized_url_idx (0007) stays a plain index: the same address under another title
+-- is another post, which a unique index on normalized_url cannot allow.

@@ -148,11 +148,24 @@ class PostsRepository:
     # Ingestion stayed dead for 21 days. Everything below exists so one post can never again
     # cost a whole cycle.
     _CONFLICT_INDEX = "posts_source_external_unique"
-    # A third (issue 0049): posts_normalized_url_unique. A post whose link comes back in
-    # another form (#atom-everything dropped, utm_ tags, http, www., a trailing slash) is the
-    # same post; its INSERT violates this index and is resolved like the one above, by
-    # updating the row found under the normalized_url. That row keeps its url and id.
-    _NORMALIZED_URL_INDEX = "posts_normalized_url_unique"
+    # Issue 0049: a post whose link comes back in another form (#atom-everything dropped, utm_
+    # tags, http, www., a trailing slash) is the same post when it also has the same title
+    # (post_title_key, migration 0038: case, whitespace, HTML entities). The address alone is
+    # not enough: Daring Fireball links different posts under one normalized_url, told apart
+    # by #fn1-..., #:~:text=... or utm_campaign, and their titles differ. No index can say
+    # "same address and same title, where the title may change on a re-fetch", so
+    # normalized_url is a plain index and _other_form takes a transaction-scoped advisory lock
+    # on the address before it looks: two writers saving forms of one address are serialized,
+    # and the second sees the first's row once it commits. Such a row is then updated by id
+    # through the resolver below (it keeps its url and id), never inserted a second time.
+    _ADDRESS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('insight.post:' || %(normalized_url)s::text, 0))"
+    _OTHER_FORM_SQL = """
+        SELECT EXISTS (
+            SELECT 1 FROM posts
+             WHERE normalized_url = %(normalized_url)s::text
+               AND post_title_key(title) = post_title_key(%(title)s::text)
+        )
+    """
 
     # Bounded because each retry only happens when another writer moved the rows under us.
     # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
@@ -164,8 +177,9 @@ class PostsRepository:
             SELECT id, source_id
               FROM posts
              WHERE url = %(url)s
-                OR (%(normalized_url)s::text IS NOT NULL AND normalized_url = %(normalized_url)s::text)
-             ORDER BY url = %(url)s DESC
+                OR (%(normalized_url)s::text IS NOT NULL AND normalized_url = %(normalized_url)s::text
+                    AND post_title_key(title) = post_title_key(%(title)s::text))
+             ORDER BY url = %(url)s DESC, fetched_at, created_at, id
              LIMIT 1
         )
         SELECT id, TRUE AS matched_by_url
@@ -195,8 +209,8 @@ class PostsRepository:
     # the incoming source_id covers the no-url-row case, where the failed statement really was
     # a plain INSERT under this source.
     #
-    # The url row is the exact url's, else the one under the same normalized_url (issue
-    # 0049): to the resolver both are "the row this post already is".
+    # The url row is the exact url's, else the first seen under the same normalized_url and
+    # title (issue 0049): to the resolver both are "the row this post already is".
 
     def upsert_post(self, cur: Cursor, post: Dict[str, Any], source_id: str) -> Tuple[str, bool]:
         """Save single post. Returns (post_id, was_inserted).
@@ -301,20 +315,29 @@ class PostsRepository:
         """.format(assignments=self._post_update_assignments(row_prefix="posts."))
 
         for attempt in range(self._CONFLICT_MAX_ATTEMPTS):
+            other_form = False
             try:
                 # The savepoint is what stops one bad row from poisoning the whole batch.
                 # Without it Postgres puts the backend in aborted-transaction state and every
                 # later statement fails with 25P02, so the caller's single terminal commit is
                 # never reached and every post gathered that cycle is rolled back.
                 with self._savepoint(cur, "insight_upsert_post"):
-                    cur.execute(query, params)
-                    row = cur.fetchone()
+                    other_form = self._other_form(cur, params)
+                    if not other_form:
+                        cur.execute(query, params)
+                        row = cur.fetchone()
             except psycopg.errors.UniqueViolation as exc:
-                # ON CONFLICT (url) already absorbs posts_url_key, so the only violations that
-                # can reach here are the two uncovered indexes. Anything else is unexpected and
-                # must stay loud rather than be swallowed by a resolver that cannot handle it.
-                if exc.diag.constraint_name not in (self._CONFLICT_INDEX, self._NORMALIZED_URL_INDEX):
+                # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
+                # can reach here is the uncovered index. Anything else is unexpected and must
+                # stay loud rather than be swallowed by a resolver that cannot handle it.
+                if exc.diag.constraint_name != self._CONFLICT_INDEX:
                     raise
+                resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
+                if resolved is not None:
+                    return resolved
+                continue
+            if other_form:
+                # Stored under another form of this address with the same title: update that row.
                 resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
                 if resolved is not None:
                     return resolved
@@ -330,9 +353,26 @@ class PostsRepository:
             return (post_id, was_inserted)
 
         raise RuntimeError(
-            f"upsert_post could not resolve {self._CONFLICT_INDEX} or {self._NORMALIZED_URL_INDEX} for {url} "
+            f"upsert_post could not resolve {self._CONFLICT_INDEX} or another form of {url} "
             f"after {self._CONFLICT_MAX_ATTEMPTS} attempts"
         )
+
+    def _other_form(self, cur: Cursor, params: Dict[str, Any]) -> bool:
+        """Whether this post is stored under another form of its url with the same title.
+
+        A post stored under its exact url takes the INSERT's ON CONFLICT (url) path and costs no
+        lock (every re-fetch of an unchanged feed). Otherwise the address is locked until the
+        caller's transaction ends (see _ADDRESS_LOCK_SQL) before looking, so a concurrent save
+        of another form cannot insert the same post twice.
+        """
+        if params.get("normalized_url") is None:
+            return False
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE url = %(url)s)", params)
+        if cur.fetchone()[0]:
+            return False
+        cur.execute(self._ADDRESS_LOCK_SQL, params)
+        cur.execute(self._OTHER_FORM_SQL, params)
+        return bool(cur.fetchone()[0])
 
     def _resolve_external_id_collision(
         self, cur: Cursor, params: Dict[str, Any], *, attempt: int = 0
