@@ -63,6 +63,11 @@ class PostLinksTests(unittest.TestCase):
         links = extract_links(html, "https://www.reddit.com/r/x/comments/1/t/", "reddit")
         self.assertEqual([l.url for l in links], ["https://news.example/story-of-the-day"])
 
+    def test_a_malformed_link_is_skipped_not_fatal(self):
+        html = '<a href="http://example.com:  some prose here/">x</a> <a href="https://b.example/post">B post</a>'
+        links = extract_links(html, "https://blog.example/post", "site")
+        self.assertEqual([link.url for link in links], ["https://b.example/post"])
+
     def test_no_html_no_links(self):
         self.assertEqual(extract_links(None, "https://a.example/x", "youtube"), [])
 

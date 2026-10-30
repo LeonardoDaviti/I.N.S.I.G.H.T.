@@ -118,7 +118,11 @@ def _parse_url(raw: str):
     else:
         candidate = raw
 
-    parsed = urlparse(candidate)
+    try:
+        parsed = urlparse(candidate)
+        parsed.port  # a port that isn't a number ("host:  some text") is not an address
+    except ValueError:
+        return None
     if not parsed.scheme or not parsed.netloc:
         return None
     return parsed

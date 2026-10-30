@@ -34,6 +34,13 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertEqual(normalize_url("https://app.test/#/post/2"), "https://app.test/#/post/2")
         self.assertNotEqual(normalize_url("https://app.test/#!/post/1"), normalize_url("https://app.test/#!/post/2"))
 
+    def test_a_link_whose_port_is_not_a_number_is_not_an_address(self):
+        """Found on the server's data: one post's link read "http://host:  some text", and the
+        ValueError it raised stopped the whole story job."""
+        self.assertIsNone(normalize_url("http://example.com:  Good morning, this is prose/"))
+        self.assertIsNone(extract_url_host("http://example.com:abc/x"))
+        self.assertEqual(normalize_url("https://example.com:8443/x"), "https://example.com:8443/x")
+
     def test_youtube_normalization_collapses_short_links(self):
         normalized = normalize_url("https://youtu.be/dQw4w9WgXcQ?t=30")
 
