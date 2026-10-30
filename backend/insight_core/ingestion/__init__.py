@@ -57,6 +57,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     from insight_core.services.posts_service import PostsService
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.sources_service import SourcesService
+    from insight_core.services.stories_service import StoriesService
     from insight_core.services.youtube_service import YouTubeService
 
     db_url = db_url or os.getenv("DATABASE_URL") or ensure_database()
@@ -84,6 +85,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
             store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),
         ),
         watch=DbPageWatchStore(db_url),
+        stories=StoriesService(db_url).recompute_safely,
     )
 
 

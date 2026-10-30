@@ -1,8 +1,8 @@
 import { Fragment, memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
+import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
-import type { FeedItem as FeedItemData, SnippetPart } from '../../services/api';
+import type { FeedItem as FeedItemData, FeedStory, SnippetPart } from '../../services/api';
 import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
 import { formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
@@ -13,13 +13,63 @@ import { lateFind, updateChanges, updateLine } from '../../lib/pageUpdate';
 import { StatusIcon } from '../ui/StatusGlyph';
 import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
-import { sourceReadPath } from '../../lib/feedContext';
+import { postHref, sourceReadPath } from '../../lib/feedContext';
+import { rememberSelection } from '../../lib/readerSelection';
+import { coveredBy } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
   if (item.duration_seconds) return formatClock(item.duration_seconds);
   if (item.reading_minutes) return `${formatCount(item.reading_minutes)} min read`;
   return null;
+}
+
+/**
+ * A folded story's line under its lead (issue 0050): "covered by 3 · Anthropic, Simon Willison, +1"
+ * opens the story's other posts, each a quiet link to the post (its source, title and date; a
+ * share says so). Opening one comes back to the lead's row.
+ */
+function StoryPosts({ story, leadId, now }: { story: FeedStory; leadId: string; now?: Date }) {
+  const [open, setOpen] = useState(false);
+  const listId = `${feedItemDomId(leadId)}-story`;
+  return (
+    <div className="mt-0.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((value) => !value)}
+        className={`-ml-1 inline-flex max-w-full items-center gap-1 rounded-sm px-1 text-[0.8125rem] leading-5 text-fg-3 hover:text-fg-2 coarse:min-h-[44px] ${FOCUS_RING}`}
+      >
+        {open ? <ChevronDown aria-hidden="true" className="h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0" />}
+        <span className="truncate">{coveredBy(story)}</span>
+      </button>
+      {open ? (
+        <ul id={listId} data-story-posts className="mt-1 mb-1 flex flex-col gap-1 border-l border-line pl-3">
+          {story.posts.map((post) => (
+            <li key={post.id} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
+              {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
+              <span className="max-w-[40%] shrink-0 truncate" title={post.source_display_name}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
+              <span aria-hidden="true" className="shrink-0">·</span>
+              <Link
+                to={postHref(post.id, null)}
+                onClick={() => rememberSelection(leadId)}
+                dir="auto"
+                className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+              >
+                {post.title?.trim() || 'Untitled post'}
+              </Link>
+              {post.role === 'share' ? <span className="shrink-0">· share</span> : null}
+              <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
+                {feedDateLabel(post.sort_at, now ?? new Date())}
+              </time>
+              {!post.read_at ? <span className="sr-only">Unread</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 /** Quiet 32px icon buttons that grow to 44px on touch (spec §F.6). */
@@ -204,6 +254,7 @@ function FeedItem({
             {excerpt}
           </p>
         ) : null}
+        {item.story ? <StoryPosts story={item.story} leadId={item.id} now={now} /> : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">

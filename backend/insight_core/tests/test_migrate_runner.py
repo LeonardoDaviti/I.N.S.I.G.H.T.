@@ -524,9 +524,10 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
             self.assertEqual(cur.fetchone(), ("my note",))
 
             # Every table pointing at posts is one the migration merges; a new one needs a look.
+            # 0039's tables (issue 0050) come after 0038 and are derived: the story job rebuilds them.
             cur.execute("SELECT conrelid::regclass::text FROM pg_constraint "
                         "WHERE contype = 'f' AND confrelid = 'posts'::regclass")
-            self.assertEqual({r[0] for r in cur.fetchall()},
+            self.assertEqual({r[0] for r in cur.fetchall()} - {"post_links", "stories", "story_posts", "story_mentions"},
                              {"post_reader_state", "post_notes", "post_interactions", "post_watch"})
             for table in ("post_reader_state", "post_interactions", "post_notes", "post_watch"):
                 cur.execute(f"SELECT count(*) FROM {table} t WHERE NOT EXISTS "

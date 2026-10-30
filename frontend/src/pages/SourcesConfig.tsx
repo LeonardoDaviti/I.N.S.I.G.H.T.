@@ -17,6 +17,7 @@ import SourceList, { type TidyActions, type TrackActions } from '../components/s
 import SourcesToolbar from '../components/sources/SourcesToolbar';
 import BulkActionBar from '../components/sources/BulkActionBar';
 import IngestionPanel from '../components/sources/IngestionPanel';
+import SuggestedSources, { SUGGESTED_SOURCES_KEY } from '../components/sources/SuggestedSources';
 import { useListKeys } from '../components/sources/useListKeys';
 import {
   STATUS_FILTERS,
@@ -77,7 +78,7 @@ const SHEET_PUSHED = 'sourceSheetPushed';
 const TRACK_HIGHLIGHT_MS = 1600;
 
 /** The tabs besides the list (`?tab=`); any other value is a legacy URL. */
-const EXTRA_TABS = ['connections', 'ingestion'] as const;
+const EXTRA_TABS = ['suggested', 'connections', 'ingestion'] as const;
 type ExtraTab = (typeof EXTRA_TABS)[number];
 const isExtraTab = (value: string | null): value is ExtraTab => (EXTRA_TABS as readonly (string | null)[]).includes(value);
 
@@ -180,6 +181,8 @@ export default function SourcesConfig() {
     setSearchParams(params, { replace: true });
   };
   const [showAddSource, setShowAddSource] = useState(false);
+  // Follow… on a suggestion (issue 0050): Add source opens on its address, through the feed finder.
+  const [followAddress, setFollowAddress] = useState<string | undefined>(undefined);
   const [newTrackOpen, setNewTrackOpen] = useState(false);
   const [newTrackName, setNewTrackName] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -221,6 +224,7 @@ export default function SourcesConfig() {
     void queryClient.invalidateQueries({ queryKey: [...SOURCES_HEALTH_KEY] });
     void queryClient.invalidateQueries({ queryKey: [...SOURCES_WITH_SETTINGS_KEY] });
     void queryClient.invalidateQueries({ queryKey: [...FOLDERS_KEY] });
+    void queryClient.invalidateQueries({ queryKey: [...SUGGESTED_SOURCES_KEY] });
   };
 
   /** Optimistic on/off in every cached health response; rolled back by the refetch on failure. */
@@ -523,6 +527,7 @@ export default function SourcesConfig() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList aria-label="Sources page" className="mb-4">
           <TabsTrigger value="sources">sources</TabsTrigger>
+          <TabsTrigger value="suggested">suggested</TabsTrigger>
           <TabsTrigger value="connections">connections</TabsTrigger>
           <TabsTrigger value="ingestion">ingestion</TabsTrigger>
         </TabsList>
@@ -541,6 +546,11 @@ export default function SourcesConfig() {
                 <a href={apiUrl('/api/sources/export.opml')} download className="text-link text-fg-2">Export sources (OPML)</a>
               </p>
             ) : null}
+          </div>
+        </TabsContent>
+        <TabsContent value="suggested" className="pt-0">
+          <div className="pb-24">
+            <SuggestedSources onFollow={(url) => { setFollowAddress(url); setShowAddSource(true); }} />
           </div>
         </TabsContent>
         <TabsContent value="connections" className="pt-2">
@@ -577,7 +587,8 @@ export default function SourcesConfig() {
       {showAddSource ? (
         <AddSourceModal
           existingAddresses={sourcesQuery.data?.map((source) => source.handle_or_url)}
-          onClose={() => setShowAddSource(false)}
+          initialAddress={followAddress}
+          onClose={() => { setShowAddSource(false); setFollowAddress(undefined); }}
           onAdd={handleAddSource}
           onAddMany={handleAddedMany}
         />

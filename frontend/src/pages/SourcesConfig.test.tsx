@@ -68,10 +68,10 @@ const rowIds = (root: HTMLElement = document.body) =>
 const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`li[data-source-id="${id}"]`)[nth];
 
 describe('SourcesConfig', () => {
-  it('is one flat list by default: sources, connections and ingestion tabs, no expert labels, one line per source', async () => {
+  it('is one flat list by default: sources, suggested, connections and ingestion tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'connections', 'ingestion']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'suggested', 'connections', 'ingestion']);
     expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
     expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
@@ -987,6 +987,32 @@ describe('SourcesConfig deep links', () => {
     await waitFor(() => expect(scrolled).toContain(group));
     expect(group).toHaveAttribute('data-highlighted', 'true');
     await waitFor(() => expect(group).not.toHaveAttribute('data-highlighted'), { timeout: 3000 });
+  });
+
+  it('suggested lists what your sources link, says why, follows through the feed finder and hides for good (issue 0050)', async () => {
+    const suggestion = {
+      key: 'openai.com', url: 'https://openai.com', voices: 5, article_count: 32, link_count: 49,
+      voice_names: ['Simon Willison', 'Anthropic News', 'https://tg.i-c-a.su/rss/seeallochnaya?limit=50', 'One Useful Thing', 'Sean Goedecke'],
+      articles: [{ url: 'https://openai.com/index/introducing-gpt-live', title: 'Introducing GPT Live', linked_by: ['Simon Willison', 'Sean Goedecke'] }],
+    };
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [{ url: 'https://openai.com/news/rss.xml', title: 'OpenAI News' }] });
+    const hideSuggestedSource = vi.fn().mockResolvedValue({ success: true });
+    setup('/settings/sources?tab=suggested', {
+      getSuggestedSources: vi.fn().mockResolvedValue({ success: true, suggestions: [suggestion, { ...suggestion, key: 'metr.org', url: 'https://metr.org' }] }),
+      hideSuggestedSource, findFeed,
+    });
+    const reason = await screen.findAllByRole('button', { name: /linked by 5 of your sources \(Simon Willison, Anthropic News, @seeallochnaya, \+2\) · 32 articles/ });
+    await userEvent.click(reason[0]);
+    expect(screen.getByRole('link', { name: 'Introducing GPT Live' })).toHaveAttribute('href', 'https://openai.com/index/introducing-gpt-live');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Not interested' })[1]);
+    expect(hideSuggestedSource).toHaveBeenCalledWith('metr.org');
+    expect(screen.queryByText('metr.org')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Follow…' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://openai.com'));
+    expect(await within(dialog).findByText('Found the feed for this page: openai.com/news/rss.xml')).toBeInTheDocument();
   });
 
   it('an unknown track shows the list with a quiet note', async () => {

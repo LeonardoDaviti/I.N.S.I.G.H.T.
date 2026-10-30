@@ -17,6 +17,7 @@ from insight_core.utils.content_fingerprints import hash_post_content
 from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
+from insight_core.db.repo_stories import StoriesRepository
 
 # metadata key of a body read from the article page (ingestion/full_text.py)
 FULL_TEXT_FLAG = "full_content_fetched"
@@ -129,6 +130,7 @@ class PostsRepository:
         self.logger = get_component_logger("repo_posts")
         self.logger.info(f"PostsRepository initialized")
         self.watch = PageWatchRepository()
+        self.stories = StoriesRepository()
 
     # ===============================
     # WRITE OPERATIONS
@@ -609,12 +611,13 @@ class PostsRepository:
                     was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool) -> bool:
         """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
         date sorts at when it was first seen (surface); a watched post keeps its text's hash and
-        comes back when it changed meaningfully. In its own savepoint: a failure here is logged
-        and costs neither the post nor the batch. Returns whether the post came back."""
-        if not (draft.watch or (surface and was_inserted)):
-            return False
+        comes back when it changed meaningfully. Issue 0050: its outside links are read from what
+        was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
+        failure here is logged and costs neither the post nor the batch. Returns whether the post
+        came back."""
         try:
             with self._savepoint(cur, "insight_after_save"):
+                self.stories.save_post_links(cur, post_id)
                 if surface and was_inserted:
                     cur.execute(
                         f"""UPDATE posts SET surfaced_at = fetched_at
@@ -623,8 +626,8 @@ class PostsRepository:
                     )
                 if draft.watch:
                     return self.watch.saved(cur, post_id, draft.source_id, post, None if was_inserted else old)
-        except Exception as exc:  # noqa: BLE001 - the post is saved; only its watch state is not
-            self.logger.error("Could not record the watch state of post %s: %s", post_id, exc)
+        except Exception as exc:  # noqa: BLE001 - the post is saved; only its links or watch state are not
+            self.logger.error("Could not record the links or watch state of post %s: %s", post_id, exc)
         return False
 
     def _discard(self, result: SaveBatchResult, window: List[Tuple[PostDraft, str, bool]]) -> None:
@@ -719,7 +722,8 @@ class PostsRepository:
         ]
 
     def save_full_text(self, cur: Cursor, post_id: str, post: Dict[str, Any]) -> None:
-        """Store the full body of a stored post; its metadata is merged, never replaced."""
+        """Store the full body of a stored post; its metadata is merged, never replaced. Its links
+        are read again by the next story job (issue 0050)."""
         fields = build_post_fields(post)
         cur.execute(
             """
@@ -730,6 +734,7 @@ class PostsRepository:
                 language_code = %(language_code)s,
                 language_confidence = %(language_confidence)s,
                 metadata = metadata || %(metadata)s::jsonb,
+                links_scanned_at = NULL,
                 updated_at = now()
             WHERE id = %(id)s::uuid
             """,

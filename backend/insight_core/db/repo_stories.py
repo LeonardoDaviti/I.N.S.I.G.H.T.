@@ -1,0 +1,308 @@
+"""Stories storage (issue 0050): post links, stories, their posts and mentions, Discover's hidden
+suggestions. Every method takes the caller's cursor and never commits.
+
+The rules live in utils/post_links.py and utils/story_rules.py; this file only reads what they
+need and writes what they return, touching only the rows that differ.
+"""
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from psycopg import Cursor
+
+from insight_core.utils.post_links import PostLink, bare, extract_links, host_of, reddit_author, site_of, source_kind
+from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
+from insight_core.utils.url_normalization import normalize_url
+
+LINKS_BATCH = 500
+# The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words.
+HTML_KINDS = ("reddit", "hn")
+
+
+class SourceFacts:
+    """What the rules need of every source: its kind, its own site and its name."""
+
+    def __init__(self, cur: Cursor) -> None:
+        cur.execute("SELECT id, platform, handle_or_url, COALESCE(settings->>'display_name', handle_or_url) FROM sources")
+        rows = cur.fetchall()
+        self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
+        self.name = {str(r[0]): r[3] for r in rows}
+        # The Saved source's pages come from any site: it has no site of its own.
+        self.handle_site = {str(r[0]): site_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
+                            if self.kind[str(r[0])] != "saved"}
+        cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
+        hosts: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+        for source_id, host, n in cur.fetchall():
+            if self.kind.get(str(source_id)) != "saved":
+                hosts[str(source_id)].append((host, int(n)))
+        self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
+
+    def own_site(self, source_id: str) -> str:
+        return self.site.get(source_id) or self.handle_site.get(source_id) or ""
+
+    def followed(self) -> Set[str]:
+        """The sites you follow: each source's own site, and the site of its address."""
+        return {s for s in (*self.site.values(), *self.handle_site.values()) if s}
+
+    def html_sources(self) -> List[str]:
+        return [source_id for source_id, kind in self.kind.items() if kind in HTML_KINDS]
+
+
+class StoriesRepository:
+    # ---- post links -------------------------------------------------------------------
+
+    @staticmethod
+    def write_links(cur: Cursor, post_id: str, links: Sequence[PostLink]) -> None:
+        """One post's links become exactly `links` (rows that did not change are not written)."""
+        cur.execute("DELETE FROM post_links WHERE post_id = %s AND NOT (target_url = ANY(%s))",
+                    (post_id, [link.url for link in links]))
+        if links:
+            cur.executemany(
+                """
+                INSERT INTO post_links (post_id, target_url, target_site, position, link_text)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (post_id, target_url) DO UPDATE
+                    SET target_site = EXCLUDED.target_site, position = EXCLUDED.position, link_text = EXCLUDED.link_text
+                    WHERE (post_links.target_site, post_links.position, post_links.link_text)
+                          IS DISTINCT FROM (EXCLUDED.target_site, EXCLUDED.position, EXCLUDED.link_text)
+                """,
+                [(post_id, link.url, link.site, link.position, link.text) for link in links],
+            )
+
+    def save_post_links(self, cur: Cursor, post_id: str) -> None:
+        """Read a stored post's links from its stored HTML (what the saver kept, not the draft)."""
+        cur.execute(
+            """
+            SELECT p.url, p.content_html, s.platform, s.handle_or_url
+            FROM posts p JOIN sources s ON s.id = p.source_id WHERE p.id = %s
+            """,
+            (post_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+        url, content_html, platform, handle = row
+        self.write_links(cur, post_id, extract_links(content_html, url, source_kind(platform, handle)))
+        cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = %s AND links_scanned_at IS NULL", (post_id,))
+
+    def fill_missing_links(self, cur: Cursor, limit: int = LINKS_BATCH) -> int:
+        """Read the links of up to `limit` posts never read (stored before 0050, or whose text a
+        repair rewrote). Returns how many posts were read."""
+        cur.execute(
+            """
+            SELECT p.id, p.url, p.content_html, s.platform, s.handle_or_url
+            FROM posts p JOIN sources s ON s.id = p.source_id
+            WHERE p.links_scanned_at IS NULL
+            ORDER BY p.id
+            LIMIT %s
+            FOR UPDATE OF p SKIP LOCKED
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        for post_id, url, content_html, platform, handle in rows:
+            self.write_links(cur, str(post_id), extract_links(content_html, url, source_kind(platform, handle)))
+        if rows:
+            cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = ANY(%s::uuid[])", ([r[0] for r in rows],))
+        return len(rows)
+
+    @staticmethod
+    def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:
+        """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
+        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed."""
+        own = list(sources.site.items())
+        cur.execute(
+            """
+            WITH n AS (SELECT source_id, count(*) AS posts FROM posts GROUP BY source_id),
+            c AS (SELECT p.source_id, pl.target_url, count(*) AS posts
+                  FROM post_links pl JOIN posts p ON p.id = pl.post_id GROUP BY 1, 2),
+            own AS (SELECT * FROM unnest(%s::uuid[], %s::text[]) AS o(source_id, site)),
+            want AS (
+                SELECT pl.post_id, pl.target_url,
+                       (c.posts >= %s AND c.posts >= %s * n.posts) OR pl.target_site = own.site AS boilerplate
+                FROM post_links pl
+                JOIN posts p ON p.id = pl.post_id
+                JOIN n ON n.source_id = p.source_id
+                JOIN c ON c.source_id = p.source_id AND c.target_url = pl.target_url
+                LEFT JOIN own ON own.source_id = p.source_id
+            )
+            UPDATE post_links pl SET boilerplate = COALESCE(want.boilerplate, false)
+            FROM want
+            WHERE pl.post_id = want.post_id AND pl.target_url = want.target_url
+              AND pl.boilerplate IS DISTINCT FROM COALESCE(want.boilerplate, false)
+            """,
+            ([s for s, _ in own], [site for _, site in own], SIGNATURE_MIN_POSTS, SIGNATURE_SHARE),
+        )
+        return cur.rowcount
+
+    # ---- the story job ----------------------------------------------------------------
+
+    @staticmethod
+    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime]) -> List[Dict[str, Any]]:
+        """The posts the job recomputes: posted since `cutoff` (every post when None), less those in
+        a story that began before it (frozen). Each with its kept links, in order, and the stored
+        post each link is, if any."""
+        cur.execute(
+            """
+            SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
+                   length(p.content), p.normalized_url,
+                   CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END
+            FROM posts p
+            WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
+              AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
+              AND NOT EXISTS (SELECT 1 FROM story_posts sp JOIN stories st ON st.id = sp.story_id
+                              WHERE sp.post_id = p.id AND st.first_at < %(cutoff)s)
+            """,
+            {"html": sources.html_sources(), "cutoff": cutoff},
+        )
+        posts = [
+            {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
+             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "links": []}
+            for r in cur.fetchall()
+        ]
+        by_id = {p["id"]: p for p in posts}
+        cur.execute(
+            """
+            SELECT pl.post_id, pl.target_url, t.id
+            FROM post_links pl LEFT JOIN posts t ON t.normalized_url = pl.target_url
+            WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[])
+            ORDER BY pl.post_id, pl.position
+            """,
+            (list(by_id),),
+        )
+        for post_id, target, stored in cur.fetchall():
+            by_id[str(post_id)]["links"].append((target, str(stored) if stored else None))
+        return posts
+
+    @staticmethod
+    def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Sequence[str],
+                      cutoff: Optional[datetime]) -> int:
+        """Make the stored stories match `stories`, the stories of `post_ids` (every post posted
+        since `cutoff`, less the frozen): stories begun since `cutoff`, those posts' story rows and
+        the mentions they make. Writes only what differs; returns how many rows changed."""
+        changed = 0
+        want_posts: Dict[str, Tuple[str, str, List[str], str]] = {}
+        want_mentions: Set[Tuple[str, str]] = set()
+        for story in stories:
+            for post in story.posts:
+                want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice)
+            want_mentions |= {(story.id, pid) for pid in story.mentions}
+        want = {story.id: (story.first_at, story.voices) for story in stories}
+
+        cur.execute("SELECT id, first_at, voices FROM stories WHERE %s::timestamptz IS NULL OR first_at >= %s",
+                    (cutoff, cutoff))
+        have = {str(r[0]): (r[1], r[2]) for r in cur.fetchall()}
+        gone = [sid for sid in have if sid not in want]
+        if gone:
+            cur.execute("DELETE FROM stories WHERE id = ANY(%s::uuid[])", (gone,))
+            changed += cur.rowcount
+        rows = [(sid, first_at, voices) for sid, (first_at, voices) in want.items() if have.get(sid) != (first_at, voices)]
+        if rows:
+            cur.executemany(
+                """
+                INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET first_at = EXCLUDED.first_at, voices = EXCLUDED.voices, updated_at = now()
+                """,
+                rows,
+            )
+            changed += len(rows)
+
+        cur.execute("SELECT post_id, story_id, role, reasons, voice FROM story_posts WHERE post_id = ANY(%s::uuid[])",
+                    (list(post_ids),))
+        have_posts = {str(r[0]): (str(r[1]), r[2], list(r[3]), r[4]) for r in cur.fetchall()}
+        drop = [pid for pid in have_posts if pid not in want_posts]
+        if drop:
+            cur.execute("DELETE FROM story_posts WHERE post_id = ANY(%s::uuid[])", (drop,))
+            changed += cur.rowcount
+        rows = [(pid, *row) for pid, row in want_posts.items() if have_posts.get(pid) != row]
+        if rows:
+            cur.executemany(
+                """
+                INSERT INTO story_posts (post_id, story_id, role, reasons, voice) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (post_id) DO UPDATE
+                    SET story_id = EXCLUDED.story_id, role = EXCLUDED.role, reasons = EXCLUDED.reasons, voice = EXCLUDED.voice
+                """,
+                rows,
+            )
+            changed += len(rows)
+
+        cur.execute(
+            """
+            SELECT m.story_id, m.post_id FROM story_mentions m JOIN stories st ON st.id = m.story_id
+            WHERE m.post_id = ANY(%s::uuid[]) AND (%s::timestamptz IS NULL OR st.first_at >= %s)
+            """,
+            (list(post_ids), cutoff, cutoff),
+        )
+        have_mentions = {(str(r[0]), str(r[1])) for r in cur.fetchall()}
+        for story_id, post_id in have_mentions - want_mentions:
+            cur.execute("DELETE FROM story_mentions WHERE story_id = %s AND post_id = %s", (story_id, post_id))
+            changed += cur.rowcount
+        new = sorted(want_mentions - have_mentions)
+        if new:
+            cur.executemany("INSERT INTO story_mentions (story_id, post_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", new)
+            changed += len(new)
+
+        # A frozen story whose posts went with a removed source is no story any more.
+        cur.execute(
+            """
+            DELETE FROM stories st WHERE (SELECT count(DISTINCT p.source_id) FROM story_posts sp
+                                          JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id) < 2
+            """
+        )
+        return changed + cur.rowcount
+
+    # ---- Discover ---------------------------------------------------------------------
+
+    @staticmethod
+    def kept_links(cur: Cursor, sources: SourceFacts) -> List[Dict[str, Any]]:
+        """Every kept outside link: its post's source, author (Reddit) and the link."""
+        cur.execute(
+            """
+            SELECT p.id, p.source_id, pl.target_url, pl.link_text,
+                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END
+            FROM post_links pl JOIN posts p ON p.id = pl.post_id
+            WHERE NOT pl.boilerplate
+            ORDER BY p.id, pl.position
+            """,
+            (sources.html_sources(),),
+        )
+        authors: Dict[str, Optional[str]] = {}
+        out = []
+        for post_id, source_id, url, text, content_html in cur.fetchall():
+            if post_id not in authors:
+                authors[post_id] = reddit_author(content_html) if content_html else None
+            out.append({"source_id": str(source_id), "url": url, "text": text, "author": authors[post_id]})
+        return out
+
+    @staticmethod
+    def hidden(cur: Cursor) -> Set[str]:
+        cur.execute("SELECT key FROM discover_hidden")
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def hide(cur: Cursor, keys: Iterable[str], reason: str) -> None:
+        cur.executemany(
+            "INSERT INTO discover_hidden (key, reason) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+            [(key, reason) for key in keys if key],
+        )
+
+    def hide_removed_source(self, cur: Cursor, source_id: str) -> None:
+        """A source about to be removed is never suggested again: a website by its site, an
+        account on a platform (a channel, a subreddit) by the account its posts are under."""
+        cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = %s", (source_id,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        cur.execute("SELECT url FROM posts WHERE source_id = %s AND url IS NOT NULL ORDER BY fetched_at DESC LIMIT 200",
+                    (source_id,))
+        urls = [normalize_url(r[0]) for r in cur.fetchall()]
+        urls = [url for url in urls if url] or ([normalize_url(row[1])] if "://" in (row[1] or "") else [])
+        if not urls:
+            return
+        if source_kind(row[0], row[1]) == "site":
+            keys = Counter(site_of(host_of(url)) for url in urls)
+        else:
+            keys = Counter("/".join(bare(url).split("/")[:2]).lower() for url in urls)
+        self.hide(cur, [keys.most_common(1)[0][0]], "removed")

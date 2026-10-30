@@ -15,12 +15,19 @@ the Later list (issue 0022) instead by when each post was saved, oldest first.
 "Unread" means no read_at, over every post the source ever gave us: an archived post from
 2015 is as unread as this morning's. INSIGHT_UNREAD_WINDOW_DAYS=N narrows unread (and the
 grouped "all" view) back to the last N days; unset or 0 means no window.
+
+One story, many sources (issue 0050): the Main feed and a track (the stream, Show unread or all)
+show a story once, at its lead: its first report among the posts the view shows, else its first
+share. The lead carries `story` (who covered it and its other posts). A source's own view, the
+by-source view, Later, Kept and search show every post. The Main feed's and a track's unread
+counts count rows; marking a story's lead read marks its shares read too.
 """
 from __future__ import annotations
 
 import base64
 import binascii
 import math
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -58,6 +65,24 @@ MINUTES_SQL = (
     " THEN ceil((p.metadata->>'duration_seconds')::numeric / 60) ELSE 0 END"
     f" ELSE ceil(COALESCE(length(p.content), 0)::numeric / {CHARS_PER_READING_MINUTE}) END"
 )
+
+
+# A story's posts, first posted first (its lead: the first report shown, else the first share).
+_STORY_RANK = "COALESCE({p}.published_at, {p}.fetched_at), {p}.id"
+# The story posts that a lead's read marks read: the shares of a story whose report (or, when
+# it has none, whose share) was read.
+_SHARES_OF_READ = """
+    SELECT DISTINCT o.post_id FROM story_posts sp
+    JOIN story_posts o ON o.story_id = sp.story_id AND o.post_id <> sp.post_id AND o.role = 'share'
+    WHERE sp.post_id = ANY(%s::uuid[])
+      AND (sp.role = 'report'
+           OR NOT EXISTS (SELECT 1 FROM story_posts r WHERE r.story_id = sp.story_id AND r.role = 'report'))
+"""
+
+
+def _on(sql: str, posts: str, sources: str) -> str:
+    """A predicate written on `p` and `s`, on other aliases (a story's other posts)."""
+    return re.sub(r"\bs\.", sources + ".", re.sub(r"\bp\.", posts + ".", sql))
 
 
 def unread_window_days_from_env() -> Optional[int]:
@@ -291,6 +316,91 @@ class ReaderRepository:
             params.append(until)
         return " AND ".join(where), params
 
+    # ---- stories (issue 0050) -------------------------------------------------------
+
+    @staticmethod
+    def folds(scope: FeedScope, filter: str) -> bool:
+        """The Main feed and a track, unread or all, show a story once."""
+        return scope.kind != "source" and filter in ("all", "unread")
+
+    def _lead_sql(self, scope: FeedScope, filter: str, since: datetime | None = None,
+                  until: datetime | None = None) -> Tuple[str, List[Any]]:
+        """`p` is its story's lead among the posts this view shows (or in no story): no other
+        shown post of its story ranks first (a report before a share, then the first posted)."""
+        scope_sql, params = self._scope_sql(scope, filter)
+        filter_sql, filter_params = self._filter_sql(filter)
+        bounds_sql, bounds_params = self._bounds_sql(since, until)
+        shown = " AND ".join(_on(sql, "op", "os") for sql in (scope_sql, filter_sql, bounds_sql))
+        sql = f"""NOT EXISTS (
+            SELECT 1 FROM story_posts sp
+            JOIN story_posts o ON o.story_id = sp.story_id AND o.post_id <> sp.post_id
+            JOIN posts op ON op.id = o.post_id
+            JOIN sources os ON os.id = op.source_id
+            WHERE sp.post_id = p.id AND {shown}
+              AND ((o.role = 'report' AND sp.role = 'share')
+                   OR (o.role = sp.role AND ({_STORY_RANK.format(p='op')}) < ({_STORY_RANK.format(p='p')}))))"""
+        return sql, [*params, *filter_params, *bounds_params]
+
+    @staticmethod
+    def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
+        """Give each item that leads a story its `story` (else None): {id, voices, sources: [{id,
+        name}] in the order they covered it, posts: the story's other posts, first posted first}."""
+        if not items:
+            return
+        cur.execute(
+            f"""
+            SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
+                   COALESCE(s.settings->>'display_name', s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
+                   r.read_at, o.role
+            FROM story_posts sp
+            JOIN stories st ON st.id = sp.story_id
+            JOIN story_posts o ON o.story_id = sp.story_id
+            JOIN posts p ON p.id = o.post_id
+            JOIN sources s ON s.id = p.source_id
+            LEFT JOIN post_reader_state r ON r.post_id = p.id
+            WHERE sp.post_id = ANY(%s::uuid[])
+            ORDER BY sp.post_id, {_STORY_RANK.format(p='p')}
+            """,
+            ([item["id"] for item in items],),
+        )
+        stories: Dict[str, Dict[str, Any]] = {}
+        for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
+             published_at, read_at, role) in cur.fetchall():
+            story = stories.setdefault(str(lead), {"id": str(story_id), "voices": int(voices), "sources": [], "posts": []})
+            if not any(source["id"] == str(source_id) for source in story["sources"]):
+                story["sources"].append({"id": str(source_id), "name": name})
+            if str(post_id) != str(lead):
+                story["posts"].append({
+                    "id": str(post_id), "title": display_title(title, content), "url": url,
+                    "source_id": str(source_id), "source_display_name": name, "platform": platform,
+                    "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
+                })
+        for item in items:
+            item["story"] = stories.get(item["id"])
+
+    @staticmethod
+    def _with_shares(cur: Cursor, read: List[str], marked: List[str], *, at: datetime | None = None) -> List[str]:
+        """`read` were marked read (`marked`: the ones that were unread): mark their stories'
+        shares read too. Returns every id marked."""
+        if not read:
+            return marked
+        cur.execute(_SHARES_OF_READ, (read,))
+        shares = [str(r[0]) for r in cur.fetchall()]
+        if not shares:
+            return marked
+        cur.execute(
+            """
+            INSERT INTO post_reader_state (post_id, read_at)
+            SELECT p.id, COALESCE(%s::timestamptz, now()) FROM posts p WHERE p.id = ANY(%s::uuid[])
+            ON CONFLICT (post_id) DO UPDATE
+                SET read_at = EXCLUDED.read_at, updated_at = now()
+                WHERE post_reader_state.read_at IS NULL
+            RETURNING post_id
+            """,
+            (at, shares),
+        )
+        return marked + [str(r[0]) for r in cur.fetchall() if str(r[0]) not in marked]
+
     def list_posts(self, cur: Cursor, query: FeedQuery, *, now: datetime
                    ) -> Tuple[List[Dict[str, Any]], FeedCursor | None]:
         """One page of `query`: items (stream) or groups (by_source), and the next page's cursor."""
@@ -312,6 +422,11 @@ class ReaderRepository:
         if query.cursor is not None:
             where.append(f"({key}, p.id) {after} (%s, %s::uuid)")
             params += [query.cursor.sort_at, query.cursor.post_id]
+        fold = self.folds(query.scope, query.filter)
+        if fold:
+            lead_sql, lead_params = self._lead_sql(query.scope, query.filter, since, until)
+            where.append(lead_sql)
+            params += lead_params
         limit = query.limit
         cur.execute(
             f"""
@@ -327,6 +442,8 @@ class ReaderRepository:
         )
         rows = cur.fetchall()
         items = [_item(r) for r in rows[:limit]]
+        if fold:
+            self.attach_stories(cur, items)
         next_cursor = None
         if len(rows) > limit:
             next_cursor = FeedCursor(items[-1]["later_at" if later else "sort_at"], items[-1]["id"])
@@ -423,7 +540,8 @@ class ReaderRepository:
     # ---- read state ---------------------------------------------------------------
 
     def set_read(self, cur: Cursor, post_ids: Sequence[str], read: bool) -> List[str]:
-        """Mark posts read (keeping the first read time) or unread. Returns the ids changed."""
+        """Mark posts read (keeping the first read time; a story's shares with its report) or
+        unread. Returns the ids changed."""
         ids = [_require_uuid(pid, "post id") for pid in post_ids]
         if not ids:
             return []
@@ -439,15 +557,16 @@ class ReaderRepository:
                 """,
                 (ids,),
             )
-        else:
-            cur.execute(
-                """
-                UPDATE post_reader_state SET read_at = NULL, updated_at = now()
-                WHERE post_id = ANY(%s::uuid[]) AND read_at IS NOT NULL
-                RETURNING post_id
-                """,
-                (ids,),
-            )
+            # A story read at its lead: its copies and shares are read too (issue 0050).
+            return self._with_shares(cur, ids, [str(r[0]) for r in cur.fetchall()])
+        cur.execute(
+            """
+            UPDATE post_reader_state SET read_at = NULL, updated_at = now()
+            WHERE post_id = ANY(%s::uuid[]) AND read_at IS NOT NULL
+            RETURNING post_id
+            """,
+            (ids,),
+        )
         return [str(r[0]) for r in cur.fetchall()]
 
     def set_starred(self, cur: Cursor, post_id: str, starred: bool) -> None:
@@ -541,6 +660,8 @@ class ReaderRepository:
         window_sql, window_params = "TRUE", []
         if self.unread_window_days is not None:
             window_sql, window_params = f"{SORT_KEY} >= %s", [now - timedelta(days=self.unread_window_days)]
+        # The rows the unread view shows: a story's lead, not the reports folded under it (0050).
+        lead_sql, lead_params = self._lead_sql(scope, "unread") if self.folds(scope, "unread") else ("TRUE", [])
         cur.execute(
             f"""
             INSERT INTO post_reader_state (post_id, read_at)
@@ -552,44 +673,58 @@ class ReaderRepository:
               AND ({SORT_KEY}, p.id) <= (%s, %s::uuid)
               AND ({SORT_KEY}, p.id) >= (%s, %s::uuid)
               AND {window_sql}
+              AND {lead_sql}
             ON CONFLICT (post_id) DO UPDATE
                 SET read_at = EXCLUDED.read_at, updated_at = now()
                 WHERE post_reader_state.read_at IS NULL
             RETURNING post_id
             """,
-            [now, *params, newest.sort_at, newest.post_id, through.sort_at, through.post_id, *window_params],
+            [now, *params, newest.sort_at, newest.post_id, through.sort_at, through.post_id, *window_params,
+             *lead_params],
         )
-        return [str(r[0]) for r in cur.fetchall()]
+        marked = [str(r[0]) for r in cur.fetchall()]
+        return self._with_shares(cur, marked, marked, at=now)
 
     def unread_counts(self, cur: Cursor) -> Dict[str, Any]:
         """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set),
-        and `later`: {count, minutes}, every post in Later and what reading them costs."""
+        and `later`: {count, minutes}, every post in Later and what reading them costs. The total and a
+        track's count are rows, as those feeds show them (a story with unread posts is one, issue 0050);
+        a source's count is its posts."""
         window_sql, window_params = self._window_sql()
         cur.execute(
             f"""
-            SELECT p.source_id, bool_or(s.in_main_digest), COUNT(*)
+            SELECT p.source_id, COUNT(*)
             FROM posts p
-            JOIN sources s ON s.id = p.source_id
             WHERE {UNREAD_SQL} AND {window_sql}
             GROUP BY p.source_id
             """,
             window_params,
         )
-        by_source: Dict[str, int] = {}
+        by_source: Dict[str, int] = {str(source_id): int(n) for source_id, n in cur.fetchall()}
+        cur.execute(
+            f"""
+            SELECT sf.folder_id, COUNT(DISTINCT COALESCE(sp.story_id, p.id))
+            FROM posts p
+            JOIN source_folders sf ON sf.source_id = p.source_id
+            LEFT JOIN story_posts sp ON sp.post_id = p.id
+            WHERE {UNREAD_SQL} AND {window_sql}
+            GROUP BY sf.folder_id
+            UNION ALL
+            SELECT NULL, COUNT(DISTINCT COALESCE(sp.story_id, p.id))
+            FROM posts p
+            JOIN sources s ON s.id = p.source_id
+            LEFT JOIN story_posts sp ON sp.post_id = p.id
+            WHERE s.in_main_digest AND {UNREAD_SQL} AND {window_sql}
+            """,
+            [*window_params, *window_params],
+        )
         total = 0
-        for source_id, in_main_digest, n in cur.fetchall():
-            by_source[str(source_id)] = int(n)
-            if in_main_digest:
-                total += int(n)
         by_folder: Dict[str, int] = {}
-        if by_source:
-            cur.execute(
-                "SELECT folder_id, source_id FROM source_folders WHERE source_id = ANY(%s::uuid[])",
-                (list(by_source),),
-            )
-            for folder_id, source_id in cur.fetchall():
-                key = str(folder_id)
-                by_folder[key] = by_folder.get(key, 0) + by_source[str(source_id)]
+        for folder_id, n in cur.fetchall():
+            if folder_id is None:
+                total = int(n)
+            else:
+                by_folder[str(folder_id)] = int(n)
         cur.execute(
             f"""
             SELECT COUNT(*), COALESCE(SUM({MINUTES_SQL}), 0)
