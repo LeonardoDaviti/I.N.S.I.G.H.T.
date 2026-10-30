@@ -23,7 +23,7 @@ import { useFlowPreference, useShortcutPreference } from '../hooks/useShortcutPr
 import { useReadingSettings } from '../hooks/useReadingSettings';
 import { READING_TEXT_CLASS, readingStyle } from '../lib/readingSettings';
 import {
-  decodeFeedContext, postHref, scopePath, sourceReadPath, sourceSettingsHref, type ContextEntry, type FeedContext,
+  decodeFeedContext, postHref, scopePath, sourceReadPath, type ContextEntry, type FeedContext,
 } from '../lib/feedContext';
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
@@ -917,8 +917,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       <header className="mb-8">
         <div className="flex min-h-[2.25rem] items-start justify-between gap-4">
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 pt-1.5 text-[0.8125rem] text-fg-2">
-            {/* The source name reads the source; `/ settings` beside it manages it (issue 0010),
-                on the first post only: a post that follows in the stream reads source / date (issue 0033). */}
+            {/* The source name reads the source. No settings link: a post is for reading, and a
+                source is managed in Sources (owner, 2026-10-31, reversing issue 0010's `/ settings`). */}
             {post.source_id ? (
               <>
                 <TextLink
@@ -928,14 +928,6 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 >
                   {middleTruncate(sourceName, 40)}
                 </TextLink>
-                {divider ? null : (
-                  <span className="whitespace-nowrap">
-                    <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
-                    <TextLink to={sourceSettingsHref(post.source_id)} className="text-fg-3 decoration-transparent hover:decoration-fg-3">
-                      settings
-                    </TextLink>
-                  </span>
-                )}
               </>
             ) : (
               <span className="min-w-0 font-medium text-fg [overflow-wrap:anywhere]" title={post.source_display_name || post.source}>

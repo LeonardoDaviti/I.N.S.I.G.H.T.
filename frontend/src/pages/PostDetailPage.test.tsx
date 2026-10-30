@@ -27,12 +27,12 @@ describe('PostDetailPage header', () => {
     expect(original).toHaveAttribute('target', '_blank');
   });
 
-  it('the source name reads the source; settings beside it opens it in Sources (issue 0010)', async () => {
+  it('the source name reads the source; the post page has no settings link (owner, 2026-10-31)', async () => {
     render(baseApi(rssPost({ source_id: 'src-1' })));
     const heading = await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
     const header = heading.closest('header')!;
     expect(within(header).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
-    expect(within(header).getByRole('link', { name: 'settings' })).toHaveAttribute('href', '/settings/sources?source=src-1');
+    expect(within(header).queryByRole('link', { name: 'settings' })).toBeNull();
   });
 
   it('a watched page says, calmly, when it changed, what changed and its own status (issue 0039)', async () => {
@@ -672,7 +672,7 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     expect(screen.getAllByText('The older post')).toHaveLength(1);
   });
 
-  it('only the first post’s byline says settings; the posts that follow read source / date (issue 0033)', async () => {
+  it('no byline says settings; the posts that follow read source / date (issue 0033)', async () => {
     const withSource: Record<string, Post> = {
       [POST_ID]: rssPost({ source_id: 'src-1' }),
       [NEXT_ID]: rssPost({ id: NEXT_ID, source_id: 'src-1', title: 'The older post', published_at: '2026-09-26T10:00:00+00:00' }),
@@ -683,7 +683,7 @@ describe('PostDetailPage continuous reading (issue 0014)', () => {
     see(streamEnd());
     const next = (await screen.findByRole('heading', { level: 1, name: 'The older post' })).closest('header')!;
 
-    expect(within(first).getByRole('link', { name: 'settings' })).toHaveAttribute('href', '/settings/sources?source=src-1');
+    expect(within(first).queryByRole('link', { name: 'settings' })).toBeNull();
     expect(within(next).queryByRole('link', { name: 'settings' })).toBeNull();
     expect(within(next).getByRole('link', { name: 'simonwillison.net' })).toHaveAttribute('href', '/read/source/src-1');
     expect(next.querySelector('time')).toHaveAttribute('dateTime', '2026-09-26T10:00:00+00:00');
