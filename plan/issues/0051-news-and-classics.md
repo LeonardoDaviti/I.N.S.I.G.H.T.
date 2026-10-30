@@ -1,6 +1,6 @@
 # 0051 — News and Classics: what many of my sources cover now, and what they keep citing
 
-Status: **spec** (2026-10-30), release not decided (proposed: v9.7, with 0050). It needs 0050's post links and stories. It replaces 0013's idea of ranking by what I read: only 0.3% of the server's posts are read, so there is nothing to learn from yet.
+Status: **spec** (2026-10-30) for v9.7, with 0050 (owner, 2026-10-30: "yes we can go"). It needs 0050's post links and stories. It replaces 0013's idea of ranking by what I read: only 0.3% of the server's posts are read, so there is nothing to learn from yet.
 
 ## The idea (owner, 2026-10-30)
 INSIGHT is for two things: **news** (what is happening now) and **classics** (what lasts). Both can be measured from your own sources, without AI and without reading history:
@@ -18,7 +18,7 @@ INSIGHT is for two things: **news** (what is happening now) and **classics** (wh
 - **HN and Reddit:** votes, with time decay.
 - **Feedly Leo and Artifact:** your own clicks. Our version of that is 0013, later.
 
-## Evidence (prototype on `insight_preview`, 2026-10-30, read only; scripts in `~/.cache/insight-checks/dedup-scripts/`)
+## Evidence (prototype on `insight_preview`, 2026-10-30, read only; scripts in `plan/research/dedup-prototype/`)
 - **The top story of each week, from 0050's stories plus names (below):**
   - W36: GPT-6 Astra;
   - W38: Snap Specs;

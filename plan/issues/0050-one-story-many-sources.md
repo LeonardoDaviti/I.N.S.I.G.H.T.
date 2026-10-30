@@ -1,6 +1,6 @@
 # 0050 — One story, many sources: the links inside posts, story groups, "covered by", and Discover
 
-Status: **spec** (2026-10-30), release not decided (proposed: v9.7, where it replaces "also discussed on HN / Reddit"). Prioritization is 0051 and builds on this.
+Status: **spec** (2026-10-30) for v9.7 (owner, 2026-10-30: "yes we can go"). It replaces "also discussed on HN / Reddit". Prioritization is 0051 and builds on this.
 
 ## The idea
 Every post carries links. Saved once, as data, those links answer three questions without AI:
@@ -14,7 +14,7 @@ Every post carries links. Saved once, as data, those links answer three question
 
 ## Evidence (prototype on `insight_preview`, 2026-10-30, read only)
 - **Data:** 7,735 posts from 94 sources (2,485 site posts, 3,439 arXiv, 898 Reddit, 537 YouTube, 356 Telegram, 20 X). There is no Hacker News source on the preview; the server has one.
-- **Scripts:** `~/.cache/insight-checks/dedup-scripts/`, run against an export in `~/.cache/insight-checks/dedup-exp/`. They are outside the repo.
+- **Scripts:** `plan/research/dedup-prototype/` (export, report, and the expected output). The real code must reproduce it.
 - **Links:** posts hold 13,830 links. After the filters below, 5,031 remain:
   - own site: 6,891;
   - a source's signature: 1,093;

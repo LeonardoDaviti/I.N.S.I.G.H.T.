@@ -23,7 +23,11 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - PDF text (0038);
   - the reader's known gaps: pages laid out in tables that read as 0 words (paulgraham.com), code written as `<figure><code>` (fasterthanli.me), from 0042 and 0039's checks;
   - Hacker News with its comments (0017), read in place.
-- **v9.7, find and follow up:** saved searches; "also discussed on Hacker News / Reddit" under a post; tuning watch, Tidy up and search after weeks of real use.
+- **v9.7, find and follow up:**
+  - one story, many sources (0050): the links inside posts, a story shown once with "covered by N", and Discover from what your sources link;
+  - News and Classics (0051): what many of your sources cover now, and what they keep citing, ranked without AI;
+  - saved searches; tuning watch, Tidy up, search and 0051's thresholds after weeks of real use.
+- **Mark IX is the groundwork for Mark X** (owner, 2026-10-30): search, post links and stories are the base that Mark X's dedup by meaning, entities, the first reporter and trends build on, not a second system.
 - **Only on a real case:** release updates (0024), native Bluesky and Mastodon, email-in.
 - **Cut** (features for their own sake, owner 2026-10-28): the installable app (PWA), the Fever / Google Reader API, a one-command install, optional login, notifications, a track published as RSS, podcasts, read aloud, export to Obsidian, webhooks.
   - Login and a simpler install come back only with the hosted product.
