@@ -45,6 +45,9 @@ class StoriesService:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         # News and Classics (issue 0051) are refreshed by this job, on its transaction.
         self.news = news or NewsService(db_url, clock=self.clock)
+        # Discover reads every kept link (138k on the server's data: 2.6 s), and its inputs change only
+        # with a story run, a source or a hidden suggestion: the last list is kept until they do.
+        self._discovered: tuple = ("", None)
 
     # ---- the job ------------------------------------------------------------------------
 
@@ -117,6 +120,9 @@ class StoriesService:
     def discover(self) -> Dict[str, Any]:
         """Sites and accounts your sources keep linking that you don't follow, each with why."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            inputs = self.repo.discover_inputs(cur)
+            if self._discovered[0] == inputs and self._discovered[1] is not None:
+                return self._discovered[1]
             sources = SourceFacts(cur)
             links = self.repo.kept_links(cur, sources)
             hidden = self.repo.hidden(cur)
@@ -155,7 +161,9 @@ class StoriesService:
                     "linked_by": sorted(names[v] for v in linked_by[url]),
                 } for url in articles],
             })
-        return {"success": True, "suggestions": out}
+        result = {"success": True, "suggestions": out}
+        self._discovered = (inputs, result)
+        return result
 
     def hide(self, key: str) -> Dict[str, Any]:
         """Not interested: the suggestion is never shown again."""

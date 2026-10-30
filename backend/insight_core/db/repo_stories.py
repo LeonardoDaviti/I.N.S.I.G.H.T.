@@ -319,6 +319,19 @@ class StoriesRepository:
         return out
 
     @staticmethod
+    def discover_inputs(cur: Cursor) -> str:
+        """What Discover is computed from, in one string: the last story run (links are read before
+        it), the sources (added, removed, renamed) and the hidden suggestions. Same string, same list."""
+        cur.execute(
+            """
+            SELECT concat_ws('|', (SELECT value::text FROM system_settings WHERE key = 'stories'),
+                             (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM sources),
+                             (SELECT count(*) || ':' || COALESCE(max(hidden_at)::text, '') FROM discover_hidden))
+            """
+        )
+        return cur.fetchone()[0]
+
+    @staticmethod
     def hidden(cur: Cursor) -> Set[str]:
         cur.execute("SELECT key FROM discover_hidden")
         return {r[0] for r in cur.fetchall()}
