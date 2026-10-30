@@ -153,7 +153,7 @@ interface AddSourceModalProps {
   onAdd: (source: {
     handle_or_url: string;
     display_name: string;
-    fetch_delay_seconds: number;
+    fetch_delay_seconds?: number;
     page_watch?: { prefix: string };
   }) => void;
   /** Several sources were added at once (issue 0035): fetch them; close when all were added. */
@@ -169,7 +169,8 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   const [handleOrUrl, setHandleOrUrl] = useState(initialAddress ?? '');
   const [displayName, setDisplayName] = useState('');
   const [displayNameManuallyEdited, setDisplayNameManuallyEdited] = useState(false);
-  const [fetchDelay, setFetchDelay] = useState(1);
+  // A template's own pace (Nitter, the Telegram bridge); a source typed in takes the default.
+  const [fetchDelay, setFetchDelay] = useState<number | undefined>(undefined);
   const [several, setSeveral] = useState(false);
   // A Substack URL offers the paid-subscription cookie; it saves to Connections, shared by every Substack source.
   const substack = isSubstackUrl(handleOrUrl);
@@ -297,7 +298,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
 
   const handleTemplateClick = (template: Template) => {
     setSelectedTemplate(template);
-    setFetchDelay(template.fetchDelay ?? 1);
+    setFetchDelay(template.fetchDelay);
     // Clear previous values
     setTemplateVariable('');
     const builds = !template.variableName || Boolean(template.optionalVariable);
@@ -323,7 +324,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
       handle_or_url: canFollow ? withScheme(followed) : address,
       // A site's blog followed keeps the pasted address as its name ("stripe.com").
       display_name: displayName.trim() || (canFollow && followed !== address ? siteName(address) : ''),
-      fetch_delay_seconds: fetchDelay,
+      ...(fetchDelay ? { fetch_delay_seconds: fetchDelay } : {}),
       ...(canFollow && pagePreview?.prefix ? { page_watch: { prefix: pagePreview.prefix } } : {}),
     });
 
@@ -542,23 +543,6 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
               placeholder="Optional; derived from the URL when empty"
             />
           </div>
-
-          <details className="group">
-            <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Advanced</summary>
-            <div className="mt-3 sm:w-1/2">
-              <label htmlFor="fetch_delay" className={label}>Fetch delay (seconds)</label>
-              <Input
-                id="fetch_delay"
-                type="number"
-                min="0"
-                max="60"
-                value={fetchDelay}
-                onChange={(e) => setFetchDelay(parseInt(e.target.value) || 1)}
-                className="tabular-nums"
-              />
-              <p className={hint}>Wait after fetching this source.</p>
-            </div>
-          </details>
 
           <DialogFooter>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
