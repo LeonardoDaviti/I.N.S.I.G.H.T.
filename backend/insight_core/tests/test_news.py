@@ -191,6 +191,15 @@ class ClassicRulesTests(unittest.TestCase):
         self.assertEqual(classics([cite("x", 0, url, stored="p"), cite("site:lab.test", 1, url, stored="p")], stored), [],
                          "the page's own voice does not count")
 
+    def test_link_words_name_a_classic_only_when_they_read_as_a_title(self):
+        page = "https://github.com/openclaw/openclaw"
+        spread = [cite("a", 0, page, text="over 100,000 commits"), cite("b", 10, page, text="over 100,000 commits"),
+                  cite("a", 200, page)]
+        [c] = classics(spread, {})
+        self.assertIsNone(c.title, "words from inside a sentence: the address is shown")
+        [c] = classics(spread + [cite("c", 201, page, text="OpenClaw on GitHub")], {})
+        self.assertEqual(c.title, "OpenClaw on GitHub")
+
     def test_reference_pages_are_not_classics(self):
         for url in ("https://docs.example/docs/intro", "https://claude.example/product/claude-code",
                     "https://example.com/pricing", "https://help.example.com/help/articles/123",

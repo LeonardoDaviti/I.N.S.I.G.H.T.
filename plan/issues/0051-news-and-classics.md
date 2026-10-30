@@ -74,7 +74,7 @@ Posts that share a surging name join one story **for News only**. A name never f
 - **Ordered by voices, then by how long it has been cited.** A page's age never counts against it.
 - **Cited again comes first:** a classic one of your sources cited in the last 7 days goes to the top, marked "cited again this week". Old doesn't mean unimportant: it can be the foundation of something new.
 - **Each card shows:**
-  - its title: the stored post's title, or the most common link text;
+  - its title: the stored post's title, else the most common link text that reads as a title (3+ words starting with a capital or digit; changed 2026-10-30, measured: 20 of the top 30 right, against 16), else its address;
   - who cited it and when ("Simon Willison, Aug 2025 · …");
   - Read: a stored post opens in the reader, and an outside page through Save any page (0031), fetched only on click;
   - Later;
