@@ -22,7 +22,8 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - full arXiv papers (0037), which are 45% of all posts;
   - PDF text (0038);
   - the reader's known gaps: pages laid out in tables that read as 0 words (paulgraham.com), code written as `<figure><code>` (fasterthanli.me), from 0042 and 0039's checks;
-  - Hacker News with its comments (0017), read in place.
+  - Hacker News with its comments (0017), read in place;
+  - History: the posts I opened, newest first, by day (0052).
 - **v9.7, find and follow up:**
   - one story, many sources (0050): the links inside posts, a story shown once with "covered by N", and Discover from what your sources link;
   - News and Classics (0051): what many of your sources cover now, and what they keep citing, ranked without AI;
@@ -106,6 +107,16 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
 - **Deduplication** is Mark X: one story across sources and languages.
 - **Entity collection, even from skipped posts:** a Hacker News post about Tailscale, skipped in the Main feed, shows up later under *Company: Tailscale* or *Product: Tailscale* (0001 entity pages, filled automatically).
 - **"Palantir for news"**, keeping the owner in charge without the noise: collect everything (Mark IX), find anything (search), connect the dots (dedup, entities, first reporter), notice what matters (watchlists, trend spikes, priority), trust it (every claim links to its posts; nothing hidden by a black box).
+
+### From the 0050/0051 work (owner, 2026-10-30)
+Mark IX finds what is cited and when (0051's Classics, "cited again", Background). Mark X adds the understanding:
+- **Why an old page is a foundation:** "this post applies the Bitter Lesson's argument to agents". This needs AI reading both texts.
+- **Classics nobody linked:** an old post that matters to a new story but was never cited. This needs embeddings.
+- **A map of ideas:** which ideas descend from which pages over time (entities, the citation graph 0004).
+- **Stories told in different words:** joining posts with no shared link, title or name (meaning, translation).
+- **Trends:** 0051's names in titles are the cheap first step toward "3× the usual volume".
+- **Popularity from outside:** HN points and Reddit scores, if News needs them.
+- **Built on Mark IX's tables:** post links, stories and story posts get new join reasons (meaning, language, entity), not a second system.
 
 ### Understanding stories
 - **Story clustering:** the same news across sources and languages becomes one story, with who reported it first, who followed, and who added something new (0004, the citation graph).

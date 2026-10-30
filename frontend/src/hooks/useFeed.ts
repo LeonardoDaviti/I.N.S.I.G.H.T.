@@ -52,7 +52,9 @@ export function useFeed({ scope, filter, view, fixture }: {
       return view === 'by_source' ? api.getFeedGroups(params) : api.getFeed(params);
     },
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    staleTime: Infinity,
+    // History (issue 0052) changes with every post you open: coming back to it loads it afresh,
+    // with the post just read on top; it still never refetches under you while you read it.
+    staleTime: filter === 'history' ? 0 : Infinity,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });

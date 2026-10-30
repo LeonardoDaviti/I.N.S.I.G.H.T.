@@ -54,8 +54,9 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, not deployed |
 | [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, not deployed |
 | [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | built, not deployed (v9.6) |
-| [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | spec (v9.7) |
+| [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | in progress, paused (v9.7): branch `issue-0050-one-story-many-sources` at 884448a, unverified |
 | [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | spec (v9.7; needs 0050) |
+| [0052](0052-what-i-read.md) | What I read: find again a post I read yesterday | built, not deployed (v9.6) |
 
 ## Analysis archive
 

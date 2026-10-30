@@ -15,7 +15,7 @@ Where sources are managed, and the only home of ingestion jobs and secrets (P7):
 ## Entry & URL
 
 - `/settings/sources`, from the `sources` nav word, ⌘K (Sources, Ingestion) and every source or track name in a reading view (P8).
-- Tabs as `?tab=`: none = **sources**, `suggested` (Discover, decision 034), `connections` (`&provider=<id>` opens that provider), `ingestion` (`&sub=archive|jobs|logs` for its views, `&job=<id>` for one job, `&sub=archive&source=<id>` for one source's backfill).
+- Tabs as `?tab=`: none = **sources**, `suggested` (Discover, decision 035), `connections` (`&provider=<id>` opens that provider), `ingestion` (`&sub=archive|jobs|logs` for its views, `&job=<id>` for one job, `&sub=archive&source=<id>` for one source's backfill).
 - Sources tab view in the URL: `?q=`, `?status=`, `?group=track|kind` (none, one flat list, is the default; the old `?group=platform` groups by kind); the old `?status=backoff` opens Failing, `?sort=name|kind|posts|lastPost|added` (status is the default) and `?dir=asc|desc` (left out while it is the column's own: name and kind ascending, the rest descending; status descending is worst first; within a status, and in every column, ties go A to Z by name). The legacy `?tab=health` opens the flat list with its `?status=`; old or unknown values (`sort=success`, `group=status`) fall back to the defaults.
 - `?source=<id>` opens that source's detail sheet; closing the sheet removes it, and Back closes the sheet. `?track=<id>` groups by track, scrolls to the track's group and briefly highlights it. An unknown id shows the list with a quiet note ("That source no longer exists"), no error page.
 - `/ingestion[/:tab]` (the old ingestion page) redirects here, to the view that holds that tab, carrying the query. Dev-only `?data=worst|empty|one|huge`.
@@ -67,7 +67,7 @@ Where sources are managed, and the only home of ingestion jobs and secrets (P7):
 
 ## Decisions
 
-- 005 ingestion is a tab here, 008 secrets only in Connections, 011 names in reading views link here, 031 Tidy up is a filter of this list, 034 Discover is the suggested tab (`../decisions.md`).
+- 005 ingestion is a tab here, 008 secrets only in Connections, 011 names in reading views link here, 031 Tidy up is a filter of this list, 035 Discover is the suggested tab (`../decisions.md`).
 
 ## Open issues
 

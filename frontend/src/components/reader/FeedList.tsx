@@ -110,6 +110,7 @@ function PostListBody({
   // Day headers for the stream: each row's day heading, and whether the row is the
   // first of its day (where the header is drawn), computed once per items array.
   // Later is in the order saved, not by day: no headers, and each row shows its date.
+  // History's `sort_at` is the last open (issue 0052), so it groups by the day you opened it.
   const byDay = filter !== 'later' && !search;
   const days = useMemo(() => {
     let previous: string | null = null;
@@ -180,9 +181,12 @@ function PostListBody({
   }, [mutations]);
 
   const askMarkThrough = useCallback((item: FeedItemData) => {
-    if (view === 'by_source' || filter === 'later' || search) {
-      // Later (and a search) is not in the feed's order: "up to here" would mean something else.
-      let message = filter === 'later' ? 'Mark read up to here does not work in Later.' : 'Mark read up to here works in the Stream view.';
+    if (view === 'by_source' || filter === 'later' || filter === 'history' || search) {
+      // Later, History (by when you opened it) and a search are not in the feed's order:
+      // "up to here" would mean something else.
+      let message = 'Mark read up to here works in the Stream view.';
+      if (filter === 'later') message = 'Mark read up to here does not work in Later.';
+      if (filter === 'history') message = 'Mark read up to here does not work in History.';
       if (search) message = 'Mark read up to here does not work in search results.';
       announce(message);
       toast(message);

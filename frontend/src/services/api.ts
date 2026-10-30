@@ -81,8 +81,9 @@ export interface ReaderState {
 
 // ---- Reader: GET /api/feed (every post list), PUT /api/feed/read (read state) ----
 
-/** `starred` is Keep, shown as "Kept" (issue 0022); `updated`, a watched source's changed pages (issue 0039). */
-export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated';
+/** `starred` is Keep, shown as "Kept" (issue 0022); `updated`, a watched source's changed pages (issue 0039);
+ *  `history`, the posts you opened or read, last open first (issue 0052). */
+export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated' | 'history';
 export type FeedView = 'stream' | 'by_source';
 
 export interface FeedItem {
@@ -95,6 +96,8 @@ export interface FeedItem {
   resume_block?: number | null; resume_blocks?: number | null;
   /** In Later since (issue 0022); null or absent when not in Later. */
   later_at?: string | null;
+  /** History only (issue 0052): your last open or reading session, which is also its `sort_at`. */
+  opened_at?: string | null;
   /** Search results only (issue 0040): the matching line, its words marked; null when the
    *  words matched only the title or the source's name. */
   snippet?: SnippetPart[] | null;

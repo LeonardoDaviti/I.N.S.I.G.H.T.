@@ -337,6 +337,12 @@ class StoryJobTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in self._feed(filter="unread")], [self.take], "the other report stays unread")
         self.assertEqual([r["id"] for r in self._feed(filter="all")], [self.lab])
 
+    def test_history_does_not_fold_a_story(self):
+        self._launch()
+        for post_id in (self.lab, self.copy, self.take):
+            self.cur.execute("INSERT INTO post_interactions (post_id, interaction_type) VALUES (%s, 'opened')", (post_id,))
+        self.assertEqual(sorted(r["id"] for r in self._feed(filter="history")), sorted([self.lab, self.copy, self.take]))
+
     def test_reading_the_lead_reads_its_shares_not_other_reports(self):
         self._launch()
         marked = self.reader.set_read(self.cur, [self.lab], True)
