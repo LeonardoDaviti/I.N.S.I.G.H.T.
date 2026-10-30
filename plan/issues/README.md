@@ -65,6 +65,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
 | [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | spec (v9.8) |
 | [0061](0061-smooth-loading.md) | Smooth loading: no broken tab after a deploy, no wait on the first post, a budget that measures what you wait for | built, not deployed (v9.8) |
+| [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | spec (v9.9) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 
 ## Analysis archive
