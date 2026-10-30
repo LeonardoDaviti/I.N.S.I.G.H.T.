@@ -53,6 +53,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0046](0046-source-hygiene.md) | Source hygiene: quiet and never-opened sources | built, not deployed |
 | [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, not deployed |
 | [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, not deployed |
+| [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | spec (v9.6) |
 
 ## Analysis archive
 
