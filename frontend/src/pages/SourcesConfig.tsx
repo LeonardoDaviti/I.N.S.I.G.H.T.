@@ -39,6 +39,7 @@ import { Button, Dialog, DialogContent, DialogFooter, Input, Page, PageHeader, T
 import { ConnectionsPanel } from '../components/connections';
 import { EmptyState, ErrorState, LoadingState, Notice } from '../components/states';
 import { SOURCES_HEALTH_KEY, useSourcesHealth } from '../hooks/useSourcesHealth';
+import { SOURCE_ANATOMY_KEY } from '../lib/ingestionNavigation';
 import { FOLDERS_KEY, useReaderDirectory } from '../hooks/useReaderDirectory';
 import { useShortcutPreference } from '../hooks/useShortcutPreference';
 import { useIngestionRun } from '../hooks/useIngestionRun';
@@ -153,7 +154,9 @@ export default function SourcesConfig() {
   // A link out of the sheet ("add in Connections") switches the tab: the sheet closes with it.
   const location = useLocation();
   const navigate = useNavigate();
-  const openId = tab === 'sources' ? searchParams.get('source') : null;
+  // The list and Ingestion → sources (issue 0054) open the sheet.
+  const opensSheets = tab === 'sources' || (tab === 'ingestion' && searchParams.get('sub') === 'sources');
+  const openId = opensSheets ? searchParams.get('source') : null;
   const latestParams = useRef(searchParams);
   latestParams.current = searchParams;
   const latestState = useRef(location.state);
@@ -225,6 +228,7 @@ export default function SourcesConfig() {
     void queryClient.invalidateQueries({ queryKey: [...SOURCES_WITH_SETTINGS_KEY] });
     void queryClient.invalidateQueries({ queryKey: [...FOLDERS_KEY] });
     void queryClient.invalidateQueries({ queryKey: [...SUGGESTED_SOURCES_KEY] });
+    void queryClient.invalidateQueries({ queryKey: [...SOURCE_ANATOMY_KEY] });
   };
 
   /** Optimistic on/off in every cached health response; rolled back by the refetch on failure. */
@@ -560,7 +564,7 @@ export default function SourcesConfig() {
         </TabsContent>
         <TabsContent value="ingestion" className="pt-2">
           <div className="pb-24">
-            <IngestionPanel />
+            <IngestionPanel onOpenSource={openSheet} />
           </div>
         </TabsContent>
       </Tabs>

@@ -1140,6 +1140,19 @@ async def get_sources_health():
     return services().operations.get_source_health()
 
 
+@app.get("/api/sources/anatomy")
+@error_detail("load the sources' anatomy")
+async def get_sources_anatomy():
+    """Source anatomy (issue 0054): every source, how it is read and what it gives. {window_days,
+    generated_at, rows: [{source_id, display_name (its own name, or null), address, platform,
+    enabled, kind (feed | page_watch | site_reader | telegram | x | reddit | youtube | saved),
+    full_text (on | off | feed), watch_changes (null: its kind cannot), watched_pages, validators
+    (null: its kind fetches unconditionally), status, interval_hours, interval_basis, next_due_at,
+    last_attempt_at, last_outcome, last_error, last_error_at, recent and all: {posts, read,
+    stories, first, classics, links}}]}, most posts in the window first. Nothing is fetched."""
+    return await asyncio.to_thread(services().anatomy.anatomy)
+
+
 @app.put("/api/sources/{source_id}/cadence")
 @error_detail("set the cadence override")
 async def set_source_cadence(source_id: str, request: CadenceOverrideRequest):

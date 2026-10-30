@@ -681,6 +681,41 @@ export interface SuggestedSource {
 }
 export interface SuggestedSourcesResponse { success: true; suggestions: SuggestedSource[]; }
 
+/** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it
+ *  reported first, the classics it cited and the outside links it gave. */
+export interface SourceGives { posts: number; read: number; stories: number; first: number; classics: number; links: number; }
+export type AnatomyKind = 'feed' | 'page_watch' | 'site_reader' | 'telegram' | 'x' | 'reddit' | 'youtube' | 'saved';
+
+/** One source's anatomy (issue 0054): how it is read, and what it gives. */
+export interface SourceAnatomyRow {
+  source_id: string;
+  /** Its own name, or null: it is named from its address. */
+  display_name: string | null;
+  address: string;
+  platform: string;
+  enabled: boolean;
+  kind: AnatomyKind;
+  /** on: it reads each post's page; off: switched off; feed: the feed carries the whole post. */
+  full_text: 'on' | 'off' | 'feed';
+  /** Change watching (0039); null: its kind cannot watch. */
+  watch_changes: boolean | null;
+  watched_pages: number;
+  /** Conditional fetching (0044): validators stored; null: its kind always fetches in full. */
+  validators: boolean | null;
+  status: HealthStatus;
+  interval_hours: number;
+  interval_basis: IntervalBasis;
+  next_due_at: string | null;
+  last_attempt_at: string | null;
+  last_outcome: OutcomeStatus | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  /** Over the last `window_days`. */
+  recent: SourceGives;
+  all: SourceGives;
+}
+export interface SourceAnatomyResponse { success: true; window_days: number; generated_at: string; rows: SourceAnatomyRow[]; }
+
 /** What the feed finder made of an address: a feed already, feeds found for it, a site INSIGHT reads itself, or nothing. */
 export interface FeedFinding extends Envelope {
   status?: 'feed' | 'found' | 'direct' | 'none';
@@ -865,6 +900,8 @@ export function createApi() {
     /** Keep a source marked quiet or never opened (issue 0046): its mark hides for 90 days; the fresh row. */
     keepSource: (sourceId: string) =>
       request<{ success: true; row: SourceHealthRow }>(`/api/sources/${enc(sourceId)}/tidy/keep`, { method: 'POST' }),
+    /** Source anatomy (issue 0054): every source, how it is read and what it gives. Fetches nothing. */
+    getSourceAnatomy: () => request<SourceAnatomyResponse>('/api/sources/anatomy'),
     /** Discover (issue 0050): what your sources keep linking that you don't follow. Fetches nothing. */
     getSuggestedSources: () => request<SuggestedSourcesResponse>('/api/sources/suggested'),
     /** Not interested: the suggestion is never shown again. */
