@@ -18,6 +18,22 @@ class PostFieldsUtilityTests(unittest.TestCase):
         self.assertEqual(normalized, "https://example.com/path?a=1&b=2")
         self.assertEqual(host, "example.com")
 
+    def test_one_post_has_one_normalized_url_however_the_link_is_written(self):
+        """Issue 0049: a fragment, utm_ tags, http, www. and a trailing slash name the same post."""
+        forms = [
+            "https://simonwillison.net/2026/Aug/10/openclaw/#atom-everything",
+            "https://simonwillison.net/2026/Aug/10/openclaw/",
+            "https://simonwillison.net/2026/Aug/10/openclaw/?utm_source=rss",
+            "http://www.simonwillison.net/2026/Aug/10/openclaw",
+        ]
+        self.assertEqual({normalize_url(form) for form in forms},
+                         {"https://simonwillison.net/2026/Aug/10/openclaw"})
+
+    def test_a_fragment_that_is_the_address_is_kept(self):
+        self.assertEqual(normalize_url("https://app.test/#!/post/1"), "https://app.test/#!/post/1")
+        self.assertEqual(normalize_url("https://app.test/#/post/2"), "https://app.test/#/post/2")
+        self.assertNotEqual(normalize_url("https://app.test/#!/post/1"), normalize_url("https://app.test/#!/post/2"))
+
     def test_youtube_normalization_collapses_short_links(self):
         normalized = normalize_url("https://youtu.be/dQw4w9WgXcQ?t=30")
 

@@ -146,6 +146,11 @@ class PostsRepository:
     # Ingestion stayed dead for 21 days. Everything below exists so one post can never again
     # cost a whole cycle.
     _CONFLICT_INDEX = "posts_source_external_unique"
+    # A third (issue 0049): posts_normalized_url_unique. A post whose link comes back in
+    # another form (#atom-everything dropped, utm_ tags, http, www., a trailing slash) is the
+    # same post; its INSERT violates this index and is resolved like the one above, by
+    # updating the row found under the normalized_url. That row keeps its url and id.
+    _NORMALIZED_URL_INDEX = "posts_normalized_url_unique"
 
     # Bounded because each retry only happens when another writer moved the rows under us.
     # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
@@ -157,6 +162,9 @@ class PostsRepository:
             SELECT id, source_id
               FROM posts
              WHERE url = %(url)s
+                OR (%(normalized_url)s::text IS NOT NULL AND normalized_url = %(normalized_url)s::text)
+             ORDER BY url = %(url)s DESC
+             LIMIT 1
         )
         SELECT id, TRUE AS matched_by_url
           FROM url_row
@@ -184,6 +192,9 @@ class PostsRepository:
     # doomed UPDATE, and upsert_post would burn all four attempts and raise. Falling back to
     # the incoming source_id covers the no-url-row case, where the failed statement really was
     # a plain INSERT under this source.
+    #
+    # The url row is the exact url's, else the one under the same normalized_url (issue
+    # 0049): to the resolver both are "the row this post already is".
 
     def upsert_post(self, cur: Cursor, post: Dict[str, Any], source_id: str) -> Tuple[str, bool]:
         """Save single post. Returns (post_id, was_inserted).
@@ -297,10 +308,10 @@ class PostsRepository:
                     cur.execute(query, params)
                     row = cur.fetchone()
             except psycopg.errors.UniqueViolation as exc:
-                # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
-                # can reach here is the uncovered index. Anything else is unexpected and must
-                # stay loud rather than be swallowed by a resolver that cannot handle it.
-                if exc.diag.constraint_name != self._CONFLICT_INDEX:
+                # ON CONFLICT (url) already absorbs posts_url_key, so the only violations that
+                # can reach here are the two uncovered indexes. Anything else is unexpected and
+                # must stay loud rather than be swallowed by a resolver that cannot handle it.
+                if exc.diag.constraint_name not in (self._CONFLICT_INDEX, self._NORMALIZED_URL_INDEX):
                     raise
                 resolved = self._resolve_external_id_collision(cur, params, attempt=attempt)
                 if resolved is not None:
@@ -317,14 +328,14 @@ class PostsRepository:
             return (post_id, was_inserted)
 
         raise RuntimeError(
-            f"upsert_post could not resolve {self._CONFLICT_INDEX} for {url} "
+            f"upsert_post could not resolve {self._CONFLICT_INDEX} or {self._NORMALIZED_URL_INDEX} for {url} "
             f"after {self._CONFLICT_MAX_ATTEMPTS} attempts"
         )
 
     def _resolve_external_id_collision(
         self, cur: Cursor, params: Dict[str, Any], *, attempt: int = 0
     ) -> Optional[Tuple[str, bool]]:
-        """Settle a (source_id, external_id) clash by identity. Returns None to retry the insert.
+        """Settle a (source_id, external_id) or normalized_url clash by identity. Returns None to retry the insert.
 
         Returns (post_id, False) - the row demonstrably already existed, so it can never be
         an insert, and the `xmax = 0` trick only applies to the INSERT ... RETURNING path.
