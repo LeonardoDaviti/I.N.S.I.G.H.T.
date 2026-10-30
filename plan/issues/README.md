@@ -63,7 +63,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | spec (v9.8) |
 | [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | built, not deployed (v9.8) |
 | [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
-| [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | spec (v9.8) |
+| [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | built, not deployed (v9.8) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 
 ## Analysis archive

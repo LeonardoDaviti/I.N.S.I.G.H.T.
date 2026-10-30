@@ -669,6 +669,8 @@ export interface AddSourceResponse extends Envelope {
 export interface FoundFeed {
   url: string;
   title: string;
+  /** How many of the site's articles your sources linked it holds (issue 0060); only when they linked some. */
+  holds?: number;
 }
 
 /** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
@@ -728,8 +730,13 @@ export interface FeedFinding extends Envelope {
   feeds?: FoundFeed[];
   /** None, and the address is a site's home page (issue 0041): a poor page to follow. */
   homepage?: boolean;
-  /** For a home page: the site's own blog or news pages to follow instead, the most articles first. */
+  /** For a home page: the site's own blog or news pages to follow instead, the most articles first
+   *  (the most of your sources' links held first, when they linked the site). */
   pages?: PageOffer[];
+  /** How many of the site's articles your sources linked (issue 0060): 0 when none. */
+  linked?: number;
+  /** The section a home page was looked at from, where most of those links point; null from the home page. */
+  start?: string | null;
 }
 
 /** Following a page without a feed (issue 0028): the article URLs found under the path, the first few read. */
@@ -748,6 +755,8 @@ export interface PageOffer {
   found: number;
   sitemap: boolean;
   items: { url: string; title: string; published_at: string | null }[];
+  /** How many of the articles your sources linked it holds (issue 0060). */
+  holds?: number;
 }
 
 /** POST /api/saved (issue 0031): a page saved into the Saved source, or one already stored. */

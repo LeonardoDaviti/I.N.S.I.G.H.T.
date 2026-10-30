@@ -90,3 +90,59 @@ describe('a home page with no feed offers its blog (issue 0041)', () => {
     expect(within(dialog()).queryByText(/This is the site's homepage/)).not.toBeInTheDocument();
   });
 });
+
+// claude.com from Discover (2026-10-31): its home page offered /resources/ (546 articles); 21 of
+// the 24 claude.com articles your sources linked are under /blog/, now /resources/articles/.
+describe('findings ranked by the articles your sources linked (issue 0060)', () => {
+  const ARTICLES = { ...offer('https://lab.example/resources/articles', '/resources/articles/', 273), holds: 21 };
+  const RESOURCES = { ...offer('https://lab.example/resources', '/resources/', 546), holds: 21 };
+  const NEWS = { ...offer('https://lab.example/news', '/news/', 40), holds: 0 };
+
+  it('lists every page with what it holds, the best already chosen and previewed', async () => {
+    const { api, onAdd } = setup({ success: true, status: 'none', feeds: [], homepage: true, linked: 24,
+      start: 'https://lab.example/blog', pages: [ARTICLES, RESOURCES, NEWS] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'lab.example');
+
+    const best = await within(dialog()).findByRole('radio', { name: /lab\.example\/resources\/articles.*273 articles/ });
+    expect(best).toBeChecked();
+    expect(within(dialog()).getAllByText('Holds 21 of the 24 articles your sources linked')).toHaveLength(2);
+    expect(within(dialog()).getByText('Holds 0 of the 24 articles your sources linked')).toBeInTheDocument();
+    expect(within(dialog()).getByText('Following lab.example/resources/articles')).toBeInTheDocument();
+    expect(within(dialog()).getByText('Found 273 articles under /resources/articles/')).toBeInTheDocument();
+    expect(within(dialog()).queryByText('Other pages on this site')).not.toBeInTheDocument();
+    expect(api.previewPageWatch).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog()).getByRole('radio', { name: /lab\.example\/news/ }));
+    expect(within(dialog()).getByText('Found 40 articles under /news/')).toBeInTheDocument();
+    await userEvent.click(within(dialog()).getByRole('radio', { name: /lab\.example\/resources\/articles/ }));
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Add source' }));
+    await waitFor(() => expect(onAdd).toHaveBeenCalled());
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ handle_or_url: 'https://lab.example/resources/articles',
+      display_name: 'lab.example', page_watch: { prefix: '/resources/articles/' } });
+  });
+
+  it('feeds say what they hold, the one holding the most chosen', async () => {
+    setup({ success: true, status: 'found', homepage: false, linked: 5, start: null, pages: [],
+      feeds: [{ url: 'https://lab.example/writing/feed', title: 'Writing', holds: 4 },
+        { url: 'https://lab.example/podcast.xml', title: 'Podcast', holds: 1 }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'lab.example/writing');
+    expect(await within(dialog()).findByRole('radio', { name: /Writing/ })).toBeChecked();
+    expect(within(dialog()).getByText('Holds 4 of the 5 articles your sources linked')).toBeInTheDocument();
+    expect(within(dialog()).getByText('Holds 1 of the 5 articles your sources linked')).toBeInTheDocument();
+  });
+
+  it('one feed found says what it holds', async () => {
+    setup({ success: true, status: 'found', homepage: false, linked: 1, start: 'https://lab.example/blog', pages: [],
+      feeds: [{ url: 'https://lab.example/blog/feed', title: 'Lab blog', holds: 1 }] });
+    await userEvent.type(within(dialog()).getByLabelText('Feed URL or handle'), 'lab.example');
+    expect(await within(dialog()).findByText('Holds the article your sources linked')).toBeInTheDocument();
+  });
+
+  it('a site your sources never linked offers its pages as before', async () => {
+    setup({ success: true, status: 'none', feeds: [], homepage: true, linked: 0, start: null, pages: [BLOG, PRESS] });
+    await typeHome();
+    expect(await within(dialog()).findByRole('button', { name: 'Follow pay.example/blog: 269 articles' })).toBeInTheDocument();
+    expect(within(dialog()).queryByRole('radio')).not.toBeInTheDocument();
+    expect(within(dialog()).queryByText(/your sources linked/)).not.toBeInTheDocument();
+  });
+});

@@ -180,7 +180,47 @@ const SCENARIOS: FrameScenario[] = [
       await frame.find('[role="dialog"]');
     },
   },
+  {
+    // Issue 0060, modeled on claude.com (2026-10-31): Follow… from Discover starts where the links point.
+    page: 'sources', state: 'follow-where-linked', label: 'Follow… from Discover: every page with the linked articles it holds',
+    url: '/settings/sources?tab=discover', routes: (now) => [...followWhereLinked(now), ...siteRoutes(normalSite(now))], documented: false,
+    setup: async (frame) => {
+      await frame.click('button', /Follow…/);
+      await frame.find('[role="dialog"] input[type="radio"]');
+    },
+  },
 ];
+
+/** Discover suggesting claude.com, and what Follow… finds there (issue 0060). */
+function followWhereLinked(now: Date): FixtureRoute[] {
+  const site = 'https://claude.com';
+  const posts = ['Introducing routines in Claude Code', 'Agent view in Claude Code', 'Cowork is now Claude',
+    'The AI-native SDLC playbook', 'Organization skills and directory'];
+  const items = (prefix: string) => posts.map((title, n) => ({
+    url: `${site}${prefix}${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, title, published_at: at(now, -(n + 1) * 26 * HOUR),
+  }));
+  const page = (path: string, found: number) => ({ url: `${site}${path.replace(/\/$/, '')}`, prefix: path, found, sitemap: true, items: items(path), holds: 21 });
+  return [
+    {
+      path: '/api/sources/suggested',
+      respond: () => ({
+        success: true,
+        suggestions: [{
+          key: 'claude.com', url: site, voices: 6, voice_names: ['Simon Willison', 'Latent Space', 'Import AI'],
+          article_count: 24, link_count: 31, classics: 0,
+          articles: items('/blog/').map((item) => ({ url: item.url, title: item.title, linked_by: ['Simon Willison'] })),
+        }],
+      }),
+    },
+    {
+      method: 'POST', path: '/api/sources/find-feed',
+      respond: () => ({
+        success: true, status: 'none', feeds: [], homepage: true, linked: 24, start: `${site}/blog`,
+        pages: [page('/resources/articles/', 273), page('/resources/', 546)],
+      }),
+    },
+  ];
+}
 
 /** A partial run with failures as the newest ingestion job. */
 function worstSiteJobs(s: Site, now: Date): Site {

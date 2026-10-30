@@ -316,6 +316,21 @@ class StoryJobTests(unittest.TestCase):
         self.cur.execute("SELECT links_scanned_at IS NOT NULL FROM posts WHERE id = %s", (post_id,))
         self.assertTrue(self.cur.fetchone()[0])
 
+    def test_a_sites_linked_articles_are_its_hosts_article_links(self):
+        # Issue 0060: what Follow ranks a site's findings by.
+        site = f"lab-{self.mark}.test"
+        source, other = self._source("A"), self._source("B")
+        post = (self._link(f"https://www.{site}/blog/a-post-about-the-model") + self._link(f"https://{site}/about")
+                + self._link(f"https://docs.{site}/guides/a-guide-to-the-model"))
+        self._post(source, site="a", html=post)
+        self._post(other, site="b", html=self._link(f"https://{site}/blog/a-post-about-the-model")
+                   + self._link(f"https://{site}/2026/10/news"))
+        self._job()
+        self.assertEqual(StoriesRepository.linked_articles(self.cur, f"www.{site}"),
+                         [f"https://{site}/2026/10/news", f"https://{site}/blog/a-post-about-the-model"])
+        self.assertEqual(StoriesRepository.linked_articles(self.cur, f"docs.{site}"),
+                         [f"https://docs.{site}/guides/a-guide-to-the-model"])
+
     def test_the_job_fills_old_posts_and_marks_a_signature(self):
         source = self._source("Newsletter")
         signature = f"https://sub-{self.mark}.test/subscribe-to-the-newsletter-now"

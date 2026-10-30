@@ -146,6 +146,12 @@ function calendarDate(value: string | null): string {
   return date ? localDateISO(date) : '';
 }
 
+/** What a finding holds of the site's articles your sources linked (issue 0060). */
+function holdsLabel(holds: number, linked: number): string {
+  if (linked === 1) return holds ? 'Holds the article your sources linked' : 'Does not hold the article your sources linked';
+  return `Holds ${holds} of the ${linked} articles your sources linked`;
+}
+
 interface AddSourceModalProps {
   /** The addresses already in the sources: a one-address template among them is not offered. */
   existingAddresses?: readonly string[];
@@ -231,6 +237,14 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
         setHandleOrUrl(first.url);
         if (!displayNameManuallyEdited && first.title) setDisplayName(first.title);
       }
+      // Your sources linked the site (issue 0060): the page holding the most of those links is
+      // chosen already, with its preview; the others are listed with theirs.
+      const best = result.status === 'none' && result.linked ? result.pages?.[0] : undefined;
+      if (best) {
+        setPagePreview({ success: true, ...best, for: best.url, asked: '' });
+        setPath(best.prefix);
+        setFollow({ for: lookup, page: best.url });
+      }
     });
     return () => { cancelled = true; };
   }, [api, lookup, address, finding, displayNameManuallyEdited]);
@@ -285,6 +299,9 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
   };
   const offerLabel = (offer: PageOffer) => `Follow ${siteName(offer.url)}: ${offer.found} article${offer.found === 1 ? '' : 's'}`;
   const otherOffers = offers.filter((offer) => offer.url !== (following ? followed : offers[0]?.url));
+  // Your sources linked the site (issue 0060): every finding says how many of those links it holds.
+  const linked = finding?.linked ?? 0;
+  const ranked = linked > 0 && offers.length > 0;
 
   const pageNote = !following ? null
     : !previewed ? 'Looking for articles…'
@@ -420,7 +437,34 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
             />
             {alreadyAdded && !looking ? <p role="status" className={hint}>This feed is already in your sources</p> : null}
             {feedNote ? <p role="status" className={hint}>{feedNote}</p> : null}
-            {noFeed && !alreadyAdded && !following && offers.length > 0 ? (
+            {feedNote && linked > 0 && finding?.status === 'found' && foundFeeds.length === 1 ? (
+              <p className={hint}>{holdsLabel(foundFeeds[0].holds ?? 0, linked)}</p>
+            ) : null}
+            {noFeed && !alreadyAdded && ranked ? (
+              <fieldset className="mt-2">
+                <legend className={hint}>
+                  {offers.length === 1 ? 'A page to follow' : `${offers.length} pages to follow`}, the most of your sources&apos; links first
+                </legend>
+                <div className="mt-1.5 space-y-1.5">
+                  {offers.map((offer) => (
+                    <label key={offer.url} className="flex cursor-pointer items-start gap-2.5 text-[0.8125rem] text-fg">
+                      <input
+                        type="radio"
+                        name="page_offer"
+                        className="mt-1 accent-current"
+                        checked={following && followed === offer.url}
+                        onChange={() => followOffer(offer)}
+                      />
+                      <span className="min-w-0">
+                        <span className="[overflow-wrap:anywhere]">{siteName(offer.url)}</span>
+                        <span className="text-fg-3"> · {offer.found} article{offer.found === 1 ? '' : 's'}</span>
+                        <span className="block text-[0.75rem] text-fg-3">{holdsLabel(offer.holds ?? 0, linked)}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ) : noFeed && !alreadyAdded && !following && offers.length > 0 ? (
               <Button size="sm" className="mt-2" onClick={() => followOffer(offers[0])}>{offerLabel(offers[0])}</Button>
             ) : noFeed && !alreadyAdded && !following ? (
               <>
@@ -428,7 +472,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                 <Button size="sm" className="mt-2" onClick={() => setFollow({ for: address, page: address })}>Follow this page instead</Button>
               </>
             ) : null}
-            {noFeed && !alreadyAdded && otherOffers.length > 0 ? (
+            {noFeed && !alreadyAdded && !ranked && otherOffers.length > 0 ? (
               <details className="mt-2">
                 <summary className="cursor-pointer select-none text-[0.8125rem] text-fg-2 hover:text-fg">Other pages on this site</summary>
                 <ul className="mt-1.5 space-y-1">
@@ -488,6 +532,7 @@ export default function AddSourceModal({ existingAddresses = [], onClose, onAdd,
                       <span className="min-w-0">
                         {feed.title || shortAddress(feed.url)}
                         <span className="block font-mono text-[0.75rem] text-fg-3 [overflow-wrap:anywhere]">{shortAddress(feed.url)}</span>
+                        {linked > 0 ? <span className="block text-[0.75rem] text-fg-3">{holdsLabel(feed.holds ?? 0, linked)}</span> : null}
                       </span>
                     </label>
                   ))}
