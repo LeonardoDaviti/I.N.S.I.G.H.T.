@@ -115,6 +115,12 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
 - **Translation:** 34% of stories already mix Russian and English.
 - **Entities and page types, claims and timelines** (page history from 0039).
 
+### Asked by the owner while reading the lab (2026-10-31)
+- **Continuity: a post's earlier posts on the same thing.** Example: @denissexy's 27 Oct "updates to this skill" continues his 25 Oct post with the repo link, with no link of its own. Shown as "Continues: …" under the post.
+  - **Technically:** the same voice first, then others. Candidates are posts from the last weeks close in meaning (embeddings). A cheap model confirms "is this a follow-up of that?". References like "this skill" or "updated" weigh in.
+- **Attribution:** "Tibo wrote…" joins the person's own post (his X account) when you follow it. Needs names to resolve to accounts (entities) and meaning across languages.
+- Test cases for all of these: `plan/research/lab/cases.json`.
+
 ### From the 0050/0051 work (owner, 2026-10-30)
 Mark IX finds what is cited and when (0051's Classics, "cited again", Background). Mark X adds the understanding:
 - **Why an old page is a foundation:** "this post applies the Bitter Lesson's argument to agents". This needs AI reading both texts.
