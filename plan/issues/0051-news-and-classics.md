@@ -167,6 +167,7 @@ Measured in the lab on a copy of the server's 41,543 posts:
   - twice or more: 60, ~27% (3 of 11). Generic phrases like "has been", "world cup", "open weights" and "time series" all came from this group.
   - A one-word name can't start with a digit: of 27 one-word surges, the 5 that did were sizes ("30b", "128gb", "2m"), and no real name did.
   - The rule is now "at most once". Its cost: an ongoing story whose name was already in use isn't found by name (RTX Spark, Le Chonk; the preview's Steam Frame launch day).
+- **Names read the stored titles, not the shown ones:** after the glued-title fix (Telegram), names from shown titles were measured. They found some real stories the stored ones miss (Gemini 4 Argon, Sonnet 5.5) and missed others they find (GLM 5.3, Kimi-K3), with as much noise. Not clearly better, so no change.
 - **Classics:** 1,244 under the 30-day rule, and all of the top 30 were "cited again this week".
   - **Most were news with legs,** not classics: the Hugging Face incident, Navier–Stokes, "We Must Pace the Frontier". By citation spread, a random sample of each bucket held about 15% real classics at 30–60 days, ~45% at 90–180 days and ~80% at a year or more.
   - **A Gwern page dated 2023** links a 2026 post (GPT-6 Astra), which gave it a 1,307-day spread. Gwern rewrites pages under their old dates, and 62 classics started from a Gwern link.
