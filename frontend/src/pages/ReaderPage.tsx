@@ -22,6 +22,7 @@ import TextLink from '../components/ui/TextLink';
 import { formatRelativeTime } from '../lib/dates';
 import { ingestionActivity } from '../lib/ingestionHealth';
 import { searchHref } from '../lib/search';
+import { loadAhead } from '../lib/loadAhead';
 
 /**
  * How many posts arrived since the feed was loaded, from the scope's unread count.
@@ -52,6 +53,11 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
 // News and Classics (issue 0051): their own chunks, loaded the first time they are shown (the reader's JS budget).
 const NewsList = lazy(() => import('../components/reader/NewsList'));
 const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
+
+// What a reader opens next, loaded ahead once per page load (issue 0061): the post page
+// with its text renderer first, then News and Classics.
+const LOAD_AHEAD = [() => import('./PostDetailPage'), () => import('../components/reader/NewsList'), () => import('../components/reader/ClassicsList')];
+let loadedAhead = false;
 
 function isReaderView(value: string | null): value is ReaderView {
   return value === 'stream' || value === 'by_source' || value === 'news' || value === 'classics';
@@ -134,6 +140,26 @@ function Reader({ scope }: { scope: string }) {
   useEffect(() => {
     document.title = `${title} · INSIGHT`;
   }, [title]);
+
+  // Load ahead (issue 0061): once the feed is on screen and nothing is fetching, when the browser is idle.
+  useEffect(() => {
+    if (loadedAhead) return undefined;
+    const cache = queryClient.getQueryCache();
+    const tryLoad = () => {
+      loadedAhead = loadAhead({
+        ready: queryClient.isFetching() === 0 && (ranked || cache.find({ queryKey: currentKey })?.state.status === 'success'),
+        saveData: (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true,
+        whenIdle: (run) => (window.requestIdleCallback ? window.requestIdleCallback(run, { timeout: 5000 }) : window.setTimeout(run, 2000)),
+        loaders: LOAD_AHEAD,
+      });
+      return loadedAhead;
+    };
+    if (tryLoad()) return undefined;
+    const unsubscribe = cache.subscribe(() => {
+      if (!loadedAhead && tryLoad()) unsubscribe();
+    });
+    return unsubscribe;
+  }, [currentKey, queryClient, ranked]);
 
   const setParam = useCallback((name: string, value: string | null) => {
     const next = new URLSearchParams(params);

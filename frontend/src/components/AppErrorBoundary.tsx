@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { errorMessage } from '../lib/apiError';
+import { isStaleChunkError } from '../lib/staleTab';
 import Button from './ui/Button';
 import { StatusIcon } from './ui/StatusGlyph';
 
@@ -38,6 +39,8 @@ export default class AppErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.hasError) return this.props.children;
+    // A chunk from before a deploy that the one automatic reload did not fix (issue 0061).
+    const updated = isStaleChunkError(this.state.error);
     return (
       <div className="mx-auto max-w-xl px-4 py-16 sm:px-6">
         <div role="alert" className="rounded-md border border-line-strong px-6 py-10 text-center">
@@ -45,11 +48,13 @@ export default class AppErrorBoundary extends Component<Props, State> {
             <StatusIcon status="failing" className="h-3 w-3" />
             <span className="sr-only">Error:</span>
           </span>
-          <p className="mt-3 text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">This page hit an error</p>
-          <p className="mt-1.5 break-words text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{errorMessage(this.state.error)}</p>
+          <p className="mt-3 text-[1.0625rem] font-semibold tracking-[-0.01em] text-fg">{updated ? 'INSIGHT was updated' : 'This page hit an error'}</p>
+          <p className="mt-1.5 break-words text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">
+            {updated ? 'Reload to get the new version.' : errorMessage(this.state.error)}
+          </p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            <Button variant="primary" onClick={this.reset}>
-              Try again
+            <Button variant="primary" onClick={updated ? () => window.location.reload() : this.reset}>
+              {updated ? 'Reload' : 'Try again'}
             </Button>
             <Button asChild variant="secondary">
               <a href="/">Go to feed</a>
