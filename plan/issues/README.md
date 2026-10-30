@@ -17,7 +17,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0010](0010-post-page-navigation.md) | Post page: back always in reach, the source name reads the source | built |
 | [0011](0011-sources-list-sort-and-read.md) | Sources list: sort by column, find the newest source, read from a row | built |
 | [0012](0012-reddit-comments-and-bursts.md) | Reddit: comments that load, posts that don't flood the top | bursts half built; comments half waits for the owner |
-| [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future) |
+| [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future; 0051 ranks by coverage until there is reading data) |
 | [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | built |
 | [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | built, not deployed |
 | [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, not deployed |
@@ -54,6 +54,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, not deployed |
 | [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, not deployed |
 | [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | spec (v9.6) |
+| [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | spec (proposed v9.7) |
+| [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | spec (proposed v9.7; needs 0050) |
 
 ## Analysis archive
 
