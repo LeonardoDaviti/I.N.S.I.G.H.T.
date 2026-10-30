@@ -59,6 +59,13 @@ def _transaction_is_poisoned(conn) -> bool:
 BACKLOG_KEY = "_backlog"
 # A page first seen this long after its date is new to you: it sorts at when it was first seen.
 NEW_TO_YOU_AFTER = "2 days"
+# Issue 0058: known news is not new. A page one of your other sources linked before it was first
+# seen already reached you (0050's post_links, target_url normalized as posts.normalized_url):
+# it keeps its date. p is the page; migration 0043 clears what was surfaced before with the
+# same condition, written out again there.
+LINKED_BEFORE_SQL = """EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
+                         WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
+                           AND q.fetched_at < p.fetched_at)"""
 
 
 @dataclass(frozen=True)
@@ -650,7 +657,9 @@ class PostsRepository:
     def _after_save(self, cur: Cursor, draft: PostDraft, post: Dict[str, Any], post_id: str,
                     was_inserted: bool, old: Optional[Dict[str, Any]], *, surface: bool) -> bool:
         """Issue 0039, after a post is written: a new post first seen NEW_TO_YOU_AFTER past its
-        date sorts at when it was first seen (surface); a watched post keeps its text's hash and
+        date sorts at when it was first seen (surface), unless another source's post linked it
+        before (0058: LINKED_BEFORE_SQL; only other posts' links count, so reading this post's
+        own links first changes nothing); a watched post keeps its text's hash and
         comes back when it changed meaningfully. Issue 0050: its outside links are read from what
         was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
         failure here is logged and costs neither the post nor the batch. Returns whether the post
@@ -660,8 +669,9 @@ class PostsRepository:
                 self.stories.save_post_links(cur, post_id)
                 if surface and was_inserted:
                     cur.execute(
-                        f"""UPDATE posts SET surfaced_at = fetched_at
-                             WHERE id = %s::uuid AND published_at < fetched_at - interval '{NEW_TO_YOU_AFTER}'""",
+                        f"""UPDATE posts p SET surfaced_at = p.fetched_at
+                             WHERE p.id = %s::uuid AND p.published_at < p.fetched_at - interval '{NEW_TO_YOU_AFTER}'
+                               AND NOT {LINKED_BEFORE_SQL}""",
                         (post_id,),
                     )
                 if draft.watch:
