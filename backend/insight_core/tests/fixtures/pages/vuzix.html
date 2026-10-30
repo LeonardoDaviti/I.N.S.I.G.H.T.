@@ -1,0 +1,2972 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!doctype html>
+<html class="js" lang="en">
+  <head>
+
+  
+  
+
+
+                     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="">
+    <link rel="canonical" href="https://www.vuzix.com/blogs/vuzix-blog/how-ai-orchestrated-workers-are-key-to-warehouse-automation"><link rel="icon" type="image/png" href="//www.vuzix.com/cdn/shop/files/favicon.png?crop=center&height=32&v=1784112223&width=32"><link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin><title>
+      How AI Orchestrated Workers are Key to Warehouse Automation
+ &ndash; Vuzix Corporation</title>
+
+    
+
+
+
+    
+      <meta
+        name="description"
+        content="Warehousing organizations face rising costs due to errors in stocking, order picking, and general turnover. Warehousing and logistics operations managers are tasked with finding ways to enable faster onboarding and increased pick rates, while reducing error rates. It&#39;s well known that Vuzix augmented reality (AR) smart"
+      >
+    
+
+
+    <meta property="og:site_name" content="Vuzix Corporation">
+<meta property="og:url" content="https://www.vuzix.com">
+<meta property="og:title" content="Vuzix Corporation">
+<meta property="og:type" content="article">
+<meta property="og:description" content="Vuzix designs and manufactures waveguide optics, OEM smart glasses platforms, and enterprise AR and AI smart glasses devices from Rochester, NY. Explore how we can help you build and deploy your solution.">
+
+
+  <meta property="og:image" content="http://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?crop=center&height=500&v=1782918411&width=600">
+  <meta property="og:image:alt" content="How AI Orchestrated Workers are Key to Warehouse Automation">
+  <meta property="og:image:width" content="1600">
+  <meta property="og:image:height" content="875">
+  <meta property="og:image:secure_url" content="https://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?crop=center&height=500&v=1782918411&width=600">
+  <meta name="pinterest:image" content="http://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?crop=center&height=500&v=1782918411&width=600">
+  <meta name="twitter:image" content="http://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?crop=center&height=500&v=1782918411&width=600">
+  <meta name="twitter:image:alt" content="How AI Orchestrated Workers are Key to Warehouse Automation">
+
+<meta property="og:image" content="http://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?v=1782918411">
+  <meta property="og:image:secure_url" content="https://www.vuzix.com/cdn/shop/articles/VUZIX_Warehouse.BG_3a4027a5-26d6-48f5-9da8-61121f0773d2.jpg?v=1782918411">
+  <meta property="og:image:width" content="1600">
+  <meta property="og:image:height" content="875"><meta name="pinterest:title" content="Vuzix Corporation">
+<meta name="pinterest:description" content="Vuzix designs and manufactures waveguide optics, OEM smart glasses platforms, and enterprise AR and AI smart glasses devices from Rochester, NY. Explore how we can help you build and deploy your solution.">
+<meta name="pinterest:url" content="https://www.vuzix.com"><meta name="twitter:site" content="Vuzix Corporation"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Vuzix Corporation">
+<meta name="twitter:description" content="Vuzix designs and manufactures waveguide optics, OEM smart glasses platforms, and enterprise AR and AI smart glasses devices from Rochester, NY. Explore how we can help you build and deploy your solution.">
+
+
+    
+    
+    
+    
+    
+    
+  <meta id="shopify-digital-wallet" name="shopify-digital-wallet" content="/58112082086/digital_wallets/dialog">
+<link rel="ucp" href="/.well-known/ucp" version="2026-08-25"><link rel="alternate" type="application/atom+xml" title="Feed" href="/blogs/vuzix-blog.atom" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+  
+
+
+
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=Varela+Round&display=swap" rel="stylesheet">
+
+
+
+    
+
+    <link href="//www.vuzix.com/cdn/shop/t/93/assets/base.css?v=58595863919739800621793285476" rel="stylesheet" type="text/css" media="all" />
+    <link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-cart-items.css?v=13033300910818915211793283028" media="print" onload="this.media='all'">
+      <link rel="preload" as="font" href="//www.vuzix.com/cdn/fonts/inter/inter_n4.b2a3f24c19b4de56e8871f609e73ca7f6d2e2bb9.woff2" type="font/woff2" crossorigin>
+      
+
+      <link rel="preload" as="font" href="//www.vuzix.com/cdn/fonts/inter/inter_n5.d7101d5e168594dd06f56f290dd759fba5431d97.woff2" type="font/woff2" crossorigin>
+      
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-localization-form.css?v=170315343355214948141793283028" rel="stylesheet" type="text/css" media="all" />
+      <link
+        rel="stylesheet"
+        href="//www.vuzix.com/cdn/shop/t/93/assets/component-predictive-search.css?v=118923337488134913561793283028"
+        media="print"
+        onload="this.media='all'"
+      >
+  
+  
+
+
+
+
+
+
+
+
+
+  <!-- Privacy-friendly analytics by Plausible -->
+
+
+
+
+
+
+
+<!-- BEGIN app block: shopify://apps/consentmo-gdpr/blocks/ada_compliance/4fbe573f-a377-4fea-9801-3ee0858cae41 -->
+<!-- END app block --><!-- BEGIN app block: shopify://apps/consentmo-gdpr/blocks/gdpr_cookie_consent/4fbe573f-a377-4fea-9801-3ee0858cae41 -->
+<link rel="preconnect" href="https://app.consentmo.com" crossorigin data-csm-preconnect="app">
+<link rel="dns-prefetch" href="https://workers.consentmo.com" data-csm-preconnect="workers">
+<link rel="dns-prefetch" href="https://storage.consentmo.com" data-csm-preconnect="storage">
+<link rel="preconnect" href="https://cdn.consentmo.com" crossorigin data-csm-preconnect="cdn"><link rel="prefetch" href="https://cdn.shopify.com/extensions/01a18835-9047-7ebd-9e7d-579022cf899b/gdpr-backpack-947/assets/layout-cookie-bar.consentmo.js" crossorigin data-csm-layout-prefetch="banner">
+  <link rel="prefetch" href="https://cdn.shopify.com/extensions/01a18835-9047-7ebd-9e7d-579022cf899b/gdpr-backpack-947/assets/layout-cookie-dialog.consentmo.js" crossorigin data-csm-layout-prefetch="dialog">
+  <link rel="prefetch" href="https://cdn.shopify.com/extensions/01a18835-9047-7ebd-9e7d-579022cf899b/gdpr-backpack-947/assets/layout-cookie-box.consentmo.js" crossorigin data-csm-layout-prefetch="box">
+  <link rel="prefetch" href="https://cdn.shopify.com/extensions/01a18835-9047-7ebd-9e7d-579022cf899b/gdpr-backpack-947/assets/layout-cookie-smart-banner.consentmo.js" crossorigin data-csm-layout-prefetch="smart">
+  <link rel="prefetch" href="https://cdn.shopify.com/extensions/01a18835-9047-7ebd-9e7d-579022cf899b/gdpr-backpack-947/assets/layout-mobile-cookie-bar.consentmo.js" crossorigin data-csm-layout-prefetch="mobile">
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/geo-pro-geolocation/blocks/geopro/16fc5313-7aee-4e90-ac95-f50fc7c8b657 --><!-- This snippet is used to load Geo:Pro data on the storefront --><meta class="geo-ip" content="eyJwYXJhbWV0ZXJzIjp7InJlZGlyZWN0X3RleHQiOiJJdCBzZWVtcyB5b3UmIzM5cmUgaW4gJUNPVU5UUlklLiBSZWRpcmVjdCB0byAlU1RPUkVOQU1FJT8iLCJ5ZXMiOiJZZXMsIHBsZWFzZSIsIm5vIjoiTm8sIHRoYW5rcyIsInBvcHVwX2RlbGF5IjoiMzYwMCIsInBlcm1hbmVudC1yZWRpcmVjdCI6MCwiYmFja2dyb3VuZC1jb2xvciI6IjQwNDA0MCIsInRleHQtY29sb3IiOiJmZmZmZmYiLCJ5ZXMtYmFja2dyb3VuZC1jb2xvciI6ImM3MjkyOSIsInllcy10ZXh0LWNvbG9yIjoiZmZmZmZmIiwibm8tYmFja2dyb3VuZC1jb2xvciI6ImM3MjkyOSIsIm5vLXRleHQtY29sb3IiOiJmZmZmZmYiLCJsYXlvdXQtc2VsZWN0b3IiOiJwb3B1cCIsIm93bmVyX2lwIjoiNjcuMjAuOS4yMzYiLCJvd25lcl9pcF9tb2RlIjoiIiwiZGlzYWJsZWRfc3RhdGUiOmZhbHNlLCJsYXN0X2VtYmVkZGVkX2F0IjoiMjAyNi0wNy0yNCAxNDo1MToyMiJ9LCJydWxlc0xpc3QiOlt7InJ1bGVfaWQiOiIxOTY2MSIsImNvdW50cmllcyI6IkphcGFuIiwiZXhjZXB0aW9ucyI6IiIsImlwIjoiIiwic3RvcmVfbmFtZSI6IlZ1eml4IEphcGFuIiwiaXBfZXhjZXB0aW9ucyI6IiIsImxpbmsiOiJodHRwczpcL1wvdnV6aXguanAiLCJkb21haW5fcmVkaXJlY3QiOiIwIiwibWFya2V0X2lkIjoiMCJ9XX0="><!-- This snippet initializes the plugin -->
+
+
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/custlo/blocks/app-embed/f81081fd-cd04-43ee-897a-18ef0e5d9b04 -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+      
+      
+
+
+
+
+
+<link rel="stylesheet" href="https://cdn.shopify.com/extensions/01a186ca-a37d-706a-826b-f5d230202201/customer-dashboard-pro-578/assets/drawer.css" media="print" onload="this.media='all'">
+
+
+
+
+
+
+     
+
+
+
+
+
+  
+  
+  
+  
+<!-- BEGIN app snippet: css-variables --><!-- END app snippet -->
+
+
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/webrex-ai-seo-optimer/blocks/webrexSeoEmbed/b26797ad-bb4d-48f5-8ef3-7c561521049c -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- BEGIN app snippet: instantPage -->
+
+<!-- END app snippet -->
+
+<!-- BEGIN app snippet: metaTags -->
+
+
+
+<!-- END app snippet -->
+<!-- END app block --><!-- BEGIN app block: shopify://apps/powerful-form-builder/blocks/app-embed/e4bcb1eb-35b2-42e6-bc37-bfe0e1542c9d -->
+
+
+
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/oo-b2b-wholesale/blocks/tax-exemption/bc577450-6605-4fce-887f-6c25c2bccc22 --><!-- BEGIN app snippet: b2b-price-visibility-early --><!-- END app snippet -->
+<!-- BEGIN app snippet: b2b-pillars-config -->
+<!-- END app snippet -->
+
+<!-- BEGIN app snippet: b2b-opt-in-modules --><!-- END app snippet -->
+<!-- BEGIN app snippet: b2b-fail-open-modules --><!-- BEGIN app snippet: b2b-proxy-resolve -->
+<!-- END app snippet -->
+<!-- BEGIN app snippet: tax-exemption-js -->
+
+
+
+
+
+
+
+<!-- BEGIN app snippet: b2b-selectors-picker -->
+<!-- END app snippet -->
+
+<!-- END app snippet -->
+<!-- BEGIN app snippet: b2b-order-limit-boot --><!-- END app snippet -->
+<!-- BEGIN app snippet: b2b-draft-checkout -->
+
+<!-- END app snippet -->
+<!-- BEGIN app snippet: b2b-custom-pricing-shop-context -->
+<!-- END app snippet -->
+  <!-- END app snippet -->
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/sitemap-noindex-pro-seo/blocks/html-sitemap-styler/4d815e2c-5af0-46ba-8301-d0f9cf660031 -->
+
+
+<!-- END app block --><!-- BEGIN app block: shopify://apps/sitemap-noindex-pro-seo/blocks/app-embed/4d815e2c-5af0-46ba-8301-d0f9cf660031 -->
+<!-- END app block -->
+<link href="https://cdn.shopify.com/extensions/01a17f0f-e78d-7ab6-b36b-03d0f70007b8/recommenda-quiz-builder-141/assets/quiz.css" rel="stylesheet" type="text/css" media="all">
+
+
+<link href="https://monorail-edge.shopifysvc.com" rel="dns-prefetch">
+
+
+
+  
+
+<meta name="shopify-y" content="00000000-0000-0000-5000-000000000000" data-expiration="1824916654000"><meta name="shopify-s" content="00000000-0000-0000-5000-000000000000" data-expiration="1793360854000"><meta name="request-id" content="620ef1f5-767d-4f14-b13f-9cc087c091c4-1793359054"        >
+</head>
+
+  
+<body class="gradient">
+
+    <a class="skip-to-content-link button visually-hidden" href="#MainContent">
+      Skip to content
+    </a><!-- BEGIN sections: header-group -->
+<div id="shopify-section-sections--29887980535974__announcement-bar" class="shopify-section shopify-section-group-header-group announcement-bar-section"><link href="//www.vuzix.com/cdn/shop/t/93/assets/component-slideshow.css?v=17933591812325749411793283028" rel="stylesheet" type="text/css" media="all" />
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-slider.css?v=14039311878856620671793283028" rel="stylesheet" type="text/css" media="all" />
+
+
+<div
+  class="utility-bar color-scheme-4 gradient utility-bar--bottom-border"
+>
+  <div class="page-width utility-bar__grid"><div
+        class="announcement-bar"
+        role="region"
+        aria-label="Announcement"
+        
+      ><a
+              href="/pages/find-your-match"
+              class="announcement-bar__link link link--text focus-inset animate-arrow"
+            ><p class="announcement-bar__message h5">
+            <span>FIND YOUR MATCH</span>
+</p></a></div><div class="localization-wrapper">
+</div>
+  </div>
+</div>
+
+
+</div><div id="shopify-section-sections--29887980535974__header" class="shopify-section shopify-section-group-header-group section-header"><link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-list-menu.css?v=151968516119678728991793283028" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-search.css?v=165164710990765432851793283028" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-menu-drawer.css?v=175812404928051672881793283028" media="print" onload="this.media='all'">
+<link
+  rel="stylesheet"
+  href="//www.vuzix.com/cdn/shop/t/93/assets/component-cart-notification.css?v=54116361853792938221793283028"
+  media="print"
+  onload="this.media='all'"
+><link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-price.css?v=47596247576480123001793283028" media="print" onload="this.media='all'"><link rel="stylesheet" href="//www.vuzix.com/cdn/shop/t/93/assets/component-mega-menu.css?v=10110889665867715061793283028" media="print" onload="this.media='all'">
+
+<div
+  
+  class="header-wrapper color-scheme-1 gradient"
+><header class="header header--middle-left header--mobile-left page-width header--has-menu header--has-account">
+
+    <a href="/" class="vzx-mobile-brand" aria-label="Vuzix Corporation — Home"><img src="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=500" alt="Vuzix Corporation" srcset="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=352 352w, //www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=500 500w" width="500" height="89" loading="eager">
+</a>
+
+<header-drawer data-breakpoint="tablet">
+
+  <details
+    id="Details-menu-drawer-container"
+    class="menu-drawer-container"
+  >
+
+    <summary
+      class="header__icon header__icon--menu header__icon--summary link focus-inset"
+      aria-label="Menu"
+    >
+      <span>
+
+</span>
+    </summary>
+
+
+    <div
+      id="menu-drawer"
+      class="gradient menu-drawer motion-reduce color-scheme-1"
+    >
+
+      <div class="menu-drawer__inner-container">
+
+        <div class="menu-drawer__navigation-container">
+
+
+
+          <!-- =================================================
+               NAVIGATION
+               ================================================= -->
+
+          <nav class="menu-drawer__navigation">
+
+            <ul
+              class="menu-drawer__menu has-submenu list-menu"
+              role="list"
+            ><li><details
+                      id="Details-menu-drawer-menu-item-1"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-waveguides"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset"
+                      >
+
+                        Waveguides
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-waveguides"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            Waveguides
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-waveguides-overview"
+                                  href="/pages/waveguides"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Overview
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-waveguides-overview-waveguides"
+                                      href="/pages/waveguides"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Waveguides
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-waveguides-waveguides-for-data-centers"
+                                  href="/pages/cpo"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Waveguides for Data Centers
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-waveguides-waveguides-for-data-centers-optical-interconnects"
+                                      href="/pages/cpo"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Optical Interconnects
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-waveguides-waveguides-for-imaging"
+                                  href="/pages/waveguide-configurations"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Waveguides for Imaging
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-waveguides-waveguides-for-imaging-waveguide-configurations"
+                                      href="/pages/waveguide-configurations"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Waveguide Configurations
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-waveguides-waveguides-for-imaging-us-based-manufacturing"
+                                      href="/pages/us-based-manufacturing"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      US-Based Manufacturing
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li><li><details
+                      id="Details-menu-drawer-menu-item-2"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-oem-services"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset"
+                      >
+
+                        OEM Services
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-oem-services"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            OEM Services
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-oem-services-overview"
+                                  href="/pages/oem"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Overview
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-overview-engineering-services"
+                                      href="/pages/engineering-services"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Engineering Services
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-overview-vuzix-ultralite-oem-platform"
+                                      href="/pages/vuzix-ultralite-oem-platform"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Vuzix Ultralite OEM Platform
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-overview-oem-readiness"
+                                      href="/pages/oem-quiz"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      OEM Readiness
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-oem-services-applications"
+                                  href="/pages/applications"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Applications
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-applications-enterprise"
+                                      href="/pages/oem-enterprise"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Enterprise
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-applications-defense"
+                                      href="/pages/defense"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Defense
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-oem-services-applications-smart-eyewear"
+                                      href="/pages/smart-eyewear"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Smart Eyewear
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li><li><details
+                      id="Details-menu-drawer-menu-item-3"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-smart-glasses"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset"
+                      >
+
+                        Smart Glasses
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-smart-glasses"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            Smart Glasses
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-smart-glasses-smart-glasses"
+                                  href="/pages/smart-glasses"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Smart Glasses
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-vuzix-lx1™"
+                                      href="/products/vuzix-lx1-smart-glasses"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Vuzix LX1™
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-vuzix-m400™"
+                                      href="/products/m400-smart-glasses"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Vuzix M400™
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-find-your-match"
+                                      href="/pages/find-your-match"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Find Your Match
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-compare-smart-glasses"
+                                      href="/pages/compare-smart-glasses"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Compare Smart Glasses
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-in-development"
+                                      href="/products/in-development"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      In Development
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-smart-glasses-mdm"
+                                      href="/pages/mobile-device-management"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      MDM
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-smart-glasses-enterprise-kits"
+                                  href="/pages/enterprise-kits"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Enterprise Kits
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-enterprise-kits-remote-assist-kit"
+                                      href="/products/remote-assist-kit"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Remote Assist Kit
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-enterprise-kits-pick-and-pack-kit"
+                                      href="/pages/pick-and-pack-kit"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Pick and Pack Kit
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-smart-glasses-accessories"
+                                  href="/collections/accessories"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Accessories
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-accessories-accessories"
+                                      href="/collections/accessories"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Accessories
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-accessories-prescriptions"
+                                      href="/pages/prescription-lenses"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Prescriptions
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-accessories-merchandise"
+                                      href="/collections/merchandise"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Merchandise
+                                    </a>
+
+                                  </li><li>
+
+                                <a
+                                  id="HeaderDrawer-smart-glasses-use-cases"
+                                  href="/pages/use-case-overview"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Use Cases
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-healthcare"
+                                      href="/pages/healthcare"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Healthcare
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-manufacturing"
+                                      href="/pages/manufacturing"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Manufacturing
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-field-service"
+                                      href="/pages/field-service"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Field Service
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-warehousing"
+                                      href="/pages/warehousing"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Warehousing
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-ai-assist"
+                                      href="/pages/ai-assist"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      AI-Assist
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-smart-glasses-use-cases-remote-support"
+                                      href="/pages/remote-mentor"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Remote Support
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li><li><details
+                      id="Details-menu-drawer-menu-item-4"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-resources"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset menu-drawer__menu-item--active"
+                      >
+
+                        Resources
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-resources"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            Resources
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-resources-resources"
+                                  href="/pages/resources-overview"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Resources
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-resources-resources-vuzix-blog"
+                                      href="/blogs/vuzix-blog"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Vuzix Blog
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-resources-resources-white-papers"
+                                      href="/blogs/white-papers"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      White Papers
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-resources-resources-case-studies"
+                                      href="/blogs/case-studies"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Case Studies
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-resources-resources-partner-login"
+                                      href="https://shopify.com/58112082086/account/profile?locale=en&region_country=US&buyer_flags=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ2dXppeC1zaG9wLm15c2hvcGlmeS5jb20iLCJmbGFncyI6W10sImV4cCI6MTc5Mzk2Mzg1NCwibmJmIjoxNzkzMzU5MDU0fQ.7mxfT4giW70XzVLklHBzx5fo66C7uoHrRwj0H8lBe1A"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Partner Login
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-resources-resources-support"
+                                      href="/pages/support"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Support
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li><li><details
+                      id="Details-menu-drawer-menu-item-5"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-company"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset"
+                      >
+
+                        Company
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-company"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            Company
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-company-company"
+                                  href="/pages/about-vuzix"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Company
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-about-vuzix"
+                                      href="/pages/about-vuzix"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      About Vuzix
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-history"
+                                      href="/pages/history"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      History
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-investors"
+                                      href="https://ir.vuzix.com"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Investors
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-partners"
+                                      href="/pages/partners"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Partners
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-events"
+                                      href="/pages/events"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Events
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-careers"
+                                      href="/pages/careers"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Careers
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-company-company-press-releases"
+                                      href="https://ir.vuzix.com/news-events/press-releases"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Press Releases
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li><li><details
+                      id="Details-menu-drawer-menu-item-6"
+                    >
+
+                      <summary
+                        id="HeaderDrawer-contact"
+                        class="menu-drawer__menu-item list-menu__item link link--text focus-inset"
+                      >
+
+                        Contact
+
+                        <span class="svg-wrapper">
+</span>
+
+                        <span class="svg-wrapper">
+</span>
+
+                      </summary>
+
+
+                      <div
+                        id="link-contact"
+                        class="menu-drawer__submenu has-submenu gradient motion-reduce"
+                        tabindex="-1"
+                      >
+
+                        <div class="menu-drawer__inner-submenu">
+
+                          <button
+                            class="menu-drawer__close-button link link--text focus-inset"
+                            aria-expanded="true"
+                            type="button"
+                          >
+
+                            <span class="svg-wrapper">
+</span>
+
+                            Contact
+
+                          </button>
+
+
+                          <ul
+                            class="menu-drawer__menu menu-drawer__menu--flattened list-menu"
+                            role="list"
+                            tabindex="-1"
+                          ><li>
+
+                                <a
+                                  id="HeaderDrawer-contact-contact"
+                                  href="/pages/contact"
+                                  class="menu-drawer__menu-item menu-drawer__menu-item--child link link--text list-menu__item focus-inset"
+                                  
+                                >
+                                  Contact
+                                </a>
+
+                              </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-contact-contact-sales"
+                                      href="/pages/contact-sales"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Sales
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-contact-contact-support"
+                                      href="/pages/contact-technical-support"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Support
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-contact-contact-investor-relations"
+                                      href="/pages/contact-investor-relations"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Investor Relations
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-contact-contact-partnerships"
+                                      href="/pages/contact-business-development"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Partnerships
+                                    </a>
+
+                                  </li><li>
+
+                                    <a
+                                      id="HeaderDrawer-contact-contact-media-inquiries"
+                                      href="/pages/contact-media-relations"
+                                      class="menu-drawer__menu-item menu-drawer__menu-item--grandchild link link--text list-menu__item focus-inset"
+                                      
+                                    >
+                                      Media Inquiries
+                                    </a>
+
+                                  </li></ul>
+
+                        </div>
+
+                      </div>
+
+                    </details></li></ul>
+
+          </nav>
+
+
+          <!-- =================================================
+               BOTTOM DRAWER UTILITIES
+               ================================================= -->
+
+          <div class="menu-drawer__utility-links">
+
+            <!--
+              Account was intentionally removed from here.
+              It now lives with Search at the TOP of the
+              mobile drawer.
+            -->
+<div class="vuzix-drawer-tools medium-hide large-up-hide">
+
+            <a
+              href="/search"
+              class="vuzix-drawer-tool link link--text focus-inset"
+            >
+
+              <span class="svg-wrapper">
+</span>
+
+              <span>
+                Search
+              </span>
+
+            </a><a
+                href="https://shopify.com/58112082086/account?locale=en&region_country=US&buyer_flags=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ2dXppeC1zaG9wLm15c2hvcGlmeS5jb20iLCJmbGFncyI6W10sImV4cCI6MTc5Mzk2Mzg1NCwibmJmIjoxNzkzMzU5MDU0fQ.7mxfT4giW70XzVLklHBzx5fo66C7uoHrRwj0H8lBe1A"
+                class="vuzix-drawer-tool link link--text focus-inset"
+                rel="nofollow"
+              ><span class="svg-wrapper">
+</span><span>Account</span>
+
+              </a></div><div class="menu-drawer__localization header-localization"><localization-form><form method="post" action="/localization" id="HeaderCountryMobileForm" accept-charset="UTF-8" class="localization-form" enctype="multipart/form-data"><input type="hidden" name="form_type" value="localization" /><input type="hidden" name="utf8" value="✓" /><input type="hidden" name="_method" value="put" /><input type="hidden" name="return_to" value="/blogs/vuzix-blog/how-ai-orchestrated-workers-are-key-to-warehouse-automation" /><div>
+
+                        <h2
+                          class="visually-hidden"
+                          id="HeaderCountryMobileLabel"
+                        >
+                          Country/region
+                        </h2>
+
+<div class="disclosure">
+  <button
+    type="button"
+    class="disclosure__button localization-form__select localization-selector link link--text caption-large"
+    aria-expanded="false"
+    aria-controls="HeaderCountryMobile-country-results"
+    aria-describedby="HeaderCountryMobileLabel"
+  >
+    <span>United States |
+      USD
+      $</span>
+    
+
+  </button>
+  <div class="disclosure__list-wrapper country-selector" hidden>
+    <div class="country-filter">
+      
+        <div class="field">
+          <input
+            class="country-filter__input field__input"
+            id="country-filter-input"
+            type="search"
+            name="country_filter"
+            value=""
+            placeholder="Search"
+            role="combobox"
+            aria-owns="country-results"
+            aria-controls="country-results"
+            aria-haspopup="listbox"
+            aria-autocomplete="list"
+            autocorrect="off"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+          >
+          <label class="field__label" for="country-filter-input">Search</label>
+          <button
+            type="reset"
+            class="country-filter__reset-button field__button hidden"
+            aria-label="Clear search term"
+          >
+</button>
+          <div class="country-filter__search-icon field__button motion-reduce">
+</div>
+        </div>
+      
+      <button
+        class="country-selector__close-button button--small link"
+        type="button"
+        aria-label="Close"
+      >
+</button>
+    </div>
+    <div id="sr-country-search-results" class="visually-hidden" aria-live="polite"></div>
+    <div
+      class="disclosure__list country-selector__list country-selector__list--with-multiple-currencies"
+      id="HeaderCountryMobile-country-results"
+    >
+      
+        <ul
+          role="list"
+          class="list-unstyled popular-countries"
+          aria-label="Popular countries/regions"
+        ><li class="disclosure__item" tabindex="-1">
+              <a
+                class="link link--text disclosure__link caption-large focus-inset"
+                href="#"
+                
+                data-value="CA"
+                id="Canada"
+              >
+                <span
+                  
+                    class="visibility-hidden"
+                  
+                >
+</span>
+                <span class="country">Canada</span>
+                <span class="localization-form__currency motion-reduce">
+                  USD
+                  $</span>
+              </a>
+            </li><li class="disclosure__item" tabindex="-1">
+              <a
+                class="link link--text disclosure__link caption-large focus-inset"
+                href="#"
+                
+                  aria-current="true"
+                
+                data-value="US"
+                id="United States"
+              >
+                <span
+                  
+                >
+</span>
+                <span class="country">United States</span>
+                <span class="localization-form__currency motion-reduce">
+                  USD
+                  $</span>
+              </a>
+            </li></ul>
+      
+      <ul role="list" class="list-unstyled countries"><li class="disclosure__item" tabindex="-1">
+            <a
+              class="link link--text disclosure__link caption-large focus-inset"
+              href="#"
+              
+              data-value="AF"
+              id="Afghanistan"
+            >
+              <span
+                
+                  class="visibility-hidden"
+                
+              >
+</span>
+              <span class="country">Afghanistan</span>
+              <span class="localization-form__currency motion-reduce">
+                USD
+                $</span>
+            </a>
+          </li><li class="disclosure__item" tabindex="-1">
+            <a
+              class="link link--text disclosure__link caption-large focus-inset"
+              href="#"
+              
+              data-value="AX"
+              id="Åland Islands"
+            >
+              <span
+                
+                  class="visibility-hidden"
+                
+              >
+</span>
+              <span class="country">Åland Islands</span>
+              <span class="localization-form__currency motion-reduce">
+                USD
+                $</span>
+            </a>
+          </li><li class="disclosure__item" tabindex="-1">
+            <a
+              class="link link--text disclosure__link caption-large focus-inset"
+              href="#"
+              
+              data-value="AL"
+              id="Albania"
+            >
+              <span
+                
+                  class="visibility-hidden"
+                
+              >
+</span>
+              <span class="country">Albania</span>
+              <span class="localization-form__currency motion-reduce">
+                EUR
+                €</span>
+            </a>
+          </li></ul>
+    </div>
+  </div>
+  <div class="country-selector__overlay"></div>
+</div>
+<input type="hidden" name="country_code" value="US">
+</div></form></localization-form>
+
+                
+</div><ul
+              class="list list-social list-unstyled"
+              role="list"
+            ></ul>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </details>
+
+</header-drawer>
+
+
+<a href="/" class="header__heading-link link link--text focus-inset"><div class="header__heading-logo-wrapper">
+            
+
+            <img src="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=600" alt="Vuzix Corporation" srcset="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=130 130w, //www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=195 195w, //www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_9e8dd8cd-80d7-4f11-b70a-44ca99c7f9cf.png?v=1784112231&amp;width=260 260w" width="130" height="23.142414860681114" loading="eager" class="header__heading-logo motion-reduce" sizes="(max-width: 260px) 50vw, 130px">
+          </div></a>
+
+<nav class="header__inline-menu vzx-header-menu">
+  <ul class="list-menu list-menu--inline vzx-header-menu__list" role="list"><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/waveguides"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="Waveguides"
+                >
+                  Waveguides
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/waveguides" class="vzx-mega-menu__heading">
+                        Overview
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/waveguides" class="vzx-mega-menu__link">
+  <span>Waveguides</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/pages/cpo" class="vzx-mega-menu__heading">
+                        Waveguides for Data Centers
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/cpo" class="vzx-mega-menu__link">
+  <span>Optical Interconnects</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/pages/waveguide-configurations" class="vzx-mega-menu__heading">
+                        Waveguides for Imaging
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/waveguide-configurations" class="vzx-mega-menu__link">
+  <span>Waveguide Configurations</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/us-based-manufacturing" class="vzx-mega-menu__link">
+  <span>US-Based Manufacturing</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/oem"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="OEM Services"
+                >
+                  OEM Services
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/oem" class="vzx-mega-menu__heading">
+                        Overview
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/engineering-services" class="vzx-mega-menu__link">
+  <span>Engineering Services</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/vuzix-ultralite-oem-platform" class="vzx-mega-menu__link">
+  <span>Vuzix Ultralite OEM Platform</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/oem-quiz" class="vzx-mega-menu__link">
+  <span>OEM Readiness</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/pages/applications" class="vzx-mega-menu__heading">
+                        Applications
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/oem-enterprise" class="vzx-mega-menu__link">
+  <span>Enterprise</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/defense" class="vzx-mega-menu__link">
+  <span>Defense</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/smart-eyewear" class="vzx-mega-menu__link">
+  <span>Smart Eyewear</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/smart-glasses"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="Smart Glasses"
+                >
+                  Smart Glasses
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/smart-glasses" class="vzx-mega-menu__heading">
+                        Smart Glasses
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/products/vuzix-lx1-smart-glasses" class="vzx-mega-menu__link">
+  <span>Vuzix LX1™</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/products/m400-smart-glasses" class="vzx-mega-menu__link">
+  <span>Vuzix M400™</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/find-your-match" class="vzx-mega-menu__link">
+  <span>Find Your Match</span>
+
+  
+    
+        <img
+        src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-quiz-white.png?v=1782920606"
+        alt="Vuzix Corporation"
+        class="vzx-quiz-icon"
+        loading="lazy"
+      >
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/compare-smart-glasses" class="vzx-mega-menu__link">
+  <span>Compare Smart Glasses</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/products/in-development" class="vzx-mega-menu__link">
+  <span>In Development</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/mobile-device-management" class="vzx-mega-menu__link">
+  <span>MDM</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/pages/enterprise-kits" class="vzx-mega-menu__heading">
+                        Enterprise Kits
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/products/remote-assist-kit" class="vzx-mega-menu__link">
+  <span>Remote Assist Kit</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/pick-and-pack-kit" class="vzx-mega-menu__link">
+  <span>Pick and Pack Kit</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/collections/accessories" class="vzx-mega-menu__heading">
+                        Accessories
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/collections/accessories" class="vzx-mega-menu__link">
+  <span>Accessories</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/prescription-lenses" class="vzx-mega-menu__link">
+  <span>Prescriptions</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/collections/merchandise" class="vzx-mega-menu__link">
+  <span>Merchandise</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li><li class="vzx-mega-menu__column">
+                      <a href="/pages/use-case-overview" class="vzx-mega-menu__heading">
+                        Use Cases
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/healthcare" class="vzx-mega-menu__link">
+  <span>Healthcare</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/manufacturing" class="vzx-mega-menu__link">
+  <span>Manufacturing</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/field-service" class="vzx-mega-menu__link">
+  <span>Field Service</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/warehousing" class="vzx-mega-menu__link">
+  <span>Warehousing</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/ai-assist" class="vzx-mega-menu__link">
+  <span>AI-Assist</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/remote-mentor" class="vzx-mega-menu__link">
+  <span>Remote Support</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/resources-overview"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="Resources"
+                >
+                  Resources
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/resources-overview" class="vzx-mega-menu__heading">
+                        Resources
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/blogs/vuzix-blog" class="vzx-mega-menu__link">
+  <span>Vuzix Blog</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/blogs/white-papers" class="vzx-mega-menu__link">
+  <span>White Papers</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/blogs/case-studies" class="vzx-mega-menu__link">
+  <span>Case Studies</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="https://shopify.com/58112082086/account/profile?locale=en&region_country=US&buyer_flags=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ2dXppeC1zaG9wLm15c2hvcGlmeS5jb20iLCJmbGFncyI6W10sImV4cCI6MTc5Mzk2Mzg1NCwibmJmIjoxNzkzMzU5MDU0fQ.7mxfT4giW70XzVLklHBzx5fo66C7uoHrRwj0H8lBe1A" class="vzx-mega-menu__link">
+  <span>Partner Login</span>
+
+  
+    
+      <img
+        src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+        alt="Vuzix Corporation"
+        class="vzx-external-icon"
+        loading="lazy"
+      >
+      
+  
+</a>
+                            </li><li>
+                              <a href="/pages/support" class="vzx-mega-menu__link">
+  <span>Support</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/about-vuzix"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="Company"
+                >
+                  Company
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/about-vuzix" class="vzx-mega-menu__heading">
+                        Company
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/about-vuzix" class="vzx-mega-menu__link">
+  <span>About Vuzix</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/history" class="vzx-mega-menu__link">
+  <span>History</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="https://ir.vuzix.com" class="vzx-mega-menu__link">
+  <span>Investors</span>
+
+  
+    
+      <img
+        src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+        alt="Vuzix Corporation"
+        class="vzx-external-icon"
+        loading="lazy"
+      >
+      
+  
+</a>
+                            </li><li>
+                              <a href="/pages/partners" class="vzx-mega-menu__link">
+  <span>Partners</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/events" class="vzx-mega-menu__link">
+  <span>Events</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/careers" class="vzx-mega-menu__link">
+  <span>Careers</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="https://ir.vuzix.com/news-events/press-releases" class="vzx-mega-menu__link">
+  <span>Press Releases</span>
+
+  
+    
+      <img
+        src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+        alt="Vuzix Corporation"
+        class="vzx-external-icon"
+        loading="lazy"
+      >
+      
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li><li class="vzx-header-menu__item"><details class="vzx-menu vzx-mega-menu">
+              <summary class="header__menu-item list-menu__item link focus-inset vzx-header-menu__link">
+                <a
+                  href="/pages/contact"
+                  class="vzx-header-menu__parent-link"
+                  aria-label="Contact"
+                >
+                  Contact
+                </a>
+                <span class="vzx-header-menu__toggle" aria-hidden="true">
+                 
+                </span>
+              </summary>
+
+              <div class="vzx-mega-menu__content">
+                <ul class="vzx-mega-menu__list" role="list"><li class="vzx-mega-menu__column">
+                      <a href="/pages/contact" class="vzx-mega-menu__heading">
+                        Contact
+                      </a><ul class="vzx-mega-menu__sublist" role="list"><li>
+                              <a href="/pages/contact-sales" class="vzx-mega-menu__link">
+  <span>Sales</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/contact-technical-support" class="vzx-mega-menu__link">
+  <span>Support</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/contact-investor-relations" class="vzx-mega-menu__link">
+  <span>Investor Relations</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/contact-business-development" class="vzx-mega-menu__link">
+  <span>Partnerships</span>
+
+  
+    
+  
+</a>
+                            </li><li>
+                              <a href="/pages/contact-media-relations" class="vzx-mega-menu__link">
+  <span>Media Inquiries</span>
+
+  
+    
+  
+</a>
+                            </li></ul></li></ul>
+              </div>
+            </details></li></ul>
+</nav>
+
+
+
+
+<div class="header__icons">
+      <div class="desktop-localization-wrapper">
+</div>
+
+      
+
+<details-modal class="header__search">
+  <details>
+    <summary
+      class="header__icon header__icon--search header__icon--summary link focus-inset modal__toggle"
+      aria-haspopup="dialog"
+      aria-label="Search"
+    >
+      <span>
+        <span class="svg-wrapper">
+</span>
+        <span class="svg-wrapper header__icon-close">
+</span>
+      </span>
+    </summary>
+    <div
+      class="search-modal modal__content gradient"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search"
+    >
+      <div class="modal-overlay"></div>
+      <div
+        class="search-modal__content search-modal__content-bottom"
+        tabindex="-1"
+      ><predictive-search class="search-modal__form" data-loading-text="Loading..."><form action="/search" method="get" role="search" class="search search-modal__form">
+          <div class="field">
+            <input
+              class="search__input field__input"
+              id="Search-In-Modal"
+              type="search"
+              name="q"
+              value=""
+              placeholder="Search"role="combobox"
+                aria-expanded="false"
+                aria-owns="predictive-search-results"
+                aria-controls="predictive-search-results"
+                aria-haspopup="listbox"
+                aria-autocomplete="list"
+                autocorrect="off"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false">
+            <label class="field__label" for="Search-In-Modal">Search</label>
+            <input type="hidden" name="options[prefix]" value="last">
+            <button
+              type="reset"
+              class="reset__button field__button hidden"
+              aria-label="Clear search term"
+            >
+              <span class="svg-wrapper">
+</span>
+            </button>
+            <button class="search__button field__button" aria-label="Search">
+              <span class="svg-wrapper">
+</span>
+            </button>
+          </div><div class="predictive-search predictive-search--header" tabindex="-1" data-predictive-search>
+
+<div class="predictive-search__loading-state">
+  
+
+</div>
+</div>
+
+            <span class="predictive-search-status visually-hidden" role="status" aria-hidden="true"></span></form></predictive-search><button
+          type="button"
+          class="search-modal__close-button modal__close-button link link--text focus-inset"
+          aria-label="Close"
+        >
+          <span class="svg-wrapper">
+</span>
+        </button>
+      </div>
+    </div>
+  </details>
+</details-modal>
+
+<a
+          href="https://shopify.com/58112082086/account?locale=en&region_country=US&buyer_flags=eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ2dXppeC1zaG9wLm15c2hvcGlmeS5jb20iLCJmbGFncyI6W10sImV4cCI6MTc5Mzk2Mzg1NCwibmJmIjoxNzkzMzU5MDU0fQ.7mxfT4giW70XzVLklHBzx5fo66C7uoHrRwj0H8lBe1A"
+          class="header__icon header__icon--account link focus-inset small-hide"
+          rel="nofollow"
+        ><span class="svg-wrapper">
+              
+
+            </span><span class="visually-hidden">Log in</span>
+        </a><a href="/cart" class="header__icon header__icon--cart link focus-inset" id="cart-icon-bubble">
+        
+          <span class="svg-wrapper">
+            
+
+          </span>
+        
+
+        <span class="visually-hidden">
+          Cart
+        </span></a>
+
+    </div>
+
+  </header>
+
+</div>
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-cart-notification.css?v=54116361853792938221793283028" rel="stylesheet" type="text/css" media="all" />
+
+
+
+<cart-notification>
+  <div class="cart-notification-wrapper">
+    <div
+      id="cart-notification"
+      class="cart-notification focus-inset"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Added to cart"
+      aria-hidden="true"
+      tabindex="-1"
+    >
+      <div class="vzx-cart-header">
+        <div class="vzx-cart-status">
+          
+          <span>Added to Cart</span>
+        </div>
+
+        <button
+          type="button"
+          class="vzx-cart-close"
+          aria-label="Close cart notification"
+        >
+          
+        </button>
+      </div>
+
+      <div
+        id="cart-notification-product"
+        class="cart-notification-product"
+        aria-hidden="true"
+      ></div>
+
+      <h2 class="vzx-cart-message">
+        Your item has been added to your cart.
+      </h2>
+
+      <div class="vzx-cart-actions">
+        <a
+          href="/cart"
+          id="cart-notification-button"
+          class="vzx-cart-primary"
+        >
+          <span>View Cart</span>
+          
+        </a>
+
+        <button
+          type="button"
+          class="vzx-cart-secondary"
+        >
+          Continue Shopping
+        </button>
+      </div>
+    </div>
+  </div>
+</cart-notification>
+
+
+</div>
+<!-- END sections: header-group -->
+
+    <main id="MainContent" class="content-for-layout focus-none" role="main" tabindex="-1">
+      
+
+
+
+
+  <div class='easylockdown-content' style='display:none;'><div id="shopify-section-template--29887984631974__default_page_header_zDmnfD" class="shopify-section">
+
+
+
+
+<section
+  class="vzx-hero vzx-hero--transparent-header"
+  style="--hero-height: 320px;"
+>
+  
+
+  <div class="vzx-hero__overlay"></div>
+
+  <div class="page-width vzx-hero__inner">
+    <div class="vzx-hero__content">
+
+  
+    <p class="vzx-hero__eyebrow">Resources</p>
+  
+
+
+  <h1 style="font-size: 3em; color: #fff;">
+    How AI Orchestrated Workers are Key to Warehouse Automation
+  </h1>
+
+
+  
+
+  
+  
+
+  
+    <div class="vzx-hero__buttons">
+
+      
+
+      
+
+    </div>
+  
+
+</div>
+
+  </div>
+
+ 
+
+
+</section>
+
+
+
+
+</div><section id="shopify-section-template--29887984631974__main" class="shopify-section section">
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/section-blog-post.css?v=150338533912445407631793283028" rel="stylesheet" type="text/css" media="all" />
+
+
+
+<article class="article-custom">
+
+  <div class="vuzix-article-header">
+
+  
+
+  <div class="vuzix-article-meta">
+
+    
+      <span class="vuzix-article-tag">
+        Warehousing
+      </span>
+    
+
+          <span class="vuzix-article-date">
+      August 24, 2023
+    </span>
+
+  </div>
+
+</div>
+
+  <div class="vuzix-article-content rte">
+  <p><span>Warehousing organizations face rising costs due to errors in stocking, order picking, and general turnover. Warehousing and logistics operations managers are tasked with finding ways to enable faster onboarding and increased pick rates, while reducing error rates. <a title="Logistics findings" href="https://web.archive.org/web/20260103065900/https://www.vuzix.com/pages/warehousing/#logistics-wearables-whitepaper" target="_blank">It's well known</a> that Vuzix augmented reality (AR) smart glasses optimize efficiencies in the warehouse and distribution center by providing an improved onboarding experience, real-time decision-making support, and instantly connecting workers to supervisors and enterprise management systems. </span></p>
+<p><span>When paired with augmented reality, AI-enabled human workers and automation are orchestrated together to work more efficiently and intelligently</span><span>. AI is continuously interpreting data to adaptively drive and revolutionize work process optimization. Vuzix’ partner, </span><a href="https://web.archive.org/web/20260103065900/https://www.logistiview.com/"><span>LogistiVIEW</span></a><span>, has created a platform utilizing AI, computer vision, machine learning, speech recognition, and object recognition, to introduce automated decision making into warehousing and logistics operations. Automated decision making is the process of using AI software to recommend that a person makes a decision or takes an action, based on a recognized pattern, and filtering complex data streams to deliver only what is most critical to aid the task at hand. </span></p>
+<p><span>“LogistiVIEW’s Automated Decision Making (ADM) predicts the next best work to do and responds in real-time as change happens. As operational complexity grows, managing uncertainty and maintaining smooth flow is an increasingly difficult task for operations leaders, creating inefficient and unpredictable outcomes. Leaders are often tied to their computers cross referencing data in multiple systems to manually plan work and watch emails for visibility to change," said Seth Patin, CEO of LogistiVIEW. “ADM unlocks the potential of people by optimizing work assignment and instruction for the workforce and empowering operations leaders to spend more time with their workforce managing performance and less time on their computers managing work.”</span></p>
+<p><span>Warehousing and logistic operations are now enhanced by using AI software to recommend things such as which orders should be released to the warehouse, the order in which tasks should get done, who work should be assigned to, the process in which an order should flow through the warehouse, among others. </span></p>
+<p><span>Over time, LogistiVIEW's work optimization engine will learn how to improve productivity on the floor by analyzing the myriad labor data captured during process execution. By using machine learning, it will provide insights into worker behavior and process integrity, give recommendations to improve performance, and automatically optimize interactions with robotics and automation. </span></p>
+<p><a href="https://web.archive.org/web/20260103065900/https://www.logistiview.com/automated-flow-control.html" title="Machine learning and artificial intelligence AI"><span>Learn more about how LogistiVIEW is driving Automated Decision Making in the warehouse using AI, machine learning pattern-recognition, and AR smart glasses.</span></a></p>
+</div>
+
+  <p class="blog-back-link"><a href="/blogs/vuzix-blog">
+
+  See All Posts
+</a></p>
+
+</article>
+
+
+
+
+</section></div>
+  <div id='easylockdown404' style='display:none;'><div class="easylockdown404-content-container"><div class="easylockdown404-content-wrapper"><div class="easylockdown404-title-holder"><span class="easylockdown-title-404"></span></div><div class="easylockdown404-content-holder rte"><div class="easylockdown-message-404"></div></div></div></div></div>
+  
+<div id="easylockdown-password-form" style="display: none;">
+  <div id="easylockdown-wrapper">
+    
+
+    <div class="easylockdown-form-holder">
+      <div id="easylockdown-password-error">Invalid password</div>
+      <input type="password" placeholder="" id="easylockdown-password"
+             onkeypress="if( event.keyCode == 13 && typeof easylockdown == 'object' && typeof easylockdown.checkUnlockPassword == 'function' ) { event.preventDefault(); easylockdown.checkUnlockPassword(this); }" />
+      <a href="javascript:void(0);" id="easylockdown-password-form-button" onclick="if( typeof easylockdown == 'object' && typeof easylockdown.checkUnlockPassword == 'function' ) easylockdown.checkUnlockPassword(this);">Enter</a>
+    </div>
+  </div>
+</div>
+
+  
+
+
+
+    </main>
+
+    <!-- BEGIN sections: footer-group -->
+<div id="shopify-section-sections--29887980404902__footer" class="shopify-section shopify-section-group-footer-group">
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/section-footer.css?v=60318643098753476351793283028" rel="stylesheet" type="text/css" media="all" />
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-newsletter.css?v=4727253280200485261793283028" rel="stylesheet" type="text/css" media="all" />
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-list-menu.css?v=151968516119678728991793283028" rel="stylesheet" type="text/css" media="all" />
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-list-payment.css?v=69253961410771838501793283028" rel="stylesheet" type="text/css" media="all" />
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-list-social.css?v=35792976012981934991793283028" rel="stylesheet" type="text/css" media="all" />
+<footer class="footer color-scheme-4 gradient section-sections--29887980404902__footer-padding"><div class="footer__content-top page-width"><div
+            class="footer__blocks-wrapper grid grid--1-col grid--2-col grid--4-col-tablet grid--3-col-tablet scroll-trigger animate--slide-in"
+            
+              data-cascade
+            
+          ><div
+                class="footer-block grid__item scroll-trigger animate--slide-in"
+                
+                
+                  data-cascade
+                  style="--animation-order: 1;"
+                
+              ><div class="footer-block__details-content footer-block-image "><div
+                          class="footer-block__image-wrapper"
+                          style="max-width: min(100%, 175px);"
+                        >
+                          <img
+                            srcset="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_0531ab6b-0feb-4bd8-819a-817caddb5dd9.png?v=1784112233&width=175, //www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_0531ab6b-0feb-4bd8-819a-817caddb5dd9.png?v=1784112233&width=350 2x"
+                            src="//www.vuzix.com/cdn/shop/files/Vuzix-Logo-June22_0531ab6b-0feb-4bd8-819a-817caddb5dd9.png?v=1784112233&width=760"
+                            alt=""
+                            loading="lazy"
+                            width="643"
+                            height="105"
+                          >
+                        </div></div></div><div
+                class="footer-block grid__item footer-block--menu scroll-trigger animate--slide-in"
+                
+                
+                  data-cascade
+                  style="--animation-order: 2;"
+                
+              ><details class="footer-mobile-accordion" open>
+                      <summary class="footer-mobile-accordion__summary">
+                        <span>COMPANY</span>
+                        <span class="footer-mobile-accordion__icon" aria-hidden="true">
+                          
+                        </span>
+                      </summary>
+
+                      <div class="footer-mobile-accordion__content">
+                        <ul class="footer-mobile-accordion__list list-unstyled" role="list"><li>
+                              <a
+                                href="/pages/about-vuzix"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>About Vuzix</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/careers"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Careers</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/partners"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Partners</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="https://ir.vuzix.com"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Investors</span>
+
+                                
+                                  
+                                    <img
+                                      src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+                                      alt="Vuzix Corporation"
+                                      class="vzx-external-icon"
+                                      loading="lazy"
+                                    >
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/events"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Events</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/withdraw-contract"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Withdraw contract</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/accessibility-statement"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Accessibility Statement</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li></ul>
+                      </div>
+                    </details></div><div
+                class="footer-block grid__item footer-block--menu scroll-trigger animate--slide-in"
+                
+                
+                  data-cascade
+                  style="--animation-order: 3;"
+                
+              ><details class="footer-mobile-accordion" open>
+                      <summary class="footer-mobile-accordion__summary">
+                        <span>RESOURCES</span>
+                        <span class="footer-mobile-accordion__icon" aria-hidden="true">
+                          
+                        </span>
+                      </summary>
+
+                      <div class="footer-mobile-accordion__content">
+                        <ul class="footer-mobile-accordion__list list-unstyled" role="list"><li>
+                              <a
+                                href="/pages/support"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Support</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="https://apps.vuzix.com"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>App Store</span>
+
+                                
+                                  
+                                    <img
+                                      src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+                                      alt="Vuzix Corporation"
+                                      class="vzx-external-icon"
+                                      loading="lazy"
+                                    >
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="https://support.vuzix.com/docs/developer-resources"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Developers</span>
+
+                                
+                                  
+                                    <img
+                                      src="https://cdn.shopify.com/s/files/1/0581/1208/2086/files/icon-link-white.png?v=1782920607"
+                                      alt="Vuzix Corporation"
+                                      class="vzx-external-icon"
+                                      loading="lazy"
+                                    >
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/blogs/case-studies"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Case Studies</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/blogs/white-papers"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>White Papers</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/blogs/vuzix-blog"
+                                class="link link--text list-menu__item list-menu__item--link list-menu__item--active"
+                              >
+                                <span>Vuzix Blog</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li></ul>
+                      </div>
+                    </details></div><div
+                class="footer-block grid__item footer-block--menu scroll-trigger animate--slide-in"
+                
+                
+                  data-cascade
+                  style="--animation-order: 4;"
+                
+              ><details class="footer-mobile-accordion" open>
+                      <summary class="footer-mobile-accordion__summary">
+                        <span>LEGAL</span>
+                        <span class="footer-mobile-accordion__icon" aria-hidden="true">
+                          
+                        </span>
+                      </summary>
+
+                      <div class="footer-mobile-accordion__content">
+                        <ul class="footer-mobile-accordion__list list-unstyled" role="list"><li>
+                              <a
+                                href="/pages/legal"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Documentation</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/shipping-policy"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Shipping Policy</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/return-policy"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Return Policy</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/terms-and-conditions"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Terms &amp; Conditions</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/privacy-policy"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Privacy Policy</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li></ul>
+                      </div>
+                    </details></div><div
+                class="footer-block grid__item footer-block--menu scroll-trigger animate--slide-in"
+                
+                
+                  data-cascade
+                  style="--animation-order: 5;"
+                
+              ><details class="footer-mobile-accordion" open>
+                      <summary class="footer-mobile-accordion__summary">
+                        <span>CONTACT</span>
+                        <span class="footer-mobile-accordion__icon" aria-hidden="true">
+                          
+                        </span>
+                      </summary>
+
+                      <div class="footer-mobile-accordion__content">
+                        <ul class="footer-mobile-accordion__list list-unstyled" role="list"><li>
+                              <a
+                                href="/pages/contact-sales"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Sales</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/contact-business-development"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Business Development</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/contact-investor-relations"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Investor Relations</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/contact-media-relations"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Media Relations</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li><li>
+                              <a
+                                href="/pages/contact-technical-support"
+                                class="link link--text list-menu__item list-menu__item--link"
+                              >
+                                <span>Technical Support</span>
+
+                                
+                                  
+                                
+                              </a>
+                            </li></ul>
+                      </div>
+                    </details></div></div><div
+          class="footer-block--newsletter scroll-trigger animate--slide-in"
+          
+            data-cascade
+          
+        ><div class="footer-block__newsletter"><h2 class="footer-block__heading inline-richtext" style="font-size: 1.1em;">Subscribe to our emails</h2><form method="post" action="/contact#ContactFooter" id="ContactFooter" accept-charset="UTF-8" class="footer__newsletter newsletter-form"><input type="hidden" name="form_type" value="customer" /><input type="hidden" name="utf8" value="✓" /><input type="hidden" name="contact[tags]" value="newsletter">
+                <div class="newsletter-form__field-wrapper">
+                  <div class="field">
+                    <input
+                      id="NewsletterForm--sections--29887980404902__footer"
+                      type="email"
+                      name="contact[email]"
+                      class="field__input"
+                      value=""
+                      aria-required="true"
+                      autocorrect="off"
+                      autocapitalize="off"
+                      autocomplete="email"
+                      
+                      placeholder="Email"
+                      required style="font-size: 17px;"
+                    >
+                    <label class="field__label" for="NewsletterForm--sections--29887980404902__footer">
+                      Email
+                    </label>
+                    <button
+                      type="submit"
+                      class="newsletter-form__button field__button"
+                      name="commit"
+                      id="Subscribe"
+                      aria-label="Subscribe"
+                    >
+                      <span class="svg-wrapper">
+</span>
+                    </button>
+                  </div></div></form></div></div>
+      </div><div
+    class="footer__content-bottom scroll-trigger animate--slide-in"
+    
+      data-cascade
+    
+  >
+    <div class="footer__content-bottom-wrapper page-width">
+      <div class="footer__column footer__localization isolate"></div>
+      <div class="footer__column footer__column--info"></div>
+    </div>
+    <div class="footer__content-bottom-wrapper page-width footer__content-bottom-wrapper--center">
+      <div class="footer__copyright caption">
+        <small class="copyright__content"
+          >&copy; 2026, <a href="/" title="">Vuzix Corporation</a></small><ul class="policies list-unstyled"><li>
+                  <small class="copyright__content"
+                    ><a href="/policies/privacy-policy">Privacy policy</a></small
+                  >
+                </li></ul></div>
+    </div>
+  </div>
+</footer>
+
+
+
+
+</div>
+<!-- END sections: footer-group -->
+
+    <ul hidden>
+      <li id="a11y-refresh-page-message">Choosing a selection results in a full page refresh.</li>
+      <li id="a11y-new-window-message">Opens in a new window.</li>
+    </ul>
+
+    <!-- -->
+
+
+
+  
+<link href="//www.vuzix.com/cdn/shop/t/93/assets/component-cart-notification.css?v=54116361853792938221793283028" rel="stylesheet" type="text/css" media="all" />
+
+
+
+<cart-notification>
+  <div class="cart-notification-wrapper">
+    <div
+      id="cart-notification"
+      class="cart-notification focus-inset"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Added to cart"
+      aria-hidden="true"
+      tabindex="-1"
+    >
+      <div class="vzx-cart-header">
+        <div class="vzx-cart-status">
+          
+          <span>Added to Cart</span>
+        </div>
+
+        <button
+          type="button"
+          class="vzx-cart-close"
+          aria-label="Close cart notification"
+        >
+          
+        </button>
+      </div>
+
+      <div
+        id="cart-notification-product"
+        class="cart-notification-product"
+        aria-hidden="true"
+      ></div>
+
+      <h2 class="vzx-cart-message">
+        Your item has been added to your cart.
+      </h2>
+
+      <div class="vzx-cart-actions">
+        <a
+          href="/cart"
+          id="cart-notification-button"
+          class="vzx-cart-primary"
+        >
+          <span>View Cart</span>
+          
+        </a>
+
+        <button
+          type="button"
+          class="vzx-cart-secondary"
+        >
+          Continue Shopping
+        </button>
+      </div>
+    </div>
+  </div>
+</cart-notification>
+
+
+
+
+  
+<div id="shopify-block-AY2E2bmk5c2dKUnB5a__5733569959556273306" class="shopify-block shopify-app-block">
+
+
+
+
+
+
+<div 
+  class="recommenda-quiz-link"
+  style="width: 100vw; height: 100dvh"
+  data-quiz-width="80"
+  data-quiz-height="80"
+  data-mobile-width="95"
+  data-mobile-height="90"
+  data-restart-on-button-click="false"
+>
+  <div class="recommenda-close" >
+    <span style="color: #838383;">&times;</span>
+  </div>
+  <input type="hidden" class="recommenda-quiz-cid-input" value="">
+  <iframe
+    allow="clipboard-write"
+    width="100%"
+    height="100%"
+    frameborder="0"></iframe>
+</div>
+
+
+</div><div id="shopify-block-AWTROWGNhY0FWR05yV__10008203421340698720" class="shopify-block shopify-app-block">
+
+<div id="gt-wrapper-AWTROWGNhY0FWR05yV__10008203421340698720"></div>
+
+
+
+</div><div id="shopify-block-AMWVTbXBRK041MUxSc__14611138475989843819" class="shopify-block shopify-app-block">
+
+  
+</div><div id="shopify-block-AQXVseTJmTnRYajVON__12741885996470144523" class="shopify-block shopify-app-block">
+
+
+</div><div id="shopify-block-AOUJDdFVDWmRGeGtje__9962162814386890965" class="shopify-block shopify-app-block"><!-- Lantern quiz active -->
+
+
+</div>
+</body>
+</html>

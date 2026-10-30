@@ -139,24 +139,30 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 # here runs against every page there.
 #
 # 1. <script>, <style>, <noscript>, <iframe>, <svg>, <audio> and <video> go, with their
-#    fallback text ("Your browser does not support the audio element").
+#    fallback text ("Your browser does not support the audio element"). Text outside any
+#    block is made readable (_LooseText, issue 0053): runs of loose text an element breaks
+#    with double <br>s become paragraphs (paulgraham.com's table cell, incompleteideas.net's
+#    <body>), and a <code> standing alone (several lines, or in a <figure>) a code block
+#    (fasterthanli.me).
 # 2. Chrome goes, with everything inside it (_ChromeStripper): the CHROME_TAGS, and any
 #    element (but <html> and <body>) with a class or id token that starts with one of the
 #    prefixes, is one of the tokens, holds one of the parts (a table of contents, a badge),
 #    names an author's box ("author-bio", "author-mini-bio"), or ends in "-tags",
-#    "-categories" or "-newsletter" after a theme prefix ("nvidia-tags",
-#    "uni-article-newsletter"). Only those endings are matched inside a token: a plugin wraps
+#    "-categories", "-newsletter" or "-nav" after a theme prefix ("nvidia-tags",
+#    "uni-article-newsletter", "bottom-nav"). Only those endings are matched inside a token: a plugin wraps
 #    whole articles in "has-highlight-and-share", WordPress gives <article> itself
 #    "category-ai tag-agents", Substack's article is "newsletter-post". A component part
 #    ("block__element") is judged on its own. A picture's dark-mode copy goes too; an
 #    article's own <header> goes but keeps its images (the cover).
-#    No rule drops an element holding more than half of the page's paragraph text: the Old
-#    New Thing's posts are in "entry-content sharepostcontent".
+#    No rule drops an element holding more than half of the page's paragraph text (the Old
+#    New Thing's posts are in "entry-content sharepostcontent"), nor one around a candidate
+#    article holding a fifth of it (lesswrong.com's "MultiToCLayout-tableOfContents").
 # 3. The article is the first candidate long enough (<article>, <main>, a content class),
 #    each read whole; with none, the smallest element holding most of the paragraph text
 #    (ai.meta.com). Its text blocks (TEXT_BLOCKS and list items) and images are kept in page
 #    order; an image keeps only its address and alt (_article_image), and pixels, icons,
-#    badges and avatars go.
+#    badges and avatars go. The notes it links to that follow it outside it are read after
+#    it (_notes_after: blog.google's footnotes).
 # 4. Its structure is kept, not only its words (_Structure, issue 0042): a data table as a
 #    table (header cells, rows and columns, no attributes but colspan and rowspan), a figure
 #    with its images and caption together. A table that lays out the page is unwrapped, its
@@ -166,11 +172,16 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 #    before the next heading of a higher level, or the end (section titles whose content a
 #    script fills in, a closing "Related" title). Not the next of the same level: a title
 #    over a same-level subtitle or a note's title is no empty section (gov.uk, the
-#    PostgreSQL docs; the before/after on 50 pages, issue 0042).
+#    PostgreSQL docs; the before/after on 50 pages, issue 0042). A table with no word in it
+#    goes; a text block inside a link (a card) is marked so step 5 reads it as a link.
+# 5. The chrome at its edges goes (_without_edge_chrome, issue 0053), judged by links and
+#    length the way Readability judges unnamed blocks: labels, in-site links and the title
+#    again before the first paragraph; a tail of links with its labels, card pictures and
+#    excerpts after the last one.
 CHROME_TAGS = frozenset({"nav", "header", "footer", "aside", "form"})
 CHROME_PREFIXES = ("nav", "menu", "footer", "related", "share", "subscribe", "sidebar",
                    "comments", "comment-", "ad-", "advert")
-CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories", "-newsletter", "_newsletter")
+CHROME_ENDINGS = ("-tags", "_tags", "-categories", "_categories", "-newsletter", "_newsletter", "-nav", "_nav")
 # A table of contents is a menu too (anthropic.com's "StickyTableOfContents-module__Trigger").
 CHROME_PARTS = ("tableofcontents", "table-of-contents", "table_of_contents", "badge")
 CHROME_TOKENS = frozenset({"toc", "newsletter", "ad", "ads"})
@@ -191,6 +202,7 @@ HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
 MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
 FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
+CANDIDATE_TEXT_SHARE = 0.2 # nor one around a candidate article holding this much of it
 ARTICLE_MIN_CHARS = 500
 
 
@@ -334,9 +346,209 @@ class _ChromeStripper(HTMLParser):
         self._keep(f"&#{name};")
 
 
+# Tags that flow inside a line of text: a loose run is made of them and its text (step 1).
+INLINE_TAGS = frozenset({"a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em",
+                         "font", "i", "ins", "kbd", "mark", "q", "s", "samp", "small", "span", "strike",
+                         "strong", "sub", "sup", "time", "tt", "u", "var", "wbr", "br", "img"})
+# Inside these loose text is already read (a text block, a caption, a form's controls) or
+# never is (the head): no run in them is made into a paragraph (step 1).
+TEXT_HOLDERS = frozenset({"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "figcaption",
+                          "caption", "dt", "dd", "button", "label", "select", "option", "textarea", "title",
+                          "head", "map"})
+# Elements whose own text is only the space between their children.
+TEXTLESS = frozenset({"ul", "ol", "dl", "table", "thead", "tbody", "tfoot", "tr", "picture", "colgroup"})
+
+
+class _LooseText(HTMLParser):
+    """Re-emits the page with the text it holds outside any block made readable (step 1).
+
+    - Loose text: a page laid out with <br>s and no <p> (paulgraham.com in a table cell,
+      incompleteideas.net in <body>) keeps its words in an element's own runs of text. In an
+      element that breaks them with a double <br>, each run (its text and inline tags, up to a
+      double <br> or a block) becomes a <p>; an inline tag the run does not both open and close
+      (a <font> around the whole page) is left out of it. An element with no double <br> is left
+      as it is: a byline or a date in a <div> is no paragraph.
+    - A code block with no <pre>: a <code> outside any text block that runs over several lines,
+      or stands in a <figure> (fasterthanli.me's <figure><code>), becomes <pre><code>.
+    A first pass (measure=True) finds `breaks`, the elements (by start order) whose own runs
+    hold a double <br>, and `code_blocks`, the <code>s to read as blocks; the second re-emits."""
+
+    def __init__(self, measure: bool, breaks: frozenset = frozenset(), code_blocks: frozenset = frozenset()) -> None:
+        super().__init__(convert_charrefs=False)
+        self.measure = measure
+        self.breaks, self.code_blocks = breaks, code_blocks
+        self.found_breaks: set = set()
+        self.found_code: set = set()
+        self.kept: List[str] = []
+        self.open: List[Tuple[str, int]] = []     # (tag, start order) of the open elements
+        self.started = 0
+        self.run: List[Tuple[str, str]] = []      # the current run: (start|end|text, its html)
+        self.run_owner = -1                       # the element whose run it is
+        self.last_br = False                      # the run's last token was a <br> (or whitespace after one)
+        self.codes: List[Tuple[int, bool, List[str]]] = []   # open <code>s: (order, alone, its text)
+
+    def _owner(self) -> Tuple[str, int]:
+        """The innermost open element that is no inline tag, or the page itself."""
+        for tag, order in reversed(self.open):
+            if tag not in INLINE_TAGS or order in self.code_blocks:
+                return tag, order
+        return "", -1
+
+    def _in_text_block(self) -> bool:
+        return (any(tag in TEXT_HOLDERS or order in self.code_blocks for tag, order in self.open)
+                or self._owner()[0] in TEXTLESS)
+
+    def _emit(self, value: str) -> None:
+        if not self.measure:
+            self.kept.append(value)
+
+    def _flush(self) -> None:
+        run, self.run, self.last_br = self.run, [], False
+        if self.measure or not run:
+            return
+        if self.run_owner not in self.breaks or not "".join(v for kind, v in run if kind == "text").strip():
+            self.kept.extend(value for _, value in run)
+            return
+        opened: List[Tuple[str, int]] = []    # only the inline tags the run both opens and closes
+        keep = [True] * len(run)
+        for index, (kind, value) in enumerate(run):
+            if kind == "text":
+                continue
+            name = re.match(r"</?\s*([a-zA-Z0-9-]+)", value).group(1).lower()
+            if kind == "start" and name not in VOID_TAGS:
+                opened.append((name, index))
+            elif kind == "end":
+                match = next((i for i in range(len(opened) - 1, -1, -1) if opened[i][0] == name), None)
+                if match is None:
+                    keep[index] = False
+                else:
+                    del opened[match:]
+        for _, index in opened:
+            keep[index] = False
+        body = "".join(value for (_, value), kept in zip(run, keep) if kept)
+        body = re.sub(r"(?is)^(?:\s|<br\b[^>]*>)+|(?:\s|<br\b[^>]*>)+$", "", body)
+        self.kept.append(f"<p>{body}</p>")
+
+    def _inline(self, kind: str, value: str) -> None:
+        if self._in_text_block():
+            self._flush()
+            self._emit(value)
+            return
+        owner = self._owner()[1]
+        if owner != self.run_owner:
+            self._flush()
+            self.run_owner = owner
+        self.run.append((kind, value))
+
+    def _block(self, value: str) -> None:
+        self._flush()
+        self._emit(value)
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        text = self.get_starttag_text() or ""
+        if tag == "br" and not self._in_text_block():
+            owner = self._owner()[1]
+            if self.last_br and owner == self.run_owner:     # a double <br>: the run ends
+                self.found_breaks.add(owner)
+                self._flush()
+                self.run_owner = owner
+                return
+            self._inline("start", text)
+            self.last_br = True
+            return
+        if tag in VOID_TAGS:
+            if tag in INLINE_TAGS:
+                self._inline("start", text)
+            else:
+                self._block(text)
+            return
+        order, self.started = self.started, self.started + 1
+        if tag == "code":
+            alone = not self._in_text_block()
+            self.codes.append((order, alone, []))
+            if alone and self._owner()[0] == "figure":
+                self.found_code.add(order)
+        if order in self.code_blocks:
+            self._block("<pre>" + text)
+        elif tag in INLINE_TAGS:
+            self._inline("start", text)
+        else:
+            self._block(text)
+        self.open.append((tag, order))
+        self.last_br = False
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID_TAGS and self.open and self.open[-1][0] == tag:
+            self.open.pop()
+
+    def handle_endtag(self, tag: str) -> None:
+        if not any(open_tag == tag for open_tag, _ in self.open):
+            return                                   # a stray end tag
+        while self.open:                             # closes it and whatever was left open inside it
+            open_tag, order = self.open[-1]
+            if open_tag == "code" and self.codes:
+                code_order, alone, text = self.codes.pop()
+                if alone and "\n" in "".join(text).strip():
+                    self.found_code.add(code_order)
+            if order in self.code_blocks:
+                self.open.pop()
+                self._block(f"</{open_tag}></pre>")
+            elif open_tag in INLINE_TAGS:
+                self._inline("end", f"</{open_tag}>")
+                self.open.pop()
+            else:
+                self.open.pop()
+                self._block(f"</{open_tag}>")
+            if open_tag == tag:
+                break
+        self.last_br = False
+
+    def handle_data(self, data: str) -> None:
+        if self.codes:
+            self.codes[-1][2].append(data)
+        self._inline("text", data)
+        if data.strip():
+            self.last_br = False
+
+    def handle_entityref(self, name: str) -> None:
+        self.handle_data(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.handle_data(f"&#{name};")
+
+    def close(self) -> None:
+        super().close()
+        self._flush()
+
+
+def _with_loose_text(html_text: str) -> str:
+    """The page with its loose text as paragraphs and its lone <code>s as code blocks
+    (_LooseText); the page itself when it has neither."""
+    measure = _LooseText(measure=True)
+    measure.feed(html_text)
+    measure.close()
+    if not measure.found_breaks and not measure.found_code:
+        return html_text
+    loose = _LooseText(measure=False, breaks=frozenset(measure.found_breaks),
+                       code_blocks=frozenset(measure.found_code))
+    loose.feed(html_text)
+    loose.close()
+    return "".join(loose.kept)
+
+
 def _without_chrome(html_text: str) -> str:
+    """The page without its chrome (_ChromeStripper). Protected: an element holding most of
+    the paragraph text, and every element around a candidate article (CANDIDATES) holding at
+    least CANDIDATE_TEXT_SHARE of it: lesswrong.com lays its post out inside a grid named
+    "MultiToCLayout-tableOfContents", and its comments hold three quarters of the page's text."""
     text = _ParagraphText(html_text)
-    protected = frozenset(index for index, size in enumerate(text.sizes) if size > text.total * MAIN_TEXT_SHARE)
+    protected = {index for index, size in enumerate(text.sizes) if size > text.total * MAIN_TEXT_SHARE}
+    for index, (element, size) in enumerate(zip(text.elements, text.sizes)):
+        if size >= text.total * CANDIDATE_TEXT_SHARE and any(test(*element) for test in CANDIDATES):
+            start, end = text.spans[index]
+            protected.update(outer for outer in range(index) if text.spans[outer][0] <= start and end <= text.spans[outer][1])
+    protected = frozenset(protected)
     stripper = _ChromeStripper(protected)
     stripper.feed(html_text)
     stripper.close()
@@ -361,9 +573,19 @@ class _Structure(HTMLParser):
         self.kept: List[str] = []
         self.tables: List[Dict[str, Any]] = []
         self.figures = 0
+        self.open: List[str] = []                 # the open elements' tags
+        self.links: List[Tuple[str, int]] = []    # open <a>s around blocks: (href, depth)
 
     def _keep(self, text: str) -> None:
         self.kept.append(text)
+
+    def _card_mark(self, text: str, tag: str) -> str:
+        """A text block that starts inside a link (a card: <a><img><h2>Title</h2></a>) carries
+        the link's address in CARD_MARK, so the edge rule reads it as a link (step 5)."""
+        if not self.links or tag not in CARD_BLOCKS or not text.endswith(">"):
+            return text
+        end = -2 if text.endswith("/>") else -1
+        return f'{text[:end]} {CARD_MARK}="{html_lib.escape(self.links[-1][0])}"{text[end:]}'
 
     def _starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> str:
         if self.tables or self.figures:
@@ -376,11 +598,15 @@ class _Structure(HTMLParser):
         self.kept.append(text)
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag not in VOID_TAGS:
+            self.open.append(tag)
+        if tag == "a" and (href := (dict(attrs).get("href") or "").strip()):
+            self.links.append((href, len(self.open)))
         if tag == "table":
             for table in self.tables:   # a table holding a table lays it out
                 table["layout"] = True
             role = (dict(attrs).get("role") or "").strip().lower()
-            self.tables.append({"parts": [], "layout": role in LAYOUT_ROLES, "cells": 0})
+            self.tables.append({"parts": [], "layout": role in LAYOUT_ROLES, "cells": 0, "text": False})
             self._part("<table>")
         elif self.tables and tag in TABLE_PARTS:
             self.tables[-1]["cells"] += tag in ("th", "td")
@@ -398,13 +624,17 @@ class _Structure(HTMLParser):
             if tag in HEADING_TAGS:
                 for table in self.tables:
                     table["layout"] = True
-            self._keep(self._starttag(tag, attrs))
+            self._keep(self._card_mark(self._starttag(tag, attrs), tag))
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if not (self.tables and tag in TABLE_WIDTHS):
             self._keep(self._starttag(tag, attrs))
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self.open:            # closes it and whatever was left open inside it
+            del self.open[len(self.open) - 1 - self.open[::-1].index(tag):]
+            while self.links and self.links[-1][1] > len(self.open):
+                self.links.pop()
         if tag == "table":
             if self.tables:
                 self._part("</table>")
@@ -422,7 +652,9 @@ class _Structure(HTMLParser):
 
     def _close_table(self) -> None:
         table = self.tables.pop()
-        layout = table["layout"] or table["cells"] < 2
+        # A table with no word in it (fabiensanglard.net's palette, its colours in styles that
+        # go) is no table either.
+        layout = table["layout"] or table["cells"] < 2 or not table["text"]
         for index in table["parts"] if layout else ():
             self.kept[index] = ""
 
@@ -434,13 +666,27 @@ class _Structure(HTMLParser):
         self.kept.append("</figure>" if self.figures else "")
 
     def handle_data(self, data: str) -> None:
+        if self.tables and data.strip():
+            for table in self.tables:
+                table["text"] = True
         self._keep(data)
 
     def handle_entityref(self, name: str) -> None:
+        if self.tables and name != "nbsp":
+            for table in self.tables:
+                table["text"] = True
         self._keep(f"&{name};")
 
     def handle_charref(self, name: str) -> None:
+        if self.tables and name not in ("160", "xa0", "xA0"):
+            for table in self.tables:
+                table["text"] = True
         self._keep(f"&#{name};")
+
+
+CARD_MARK = "data-insight-card"
+CARD_MARK_RE = re.compile(rf'\s{CARD_MARK}="[^"]*"')
+CARD_BLOCKS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"})
 
 
 def _with_structure(html_text: str) -> str:
@@ -450,7 +696,9 @@ def _with_structure(html_text: str) -> str:
     return "".join(structure.kept)
 
 
-CONTENT_CLASSES = ("entry-content", "post-content", "article-content", "content-body", "prose", "single-post-content")
+# "instapaper_body" marks an article body for read-later tools (lesswrong.com).
+CONTENT_CLASSES = ("entry-content", "post-content", "article-content", "content-body", "prose", "single-post-content",
+                   "instapaper_body")
 CANDIDATES = (
     lambda tag, id_, classes: tag == "article",
     lambda tag, id_, classes: tag == "main",
@@ -459,28 +707,46 @@ CANDIDATES = (
 )
 
 
-def _candidates(html_text: str) -> List[str]:
-    """What may be the article, in this order: the page's first <article>, its first <main>,
-    #markdownBody, the first <div> with a CONTENT_CLASSES class, each whole (a card nested in
-    the post no longer ends it). With none, the smallest element holding FALLBACK_TEXT_SHARE
-    of the paragraph text (the whole page when it has none)."""
-    page = _ParagraphText(html_text)
+def _candidates(page: "_ParagraphText", html_text: str) -> List[Tuple[int, int]]:
+    """Where the article may be (spans of html_text), in this order: the page's first
+    <article>, its first <main>, #markdownBody, the first <div> with a CONTENT_CLASSES class,
+    each whole (a card nested in the post no longer ends it). With none, the smallest element
+    holding FALLBACK_TEXT_SHARE of the paragraph text (the whole page when it has none)."""
     found = [next((i for i, element in enumerate(page.elements) if test(*element)), None) for test in CANDIDATES]
     if any(index is not None for index in found):
-        return [html_text[slice(*page.spans[index])] for index in found if index is not None]
+        return [page.spans[index] for index in found if index is not None]
     spans = [span for size, span in zip(page.sizes, page.spans)
              if page.total and size >= page.total * FALLBACK_TEXT_SHARE]
-    start, end = min(spans, key=lambda span: span[1] - span[0], default=(0, len(html_text)))
-    return [html_text[start:end]]
+    return [min(spans, key=lambda span: span[1] - span[0], default=(0, len(html_text)))]
+
+
+# A link to a note: its text a number or a mark ("1", "[2]", "*", "†").
+NOTE_REF_RE = re.compile(rf"""(?is)<a\b{ATTRS}?\bhref\s*=\s*["']#([^"']+)["']{ATTRS}>\s*(?:<[^>]+>\s*)*"""
+                         r"""\[?(?:\d{1,3}|[*†‡§])\]?\s*(?:</[^>]+>\s*)*</a>""")
+
+
+def _notes_after(page: "_ParagraphText", html_text: str, span: Tuple[int, int]) -> List[str]:
+    """The notes the article points to that sit after it, outside it (blog.google's footnotes
+    follow its <article>): the blocks of each element, after the article's end, whose id a
+    note mark in the article links to ("#footnote-1"), in page order."""
+    wanted = set(NOTE_REF_RE.findall(html_text[span[0]:span[1]]))
+    blocks: List[str] = []
+    after = span[1]
+    for (_, id_, _), (start, end) in zip(page.elements, page.spans):
+        if id_ in wanted and start >= after:
+            blocks.extend(_blocks(_with_structure(html_text[start:end])))
+            after = end                  # a note inside a note is read once
+    return blocks
 
 
 IMG_TAG_RE = re.compile(rf"(?is)<img\b{ATTRS}>")
-IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|srcset|data-srcset|alt|width|height|class)"""
+IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|srcset|data-srcset|alt|width|height|class|style)"""
                          r"""\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
 # Where an <img> keeps its address, in this order: a lazy image's real one first; a srcset's
 # first candidate last (an image known only by its srcset).
 IMAGE_ADDRESSES = ("data-src", "data-lazy-src", "data-original", "src", "srcset", "data-srcset")
 ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge
+STYLE_PX_RE = re.compile(r"(?i)(?<![-\w])(?:max-)?(?:width|height)\s*:\s*(\d+)px")
 
 
 def _px(value: Optional[str]) -> Optional[int]:
@@ -495,6 +761,8 @@ def _image_attrs(tag: str) -> Dict[str, str]:
 def _is_article_image(attrs: Dict[str, str]) -> bool:
     """Not a tracking pixel, an icon, a badge or an avatar."""
     sizes = [px for px in (_px(attrs.get("width")), _px(attrs.get("height"))) if px is not None]
+    # A size in its style counts too: about.fb.com's share icons are style="max-width:24px".
+    sizes += [int(px) for px in STYLE_PX_RE.findall(attrs.get("style", ""))]
     if any(px <= ICON_MAX_PX for px in sizes):
         return False
     return not (any(token.startswith("avatar") for token in attrs.get("class", "").lower().split())
@@ -585,22 +853,175 @@ def _with_headings_over_content(blocks: List[str]) -> List[str]:
     return kept[::-1]
 
 
+LINK_RE = re.compile(rf"(?is)<a\b(?P<attrs>{ATTRS})>(?P<text>.*?)</a>")
+HREF_RE = re.compile(r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+TITLE_TAG_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
+LABEL_MAX_CHARS = 50       # a block shorter than this, with no sentence end, is a label ("Share:", "5 min read")
+EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list
+# A block with this share of its text in links is a link: a card's title or a related
+# list's item is all link (0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
+# Constructive Prediction …” ICLR 2020.") about three quarters.
+LINK_SHARE = 0.8
+SENTENCE_END = (".", "!", "?", "…", ".”", ".\"", "?”", "!”", ".)", ".’")
+LABEL_COLON_WORDS = 3
+CONTENT_TAGS = frozenset({"pre", "table", "blockquote"})
+TITLE_SEPARATORS = ("|", "-", "–", "—", ":", "·", "•", "/")
+
+
+def _same_site(href: str, host: str) -> bool:
+    """A link within the page's own site (relative, or to its host or a host under the same
+    domain): menus, breadcrumbs, authors and related posts are; a link post's subject is not."""
+    target = (urllib.parse.urlparse(href).hostname or "").lower().removeprefix("www.")
+    if not target:
+        return True
+    return bool(host) and (target == host or target.endswith(f".{host}") or host.endswith(f".{target}"))
+
+
+def _block_kind(block: str, host: str) -> Tuple[str, bool]:
+    """(what an edge block is, whether its links stay on the site): "link" (most of its text
+    in links, or a short block of several links, a row of icons), "label" (short, no sentence
+    end: "Share:", "5 min read", "Related posts"), "empty" (no letter: "0%", "+23"), "image"
+    (a figure, or images with no text), "short" (a paragraph under EXCERPT_MAX_CHARS) or
+    "text". A table, a code block or a quote is always text."""
+    tag = (re.match(r"<([a-zA-Z0-9]+)", block) or [None, ""])[1].lower()
+    text = " ".join(strip_html(block).split())
+    if tag in CONTENT_TAGS or re.search(r"(?i)<(?:table|pre|blockquote)\b", block):
+        return "text", False
+    if tag in ("figure", "img") or (not text and "<img" in block.lower()):
+        return "image", False
+    card = re.match(rf'<[^>]*\s{CARD_MARK}="([^"]*)"', block)
+    if card:
+        return "link", _same_site(html_lib.unescape(card.group(1)), host)
+    links = []
+    for match in LINK_RE.finditer(block):
+        href = next((value for value in HREF_RE.search(match.group("attrs")).groups() if value is not None), "") \
+            if HREF_RE.search(match.group("attrs")) else ""
+        href = html_lib.unescape(href).strip()
+        if href and not href.lower().startswith(("mailto:", "tel:", "javascript:", "#")):
+            links.append((href, " ".join(strip_html(match.group("text")).split())))
+    linked = sum(len(link_text) for _, link_text in links)
+    same_site = all(_same_site(href, host) for href, _ in links)
+    # A whole sentence linking to another site ("Learn more about how LogistiVIEW is driving
+    # … smart glasses.") is the article's own; a card's title links within the site.
+    sentence = not same_site and len(text) >= LABEL_MAX_CHARS and text.endswith((".", ".”", ".)", ".’"))
+    if links and not sentence and (
+            (text and linked >= len(text) * LINK_SHARE) or (len(links) >= 2 and len(text) < LABEL_MAX_CHARS)):
+        return "link", same_site
+    if not any(char.isalpha() for char in text):
+        return "empty", False
+    # A colon ends a sentence that introduces what follows ("The simplest file could look like
+    # this:"), not a label of a word or two ("Share:", "Tags:", "News Summary:").
+    ends = SENTENCE_END + ((":",) if len(text.split()) > LABEL_COLON_WORDS else ())
+    if len(text) < LABEL_MAX_CHARS and not text.rstrip("*").endswith(ends):
+        return "label", False
+    return ("short" if len(text) <= EXCERPT_MAX_CHARS else "text"), False
+
+
+QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
+
+def _title_key(text: str) -> str:
+    """A title as compared: its words, in any case, with straight quotes."""
+    return " ".join(strip_html(text).split()).casefold().translate(QUOTES)
+
+
+def _repeats_title(block: str, titles: List[str]) -> bool:
+    """A heading that is the page's title again (its <title> or og:title, perhaps with a
+    " | Site" after it)."""
+    if not HEADING_RE.match(block):
+        return False
+    heading = _title_key(block)
+    return bool(heading) and any(
+        title == heading or (title.startswith(heading) and title[len(heading):].lstrip().startswith(TITLE_SEPARATORS))
+        for title in titles)
+
+
+def _page_titles(page: str) -> List[str]:
+    found = [meta_content(page, "og:title"), (TITLE_TAG_RE.search(page) or [None, ""])[1]]
+    return [_title_key(html_lib.unescape(title)) for title in found if title and title.strip()]
+
+
+def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) -> List[str]:
+    """The blocks without the chrome at the article's edges (step 5), the way Readability
+    judges unnamed blocks by their links and their length, but only where chrome sits:
+    - Before the first paragraph: labels (an eyebrow, "Back to Blog", a date, "5 min read",
+      "Share:"), links within the site (breadcrumbs, the author's page) and blocks with no
+      letter go; images (the cover) and headings stay, but for a heading that is the page's
+      title again (the reader shows the title). A link to another site (a link post's subject)
+      ends the opening.
+    - After the last paragraph, a tail of links (related posts, a "More on …" list, share and
+      social rows, a product grid) goes with its labels ("Related posts", "Tags:") and what lies
+      between its links (the cards' images and short excerpts): it begins at its first link,
+      or the labels just before it, and must hold two links or end on a link or a label, so an
+      article's own closing link ("Watch the keynote") stays. Blocks with no letter at the very
+      end ("0%") go."""
+    host = (urllib.parse.urlparse(base_url).hostname or "").lower().removeprefix("www.")
+    kinds = [_block_kind(block, host) for block in blocks]
+    keep = [True] * len(blocks)
+    # The opening.
+    title_seen = False
+    for index, (block, (kind, same_site)) in enumerate(zip(blocks, kinds)):
+        if HEADING_RE.match(block) and kind != "link":
+            if not title_seen and _repeats_title(block, titles):
+                keep[index] = False
+                title_seen = True
+            continue
+        if kind in ("label", "empty") or (kind == "link" and same_site):
+            keep[index] = False
+        elif kind == "image" and re.match(r"(?i)<li\b", block):
+            keep[index] = False         # a list of pictures with no words: avatars, logos
+        elif kind != "image":
+            break
+    # The tail: the longest run of links, labels, images, letterless and short blocks at the end.
+    start = len(blocks)
+    while start and kinds[start - 1][0] in ("link", "label", "image", "empty", "short"):
+        start -= 1
+    first_link = next((i for i in range(start, len(blocks)) if kinds[i][0] == "link"), None)
+    if first_link is not None:
+        begin = first_link
+        while begin > start and kinds[begin - 1][0] in ("label", "empty", "image"):
+            begin -= 1
+        while begin < first_link and kinds[begin][0] in ("image", "empty"):
+            begin += 1
+        # Cards (a picture, then its title): the first card's picture goes with it.
+        pairs = sum(1 for i in range(begin + 1, len(blocks)) if kinds[i][0] == "link" and kinds[i - 1][0] == "image")
+        if begin == first_link and begin > start and kinds[begin - 1][0] == "image" and pairs >= 1:
+            begin -= 1
+        tail = [(kind, block) for (kind, _), block in zip(kinds[begin:], blocks[begin:]) if kind not in ("empty", "image")]
+        if tail and (tail[-1][0] in ("link", "label")
+                     or (tail[-1][0] == "short" and len(tail) > 1 and tail[-2][0] == "link"
+                         and HEADING_RE.match(tail[-2][1]) and sum(kind == "link" for kind, _ in tail) >= 2)):
+            keep[begin:] = [False] * (len(blocks) - begin)
+    end = len(blocks)
+    while end and keep[end - 1] and kinds[end - 1][0] == "empty":
+        keep[end - 1] = False
+        end -= 1
+    return [block for block, kept in zip(blocks, keep) if kept]
+
+
 def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str, Any]]:
     """(the article's html, its reading fidelity). The html is extract_article_html's; the
     fidelity (read_fidelity) is {} when no article was found."""
     cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg|audio|video)\b.*?</\1>", "", html_text or "")
-    cleaned = _without_chrome(cleaned)
+    titles = _page_titles(cleaned)
+    cleaned = _without_chrome(_with_loose_text(cleaned))
     # The first candidate long enough to be the article: a page's first <article> can be a
     # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The
     # main block only when no candidate matched: a short <article> is no article, not a reason
     # to read the page's other lists as one (issue 0029).
-    for candidate in _candidates(cleaned):
-        blocks = _blocks(_with_structure(candidate))
+    page = _ParagraphText(cleaned)
+    for span in _candidates(page, cleaned):
+        blocks = _blocks(_with_structure(cleaned[span[0]:span[1]]))
         if not blocks:  # list items count only inside the chosen candidate
             blocks = PAGE_BLOCK_RE.findall(cleaned)
-        blocks = _with_headings_over_content(blocks)
-        if len(strip_html(" ".join(blocks))) >= ARTICLE_MIN_CHARS:
-            html = IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url), "\n".join(blocks))
+        blocks += _notes_after(page, cleaned, span)
+        # Long enough to be the article is judged before its edges go: a short post (a
+        # summary under a shop's product grid) is still the post.
+        long_enough = len(strip_html(" ".join(_with_headings_over_content(blocks)))) >= ARTICLE_MIN_CHARS
+        blocks = _with_headings_over_content(_without_edge_chrome(blocks, titles, base_url))
+        if long_enough and strip_html(" ".join(blocks)).strip():
+            html = IMG_TAG_RE.sub(lambda match: _article_image(match.group(0), base_url),
+                                  CARD_MARK_RE.sub("", "\n".join(blocks)))
             html = EMPTY_FIGURE_RE.sub("", _escaped_attributes(html))
             return html, read_fidelity(blocks, html)
     return "", {}

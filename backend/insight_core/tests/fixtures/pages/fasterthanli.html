@@ -1,0 +1,2174 @@
+
+
+
+<!DOCTYPE html>
+<html lang="en" class="theme-device ">
+
+<head>
+    <title>I want off Mr. Golang&#x27;s Wild Ride</title>
+
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="impact-site-verification" value="805abea2-eaaa-4a33-8250-9448e4976bd2">
+    
+
+    
+    <meta name="amos-face" content="https://cdn.fasterthanli.me/content/articles/the-virtue-of-unsynn/amos-face~6eabffd6c6ca3b04.avif">
+
+    
+    <link rel="icon" type="image/jxl" href="https://cdn.fasterthanli.me/content/img/favicon~72ac4ba96bed6dad.jxl">
+    <link rel="icon" type="image/webp" href="https://cdn.fasterthanli.me/content/img/favicon~679ae9c272874bba.webp">
+    <link rel="icon" type="image/avif" href="https://cdn.fasterthanli.me/content/img/favicon~fc5931f361bf516c.avif">
+
+    <meta property="og:site_name" content="fasterthanli.me">
+    <meta property="og:locale" content="en-us">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="">
+    <meta name="theme-color" content="#f64c4c">
+    <meta property="og:title" content="I want off Mr. Golang&#x27;s Wild Ride"><meta property="og:image" content="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/_thumb~37ef6e1f46165d86.png">
+    <meta property="og:image:width" content="1921">
+    <meta property="og:image:height" content="1080">
+
+    <meta property="og:description" content="My honeymoon with the Go language is extremely over.
+This article is going to have a different tone from what I’ve been posting the past year - it’s a proper rant. And I always feel bad writing tho...">
+    <meta name="description" content="My honeymoon with the Go language is extremely over.
+This article is going to have a different tone from what I’ve been posting the past year - it’s a proper rant. And I always feel bad writing tho...">
+    <meta name="author" content="Amos Wenger"><meta name="article:tag" content="golang"><meta name="article:tag" content="rant"><meta property="article:published_time" content="2020-02-28T10:30:00Z"><link href="/index.xml" type="application/atom+xml" rel="alternate" title="Sitewide Atom feed">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Commissioner:wght@100..900&family=Outfit:wght@100..900&display=swap">
+
+    
+
+    
+
+    
+    
+<meta property="home:page-path" content="/content/articles/i-want-off-mr-golangs-wild-ride/_index.md"><!-- inserted by home -->
+<link rel="stylesheet" href="https://cdn.fasterthanli.me/dist/assets/bundle-DCh2U5HF.css" media="print" onload="this.media='all'"></head>
+
+<body>
+<div class="body-inner">
+<div class="content">
+  <a id="home-page-top" href="#home-page-top"></a>
+  <div id="page-topnav" class="page-topnav"></div>
+  <main>
+    
+    <div class="page-html has-toc">
+      
+  
+
+  <div class="page-html-padded markup-container page-markup">
+
+  
+    
+    
+
+    
+    
+
+    <h1 class="page-title">
+        I want off Mr. Golang&#x27;s Wild Ride
+    </h1>
+
+    
+
+    
+    
+
+    
+    
+    <div class="page-metadata with-reading-time">
+        
+        <span>Feb 28, 2020</span>
+        
+         
+
+        <span class="reading-time">
+        
+
+        <abbr title="Estimated reading time, at 220 words per minute, where one word = 5 characters">
+            
+                34 min
+            
+        </abbr>
+    </span>
+        
+    <span class="tags">
+        
+            
+                <span><a href="/tags/golang">#golang</a></span>
+            
+            
+                <span>&middot;</span>
+            
+        
+            
+                <span><a href="/tags/rant">#rant</a></span>
+            
+            
+        
+    </span>
+        <span class="indicators">
+    
+        
+
+        
+    
+
+    
+</span>
+    </div> 
+     
+
+     
+
+    <div class="after-page-metadata-spacer"></div>
+
+    
+        
+            <div class="disclosure paragraph-like">
+                <p>
+                    👋 This page was last updated ~7 years ago. Just so you know.
+                </p>
+            </div>
+    
+    
+
+
+
+    
+
+    
+
+    
+
+    <p data-bo="163">My honeymoon with the <a href="https://golang.org/">Go language</a> is <em>extremely</em> over.</p>
+
+<p data-bo="242">This article is going to have a different tone from what I’ve been posting
+the past year - it’s a proper rant. And I always feel bad writing those,
+because, inevitably, it discusses things a lot of people have been working
+very hard on.</p>
+
+<p data-bo="480">In spite of that, here we are.</p>
+
+<p data-bo="512">Having invested thousands of hours into the language, and implemented several
+critical (to my employer) pieces of infrastructure with it, I wish I hadn’t.</p>
+
+<p data-bo="668">If you’re <em>already</em> heavily invested in Go, you probably shouldn’t read this,
+it’ll probably just twist the knife. If you work on Go, you <em>definitely</em>
+shouldn’t read this.</p>
+
+<p data-bo="841">I’ve been suffering Go’s idiosyncracies in relative silence for too long,
+there’s a few things I really need to get off my chest.</p>
+
+<p data-bo="972">Alright? Alright.</p>
+
+<a id="garden-variety-takes-on-go" href="#garden-variety-takes-on-go" class="anchor"><h2>Garden-variety takes on Go</h2></a>
+<p data-bo="1022">By now, everybody knows Go doesn’t have generics, which makes a lot of
+problems impossible to model accurately (instead, you have to fall back to
+reflection, which is <em>extremely</em> unsafe, and the API is very error-prone),
+error handling is wonky (even with your pick of the third-party libraries
+that add context or stack traces), package management took a while to arrive,
+etc.</p>
+
+<p data-bo="1401">But everybody also knows Go’s strengths: static linking makes binaries easy
+to deploy (although, Go binaries get <a href="https://blog.filippo.io/shrink-your-go-binaries-with-this-one-weird-trick/">very
+large</a>,
+even if you strip DWARF tables - stack trace annotations still remain, and are <em>costly</em>).</p>
+
+<p data-bo="1695">Compile times are short (unless you need cgo), there’s an interactive runtime
+profiler (pprof) at arm’s reach, it’s relatively cross-platform (there’s even
+a <a href="https://github.com/tinygo-org/tinygo">tiny variant</a> for embedded), it’s
+easy to syntax-highlight, and there’s now an official <a href="https://github.com/golang/tools/blob/master/gopls/README.md">LSP
+server</a> for it.</p>
+
+<p data-bo="2063">I’ve accepted all of these - the good and the bad.</p>
+
+<p data-bo="2115">We’re here to talk about the ugly.</p>
+
+<a id="simple-is-a-lie" href="#simple-is-a-lie" class="anchor"><h2>Simple is a lie</h2></a>
+<p data-bo="2171">Over and over, every piece of documentation for the Go language markets it
+as “simple”.</p>
+
+<p data-bo="2260">This is a lie.</p>
+
+<p data-bo="2276">Or rather, it’s a half-truth that conveniently covers up the fact that, when
+you make something simple, you move complexity elsewhere.</p>
+
+<p data-bo="2412">Computers, operating systems, networks are a hot mess. They’re barely
+manageable, even if you know a decent amount about what you’re doing. Nine
+out of ten software engineers agree: it’s a miracle anything works at all.</p>
+
+<p data-bo="2633">So all the complexity is swept under the rug. Hidden from view, but not
+solved.</p>
+
+<p data-bo="2714">Here’s a simple example.</p>
+
+<div data-bo="2742" class="tip markup-container">
+<div class="tip-header bear-mark">
+<picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~f8031274cabccdf6.w400.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~451aa11f175f8fc4.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~2add1c1dfe1cf845.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~e1d6acd7da0c8bd7.w400.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~fe0a016a137f310a.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~909ed9e4ba5c3317.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~c7e5fe0bec9ef4d6.w400.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~430cbb8ae0eaa295.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~9df5546a60e748fc.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 2x"><img src="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl" loading="lazy" width="48" height="48" data-kind="media" data-input-path="/content/img/reimena/coolbear-idea.jxl" class="bear" alt="Cool bear"></picture>
+Cool Bear's hot tip
+</div>
+<p data-bo="2753">This example does go on for a while, actually - but don’t let the specifics
+distract you. While it goes rather in-depth, it illustrates a larger point.</p>
+
+</div><p data-bo="2908">Most of Go’s APIs (much like NodeJS’s APIs) are designed for Unix-like
+operating systems. This is not surprising, as Rob &amp; Ken are from the <a href="https://en.wikipedia.org/wiki/Plan_9_from_Bell_Labs#History">Plan 9
+gang</a>.</p>
+
+<p data-bo="3125">So, the file API in Go looks like this:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="3166"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// File represents an open file descriptor.</a-c>
+<a-k>type</a-k> <a-t>File</a-t> <a-k>struct</a-k> {
+    <a-o>*</a-o><a-t>file</a-t> <a-c>// os specific</a-c>
+}
+
+<a-k>func</a-k> (<a-v>f</a-v> <a-o>*</a-o><a-t>File</a-t>) <a-pr>Stat</a-pr>() (<a-t>FileInfo</a-t>, <a-t>error</a-t>) {
+    <a-c>// omitted</a-c>
+}
+
+<a-c>// A FileInfo describes a file and is returned by Stat and Lstat.</a-c>
+<a-k>type</a-k> <a-t>FileInfo</a-t> <a-k>interface</a-k> {
+  <a-pr>Name</a-pr>() <a-t>string</a-t>       <a-c>// base name of the file</a-c>
+  <a-pr>Size</a-pr>() <a-t>int64</a-t>        <a-c>// length in bytes for regular files; system-dependent for others</a-c>
+  <a-pr>Mode</a-pr>() <a-t>FileMode</a-t>     <a-c>// file mode bits</a-c>
+  <a-pr>ModTime</a-pr>() time.<a-t>Time</a-t> <a-c>// modification time</a-c>
+  <a-pr>IsDir</a-pr>() <a-t>bool</a-t>        <a-c>// abbreviation for Mode().IsDir()</a-c>
+  <a-pr>Sys</a-pr>() <a-k>interface</a-k>{}   <a-c>// underlying data source (can return nil)</a-c>
+}
+
+<a-c>// A FileMode represents a file&#39;s mode and permission bits.</a-c>
+<a-c>// The bits have the same definition on all systems, so that</a-c>
+<a-c>// information about files can be moved from one system</a-c>
+<a-c>// to another portably. Not all bits apply to all systems.</a-c>
+<a-c>// The only required bit is ModeDir for directories.</a-c>
+<a-k>type</a-k> <a-t>FileMode</a-t> <a-t>uint32</a-t>
+
+<a-c>// The defined file mode bits are the most significant bits of the FileMode.</a-c>
+<a-c>// The nine least-significant bits are the standard Unix rwxrwxrwx permissions.</a-c>
+<a-c>// The values of these bits should be considered part of the public API and</a-c>
+<a-c>// may be used in wire protocols or disk representations: they must not be</a-c>
+<a-c>// changed, although new bits might be added.</a-c>
+<a-k>const</a-k> (
+  <a-c>// The single letters are the abbreviations</a-c>
+  <a-c>// used by the String method&#39;s formatting.</a-c>
+  <a-v>ModeDir</a-v>        <a-t>FileMode</a-t> <a-o>=</a-o> <a-n>1</a-n> <a-o>&lt;&lt;</a-o> (<a-n>32</a-n> <a-o>-</a-o> <a-n>1</a-n> <a-o>-</a-o> <a-co>iota</a-co>) <a-c>// d: is a directory</a-c>
+  <a-v>ModeAppend</a-v>                                     <a-c>// a: append-only</a-c>
+  <a-v>ModeExclusive</a-v>                                  <a-c>// l: exclusive use</a-c>
+  <a-v>ModeTemporary</a-v>                                  <a-c>// T: temporary file; Plan 9 only</a-c>
+  <a-v>ModeSymlink</a-v>                                    <a-c>// L: symbolic link</a-c>
+  <a-v>ModeDevice</a-v>                                     <a-c>// D: device file</a-c>
+  <a-v>ModeNamedPipe</a-v>                                  <a-c>// p: named pipe (FIFO)</a-c>
+  <a-v>ModeSocket</a-v>                                     <a-c>// S: Unix domain socket</a-c>
+  <a-v>ModeSetuid</a-v>                                     <a-c>// u: setuid</a-c>
+  <a-v>ModeSetgid</a-v>                                     <a-c>// g: setgid</a-c>
+  <a-v>ModeCharDevice</a-v>                                 <a-c>// c: Unix character device, when ModeDevice is set</a-c>
+  <a-v>ModeSticky</a-v>                                     <a-c>// t: sticky</a-c>
+  <a-v>ModeIrregular</a-v>                                  <a-c>// ?: non-regular file; nothing else is known about this file</a-c>
+
+  <a-c>// Mask for the type bits. For regular files, none will be set.</a-c>
+  <a-v>ModeType</a-v> <a-o>=</a-o> <a-v>ModeDir</a-v> <a-o>|</a-o> <a-v>ModeSymlink</a-v> <a-o>|</a-o> <a-v>ModeNamedPipe</a-v> <a-o>|</a-o> <a-v>ModeSocket</a-v> <a-o>|</a-o> <a-v>ModeDevice</a-v> <a-o>|</a-o> <a-v>ModeCharDevice</a-v> <a-o>|</a-o> <a-v>ModeIrregular</a-v>
+
+  <a-v>ModePerm</a-v> <a-t>FileMode</a-t> <a-o>=</a-o> <a-n>0777</a-n> <a-c>// Unix permission bits</a-c>
+)
+</code></figure><p data-bo="5728">Makes sense for a Unix, right?</p>
+
+<p data-bo="5760">Every file has a mode, there’s even a command that lets you dump it as hex:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="5837"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ stat -c '%f' /etc/hosts
+81a4
+$ stat -c '%f' /usr/bin/man
+81ed
+</code></figure><p data-bo="5915">And so, a simple Go program can easily grab those “Unix permission bits”:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="5990"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+        <a-s>&quot;fmt&quot;</a-s>
+        <a-s>&quot;os&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+        <a-v>arg</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Args</a-pr>[<a-n>1</a-n>]
+        <a-v>fi</a-v>, <a-v>_</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Stat</a-pr>(<a-v>arg</a-v>)
+        <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;(%s) mode = %o\n&quot;</a-s>, <a-v>arg</a-v>, <a-v>fi</a-v>.<a-pr>Mode</a-pr>() <a-o>&amp;</a-o> <a-v>os</a-v>.<a-pr>ModePerm</a-pr>)
+}
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="6195"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go run main.go /etc/hosts
+(/etc/hosts) mode = 644
+$ go run main.go /usr/bin/man
+(/usr/bin/man) mode = 755
+</code></figure><p data-bo="6317">On Windows, files don’t have modes. It doesn’t have <code>stat</code>, <code>lstat</code>, <code>fstat</code>
+syscalls - it has a <code>FindFirstFile</code> family of functions (alternatively,
+<code>CreateFile</code> to open, then <code>GetFileAttributes</code>, alternatively,
+<code>GetFileInformationByHandle</code>), which takes a pointer to a <code>WIN32_FIND_DATA</code>
+structure, which contains <a href="https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants">file
+attributes</a>.</p>
+
+<p data-bo="6731">So, what happens if you run that program on Windows?</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="6785"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">&gt; go run main.go C:\Windows\notepad.exe
+(C:\Windows\notepad.exe) mode = 666
+</code></figure><p data-bo="6875">It makes up a mode.</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="6896"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/os/types_windows.go</a-c>
+
+<a-k>func</a-k> (<a-v>fs</a-v> <a-o>*</a-o><a-t>fileStat</a-t>) <a-pr>Mode</a-pr>() (<a-v>m</a-v> <a-t>FileMode</a-t>) {
+  <a-k>if</a-k> <a-v>fs</a-v> <a-o>==</a-o> <a-o>&amp;</a-o><a-v>devNullStat</a-v> {
+    <a-k>return</a-k> <a-v>ModeDevice</a-v> <a-o>|</a-o> <a-v>ModeCharDevice</a-v> <a-o>|</a-o> <a-n>0666</a-n>
+  }
+  <a-k>if</a-k> <a-v>fs</a-v>.<a-pr>FileAttributes</a-pr><a-o>&amp;</a-o><a-v>syscall</a-v>.<a-pr>FILE_ATTRIBUTE_READONLY</a-pr> <a-o>!=</a-o> <a-n>0</a-n> {
+    <a-v>m</a-v> <a-o>|=</a-o> <a-n>0444</a-n>
+  } <a-k>else</a-k> {
+    <a-v>m</a-v> <a-o>|=</a-o> <a-n>0666</a-n>
+  }
+  <a-k>if</a-k> <a-v>fs</a-v>.<a-pr>isSymlink</a-pr>() {
+    <a-k>return</a-k> <a-v>m</a-v> <a-o>|</a-o> <a-v>ModeSymlink</a-v>
+  }
+  <a-k>if</a-k> <a-v>fs</a-v>.<a-pr>FileAttributes</a-pr><a-o>&amp;</a-o><a-v>syscall</a-v>.<a-pr>FILE_ATTRIBUTE_DIRECTORY</a-pr> <a-o>!=</a-o> <a-n>0</a-n> {
+    <a-v>m</a-v> <a-o>|=</a-o> <a-v>ModeDir</a-v> <a-o>|</a-o> <a-n>0111</a-n>
+  }
+  <a-k>switch</a-k> <a-v>fs</a-v>.<a-pr>filetype</a-pr> {
+  <a-k>case</a-k> <a-v>syscall</a-v>.<a-pr>FILE_TYPE_PIPE</a-pr>:
+    <a-v>m</a-v> <a-o>|=</a-o> <a-v>ModeNamedPipe</a-v>
+  <a-k>case</a-k> <a-v>syscall</a-v>.<a-pr>FILE_TYPE_CHAR</a-pr>:
+    <a-v>m</a-v> <a-o>|=</a-o> <a-v>ModeDevice</a-v> <a-o>|</a-o> <a-v>ModeCharDevice</a-v>
+  }
+  <a-k>return</a-k> <a-v>m</a-v>
+}
+</code></figure><p data-bo="7464">Node.js does the same. There’s a <a href="https://nodejs.org/api/fs.html#fs_class_fs_stats">single fs.Stats
+“type”</a> for all platforms.</p>
+
+<p data-bo="7592">Using “whatever Unix has” as the lowest common denominator is <em>extremely
+common</em> in open-source codebases, so it’s not surprising.</p>
+
+<p data-bo="7724">Let’s go a little bit further. On Unix systems, you can change the modes of
+files, to make them read-only, or flip the executable bit.</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="7860"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+  <a-s>&quot;fmt&quot;</a-s>
+  <a-s>&quot;os&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+  <a-v>arg</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Args</a-pr>[<a-n>1</a-n>]
+
+  <a-v>fi</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Stat</a-pr>(<a-v>arg</a-v>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;(%s) old mode = %o\n&quot;</a-s>, <a-v>arg</a-v>, <a-v>fi</a-v>.<a-pr>Mode</a-pr>()<a-o>&amp;</a-o><a-v>os</a-v>.<a-pr>ModePerm</a-pr>)
+
+  <a-v>must</a-v>(<a-v>os</a-v>.<a-pr>Chmod</a-pr>(<a-v>arg</a-v>, <a-n>0755</a-n>))
+
+  <a-v>fi</a-v>, <a-v>err</a-v> <a-o>=</a-o> <a-v>os</a-v>.<a-pr>Stat</a-pr>(<a-v>arg</a-v>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;(%s) new mode = %o\n&quot;</a-s>, <a-v>arg</a-v>, <a-v>fi</a-v>.<a-pr>Mode</a-pr>()<a-o>&amp;</a-o><a-v>os</a-v>.<a-pr>ModePerm</a-pr>)
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+  <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-v>panic</a-v>(<a-v>err</a-v>)
+  }
+}
+</code></figure><p data-bo="8247">Let’s run this on Linux:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="8273"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ touch test.txt
+$ go run main.go test.txt
+(test.txt) old mode = 644
+(test.txt) new mode = 755
+</code></figure><p data-bo="8382">And now on Windows:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="8403"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">&gt; go run main.go test.txt
+(test.txt) old mode = 666
+(test.txt) new mode = 666
+</code></figure><p data-bo="8495">So, no errors. <code>Chmod</code> just silently does… nothing. Which is reasonable -
+there’s no equivalent to the “executable bit” for files on Windows.</p>
+
+<p data-bo="8640">What does <code>Chmod</code> even do on Windows?</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="8679"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/syscall/syscall_windows.go</a-c>
+
+<a-k>func</a-k> <a-v>Chmod</a-v>(<a-v>path</a-v> <a-t>string</a-t>, <a-v>mode</a-v> <a-t>uint32</a-t>) (<a-v>err</a-v> <a-t>error</a-t>) {
+  <a-v>p</a-v>, <a-v>e</a-v> <a-o>:=</a-o> <a-v>UTF16PtrFromString</a-v>(<a-v>path</a-v>)
+  <a-k>if</a-k> <a-v>e</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-k>return</a-k> <a-v>e</a-v>
+  }
+  <a-v>attrs</a-v>, <a-v>e</a-v> <a-o>:=</a-o> <a-v>GetFileAttributes</a-v>(<a-v>p</a-v>)
+  <a-k>if</a-k> <a-v>e</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-k>return</a-k> <a-v>e</a-v>
+  }
+  <a-k>if</a-k> <a-v>mode</a-v><a-o>&amp;</a-o><a-v>S_IWRITE</a-v> <a-o>!=</a-o> <a-n>0</a-n> {
+    <a-v>attrs</a-v> &amp;^= <a-v>FILE_ATTRIBUTE_READONLY</a-v>
+  } <a-k>else</a-k> {
+    <a-v>attrs</a-v> <a-o>|=</a-o> <a-v>FILE_ATTRIBUTE_READONLY</a-v>
+  }
+  <a-k>return</a-k> <a-v>SetFileAttributes</a-v>(<a-v>p</a-v>, <a-v>attrs</a-v>)
+}
+</code></figure><p data-bo="9067">It sets or clears the read-only bit. That’s it.</p>
+
+<p data-bo="9116">We have an <code>uint32</code> argument, with four billion two hundred ninety-four
+million nine hundred sixty-seven thousand two hundred ninety-five possible
+values, to encode… one bit of information.</p>
+
+<p data-bo="9309">That’s a pretty innocent lie. The assumption that files have modes was baked
+into the API design from the start, and now, everyone has to live with it.
+Just like in Node.JS, and probably tons of other languages.</p>
+
+<p data-bo="9522">But <em>it doesn’t have to be like that</em>.</p>
+
+<p data-bo="9562">A language with a more involved type system, and better designed libraries
+could avoid that pitfall.</p>
+
+<p data-bo="9664">Out of curiosity, what does Rust do?</p>
+
+<div data-bo="9704" class="tip markup-container">
+<div class="tip-header bear-mark">
+<picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~f8031274cabccdf6.w400.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~451aa11f175f8fc4.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~2add1c1dfe1cf845.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~e1d6acd7da0c8bd7.w400.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~fe0a016a137f310a.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~909ed9e4ba5c3317.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~c7e5fe0bec9ef4d6.w400.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~430cbb8ae0eaa295.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~9df5546a60e748fc.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 2x"><img src="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl" loading="lazy" width="48" height="48" data-kind="media" data-input-path="/content/img/reimena/coolbear-idea.jxl" class="bear" alt="Cool bear"></picture>
+Cool Bear's hot tip
+</div>
+<p data-bo="9715">Oh, here we go again - Rust, Rust, and Rust again.</p>
+
+<p data-bo="9770">Why always Rust?</p>
+
+<p data-bo="9791">Well, I tried <em>real hard</em> to keep Rust out of all of this. Among other
+things, because people are going to dismiss this article as coming from “a
+typical rustacean”.</p>
+
+<p data-bo="9965">But for all the problems I raise in this article… Rust gets it right.
+If I had another good example, I’d use it. But I don’t, so, here goes.</p>
+
+</div><p data-bo="10111">There’s no <code>stat</code>-like function in the Rust standard library. There’s
+<code>std::fs::metadata</code>:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="10203"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>metadata</a-f><a-p>&lt;</a-p><a-t>P</a-t><a-p>:</a-p> <a-t>AsRef</a-t><a-p>&lt;</a-p><a-t>Path</a-t><a-p>&gt;&gt;(</a-p><a-v>path</a-v><a-p>:</a-p> <a-t>P</a-t><a-p>)</a-p> -&gt; <a-t>Result</a-t><a-p>&lt;</a-p><a-t>Metadata</a-t><a-p>&gt;</a-p>
+</code></figure><p data-bo="10277">This function signatures tells us a lot already. It returns a <code>Result</code>, which
+means, not only do we know this can fail, we <em>have</em> to handle it. Either by
+panicking on error, with <code>.unwrap()</code> or <code>.expect()</code>, or by matching it against
+<code>Result::Ok</code> &#x2F; <code>Result::Err</code>, or by bubbling it up with the <code>?</code> operator.</p>
+
+<p data-bo="10585">The point is, this function signature makes it <em>impossible</em> for us to access
+an invalid&#x2F;uninitialized&#x2F;null <code>Metadata</code>. With a Go function, if you ignore the
+returned <code>error</code>, you <em>still</em> get the result - most probably a null pointer.</p>
+
+<p data-bo="10820">Also, the argument is not a string - it’s a path. Or rather, it’s something
+that <em>can be turned into a path</em>.</p>
+
+<p data-bo="10931">And <code>String</code> <a href="https://doc.rust-lang.org/std/string/struct.String.html#impl-AsRef%3CPath%3E">does implement
+<code>AsRef&lt;Path&gt;</code></a>,
+so, for simple use cases, it’s not troublesome:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="11103"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> metadata = std<a-p>::</a-p>fs<a-p>::</a-p><a-f>metadata</a-f><a-p>(</a-p><a-s>&quot;Cargo.toml&quot;</a-s><a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+    <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;is dir? {:?}&quot;</a-s><a-p>,</a-p> metadata<a-p>.</a-p><a-pr>is_dir</a-pr><a-p>());</a-p>
+    <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;is file? {:?}&quot;</a-s><a-p>,</a-p> metadata<a-p>.</a-p><a-pr>is_file</a-pr><a-p>());</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="11291">But paths are not necessarily strings. On Unix (!), paths can be any sequence
+of bytes, except null bytes.</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="11399"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cd rustfun/
+$ touch "$(printf "\xbd\xb2\x3d\xbc\x20\xe2\x8c\x98")"
+$ ls
+ls: cannot compare file names ‘Cargo.lock’ and ‘\275\262=\274 ⌘’: Invalid or incomplete multibyte or wide character
+ src   target   Cargo.lock   Cargo.toml  ''$'\275\262''='$'\274'' ⌘'
+</code></figure><p data-bo="11684">We’ve just made a file with a <em>very naughty</em> name - but it’s a perfectly
+valid file, even if <code>ls</code> struggles with it.</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="11802"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ stat "$(printf "\xbd\xb2\x3d\xbc\x20\xe2\x8c\x98")"
+  File: = ⌘
+  Size: 0               Blocks: 0          IO Block: 65536  regular empty file
+Device: 8c70d496h/2356204694d   Inode: 72620543991375285  Links: 1
+Access: (0644/-rw-r--r--)  Uid: (197611/    amos)   Gid: (197611/    amos)
+Access: 2020-02-28 13:12:12.783734000 +0100
+Modify: 2020-02-28 13:12:12.783734000 +0100
+Change: 2020-02-28 13:12:12.783329400 +0100
+ Birth: 2020-02-28 13:12:12.783329400 +0100
+</code></figure><p data-bo="12281">That’s not something we can represent with a <code>String</code> in Rust, because <a href="/articles/working-with-strings-in-rust">Rust
+Strings are valid utf-8</a>, and this isn’t.</p>
+
+<p data-bo="12441">Rust <code>Path</code>s, however, are… arbitrary byte sequences.</p>
+
+<p data-bo="12498">And so, if we use <code>std::fs::read_dir</code>, we have no problem listing it and
+getting its metadata:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="12594"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>use</a-k> std<a-p>::</a-p>fs<a-p>;</a-p>
+
+<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> entries = fs<a-p>::</a-p><a-f>read_dir</a-f><a-p>(</a-p><a-s>&quot;.&quot;</a-s><a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+    <a-k>for</a-k> entry <a-k>in</a-k> entries <a-p>{</a-p>
+        <a-k>let</a-k> path = entry<a-p>.</a-p><a-pr>unwrap</a-pr><a-p>().</a-p><a-pr>path</a-pr><a-p>();</a-p>
+        <a-k>let</a-k> meta = fs<a-p>::</a-p><a-f>metadata</a-f><a-p>(</a-p><a-o>&amp;</a-o>path<a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+        <a-k>if</a-k> meta<a-p>.</a-p><a-pr>is_dir</a-pr><a-p>()</a-p> <a-p>{</a-p>
+            <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;(dir) {:?}&quot;</a-s><a-p>,</a-p> path<a-p>);</a-p>
+        <a-p>}</a-p> <a-k>else</a-k> <a-p>{</a-p>
+            <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;      {:?}&quot;</a-s><a-p>,</a-p> path<a-p>);</a-p>
+        <a-p>}</a-p>
+    <a-p>}</a-p>
+<a-p>}</a-p>
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="12943"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+(dir) "./src"
+      "./Cargo.toml"
+      "./.gitignore"
+      "./\xBD\xB2=\xBC ⌘"
+(dir) "./.git"
+      "./Cargo.lock"
+(dir) "./target"
+</code></figure><p data-bo="13114">What about Go?</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="13130"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+        <a-s>&quot;fmt&quot;</a-s>
+        <a-s>&quot;os&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+        <a-v>arg</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Args</a-pr>[<a-n>1</a-n>]
+        <a-v>f</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Open</a-pr>(<a-v>arg</a-v>)
+        <a-v>must</a-v>(<a-v>err</a-v>)
+
+        <a-v>entries</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>f</a-v>.<a-pr>Readdir</a-pr>(<a-o>-</a-o><a-n>1</a-n>)
+        <a-v>must</a-v>(<a-v>err</a-v>)
+
+        <a-k>for</a-k> <a-v>_</a-v>, <a-v>e</a-v> <a-o>:=</a-o> <a-k>range</a-k> <a-v>entries</a-v> {
+                <a-k>if</a-k> <a-v>e</a-v>.<a-pr>IsDir</a-pr>() {
+                        <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;(dir) %s\n&quot;</a-s>, <a-v>e</a-v>.<a-pr>Name</a-pr>())
+                } <a-k>else</a-k> {
+                        <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;      %s\n&quot;</a-s>, <a-v>e</a-v>.<a-pr>Name</a-pr>())
+                }
+        }
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+        <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+                <a-v>panic</a-v>(<a-v>err</a-v>)
+        }
+}
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="13668"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go build
+$ ./gofun ../rustfun
+(dir) src
+      Cargo.toml
+      .gitignore
+      = ⌘
+(dir) .git
+      Cargo.lock
+(dir) target
+</code></figure><p data-bo="13811">It… silently prints a wrong version of the path.</p>
+
+<p data-bo="13863">See, there’s no “path” type in Go. Just “string”. And Go strings <a href="https://blog.golang.org/strings">are just byte
+slices</a>, with no guarantees about what’s
+inside.</p>
+
+<p data-bo="14026">So it prints garbage, whereas in Rust, <code>Path</code> does not implement <code>Display</code>, so
+we couldn’t do this:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="14127"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-m>println!</a-m><a-p>(</a-p><a-s>&quot;(dir) {}&quot;</a-s><a-p>,</a-p> path<a-p>);</a-p>
+</code></figure><p data-bo="14168">We had to do this:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="14188"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-m>println!</a-m><a-p>(</a-p><a-s>&quot;(dir) {:?}&quot;</a-s><a-p>,</a-p> path<a-p>);</a-p>
+</code></figure><p data-bo="14231">And if we wanted a friendlier output, we <em>could</em> handle both cases: when
+the path happens to be a valid utf-8 string, and when it doesn’t:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="14371"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>use</a-k> std<a-p>::</a-p>fs<a-p>;</a-p>
+
+<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> entries = fs<a-p>::</a-p><a-f>read_dir</a-f><a-p>(</a-p><a-s>&quot;.&quot;</a-s><a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+    <a-k>for</a-k> entry <a-k>in</a-k> entries <a-p>{</a-p>
+        <a-k>let</a-k> path = entry<a-p>.</a-p><a-pr>unwrap</a-pr><a-p>().</a-p><a-pr>path</a-pr><a-p>();</a-p>
+        <a-k>let</a-k> meta = fs<a-p>::</a-p><a-f>metadata</a-f><a-p>(</a-p><a-o>&amp;</a-o>path<a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+        <a-k>let</a-k> prefix = <a-k>if</a-k> meta<a-p>.</a-p><a-pr>is_dir</a-pr><a-p>()</a-p> <a-p>{</a-p>
+            <a-s>&quot;(dir)&quot;</a-s>
+        <a-p>}</a-p> <a-k>else</a-k> <a-p>{</a-p>
+            <a-s>&quot;     &quot;</a-s>
+        <a-p>};</a-p>
+        <a-k>match</a-k> path<a-p>.</a-p><a-pr>to_str</a-pr><a-p>()</a-p> <a-p>{</a-p>
+            <a-cr>Some</a-cr><a-p>(</a-p>s<a-p>)</a-p> =&gt; <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;{} {}&quot;</a-s><a-p>,</a-p> prefix<a-p>,</a-p> s<a-p>),</a-p>
+            <a-cr>None</a-cr> =&gt; <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;{} {:?} (invalid utf-8)&quot;</a-s><a-p>,</a-p> prefix<a-p>,</a-p> path<a-p>),</a-p>
+        <a-p>}</a-p>
+    <a-p>}</a-p>
+<a-p>}</a-p>
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="14854"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+(dir) ./src
+      ./Cargo.toml
+      ./.gitignore
+      "./\xBD\xB2=\xBC ⌘" (invalid utf-8)
+(dir) ./.git
+      ./Cargo.lock
+(dir) ./target
+</code></figure><p data-bo="15029">Go says “don’t worry about encodings! things are <em>probably</em> utf-8”.</p>
+
+<p data-bo="15098">Except when they aren’t. And paths aren’t. So, in Go, all path manipulation
+routines operate on <code>string</code>, let’s take a look at the <code>path&#x2F;filepath</code> package.</p>
+
+<blockquote><p data-bo="15257">Package filepath implements utility routines for manipulating filename paths
+in a way compatible with the target operating system-defined file paths.</p>
+
+<p data-bo="15413">The filepath package uses either forward slashes or backslashes, depending on
+the operating system. To process paths such as URLs that always use forward
+slashes regardless of the operating system, see the path package.</p>
+
+</blockquote>
+<p data-bo="15638">What does this package give us?</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="15671"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>func</a-k> <a-v>Abs</a-v>(<a-v>path</a-v> <a-t>string</a-t>) (<a-t>string</a-t>, <a-t>error</a-t>)
+<a-k>func</a-k> <a-v>Base</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>Clean</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>Dir</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>EvalSymlinks</a-v>(<a-v>path</a-v> <a-t>string</a-t>) (<a-t>string</a-t>, <a-t>error</a-t>)
+<a-k>func</a-k> <a-v>Ext</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>FromSlash</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>Glob</a-v>(<a-v>pattern</a-v> <a-t>string</a-t>) (<a-v>matches</a-v> []<a-t>string</a-t>, <a-v>err</a-v> <a-t>error</a-t>)
+<a-k>func</a-k> <a-v>HasPrefix</a-v>(<a-v>p</a-v>, <a-v>prefix</a-v> <a-t>string</a-t>) <a-t>bool</a-t>
+<a-k>func</a-k> <a-v>IsAbs</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>bool</a-t>
+<a-k>func</a-k> <a-v>Join</a-v>(<a-v>elem</a-v> <a-o>...</a-o><a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>Match</a-v>(<a-v>pattern</a-v>, <a-v>name</a-v> <a-t>string</a-t>) (<a-v>matched</a-v> <a-t>bool</a-t>, <a-v>err</a-v> <a-t>error</a-t>)
+<a-k>func</a-k> <a-v>Rel</a-v>(<a-v>basepath</a-v>, <a-v>targpath</a-v> <a-t>string</a-t>) (<a-t>string</a-t>, <a-t>error</a-t>)
+<a-k>func</a-k> <a-v>Split</a-v>(<a-v>path</a-v> <a-t>string</a-t>) (<a-v>dir</a-v>, <a-v>file</a-v> <a-t>string</a-t>)
+<a-k>func</a-k> <a-v>SplitList</a-v>(<a-v>path</a-v> <a-t>string</a-t>) []<a-t>string</a-t>
+<a-k>func</a-k> <a-v>ToSlash</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>VolumeName</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+<a-k>func</a-k> <a-v>Walk</a-v>(<a-v>root</a-v> <a-t>string</a-t>, <a-v>walkFn</a-v> <a-t>WalkFunc</a-t>) <a-t>error</a-t>
+</code></figure><p data-bo="16383">Strings. Lots and lots of strings. Well, byte slices.</p>
+
+<p data-bo="16438">Speaking of bad design decisions - what’s that <code>Ext</code> function I see?</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="16508"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// Ext returns the file name extension used by path. The extension is the suffix</a-c>
+<a-c>// beginning at the final dot in the final element of path; it is empty if there</a-c>
+<a-c>// is no dot.</a-c>
+<a-k>func</a-k> <a-v>Ext</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t>
+</code></figure><p data-bo="16724">Interesting! Let’s try it out.</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="16756"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+        <a-s>&quot;fmt&quot;</a-s>
+        <a-s>&quot;path/filepath&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+        <a-v>inputs</a-v> <a-o>:=</a-o> []<a-t>string</a-t>{
+                <a-s>&quot;/&quot;</a-s>,
+                <a-s>&quot;/.&quot;</a-s>,
+                <a-s>&quot;/.foo&quot;</a-s>,
+                <a-s>&quot;/foo&quot;</a-s>,
+                <a-s>&quot;/foo.txt&quot;</a-s>,
+                <a-s>&quot;/foo.txt/bar&quot;</a-s>,
+                <a-s>&quot;C:\\&quot;</a-s>,
+                <a-s>&quot;C:\\.&quot;</a-s>,
+                <a-s>&quot;C:\\foo.txt&quot;</a-s>,
+                <a-s>&quot;C:\\foo.txt\\bar&quot;</a-s>,
+        }
+        <a-k>for</a-k> <a-v>_</a-v>, <a-v>i</a-v> <a-o>:=</a-o> <a-k>range</a-k> <a-v>inputs</a-v> {
+                <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;%24q =&gt; %q\n&quot;</a-s>, <a-v>i</a-v>, <a-v>filepath</a-v>.<a-pr>Ext</a-pr>(<a-v>i</a-v>))
+        }
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+        <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+                <a-v>panic</a-v>(<a-v>err</a-v>)
+        }
+}
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="17348"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go run main.go
+                     "/" =&gt; ""
+                    "/." =&gt; "."
+                 "/.foo" =&gt; ".foo"
+                  "/foo" =&gt; ""
+              "/foo.txt" =&gt; ".txt"
+          "/foo.txt/bar" =&gt; ""
+                  "C:\\" =&gt; ""
+                 "C:\\." =&gt; "."
+           "C:\\foo.txt" =&gt; ".txt"
+      "C:\\foo.txt\\bar" =&gt; ".txt\\bar"
+</code></figure><p data-bo="17712">Right away, I’m in debating mood - is <code>.foo</code>’s extension <em>really</em> <code>.foo</code>? But
+let’s move on.</p>
+
+<p data-bo="17806">This example was run on Linux, so <code>C:\foo.txt\bar</code>’s extension, according
+to <code>filepath.Ext</code>, is.. <code>.txt\bar</code>.</p>
+
+<p data-bo="17917">Why? Because the Go standard library makes the assumption that a platform has
+a single path separator - on Unix and BSD-likes, it’s <code>&#x2F;</code>, and on Windows
+it’s <code>\\</code>.</p>
+
+<p data-bo="18081">Except… that’s not the whole truth. I was curious, so I checked:</p>
+
+<figure role="region" aria-label="C code block" class="code-block has-language-tag" translate="no" data-lang="c" data-bo="18149"><span class="language-tag" title="C"></span><code class="scroll-wrapper"><a-c>// in `fun.c`</a-c>
+
+<a-t>void</a-t> <a-v>main</a-v>() {
+  <a-t>HANDLE</a-t> <a-v>hFile</a-v> <a-o>=</a-o> <a-v>CreateFile</a-v>(<a-s>&quot;C:/Users/amos/test.txt&quot;</a-s>, <a-co>GENERIC_WRITE</a-co>, <a-n>0</a-n>, <a-co>NULL</a-co>,
+                            <a-co>CREATE_NEW</a-co>, <a-co>FILE_ATTRIBUTE_NORMAL</a-co>, <a-co>NULL</a-co>);
+
+  <a-t>char</a-t> <a-o>*</a-o><a-v>data</a-v> <a-o>=</a-o> <a-s>&quot;Hello from the Win32 API&quot;</a-s>;
+  <a-t>DWORD</a-t> <a-v>dwToWrite</a-v> <a-o>=</a-o> (<a-t>DWORD</a-t>) <a-v>strlen</a-v>(<a-v>data</a-v>);
+  <a-t>DWORD</a-t> <a-v>dwWritten</a-v> <a-o>=</a-o> <a-n>0</a-n>;
+  <a-v>WriteFile</a-v>(<a-v>hFile</a-v>, <a-v>data</a-v>, <a-v>dwToWrite</a-v>, <a-o>&amp;</a-o><a-v>dwWritten</a-v>, <a-co>NULL</a-co>);
+  <a-v>CloseHandle</a-v>(<a-v>hFile</a-v>);
+}
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="18524"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">&gt; cl fun.c
+Microsoft (R) C/C++ Optimizing Compiler Version 19.23.28107 for x64
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+fun.c
+Microsoft (R) Incremental Linker Version 14.23.28107.0
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+/out:fun.exe
+fun.obj
+&gt; .\fun.exe
+&gt; type C:\Users\amos\test.txt
+Hello from the Win32 API
+</code></figure><p data-bo="18886">No funny <a href="https://www.msys2.org/">Unix emulation</a> business going on - just
+regular old Windows 10.</p>
+
+<p data-bo="18986">And yet, in Go’s standard library, the <code>path&#x2F;filepath</code> package exports those
+constants:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="19075"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>const</a-k> (
+    <a-v>Separator</a-v>     <a-o>=</a-o> <a-v>os</a-v>.<a-pr>PathSeparator</a-pr>
+    <a-v>ListSeparator</a-v> <a-o>=</a-o> <a-v>os</a-v>.<a-pr>PathListSeparator</a-pr>
+)
+</code></figure><p data-bo="19174"><code>os</code>, in turn, exports:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="19199"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/os/path_windows.go</a-c>
+<a-k>const</a-k> (
+  <a-v>PathSeparator</a-v>     <a-o>=</a-o> <a-s>&#39;\\&#39;</a-s> <a-c>// OS-specific path separator</a-c>
+  <a-v>PathListSeparator</a-v> <a-o>=</a-o> <a-s>&#39;;&#39;</a-s>  <a-c>// OS-specific path list separator</a-c>
+)
+</code></figure><p data-bo="19365">So how comes <code>filepath.Ext</code> works with both separators on Windows?</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="19433"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go run main.go
+                     "/" =&gt; ""
+                    "/." =&gt; "."
+                 "/.foo" =&gt; ".foo"
+                  "/foo" =&gt; ""
+              "/foo.txt" =&gt; ".txt"
+          "/foo.txt/bar" =&gt; ""
+                  "C:\\" =&gt; ""
+                 "C:\\." =&gt; "."
+           "C:\\foo.txt" =&gt; ".txt"
+      "C:\\foo.txt\\bar" =&gt; ""
+</code></figure><p data-bo="19788">Let’s look at its implementation:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="19823"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/path/filepath/path.go</a-c>
+
+<a-k>func</a-k> <a-v>Ext</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t> {
+  <a-k>for</a-k> <a-v>i</a-v> <a-o>:=</a-o> <a-v>len</a-v>(<a-v>path</a-v>) <a-o>-</a-o> <a-n>1</a-n>; <a-v>i</a-v> <a-o>&gt;=</a-o> <a-n>0</a-n> <a-o>&amp;&amp;</a-o> <a-o>!</a-o><a-v>os</a-v>.<a-pr>IsPathSeparator</a-pr>(<a-v>path</a-v>[<a-v>i</a-v>]); <a-v>i</a-v><a-o>--</a-o> {
+    <a-k>if</a-k> <a-v>path</a-v>[<a-v>i</a-v>] <a-o>==</a-o> <a-s>&#39;.&#39;</a-s> {
+      <a-k>return</a-k> <a-v>path</a-v>[<a-v>i</a-v>:]
+    }
+  }
+  <a-k>return</a-k> <a-s>&quot;&quot;</a-s>
+}
+</code></figure><p data-bo="20037">Ah. An <code>IsPathSeparator</code> function.</p>
+
+<p data-bo="20073">Sure enough:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="20087"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/os/path_windows.go</a-c>
+
+<a-c>// IsPathSeparator reports whether c is a directory separator character.</a-c>
+<a-k>func</a-k> <a-v>IsPathSeparator</a-v>(<a-v>c</a-v> <a-t>uint8</a-t>) <a-t>bool</a-t> {
+  <a-c>// NOTE: Windows accept / as path separator.</a-c>
+  <a-k>return</a-k> <a-v>c</a-v> <a-o>==</a-o> <a-s>&#39;\\&#39;</a-s> <a-o>||</a-o> <a-v>c</a-v> <a-o>==</a-o> <a-s>&#39;/&#39;</a-s>
+}
+</code></figure><p data-bo="20315">(Can I just point out how hilarious that “Extension” was deemed long
+enough to abbreviate to “Ext”, but “IsPathSeparator” wasn’t?)</p>
+
+<p data-bo="20447">How does Rust handle this?</p>
+
+<p data-bo="20475">It has <code>std::path::is_separator</code>:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="20510"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-c>/// Determines whether the character is one of the permitted
+// path separators for the current platform.</a-c>
+<a-k>pub</a-k> <a-k>fn</a-k> <a-f>is_separator</a-f><a-p>(</a-p><a-v>c</a-v><a-p>:</a-p> <a-t>char</a-t><a-p>)</a-p> -&gt; <a-t>bool</a-t><a-p>
+</a-p></code></figure><p data-bo="20666">And it has <code>std::path::MAIN_SEPARATOR</code> - emphasis on <em>main</em> separator:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="20738"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-c>/// The primary separator of path components for the current platform.
+///
+/// For example, / on Unix and \ on Windows.
+</a-c><a-k>pub</a-k> <a-k>const</a-k> <a-cr>MAIN_SEPARATOR</a-cr><a-p>:</a-p> <a-t>char</a-t><a-p>
+</a-p></code></figure><p data-bo="20902">The naming alone makes it much clearer that there <em>might</em> be secondary path
+separators, and the rich Path manipulation API makes it much less likely
+to find this kind of code, for example:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="21092"><span class="language-tag" title="Go"></span><code class="scroll-wrapper">  <a-v>DefaultScripts</a-v> <a-o>=</a-o> <a-s>&quot;downloads&quot;</a-s> <a-o>+</a-o> <a-v>string</a-v>(<a-v>os</a-v>.<a-pr>PathSeparator</a-pr>) <a-o>+</a-o> <a-s>&quot;defaultScripts&quot;</a-s>
+</code></figure><p data-bo="21180">Or this kind:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="21195"><span class="language-tag" title="Go"></span><code class="scroll-wrapper">  <a-k>if</a-k> <a-v>os</a-v>.<a-pr>PathSeparator</a-pr> <a-o>==</a-o> <a-s>&#39;/&#39;</a-s> {
+    <a-v>projname</a-v> <a-o>=</a-o> <a-v>strings</a-v>.<a-pr>Replace</a-pr>(<a-v>name</a-v>, <a-s>&quot;\\&quot;</a-s>, <a-s>&quot;/&quot;</a-s>, <a-o>-</a-o><a-n>1</a-n>)
+  } <a-k>else</a-k> <a-k>if</a-k> <a-v>os</a-v>.<a-pr>PathSeparator</a-pr> <a-o>==</a-o> <a-s>&#39;\\&#39;</a-s> {
+    <a-v>projname</a-v> <a-o>=</a-o> <a-v>strings</a-v>.<a-pr>Replace</a-pr>(<a-v>name</a-v>, <a-s>&quot;/&quot;</a-s>, <a-s>&quot;\\&quot;</a-s>, <a-o>-</a-o><a-n>1</a-n>)
+  }
+</code></figure><p data-bo="21384">Or this… kind:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="21402"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-v>filefullpath</a-v> <a-o>=</a-o> <a-v>fmt</a-v>.<a-pr>Sprintf</a-pr>(<a-s>&quot;%s%c%s%c%s%c%s%c%s%s&quot;</a-s>,
+    <a-v>a</a-v>.<a-pr>DataDir</a-pr>, <a-v>os</a-v>.<a-pr>PathSeparator</a-pr>,
+    <a-v>m</a-v>[<a-n>0</a-n>:<a-n>1</a-n>], <a-v>os</a-v>.<a-pr>PathSeparator</a-pr>,
+    <a-v>m</a-v>[<a-n>1</a-n>:<a-n>2</a-n>], <a-v>os</a-v>.<a-pr>PathSeparator</a-pr>,
+    <a-v>m</a-v>[<a-n>2</a-n>:<a-n>3</a-n>], <a-v>os</a-v>.<a-pr>PathSeparator</a-pr>,
+    <a-v>m</a-v>, <a-v>ext</a-v>)
+</code></figure><p data-bo="21599">It turns out Rust also has a “get a path’s extension” function, but it’s a lot
+more conservative in the promises it makes:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="21723"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-c>// Extracts the extension of self.file_name, if possible.</a-c>
+<a-c>//</a-c>
+<a-c>// The extension is:</a-c>
+<a-c>//</a-c>
+<a-c>//   * None, if there is no file name;</a-c>
+<a-c>//   * None, if there is no embedded .;</a-c>
+<a-c>//   * None, if the file name begins with . and has no other .s within;</a-c>
+<a-c>//   * Otherwise, the portion of the file name after the final .</a-c>
+<a-k>pub</a-k> <a-k>fn</a-k> <a-f>extension</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>Option</a-t><a-p>&lt;</a-p><a-o>&amp;</a-o><a-t>OsStr</a-t><a-p>&gt;</a-p>
+</code></figure><p data-bo="22079">Let’s submit it to the same test:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="22114"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> inputs = <a-p>[</a-p>
+        <a-s>r&quot;/&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/.&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/.foo&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/foo.&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/foo&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/foo.txt&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;/foo.txt/bar&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;C:\&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;C:\.&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;C:\foo.txt&quot;</a-s><a-p>,</a-p>
+        <a-s>r&quot;C:\foo.txt\bar&quot;</a-s><a-p>,</a-p>
+    <a-p>];</a-p>
+    <a-k>for</a-k> input <a-k>in</a-k> <a-o>&amp;</a-o>inputs <a-p>{</a-p>
+        <a-k>use</a-k> std<a-p>::</a-p>path<a-p>::</a-p><a-cr>Path</a-cr><a-p>;</a-p>
+        <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;{:&gt;20} =&gt; {:?}&quot;</a-s><a-p>,</a-p> input<a-p>,</a-p> <a-cr>Path</a-cr><a-p>::</a-p><a-f>new</a-f><a-p>(</a-p>input<a-p>).</a-p><a-pr>extension</a-pr><a-p>());</a-p>
+    <a-p>}</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="22513">On Linux:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="22524"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+                   / =&gt; None
+                  /. =&gt; None
+               /.foo =&gt; None
+               /foo. =&gt; Some("")
+                /foo =&gt; None
+            /foo.txt =&gt; Some("txt")
+        /foo.txt/bar =&gt; None
+                 C:\ =&gt; None
+                C:\. =&gt; Some("")
+          C:\foo.txt =&gt; Some("txt")
+      C:\foo.txt\bar =&gt; Some("txt\\bar")
+</code></figure><p data-bo="22911">On Windows:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="22924"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+                   / =&gt; None
+                  /. =&gt; None
+               /.foo =&gt; None
+               /foo. =&gt; Some("")
+                /foo =&gt; None
+            /foo.txt =&gt; Some("txt")
+        /foo.txt/bar =&gt; None
+                 C:\ =&gt; None
+                C:\. =&gt; None
+          C:\foo.txt =&gt; Some("txt")
+      C:\foo.txt\bar =&gt; None
+</code></figure><p data-bo="23295">Like Go, it gives a <code>txt\bar</code> extension for a Windows path on Linux.</p>
+
+<p data-bo="23365">Unlike Go, it:</p>
+
+<ul><li>Doesn’t think “&#x2F;.foo” has a file extension</li>
+<li>Distinguishes between the “&#x2F;foo.” case (<code>Some(&quot;&quot;)</code>) and the “&#x2F;foo” case (<code>None</code>)</li>
+</ul>
+<p data-bo="23510">Let’s also look at the Rust implementation of <code>std::path::Path::extension</code>:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="23587"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>extension</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>Option</a-t><a-p>&lt;</a-p><a-o>&amp;</a-o><a-t>OsStr</a-t><a-p>&gt;</a-p> <a-p>{</a-p>
+  <a-v>self</a-v><a-p>.</a-p><a-pr>file_name</a-pr><a-p>().</a-p><a-pr>map</a-pr><a-p>(</a-p>split_file_at_dot<a-p>).</a-p><a-pr>and_then</a-pr><a-p>(</a-p>|<a-p>(</a-p>before<a-p>,</a-p> after<a-p>)</a-p>| before<a-p>.</a-p><a-pr>and</a-pr><a-p>(</a-p>after<a-p>))</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="23734">Let’s dissect that: first it calls <code>file_name()</code>. How does that work? Is it where
+it searches for path separators backwards from the end of the path?</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="23885"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>file_name</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>Option</a-t><a-p>&lt;</a-p><a-o>&amp;</a-o><a-t>OsStr</a-t><a-p>&gt;</a-p> <a-p>{</a-p>
+  <a-v>self</a-v><a-p>.</a-p><a-pr>components</a-pr><a-p>().</a-p><a-pr>next_back</a-pr><a-p>().</a-p><a-pr>and_then</a-pr><a-p>(</a-p>|p| <a-k>match</a-k> p <a-p>{</a-p>
+    <a-cr>Component</a-cr><a-p>::</a-p><a-cr>Normal</a-cr><a-p>(</a-p>p<a-p>)</a-p> =&gt; <a-cr>Some</a-cr><a-p>(</a-p>p<a-p>.</a-p><a-pr>as_ref</a-pr><a-p>()),</a-p>
+    _ =&gt; <a-cr>None</a-cr><a-p>,</a-p>
+  <a-p>})</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="24065">No! It calls <code>components</code> which returns a type that implements <code>DoubleEndedIterator</code> -
+an iterator you can navigate from the front or the back. <em>Then</em> it grabs the first item
+from the back - if any - and returns that.</p>
+
+<p data-bo="24284">The iterator <em>does</em> look for path separators - lazily, in a re-usable way. There is
+no code duplication, like in the Go library:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="24414"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/os/path_windows.go</a-c>
+
+<a-k>func</a-k> <a-v>dirname</a-v>(<a-v>path</a-v> <a-t>string</a-t>) <a-t>string</a-t> {
+  <a-v>vol</a-v> <a-o>:=</a-o> <a-v>volumeName</a-v>(<a-v>path</a-v>)
+  <a-v>i</a-v> <a-o>:=</a-o> <a-v>len</a-v>(<a-v>path</a-v>) <a-o>-</a-o> <a-n>1</a-n>
+  <a-k>for</a-k> <a-v>i</a-v> <a-o>&gt;=</a-o> <a-v>len</a-v>(<a-v>vol</a-v>) <a-o>&amp;&amp;</a-o> <a-o>!</a-o><a-v>IsPathSeparator</a-v>(<a-v>path</a-v>[<a-v>i</a-v>]) {
+    <a-v>i</a-v><a-o>--</a-o>
+  }
+  <a-v>dir</a-v> <a-o>:=</a-o> <a-v>path</a-v>[<a-v>len</a-v>(<a-v>vol</a-v>) : <a-v>i</a-v><a-o>+</a-o><a-n>1</a-n>]
+  <a-v>last</a-v> <a-o>:=</a-o> <a-v>len</a-v>(<a-v>dir</a-v>) <a-o>-</a-o> <a-n>1</a-n>
+  <a-k>if</a-k> <a-v>last</a-v> <a-o>&gt;</a-o> <a-n>0</a-n> <a-o>&amp;&amp;</a-o> <a-v>IsPathSeparator</a-v>(<a-v>dir</a-v>[<a-v>last</a-v>]) {
+    <a-v>dir</a-v> <a-o>=</a-o> <a-v>dir</a-v>[:<a-v>last</a-v>]
+  }
+  <a-k>if</a-k> <a-v>dir</a-v> <a-o>==</a-o> <a-s>&quot;&quot;</a-s> {
+    <a-v>dir</a-v> <a-o>=</a-o> <a-s>&quot;.&quot;</a-s>
+  }
+  <a-k>return</a-k> <a-v>vol</a-v> <a-o>+</a-o> <a-v>dir</a-v>
+}
+</code></figure><p data-bo="24777">So, now we have <em>only the file name</em>. If we had <code>&#x2F;foo&#x2F;bar&#x2F;baz.txt</code>, we’re now only
+dealing with <code>baz.txt</code> - as an <code>OsStr</code>, <em>not</em> a utf-8 <code>String</code>. We can still have
+random bytes.</p>
+
+<p data-bo="24957">We then map this result through <code>split_file_at_dot</code>, which behaves like so:</p>
+
+<ul><li>For <code>&quot;foo&quot;</code>, return <code>(Some(&quot;foo&quot;), None)</code></li>
+<li>For <code>&quot;foo.bar&quot;</code>, return <code>(Some(&quot;foo&quot;), Some(&quot;bar&quot;))</code></li>
+<li>For <code>&quot;foo.bar.baz&quot;</code>, return <code>(Some(&quot;foo.bar&quot;), Some(&quot;baz&quot;))</code></li>
+</ul>
+<p data-bo="25197"><code>and_then</code>, we only return <code>after</code> if <code>before</code> wasn’t <code>None</code>.</p>
+
+<p data-bo="25260">If we spelled out everything, we’d have:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="25302"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>extension</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>Option</a-t><a-p>&lt;</a-p><a-o>&amp;</a-o><a-t>OsStr</a-t><a-p>&gt;</a-p> <a-p>{</a-p>
+  <a-k>if</a-k> <a-k>let</a-k> <a-cr>Some</a-cr><a-p>(</a-p>file_name<a-p>)</a-p> = <a-v>self</a-v><a-p>.</a-p><a-pr>file_name</a-pr><a-p>()</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> <a-p>(</a-p>before<a-p>,</a-p> after<a-p>)</a-p> = <a-f>split_file_at_dot</a-f><a-p>(</a-p>file_name<a-p>);</a-p>
+    <a-k>if</a-k> <a-k>let</a-k> <a-cr>Some</a-cr><a-p>(</a-p>before<a-p>)</a-p> = before <a-p>{</a-p>
+      <a-c>// note: `after` is already an `Option&lt;&amp;OsStr&gt;` - it</a-c>
+      <a-c>// might still be `None`.</a-c>
+      <a-k>return</a-k> after
+    <a-p>}</a-p>
+  <a-p>}</a-p>
+  <a-cr>None</a-cr>
+<a-p>}</a-p>
+</code></figure><p data-bo="25625">The problem is carefully modelled. We can look at <em>what</em> we’re manipulating
+just by looking at its type. If it might not exist, it’s an <code>Option&lt;T&gt;</code>! If
+it’s a path with multiple components, it’s a <code>&amp;Path</code> (or its owned
+counterpart, <code>PathBuf</code>). If it’s just part of a path, it’s an <code>&amp;OsStr</code>.</p>
+
+<p data-bo="25917">Of course there’s a learning curve. Of course there’s more concepts involved
+than just throwing for loops at byte slices and seeing what sticks, like the
+Go library does.</p>
+
+<p data-bo="26089">But the result is a high-performance, reliable and type-safe library.</p>
+
+<p data-bo="26160">It’s worth it.</p>
+
+<p data-bo="26176">Speaking of Rust, we haven’t seen how it handles the whole “mode” thing yet.</p>
+
+<p data-bo="26254">So <code>std::fs::Metadata</code> has <code>is_dir()</code> and <code>is_file()</code>, which return booleans.
+It also has <code>len()</code>, which returns an <code>u64</code> (unsigned 64-bit integer).</p>
+
+<p data-bo="26404">It has <code>created()</code>, <code>modified()</code>, and <code>accessed()</code>, all of which return an
+<code>Option&lt;SystemTime&gt;</code>. Again - the types inform us on what scenarios are
+possible. Access timestamps might not exist at all.</p>
+
+<p data-bo="26604">The returned time is not an <code>std::time::Instant</code> - it’s an
+<code>std::time::SystemTime</code> - the documentation tells us the difference:</p>
+
+<blockquote><p data-bo="26735">A measurement of the system clock, useful for talking to external entities
+like the file system or other processes.</p>
+
+<p data-bo="26857">Distinct from the
+<a href="https://doc.rust-lang.org/std/time/struct.Instant.html"><code>Instant</code></a> type,
+this time measurement <strong>is not monotonic</strong>. This means that you can save a
+file to the file system, then save another file to the file system, <strong>and the
+second file has a <code>SystemTime</code> measurement earlier than the first</strong>. In other
+words, an operation that happens after another operation in real time may
+have an earlier <code>SystemTime</code>!</p>
+
+<p data-bo="27300">Consequently, comparing two <code>SystemTime</code> instances to learn about the
+duration between them returns a
+<a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a> instead of
+an infallible
+<a href="https://doc.rust-lang.org/std/time/struct.Duration.html"><code>Duration</code></a> to
+indicate that this sort of time drift may happen and needs to be handled.</p>
+
+<p data-bo="27654">Although a <code>SystemTime</code> cannot be directly inspected, the
+<a href="https://doc.rust-lang.org/std/time/constant.UNIX_EPOCH.html"><code>UNIX_EPOCH</code></a>
+constant is provided in this module as an anchor in time to learn information
+about a <code>SystemTime</code>. By calculating the duration from this fixed point in
+time, a <code>SystemTime</code> can be converted to a human-readable time, or perhaps
+some other string representation.</p>
+
+<p data-bo="28064">The size of a <code>SystemTime</code> struct may vary depending on the target operating
+system.</p>
+
+<p data-bo="28155">Source: <a href="https://doc.rust-lang.org/std/time/struct.SystemTime.html">https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;std&#x2F;time&#x2F;struct.SystemTime.html</a></p>
+
+</blockquote>
+<div data-bo="28226" class="tip markup-container">
+<div class="tip-header bear-mark">
+<picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~f8031274cabccdf6.w400.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~451aa11f175f8fc4.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~2add1c1dfe1cf845.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~e1d6acd7da0c8bd7.w400.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~fe0a016a137f310a.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~909ed9e4ba5c3317.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~c7e5fe0bec9ef4d6.w400.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~430cbb8ae0eaa295.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~9df5546a60e748fc.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 2x"><img src="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl" loading="lazy" width="48" height="48" data-kind="media" data-input-path="/content/img/reimena/coolbear-idea.jxl" class="bear" alt="Cool bear"></picture>
+Cool Bear's hot tip
+</div>
+<p data-bo="28237">In fairness to everyone, <a href="https://github.com/rust-lang/rust/blob/e2223c94bf433fc38234d1303e88cbaf14755863/src/libstd/time.rs#L205-L232">monotonic time is really
+hard</a>.</p>
+
+</div><p data-bo="28408">What about permissions? Well, there it is:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="28452"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>permissions</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>Permissions</a-t><a-p>
+</a-p></code></figure><p data-bo="28506">A <code>Permissions</code> type! Just for that! And we can afford it, too - because
+types don’t cost anything at runtime. Everything probably ends up inlined
+anyway.</p>
+
+<p data-bo="28662">What does it expose?</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="28684"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>pub</a-k> <a-k>fn</a-k> <a-f>readonly</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>bool</a-t> <a-p>{}</a-p>
+<a-k>pub</a-k> <a-k>fn</a-k> <a-f>set_readonly</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-k>mut</a-k> <a-v>self</a-v><a-p>,</a-p> <a-v>readonly</a-v><a-p>:</a-p> <a-t>bool</a-t><a-p>)</a-p> <a-p>{}</a-p>
+</code></figure><p data-bo="28781">Well! It exposes <em>only what all supported operating systems have in common</em>.</p>
+
+<p data-bo="28859">Can we still get Unix permission? Of course! But <em>only</em> on Unix:</p>
+
+<blockquote><p data-bo="28927">Representation of the various permissions on a file.</p>
+
+<p data-bo="28984">This module only currently provides one bit of information,
+<a href="https://doc.rust-lang.org/std/fs/struct.Permissions.html#method.readonly"><code>readonly</code></a>,
+which is exposed on all currently supported platforms. Unix-specific
+functionality, such as mode bits, is available through the
+<a href="https://doc.rust-lang.org/std/os/unix/fs/trait.PermissionsExt.html"><code>PermissionsExt</code></a>
+trait.</p>
+
+<p data-bo="29368">Source: <a href="https://doc.rust-lang.org/std/fs/struct.Permissions.html">https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;std&#x2F;fs&#x2F;struct.Permissions.html</a></p>
+
+</blockquote>
+<p data-bo="29436"><code>std::os::unix::fs::PermissionsExt</code> is only compiled in on Unix, and exposes
+the following functions:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="29539"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>fn</a-k> <a-f>mode</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-v>self</a-v><a-p>)</a-p> -&gt; <a-t>u32</a-t> <a-p>{}</a-p>
+<a-k>fn</a-k> <a-f>set_mode</a-f><a-p>(</a-p><a-o>&amp;</a-o><a-k>mut</a-k> <a-v>self</a-v><a-p>,</a-p> <a-v>mode</a-v><a-p>:</a-p> <a-t>u32</a-t><a-p>)</a-p> <a-p>{}</a-p>
+<a-k>fn</a-k> <a-f>from_mode</a-f><a-p>(</a-p><a-v>mode</a-v><a-p>:</a-p> <a-t>u32</a-t><a-p>)</a-p> -&gt; <a-t>Self</a-t> <a-p>{}</a-p>
+</code></figure><p data-bo="29649">The documentation makes it <em>really clear</em> it’s Unix-only:</p>
+
+<p data-bo="29708"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~a2040d7d03b27aee.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~d854dcdcf55851ec.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~81caf172310b8dd8.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~dccae637569f3661.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~dccae637569f3661.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~8daf5f2f341b2674.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~c09464df447d721f.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~ef38de0b86f1fcd8.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~90f6769a9408958e.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~90f6769a9408958e.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~f1ffd7252dd90864.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~05cdd0de1806f859.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~eb56249b2adeeeaf.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~9afb0624aafd8bff.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~9afb0624aafd8bff.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only~dccae637569f3661.jxl" loading="lazy" width="1096" height="736" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/unix-only.jxl"></picture></p>
+
+<p data-bo="29735">But it’s not just documentation. This sample program will compile and run
+on Linux (and macOS, etc.)</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="29837"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>use</a-k> std<a-p>::</a-p>fs<a-p>::</a-p><a-cr>File</a-cr><a-p>;</a-p>
+<a-k>use</a-k> std<a-p>::</a-p>os<a-p>::</a-p>unix<a-p>::</a-p>fs<a-p>::</a-p><a-cr>PermissionsExt</a-cr><a-p>;</a-p>
+
+<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> -&gt; std<a-p>::</a-p>io<a-p>::</a-p><a-t>Result</a-t><a-p>&lt;()&gt;</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> f = <a-cr>File</a-cr><a-p>::</a-p><a-f>open</a-f><a-p>(</a-p><a-s>&quot;/usr/bin/man&quot;</a-s><a-p>)</a-p>?<a-p>;</a-p>
+    <a-k>let</a-k> metadata = f<a-p>.</a-p><a-pr>metadata</a-pr><a-p>()</a-p>?<a-p>;</a-p>
+    <a-k>let</a-k> permissions = metadata<a-p>.</a-p><a-pr>permissions</a-pr><a-p>();</a-p>
+
+    <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;permissions: {:o}&quot;</a-s><a-p>,</a-p> permissions<a-p>.</a-p><a-pr>mode</a-pr><a-p>());</a-p>
+    <a-cr>Ok</a-cr><a-p>(())</a-p>
+<a-p>}</a-p>
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="30134"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+permissions: 100755
+</code></figure><p data-bo="30188">But will fail to compile on Windows:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="30226"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet
+error[E0433]: failed to resolve: could not find `unix` in `os`
+ --&gt; src\main.rs:2:14
+  |
+2 | use std::os::unix::fs::PermissionsExt;
+  |              ^^^^ could not find `unix` in `os`
+
+error[E0599]: no method named `mode` found for type `std::fs::Permissions` in the current scope
+ --&gt; src\main.rs:9:47
+  |
+9 |     println!("permissions: {:o}", permissions.mode());
+  |                                               ^^^^ method not found in `std::fs::Permissions`
+
+error: aborting due to 2 previous errors
+
+Some errors have detailed explanations: E0433, E0599.
+For more information about an error, try `rustc --explain E0433`.
+error: could not compile `rustfun`.
+
+To learn more, run the command again with --verbose.
+</code></figure><p data-bo="30977">How can we make a program that runs on Windows too? The same way
+the standard library only exposes <code>PermissionsExt</code> on Unix: with
+attributes.</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="31120"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>use</a-k> std<a-p>::</a-p>fs<a-p>::</a-p><a-cr>File</a-cr><a-p>;</a-p>
+<a-at>#</a-at><a-p>[</a-p><a-at>cfg</a-at><a-p>(</a-p><a-at>target_family = </a-at><a-s>&quot;unix&quot;</a-s><a-p>)]</a-p>
+<a-k>use</a-k> std<a-p>::</a-p>os<a-p>::</a-p>unix<a-p>::</a-p>fs<a-p>::</a-p><a-cr>PermissionsExt</a-cr><a-p>;</a-p>
+
+<a-k>fn</a-k> <a-f>main</a-f><a-p>()</a-p> -&gt; std<a-p>::</a-p>io<a-p>::</a-p><a-t>Result</a-t><a-p>&lt;()&gt;</a-p> <a-p>{</a-p>
+    <a-k>let</a-k> arg = std<a-p>::</a-p>env<a-p>::</a-p><a-f>args</a-f><a-p>().</a-p><a-pr>nth</a-pr><a-p>(</a-p><a-co>1</a-co><a-p>).</a-p><a-pr>unwrap</a-pr><a-p>();</a-p>
+    <a-k>let</a-k> f = <a-cr>File</a-cr><a-p>::</a-p><a-f>open</a-f><a-p>(</a-p><a-o>&amp;</a-o>arg<a-p>)</a-p>?<a-p>;</a-p>
+    <a-k>let</a-k> metadata = f<a-p>.</a-p><a-pr>metadata</a-pr><a-p>()</a-p>?<a-p>;</a-p>
+    <a-k>let</a-k> permissions = metadata<a-p>.</a-p><a-pr>permissions</a-pr><a-p>();</a-p>
+
+    <a-at>#</a-at><a-p>[</a-p><a-at>cfg</a-at><a-p>(</a-p><a-at>target_family = </a-at><a-s>&quot;unix&quot;</a-s><a-p>)]</a-p>
+    <a-p>{</a-p>
+        <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;permissions: {:o}&quot;</a-s><a-p>,</a-p> permissions<a-p>.</a-p><a-pr>mode</a-pr><a-p>());</a-p>
+    <a-p>}</a-p>
+
+    <a-at>#</a-at><a-p>[</a-p><a-at>cfg</a-at><a-p>(</a-p><a-at>target_family = </a-at><a-s>&quot;windows&quot;</a-s><a-p>)]</a-p>
+    <a-p>{</a-p>
+        <a-m>println!</a-m><a-p>(</a-p><a-s>&quot;readonly? {:?}&quot;</a-s><a-p>,</a-p> permissions<a-p>.</a-p><a-pr>readonly</a-pr><a-p>());</a-p>
+    <a-p>}</a-p>
+
+    <a-cr>Ok</a-cr><a-p>(())</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="31649">Those aren’t <code>#ifdef</code> - they’re not preprocessor directives. There’s no risk
+of forgetting an <code>#endif</code>. And if you miss if&#x2F;else chains, <a href="https://github.com/alexcrichton/cfg-if">there’s a crate
+for that</a>.</p>
+
+<p data-bo="31854">Here’s that sample program on Linux:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="31892"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet -- /usr/bin/man
+permissions: 100755
+</code></figure><p data-bo="31962">And on Windows:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="31979"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ cargo run --quiet -- Cargo.toml
+readonly? false
+</code></figure><p data-bo="32043">Can you do that in Go? Sure! Kind of!</p>
+
+<p data-bo="32082">There’s two ways to do something similar, and both involve multiple files.</p>
+
+<p data-bo="32158">Here’s one:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="32171"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go mod init github.com/fasterthanlime/gofun
+</code></figure><p data-bo="32231">In <code>main.go</code>, we need:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="32255"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> <a-s>&quot;os&quot;</a-s>
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+        <a-v>poke</a-v>(<a-v>os</a-v>.<a-pr>Args</a-pr>[<a-n>1</a-n>])
+}
+</code></figure><p data-bo="32334">In <code>poke_windows.go</code>, we need:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="32366"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+        <a-s>&quot;fmt&quot;</a-s>
+        <a-s>&quot;os&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>poke</a-v>(<a-v>path</a-v> <a-t>string</a-t>) {
+        <a-v>stats</a-v>, <a-v>_</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Stat</a-pr>(<a-v>path</a-v>)
+        <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;readonly? %v\n&quot;</a-s>, (<a-v>stats</a-v>.<a-pr>Mode</a-pr>() <a-o>&amp;</a-o> <a-n>0o600</a-n>) <a-o>==</a-o> <a-n>0</a-n>);
+}
+</code></figure><p data-bo="32558">And in <code>poke_unix.go</code>, we need:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="32591"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// +build !windows</a-c>
+
+<a-k>package</a-k> main
+
+<a-k>import</a-k> (
+        <a-s>&quot;fmt&quot;</a-s>
+        <a-s>&quot;os&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>poke</a-v>(<a-v>path</a-v> <a-t>string</a-t>) {
+    <a-v>stats</a-v>, <a-v>_</a-v> <a-o>:=</a-o> <a-v>os</a-v>.<a-pr>Stat</a-pr>(<a-v>path</a-v>)
+    <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;permissions: %o\n&quot;</a-s>, <a-v>stats</a-v>.<a-pr>Mode</a-pr>() <a-o>&amp;</a-o> <a-v>os</a-v>.<a-pr>ModePerm</a-pr>);
+}
+</code></figure><p data-bo="32797">Note how the <code>_windows.go</code> suffix is magic - it’ll get automatically excluded
+on non-Windows platforms. There’s no magic suffix for Unix systems though!</p>
+
+<p data-bo="32951">So we have to add a <a href="https://golang.org/pkg/go/build/">build constraint</a>, which is:</p>
+
+<ul><li>A comment</li>
+<li>That must be “near the top of the file”</li>
+<li>That can only be preceded by blank space</li>
+<li>That must appear before the package clause</li>
+<li>That has its own language</li>
+</ul>
+<p data-bo="33207">From the docs:</p>
+
+<blockquote><p data-bo="33225">A build constraint is evaluated as the OR of space-separated options. Each
+option evaluates as the AND of its comma-separated terms. Each term consists
+of letters, digits, underscores, and dots. A term may be negated with a
+preceding !. For example, the build constraint:</p>
+
+<p data-bo="33507"><code>&#x2F;&#x2F; +build linux,386 darwin,!cgo</code></p>
+
+<p data-bo="33545">corresponds to the boolean formula:</p>
+
+<p data-bo="33585"><code>(linux AND 386) OR (darwin AND (NOT cgo))</code></p>
+
+<p data-bo="33633">A file may have multiple build constraints. The overall constraint is the AND
+of the individual constraints. That is, the build constraints:</p>
+
+<p data-bo="33780"><code>&#x2F;&#x2F; +build linux darwin</code> &gt; <code>&#x2F;&#x2F; +build 386</code></p>
+
+<p data-bo="33827">corresponds to the boolean formula:</p>
+
+<p data-bo="33867"><code>(linux OR darwin) AND 386</code></p>
+
+</blockquote>
+<p data-bo="33896">Fun! Fun fun fun. So, on Linux, we get:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="33937"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go build
+$ ./gofun /usr/bin/man
+permissions: 755
+$ ./gofun /etc/hosts
+permissions: 644
+</code></figure><p data-bo="34040">And on Windows, we get:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="34065"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">&gt; go build
+&gt; .\gofun.exe .\main.go
+readonly? false
+</code></figure><p data-bo="34130">Now, <em>at least there’s a way</em> to write platform-specific code in Go.</p>
+
+<p data-bo="34200">In practice, it gets old very quickly. You now have related code split across
+multiple files, even if <em>only one</em> of the functions is platform-specific.</p>
+
+<p data-bo="34353">Build constraints override the magic suffixes, so it’s never obvious exactly
+which files are compiled in. You also have to duplicate (and keep in sync!)
+function signatures all over the place.</p>
+
+<p data-bo="34547">It’s… a hack. A shortcut. And an annoying one, at that.</p>
+
+<p data-bo="34606">So what happens when you make it hard for users to do things the right way?
+(The right way being, in this case, to <em>not</em> compile in code that isn’t relevant
+for a given platform). They take shortcuts, too.</p>
+
+<p data-bo="34813">Even in the official Go distribution, a lot of code just switches on the value
+of <code>runtime.GOOS</code> at, well, run-time:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="34931"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// src/net/file_test.go</a-c>
+
+<a-k>func</a-k> <a-v>TestFileConn</a-v>(<a-v>t</a-v> <a-o>*</a-o>testing.<a-t>T</a-t>) {
+  <a-k>switch</a-k> <a-v>runtime</a-v>.<a-pr>GOOS</a-pr> {
+  <a-k>case</a-k> <a-s>&quot;plan9&quot;</a-s>, <a-s>&quot;windows&quot;</a-s>:
+    <a-v>t</a-v>.<a-pr>Skipf</a-pr>(<a-s>&quot;not supported on %s&quot;</a-s>, <a-v>runtime</a-v>.<a-pr>GOOS</a-pr>)
+  }
+
+  <a-k>for</a-k> <a-v>_</a-v>, <a-v>tt</a-v> <a-o>:=</a-o> <a-k>range</a-k> <a-v>fileConnTests</a-v> {
+    <a-k>if</a-k> <a-o>!</a-o><a-v>testableNetwork</a-v>(<a-v>tt</a-v>.<a-pr>network</a-pr>) {
+      <a-v>t</a-v>.<a-pr>Logf</a-pr>(<a-s>&quot;skipping %s test&quot;</a-s>, <a-v>tt</a-v>.<a-pr>network</a-pr>)
+      <a-k>continue</a-k>
+    }
+</code></figure><p data-bo="35247">“But these are little things!”</p>
+
+<p data-bo="35279">They’re all little things. They add up. Quickly.</p>
+
+<p data-bo="35329">And they’re symptomatic of the problems with “the Go way” in general. The Go
+way is to half-ass things.</p>
+
+<p data-bo="35434">The Go way is to patch things up until they sorta kinda work, in the name of
+simplicity.</p>
+
+<a id="lots-of-little-things" href="#lots-of-little-things" class="anchor"><h2>Lots of little things</h2></a>
+<p data-bo="35550">Speaking of little things, let’s consider what pushed me over the edge and
+provoked me to write this whole rant in the first place.</p>
+
+<p data-bo="35683">It was <a href="https://github.com/getlantern/idletiming">this package</a>.</p>
+
+<p data-bo="35749">What does it do?</p>
+
+<blockquote><p data-bo="35769">Provides mechanisms for adding idle timeouts to <code>net.Conn</code> and <code>net.Listener</code>.</p>
+
+</blockquote>
+<p data-bo="35849">Why do we need it?</p>
+
+<p data-bo="35869">Because the real-world is messy.</p>
+
+<p data-bo="35903">If you do a naive HTTP request in Go:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="35942"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+  <a-s>&quot;fmt&quot;</a-s>
+  <a-s>&quot;io/ioutil&quot;</a-s>
+  <a-s>&quot;net/http&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+  <a-v>res</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>http</a-v>.<a-pr>Get</a-pr>(<a-s>&quot;http://perdu.com&quot;</a-s>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-k>defer</a-k> <a-v>res</a-v>.<a-pr>Body</a-pr>.<a-pr>Close</a-pr>() <a-c>// this is a *very* common gotcha</a-c>
+
+  <a-v>body</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>ioutil</a-v>.<a-pr>ReadAll</a-pr>(<a-v>res</a-v>.<a-pr>Body</a-pr>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;%s&quot;</a-s>, <a-v>string</a-v>(<a-v>body</a-v>))
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+  <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-v>panic</a-v>(<a-v>err</a-v>)
+  }
+}
+</code></figure><figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="36293"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go run main.go
+&lt;html&gt;&lt;head&gt;&lt;title&gt;Vous Etes Perdu ?&lt;/title&gt;&lt;/head&gt;&lt;body&gt;&lt;h1&gt;Perdu sur l'Internet ?&lt;/h1&gt;&lt;h2&gt;Pas de panique, on va vous aider&lt;/h2&gt;&lt;strong&gt;&lt;pre&gt;    * &lt;----- vous &amp;ecirc;tes ici&lt;/pre&gt;&lt;/strong&gt;&lt;/body&gt;&lt;/html&gt;
+</code></figure><p data-bo="36528">Then it works. When it works.</p>
+
+<p data-bo="36559">If the server never accepts your connection - which might <em>definitely</em> happen
+if it’s dropping all the traffic to the relevant port, then you’ll just hang
+forever.</p>
+
+<p data-bo="36724">If you <em>don’t</em> want to hang forever, you have to do something else.</p>
+
+<p data-bo="36793">Like this:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="36805"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+  <a-s>&quot;fmt&quot;</a-s>
+  <a-s>&quot;io/ioutil&quot;</a-s>
+  <a-s>&quot;net&quot;</a-s>
+  <a-s>&quot;net/http&quot;</a-s>
+  <a-s>&quot;time&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+  <a-v>client</a-v> <a-o>:=</a-o> <a-o>&amp;</a-o>http.<a-t>Client</a-t>{
+    <a-v>Transport</a-v>: <a-o>&amp;</a-o>http.<a-t>Transport</a-t>{
+      <a-v>DialContext</a-v>: (<a-o>&amp;</a-o>net.<a-t>Dialer</a-t>{
+        <a-v>Timeout</a-v>: <a-n>5</a-n> <a-o>*</a-o> <a-v>time</a-v>.<a-pr>Second</a-pr>,
+      }).<a-pr>DialContext</a-pr>,
+    },
+  }
+
+  <a-v>req</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>http</a-v>.<a-pr>NewRequest</a-pr>(<a-s>&quot;GET&quot;</a-s>, <a-s>&quot;http://perdu.com&quot;</a-s>, <a-co>nil</a-co>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+
+  <a-v>res</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>client</a-v>.<a-pr>Do</a-pr>(<a-v>req</a-v>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-k>defer</a-k> <a-v>res</a-v>.<a-pr>Body</a-pr>.<a-pr>Close</a-pr>()
+
+  <a-v>body</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>ioutil</a-v>.<a-pr>ReadAll</a-pr>(<a-v>res</a-v>.<a-pr>Body</a-pr>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;%s&quot;</a-s>, <a-v>string</a-v>(<a-v>body</a-v>))
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+  <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-v>panic</a-v>(<a-v>err</a-v>)
+  }
+}
+</code></figure><p data-bo="37359">Not so simple, but, eh, whatever, it works.</p>
+
+<p data-bo="37404">Unless the server accepts your connection, says it’s going to send a bunch of bytes,
+and then <em>never sends you anything</em>.</p>
+
+<p data-bo="37527">Which definitely, 100%, for-sure, if-it-can-happen-it-does-happen, happens.</p>
+
+<p data-bo="37604">And then you hang forever.</p>
+
+<p data-bo="37632">To avoid that, you can set a timeout on <em>the whole request</em>, like so:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="37703"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-k>package</a-k> main
+
+<a-k>import</a-k> (
+  <a-s>&quot;context&quot;</a-s>
+  <a-s>&quot;fmt&quot;</a-s>
+  <a-s>&quot;io/ioutil&quot;</a-s>
+  <a-s>&quot;net/http&quot;</a-s>
+  <a-s>&quot;time&quot;</a-s>
+)
+
+<a-k>func</a-k> <a-v>main</a-v>() {
+  <a-v>ctx</a-v>, <a-v>cancel</a-v> <a-o>:=</a-o> <a-v>context</a-v>.<a-pr>WithTimeout</a-pr>(<a-v>context</a-v>.<a-pr>Background</a-pr>(), <a-n>5</a-n><a-o>*</a-o><a-v>time</a-v>.<a-pr>Second</a-pr>)
+  <a-k>defer</a-k> <a-v>cancel</a-v>()
+  <a-v>req</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>http</a-v>.<a-pr>NewRequestWithContext</a-pr>(<a-v>ctx</a-v>, <a-s>&quot;GET&quot;</a-s>, <a-s>&quot;http://perdu.com&quot;</a-s>, <a-co>nil</a-co>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+
+  <a-v>res</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>http</a-v>.<a-pr>DefaultClient</a-pr>.<a-pr>Do</a-pr>(<a-v>req</a-v>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-k>defer</a-k> <a-v>res</a-v>.<a-pr>Body</a-pr>.<a-pr>Close</a-pr>()
+
+  <a-v>body</a-v>, <a-v>err</a-v> <a-o>:=</a-o> <a-v>ioutil</a-v>.<a-pr>ReadAll</a-pr>(<a-v>res</a-v>.<a-pr>Body</a-pr>)
+  <a-v>must</a-v>(<a-v>err</a-v>)
+  <a-v>fmt</a-v>.<a-pr>Printf</a-pr>(<a-s>&quot;%s&quot;</a-s>, <a-v>string</a-v>(<a-v>body</a-v>))
+}
+
+<a-k>func</a-k> <a-v>must</a-v>(<a-v>err</a-v> <a-t>error</a-t>) {
+  <a-k>if</a-k> <a-v>err</a-v> <a-o>!=</a-o> <a-co>nil</a-co> {
+    <a-v>panic</a-v>(<a-v>err</a-v>)
+  }
+}
+</code></figure><p data-bo="38221">But that doesn’t work if you’re planning on uploading something large, for
+example. How many seconds is enough to upload a large file? Is 30 seconds
+enough? And how do you know you’re spending those seconds uploading, and not
+waiting for the server to accept your request?</p>
+
+<p data-bo="38495">So, <code>getlantern&#x2F;idletiming</code> adds a mechanism for timing out <em>if there hasn’t
+been any data transmitted in a while</em>, which is distinct from a dial timeout,
+and doesn’t force you to set a timeout on the <em>whole request</em>, so that it
+works for arbitrarily large uploads.</p>
+
+<p data-bo="38762">The repository looks innocent enough:</p>
+
+<p data-bo="38801"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~860357bd2f6b60d7.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~6641e7430e8db2da.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~f3c62e3fddcef10a.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~d53ac5a9499d7585.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~d53ac5a9499d7585.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~53169451b8dbd3f3.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~e050d33e1d04c375.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~7b478156febe1075.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~ae74d20e3e3f3a16.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~ae74d20e3e3f3a16.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~41ab861d28e1c037.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~7c1ad05a512dfcdf.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~cbb7e6f82d6cbf60.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~5cb682e9f95abee8.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~5cb682e9f95abee8.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo~d53ac5a9499d7585.jxl" loading="lazy" width="1003" height="720" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/idle-repo.jxl"></picture></p>
+
+<p data-bo="38828">Just a couple files! And even some tests. Also - it works. I’m using it
+in production. I’m happy with it.</p>
+
+<p data-bo="38935">There’s just.. one thing.</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="38962"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ git clone https://github.com/getlantern/idletiming
+Cloning into 'idletiming'...
+(cut)
+$ cd idletiming
+$ go mod graph | wc -l
+196
+</code></figure><p data-bo="39107">I’m sorry?</p>
+
+<p data-bo="39119">One hundred and ninety-six packages?</p>
+
+<p data-bo="39157">Well, I mean… lots of small, well-maintained libraries isn’t necessarily a
+bad idea - I never really agreed that the takeaway from the <code>left-pad</code> disaster
+was “small libraries are bad”.</p>
+
+<p data-bo="39346">Let’s look at what we’ve got there:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="39383"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">$ go mod graph
+github.com/getlantern/idletiming github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="1b7c747a6972686f7a5b6d2b352b352b36292b292b2b2a282a2a2f2b2d292936782d2f2c287e287e7f2a2328">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/getlantern/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="4b2d2f28243e253f0b3d7b657b657b66797b7a727b727a797a7f797e7b7d662d73722a2d2f7c787d7c287f">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/getlantern/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="4f28202320280f397f617f617f627d7f7e767f777c7f7f787b767d7f627b2a297d2a7876772c7d2b78">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/getlantern/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="402732343221232b0036706e706e706d72707176707872747179757272786d232226767724732621702624">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/getlantern/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="bcd1c8d5d1d9fcca8c928c928c918e8c8d8b8c8d8d8b8d858f8f8f8d91dedd8d8d88d988dd848ede8c">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/getlantern/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="650b00111d2513554b554b55485755545c5554545557575557555c485c5c5457010053035c510301">[email&#160;protected]</a>
+github.com/getlantern/idletiming github.com/stretchr/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="22564751564b445b6254130c160c12">[email&#160;protected]</a>
+</code></figure><p data-bo="40066">I’m sure all of these are reasonable. Lantern is a “site unblock” product, so
+it has to deal with networking a lot, it makes sense that they’d have their
+own libraries for a bunch of things, including logging (<code>golog</code>) and some
+network extensions (<code>netx</code>). <code>testify</code> is a well-known set of testing
+helpers, I use it too!</p>
+
+<p data-bo="40388">Let’s keep going:</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="40407"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="7b1c141a0912080f1a3b0d4b554b554b56494b494b4b4a484a4a4f4b4d494956184d4f4c481e481e1f4a4348">[email&#160;protected]</a> github.com/Shopify/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f88b998a999599b88ec9d6cacbd6c9">[email&#160;protected]</a>
+</code></figure><p data-bo="40525">Uhh….</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="40534"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="b0d7dfd1c2d9c3c4d1f0c6809e809e809d82808280808183818184808682829dd386848783d583d5d4818883">[email&#160;protected]</a> github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="b3d5c0dddcc7dad5caf3c5829d879d81">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="bed9d1dfccd7cdcadffec88e908e908e938c8e8c8e8e8f8d8f8f8a8e888c8c93dd888a898ddb8ddbda8f868d">[email&#160;protected]</a> github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="32555e5d557244021c021c021f0002030a0206030b0305000a0007">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="01666e6073687275604177312f312f312c33313331313032303035313733332c623735363264326465303932">[email&#160;protected]</a> github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e5969589908b8ec88d8086c8828aa593d5cbd6cbd6">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="86e1e9e7f4eff5f2e7c6f0b6a8b6a8b6abb4b6b4b6b6b7b5b7b7b2b6b0b4b4abe5b0b2b1b5e3b5e3e2b7beb5">[email&#160;protected]</a> github.com/garyburd/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a4d6c1c0cdc3cbe4d2958a928a94">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="7e19111f0c170d0a1f3e084e504e504e534c4e4c4e4e4f4d4f4f4a4e484c4c531d484a494d1b4d1b1a4f464d">[email&#160;protected]</a> github.com/golang/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="bacac8d5ced5d8cfdcfacc8b94899488">[email&#160;protected]</a>
+</code></figure><p data-bo="41109">Wait, I think we..</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="41129"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="4c2b232d3e253f382d0c3a7c627c627c617e7c7e7c7c7d7f7d7d787c7a7e7e612f7a787b7f297f29287d747f">[email&#160;protected]</a> github.com/influxdata/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="620b0c040e171a0600534f010e0b070c162214524c524c524f5052535b525a">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="83e4ece2f1eaf0f7e2c3f5b3adb3adb3aeb1b3b1b3b3b2b0b2b2b7b3b5b1b1aee0b5b7b4b0e6b0e6e7b2bbb0">[email&#160;protected]</a> github.com/klauspost/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="d4b7a4a1bdb094a2e5fae6fae5">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="53343c32213a2027321325637d637d637e61636163636260626267636561617e306567646036603637626b60">[email&#160;protected]</a> github.com/klauspost/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="89fbececedfae6e5e6e4e6e7c9ffb8a7b0a7bb">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="b4d3dbd5c6ddc7c0d5f4c2849a849a8499868486848485878585808482868699d782808387d187d1d0858c87">[email&#160;protected]</a> github.com/kylelemons/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="adcac2c9c8cfd8caeddb9c839c839d">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="7b1c141a0912080f1a3b0d4b554b554b56494b494b4b4a484a4a4f4b4d494956184d4f4c481e481e1f4a4348">[email&#160;protected]</a> github.com/onsi/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="34535d5a5f535b7442051a05041a05">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="85e2eae4f7ecf6f1e4c5f3b5abb5abb5a8b7b5b7b5b5b4b6b4b4b1b5b3b7b7a8e6b3b1b2b6e0b6e0e1b4bdb6">[email&#160;protected]</a> github.com/onsi/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="583f37353d3f39182e69766f7668">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="9dfaf2fceff4eee9fcddebadb3adb3adb0afadafadadacaeacaca9adabafafb0feaba9aaaef8aef8f9aca5ae">[email&#160;protected]</a> github.com/openconfig/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="2a4d4447436a5c1a041a041a07181a1b131a1218191b121e1a1b1e07121348">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="5c3b333d2e352f283d1c2a6c726c726c716e6c6e6c6c6d6f6d6d686c6a6e6e713f6a686b6f396f39386d646f">[email&#160;protected]</a> github.com/openconfig/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="255740434057404b46406553150b150b15081715141c151217121514101d16">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="50373f3122392324311026607e607e607d62606260606163616164606662627d336664676335633534616863">[email&#160;protected]</a> github.com/prometheus/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="2b4847424e455f744c44474a454c6b5d1a051a051b">[email&#160;protected]</a>
+</code></figure><p data-bo="42150">I can understand some of these but…</p>
+
+<figure role="region" aria-label="Shell session code block" class="code-block has-language-tag" translate="no" data-lang="shell" data-bo="42189"><span class="language-tag" title="Shell session"></span><code class="scroll-wrapper">github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="77101816051e040316370147594759475a45474547474644464643474145455a144143404412441213464f44">[email&#160;protected]</a> github.com/satori/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="44232b6a31312d200432756a766a74">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="0d6a626c7f647e796c4d7b3d233d233d203f3d3f3d3d3c3e3c3c393d3b3f3f206e3b393a3e683e68693c353e">[email&#160;protected]</a> github.com/stretchr/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="5b2f3e282f323d221b2d6a7568756b">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a4c3cbc5d6cdd7d0c5e4d2948a948a9489969496949495979595909492969689c792909397c197c1c0959c97">[email&#160;protected]</a> github.com/templexxx/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="dfbcafaab9babeab9fa9eff1eff1eff2edefeee7efe8edebefeeedeeedeaf2bc">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a2c5cdc3d0cbd1d6c3e2d4928c928c928f90929092929391939396929490908fc194969591c791c7c6939a91">[email&#160;protected]</a> github.com/templexxx/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="d1a9bea391a7e1ffe1ffe1fce3e1e0e9e0e1e3e2e1e2e1e7e5e6fce5b4e8e3b7">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="d5b2bab4a7bca6a1b495a3e5fbe5fbe5f8e7e5e7e5e5e4e6e4e4e1e5e3e7e7f8b6e3e1e2e6b0e6b0b1e4ede6">[email&#160;protected]</a> github.com/tjfoc/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="b2d5dfc1dff2c4839c829c83">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="6d0a020c1f041e190c2d1b5d435d435d405f5d5f5d5d5c5e5c5c595d5b5f5f400e5b595a5e085e08095c555e">[email&#160;protected]</a> github.com/xtaci/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="751e160558121a3503405b415b40">[email&#160;protected]</a>+incompatible
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e2858d83908b919683a294d2ccd2ccd2cfd0d2d0d2d2d3d1d3d3d6d2d4d0d0cf81d4d6d5d187d18786d3dad1">[email&#160;protected]</a> github.com/xtaci/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="fa969589898399959494ba8ccad4cad4cad7c8cacbc3cacccac8cbcacfcbc9c8d7c29e9c">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="bfd8d0decdd6cccbdeffc98f918f918f928d8f8d8f8f8e8c8e8e8b8f898d8d92dc898b888cda8cdadb8e878c">[email&#160;protected]</a> golang.org/x/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e28c8796a294d2ccd2ccd2cfd0d2d3dbd2dbd3d0d3d4d2d5d3d2cfd0d687d3db80868780d284d0">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="c0a7afa1b2a9b3b4a180b6f0eef0eef0edf2f0f2f0f0f1f3f1f1f4f0f6f2f2eda3f6f4f7f3a5f3a5a4f1f8f3">[email&#160;protected]</a> golang.org/x/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e1929892a197d1cfd1cfd1ccd3d1d0d8d1d8d0d3d0d5d0d8d2d3cc8382d8d7d684878280d583d9">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="97f0f8f6e5fee4e3f6d7e1a7b9a7b9a7baa5a7a5a7a7a6a4a6a6a3a7a1a5a5baf4a1a3a0a4f2a4f2f3a6afa4">[email&#160;protected]</a> golang.org/x/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e195888c84a197d1cfd1cfd1ccd3d1d0d8d1d2d1d9d3d1d3d9d3d6ccd885d3d584d9d3d3d6d383d5">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="ee89818f9c879d9a8fae98dec0dec0dec3dcdedcdededfdddfdfdaded8dcdcc38dd8dad9dd8bdd8b8adfd6dd">[email&#160;protected]</a> golang.org/x/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="691d0606051a291f5947594759445b5958505950585b58515c5f5a5f44515e0d500f59500a5c0d5150">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a1c6cec0d3c8d2d5c0e1d7918f918f918c93919391919092909095919793938cc297959692c492c4c5909992">[email&#160;protected]</a> google.golang.org/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="086f7a786b487e39263a3b2639">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="93f4fcf2e1fae0e7f2d3e5a3bda3bda3bea1a3a1a3a3a2a0a2a2a7a3a5a1a1bef0a5a7a4a0f6a0f6f7a2aba0">[email&#160;protected]</a> gopkg.in/bsm/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="9eecffeafbf2f7f3f7eab0e8afdee8afb0aeb0aeb3acaeafa8aeacacaeafabaaa7afa7b3fafcafaa">[email&#160;protected]</a>&gt;
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="4c2b232d3e253f382d0c3a7c627c627c617e7c7e7c7c7d7f7d7d787c7a7e7e612f7a787b7f297f29287d747f">[email&#160;protected]</a> gopkg.in/jcmturner/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="9ef9f1f7fafbf0eaf7eae7b0e8addee8adb0aeb0ae">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="dfb8b0beadb6acabbe9fa9eff1eff1eff2edefedefefeeeceeeeebefe9ededf2bce9ebe8ecbaecbabbeee7ec">[email&#160;protected]</a> gopkg.in/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="8dffe8e9e4fea3fbb9cdfbb9a3bfa3b9">[email&#160;protected]</a>
+github.com/aristanetworks/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f6919997849f858297b680c6d8c6d8c6dbc4c6c4c6c6c7c5c7c7c2c6c0c4c4db95c0c2c1c593c59392c7cec5">[email&#160;protected]</a> gopkg.in/<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="3c455d5150124a0e7c4a0e120e120e">[email&#160;protected]</a>
+</code></figure><p data-bo="44011">STOP! Just stop. Stop it already.</p>
+
+<p data-bo="44046">It keeps going on, and on. There’s everything.</p>
+
+<p data-bo="44094"><a href="https://en.wikipedia.org/wiki/YAML">YAML</a>, <a href="https://redis.io/">Redis</a>,
+<a href="https://grpc.io/">GRPC</a>, which in turns needs
+<a href="https://developers.google.com/protocol-buffers/">protobuf</a>,
+<a href="https://en.wikipedia.org/wiki/InfluxDB">InfluxDB</a>, an <a href="https://github.com/Shopify/sarama">Apache Kafka
+client</a>, a
+<a href="https://prometheus.io/">Prometheus</a> client,
+<a href="https://en.wikipedia.org/wiki/Snappy_(compression)">Snappy</a>,
+<a href="https://en.wikipedia.org/wiki/Zstandard">Zstandard</a>,
+<a href="https://lz4.github.io/lz4/">LZ4</a>, <a href="https://github.com/shopify/toxiproxy">a chaos-testing TCP
+proxy</a>, three other logging packages, and client
+libraries for various Google Cloud services.</p>
+
+<p data-bo="44741">What could <em>possibly</em> justify all this?</p>
+
+<p data-bo="44782">Let’s review:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="44797"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// `idletiming_listener.go`</a-c>
+
+<a-k>package</a-k> idletiming
+
+<a-k>import</a-k> (
+  <a-s>&quot;net&quot;</a-s>
+  <a-s>&quot;time&quot;</a-s>
+)
+</code></figure><p data-bo="44885">Only built-in imports. Good.</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="44915"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// `idletiming_conn.go`</a-c>
+
+<a-c>// package idletiming provides mechanisms for adding idle timeouts to net.Conn</a-c>
+<a-c>// and net.Listener.</a-c>
+<a-k>package</a-k> idletiming
+
+<a-k>import</a-k> (
+  <a-s>&quot;errors&quot;</a-s>
+  <a-s>&quot;io&quot;</a-s>
+  <a-s>&quot;net&quot;</a-s>
+  <a-s>&quot;sync&quot;</a-s>
+  <a-s>&quot;sync/atomic&quot;</a-s>
+  <a-s>&quot;time&quot;</a-s>
+
+  <a-s>&quot;github.com/getlantern/golog&quot;</a-s>
+  <a-s>&quot;github.com/getlantern/mtime&quot;</a-s>
+  <a-s>&quot;github.com/getlantern/netx&quot;</a-s>
+)
+</code></figure><p data-bo="45238">This one is the meat of the library, so to say, and it requires a few of the
+<code>getlantern</code> packages we’ve seen:</p>
+
+<p data-bo="45350"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~44a8c3441ea927ef.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~78f5efdc0f5ce704.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~e877dc481be817d9.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~59da5fe31ae42719.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~59da5fe31ae42719.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~a8bb8abb1d2cda60.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~5d098083afb8d1ec.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~30ff108a016ffc1b.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~ebf807255d103afe.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~ebf807255d103afe.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~4162f6e96e77316c.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~44e6cb68761aff0d.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~3c9eaa40ed7f15bc.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~13c5cbbeb83218d2.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~13c5cbbeb83218d2.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph~59da5fe31ae42719.jxl" loading="lazy" width="1338" height="403" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/golog-graph.jxl"></picture></p>
+
+<p data-bo="45379">It does end up importing <code>golang.org&#x2F;x&#x2F;net&#x2F;http2&#x2F;hpack</code> - but that’s just because
+of <code>net&#x2F;http</code>. These are built-ins, so let’s ignore them for now.</p>
+
+<p data-bo="45528"><code>getlantern&#x2F;hex</code> is self-contained, so, moving on to <code>getlantern&#x2F;mtime</code>:</p>
+
+<p data-bo="45602"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~098d16153a66e73d.w400.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~53fbe7538280beb4.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~53fbe7538280beb4.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~61381f0906165e72.w400.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~7eb5374f9c336838.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~7eb5374f9c336838.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~c7c14b219d2f8f02.w400.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~7c745a0c27ab8c61.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~7c745a0c27ab8c61.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph~53fbe7538280beb4.jxl" loading="lazy" width="666" height="197" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/mtime-graph.jxl"></picture></p>
+
+<p data-bo="45631">That’s it? What’s why Go ends up fetching <em>the entire</em>
+<code>github.com&#x2F;aristanetworks&#x2F;goarista</code> repository, and <em>all its transitive
+dependencies</em>?</p>
+
+<p data-bo="45775">What does <code>aristanetworks&#x2F;goariasta&#x2F;monotime</code> even do?</p>
+
+<p data-bo="45831"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~c3ce8734a9c5a74c.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~b293a13e3b0b9ba3.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~77884bf27db54273.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~ba2afc2d5a4c6c33.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~ba2afc2d5a4c6c33.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~e8e3e90b76647130.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~a591d87a8fd01790.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~010070de562672ba.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~c2d2d445b0cc6b38.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~c2d2d445b0cc6b38.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~008044ad79040be0.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~2b8ac64c615f3582.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~fc6282273fc68482.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~b46673a0265e5524.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~b46673a0265e5524.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github~ba2afc2d5a4c6c33.jxl" loading="lazy" width="1007" height="370" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/monotime-github.jxl"></picture></p>
+
+<p data-bo="45864">Mh. Let’s look inside <code>issue15006.s</code></p>
+
+<figure role="region" aria-label="C code block" class="code-block has-language-tag" translate="no" data-lang="c" data-bo="45902"><span class="language-tag" title="C"></span><code class="scroll-wrapper"><a-c>// Copyright (c) 2016 Arista Networks, Inc.</a-c>
+<a-c>// Use of this source code is governed by the Apache License 2.0</a-c>
+<a-c>// that can be found in the COPYING file.</a-c>
+
+<a-c>// This file is intentionally empty.</a-c>
+<a-c>// It&#39;s a workaround for https://github.com/golang/go/issues/15006</a-c>
+</code></figure><p data-bo="46168">I uh… okay.</p>
+
+<p data-bo="46183">What does <a href="https://github.com/golang/go/issues/15006">that issue</a> say?</p>
+
+<blockquote><p data-bo="46257">This is known and I think the empty assembly file is the accepted fix.</p>
+
+<p data-bo="46332">It’s a rarely used feature and having an assembly file also make it
+standout.</p>
+
+<p data-bo="46416">I don’t think we should make this unsafe feature easy to use.</p>
+
+</blockquote>
+<p data-bo="46479">And later (emphasis mine):</p>
+
+<blockquote><p data-bo="46509">I agree with Minux. If you’re looking at a Go package to import, you might
+want to know if it does any unsafe trickery. Currently you have to grep for
+an import of unsafe <strong>and look for non-.go files</strong>. If we got rid of the
+requirement for the empty .s file, then you’d have to grep for &#x2F;&#x2F;go:linkname
+also.</p>
+
+</blockquote>
+<p data-bo="46825">That’s… that’s certainly a stance.</p>
+
+<p data-bo="46863">But <em>which</em> unsafe feature exactly?</p>
+
+<p data-bo="46900">Let’s look at <code>nanotime.go</code>:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="46930"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// Copyright (c) 2016 Arista Networks, Inc.</a-c>
+<a-c>// Use of this source code is governed by the Apache License 2.0</a-c>
+<a-c>// that can be found in the COPYING file.</a-c>
+
+<a-c>// Package monotime provides a fast monotonic clock source.</a-c>
+<a-k>package</a-k> monotime
+
+<a-k>import</a-k> (
+  <a-s>&quot;time&quot;</a-s>
+  _ <a-s>&quot;unsafe&quot;</a-s> <a-c>// required to use //go:linkname</a-c>
+)
+
+<a-c>//go:noescape</a-c>
+<a-c>//go:linkname nanotime runtime.nanotime</a-c>
+<a-k>func</a-k> <a-v>nanotime</a-v>() <a-t>int64</a-t>
+
+<a-c>// Now returns the current time in nanoseconds from a monotonic clock.</a-c>
+<a-c>// The time returned is based on some arbitrary platform-specific point in the</a-c>
+<a-c>// past.  The time returned is guaranteed to increase monotonically at a</a-c>
+<a-c>// constant rate, unlike time.Now() from the Go standard library, which may</a-c>
+<a-c>// slow down, speed up, jump forward or backward, due to NTP activity or leap</a-c>
+<a-c>// seconds.</a-c>
+<a-k>func</a-k> <a-v>Now</a-v>() <a-t>uint64</a-t> {
+  <a-k>return</a-k> <a-v>uint64</a-v>(<a-v>nanotime</a-v>())
+}
+
+<a-c>// Since returns the amount of time that has elapsed since t. t should be</a-c>
+<a-c>// the result of a call to Now() on the same machine.</a-c>
+<a-k>func</a-k> <a-v>Since</a-v>(<a-v>t</a-v> <a-t>uint64</a-t>) time.<a-t>Duration</a-t> {
+  <a-k>return</a-k> <a-v>time</a-v>.<a-pr>Duration</a-pr>(<a-v>Now</a-v>() <a-o>-</a-o> <a-v>t</a-v>)
+}
+</code></figure><p data-bo="47956">That’s it. That’s the whole package.</p>
+
+<p data-bo="47994">The unsafe feature in question is being able to access unexported (read:
+lowercase, <em>sigh</em>) symbols from the Go standard library.</p>
+
+<p data-bo="48125">Why is that even needed?</p>
+
+<p data-bo="48151">If you remember from earlier, Rust has two types for time: <code>SystemTime</code>,
+which corresponds to your… system’s… time, which can be adjusted via
+<a href="https://en.wikipedia.org/wiki/Network_Time_Protocol">NTP</a>. It can go
+back, so subtraction can fail.</p>
+
+<p data-bo="48399">And it has <code>Instant</code>, which is weakly monotonically increasing - at worse,
+it’ll give the same value twice, but never <em>less</em> than the previous value.
+This is useful to measure elapsed time <em>within a process</em>.</p>
+
+<p data-bo="48609">How did Go solve that problem?</p>
+
+<p data-bo="48641">At first, <a href="https://github.com/golang/go/issues/16658">it didn’t</a>. Monotonic
+time measurement is a hard problem, so it was only available internally, in
+the standard library, not for regular Go developers (a common theme):</p>
+
+<p data-bo="48864"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~63fef5985da88aee.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~ca324dcd8d4c0f95.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~13f58642ad66de52.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~dfa613022ab10021.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~dfa613022ab10021.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~942f0e494bf13cf5.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~b124a9e9c294c791.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~084d19ecf49e359f.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~0888bedec31c10e3.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~0888bedec31c10e3.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~d0256d157d227f29.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~a4e53ffeecf0c72f.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~729c03bc7fb8f60c.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~3e0360cf7440947d.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~3e0360cf7440947d.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime~dfa613022ab10021.jxl" loading="lazy" width="939" height="618" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/expose-nanotime.jxl"></picture></p>
+
+<p data-bo="48897">And then, <a href="https://github.com/golang/go/issues/12914">it did</a>.</p>
+
+<p data-bo="48961">Sort of. In the most “Go way” possible.</p>
+
+<blockquote><p data-bo="49004">I thought some more about the suggestion above to reuse <code>time.Time</code> with a
+special location. The special location still seems wrong, but what if we
+reuse <code>time.Time</code> by storing inside it both a wall time and a monotonic time,
+fetched one after the other?</p>
+
+<p data-bo="49269">Then there are two kinds of <code>time.Time</code>s: those with wall <em>and</em> monotonic
+stored inside (let’s call those “wall+monotonic Times”) and those with only
+wall stored inside (let’s call those “wall-only Times”).</p>
+
+<p data-bo="49484">Suppose further that:</p>
+
+<ul><li><code>time.Now</code> returns a wall+monotonic Time.</li>
+<li>for <code>t.Add(d)</code>, if t is a wall+monotonic Time, so is the result;
+if t is wall-only, so is the result.</li>
+<li>all other functions that return Times return wall-only Times. These include:
+<code>time.Date</code>, <code>time.Unix</code>, <code>t.AddDate</code>, <code>t.In</code>, <code>t.Local</code>, <code>t.Round</code>, <code>t.Truncate</code>,
+<code>t.UTC</code></li>
+<li>for <code>t.Sub(u)</code>, if t and u are both wall+monotonic, the result is computed by
+subtracting monotonics; otherwise the result is computed by subtracting wall
+times. - <code>t.After(u)</code>, <code>t.Before(u)</code>, <code>t.Equal(u)</code> compare monotonics if available
+(just like <code>t.Sub(u)</code>), otherwise walls.</li>
+<li>all the other functions that operate on time.Times use the wall time only.
+These include: <code>t.Day</code>, <code>t.Format</code>, <code>t.Month</code>, <code>t.Unix</code>, <code>t.UnixNano</code>, <code>t.Year</code>, and so on.</li>
+</ul>
+<p data-bo="50318">Doing this returns a kind of hybrid time from <code>time.Now</code>: it works as a wall
+time but also works as a monotonic time, and future operations use the right
+one.</p>
+
+</blockquote>
+<p data-bo="50482">So, as of Go 1.9 - problem solved!</p>
+
+<p data-bo="50518">If you’re confused by the proposal, no worries, let’s check out the release notes:</p>
+
+<blockquote><a id="transparent-monotonic-time-support" href="#transparent-monotonic-time-support" class="anchor"><h3>Transparent Monotonic Time support</h3></a>
+<p data-bo="50647">The <a href="https://golang.org/pkg/time/"><code>time</code></a> package now transparently tracks
+monotonic time in each <a href="https://golang.org/pkg/time/#Time"><code>Time</code></a> value,
+making computing durations between two <code>Time</code> values a safe operation in the
+presence of wall clock adjustments. See the <a href="https://golang.org/pkg/time/#hdr-Monotonic_Clocks">package
+docs</a> and <a href="https://golang.org/design/12914-monotonic">design
+document</a> for details.</p>
+
+</blockquote>
+<p data-bo="51073">This changed the behavior of a number of Go packages, but, the core team
+knows best:</p>
+
+<p data-bo="51159"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~e56c377780e8d726.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~f40140a875cfc6b8.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~362305aad203e028.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~032e58c32da50a5d.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~032e58c32da50a5d.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~4d06f8428f510964.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~8d9ee48ed1038b6e.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~b4abe39d83fe9246.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~89019d5da5b99173.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~89019d5da5b99173.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~60359c093e7e73e7.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~b38e0459cc96283e.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~259f8aff7584a4ee.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~436e65f8b5ad0f60.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~436e65f8b5ad0f60.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change~032e58c32da50a5d.jxl" loading="lazy" width="947" height="248" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/breaking-change.jxl"></picture>
+This <em>is</em> a breaking change, but more importantly, it wasn’t before the
+introduction of Go modules (declared “stable” as of Go 1.14) that you could
+require a certain Go version for a package.</p>
+
+<p data-bo="51384">So, if you have a package without a minimum required Go version, you can’t be
+sure you have the “transparent monotonic time support” of Go 1.9, and it’s
+better to rely on <code>aristanetworks&#x2F;goarista&#x2F;monotime</code>, which pulls 100+ packages,
+because Go packages are “simple” and they’re just folders in a git repository.</p>
+
+<div data-bo="51700" class="tip markup-container">
+<div class="tip-header bear-mark">
+<picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~f8031274cabccdf6.w400.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~451aa11f175f8fc4.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~2add1c1dfe1cf845.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~e1d6acd7da0c8bd7.w400.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~fe0a016a137f310a.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~909ed9e4ba5c3317.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~165a8452ce0788cd.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~c7e5fe0bec9ef4d6.w400.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~430cbb8ae0eaa295.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~9df5546a60e748fc.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 1x,https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~ff0c651f16d7613d.webp 2x"><img src="https://cdn.fasterthanli.me/content/img/reimena/coolbear-idea~85823bd96ffd0bb6.jxl" loading="lazy" width="48" height="48" data-kind="media" data-input-path="/content/img/reimena/coolbear-idea.jxl" class="bear" alt="Cool bear"></picture>
+Cool Bear's hot tip
+</div>
+<p data-bo="51711">It’s not <em>just</em> <code>idletiming</code> that depends on monotime.</p>
+
+<p data-bo="51770">As of the time of this writing, <a href="https://godoc.org/github.com/aristanetworks/goarista/monotime?importers">266 publicly-available Go packages import
+it</a>,
+and they pull in the hundred+ dependencies with it.</p>
+
+</div><p data-bo="51980">The change raised other questions: since <code>time.Time</code> now sometimes packs two
+types of time, two calls are needed. This concern was dismissed.</p>
+
+<p data-bo="52123"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~7d2b8017a9d92036.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~0abcb115969c8759.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~34a8944c7571afb6.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~ef591024c9627173.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~ef591024c9627173.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~d4757a0ed98ea8bc.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~2a9406f18212f713.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~ddc7a4e3ca34bb69.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~5c35a923553cc48f.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~5c35a923553cc48f.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~2ae271eca50f1f7a.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~c7cd4fc480f633be.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~9c4d314136e3c1c4.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~0b454b1569fa7473.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~0b454b1569fa7473.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls~ef591024c9627173.jxl" loading="lazy" width="978" height="884" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/two-calls.jxl"></picture></p>
+
+<p data-bo="52150">In order for <code>time.Time</code> not to grow, both values were <em>packed</em> inside it, which
+restricted the range of times that could be represented with it:</p>
+
+<p data-bo="52297"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~15b3ddc907d76c0d.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~1fac295787fec5e7.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~26224a451e4eebf7.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~19c1e50bed73cc73.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~19c1e50bed73cc73.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~9e06f70160bc56ba.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~4dc0107d435b44a9.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~a43c45965f10c99d.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~1a68aa9e665f11c7.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~1a68aa9e665f11c7.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~b45d3ea0ff1aa0be.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~0cdfe1eecfc4689b.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~55185e4727bcbe09.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~804db1f38f9c3125.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~804db1f38f9c3125.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing~19c1e50bed73cc73.jxl" loading="lazy" width="947" height="481" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/packing.jxl"></picture></p>
+
+<p data-bo="52322">This issue was raised early on in the design process:</p>
+
+<p data-bo="52377"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~5528936a29b8f2dc.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~85a77846a9504ac1.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~c93f69650407394d.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~2e8c7032865cfadd.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~2e8c7032865cfadd.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~b2c12e29530c80aa.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~18ffb1a8c32b0ce3.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~4a26e791a6b3cb6b.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~e8ebb8edb055c3d1.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~e8ebb8edb055c3d1.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~2a3d237e92d6dc34.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~6cde9399b8d1ed6e.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~2d477c6e2c142012.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~f91fff84b09f5249.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~f91fff84b09f5249.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1~2e8c7032865cfadd.jxl" loading="lazy" width="1006" height="566" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded1.jxl"></picture></p>
+
+<p data-bo="52404"><picture><source type="image/jxl" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~5a33202e0d93f575.w400.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~c95a9a90b6a7791b.w800.jxl 2x"><source type="image/jxl" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~8159dc3b4d5966d8.w900.jxl 1x"><source type="image/jxl" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~6f521da61c273c43.jxl 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~6f521da61c273c43.jxl 2x"><source type="image/avif" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~2f4c7b372e98aca9.w400.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~77e3bf18f1487a09.w800.avif 2x"><source type="image/avif" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~20465c2e4cc72d5f.w900.avif 1x"><source type="image/avif" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~7b6e3eb38f9ecc3f.avif 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~7b6e3eb38f9ecc3f.avif 2x"><source type="image/webp" media="(max-width: 400px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~98b8c83fc8f87f27.w400.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~b2177448a7b7ce5f.w800.webp 2x"><source type="image/webp" media="(max-width: 900px)" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~068e4516a9359845.w900.webp 1x"><source type="image/webp" srcset="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~5b09efca61d01f0c.webp 1x,https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~5b09efca61d01f0c.webp 2x"><img src="https://cdn.fasterthanli.me/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2~6f521da61c273c43.jxl" loading="lazy" width="975" height="242" data-kind="media" data-input-path="/content/articles/i-want-off-mr-golangs-wild-ride/assets/embedded2.jxl"></picture></p>
+
+<p data-bo="52431">You can check out <a href="https://github.com/golang/go/issues/12914">the complete
+thread</a> for a full history.</p>
+
+<a id="parting-words" href="#parting-words" class="anchor"><h2>Parting words</h2></a>
+<p data-bo="52553">This is just one issue. But there are many like it - this one is as good an
+example as any.</p>
+
+<p data-bo="52646">Over and over, Go is a victim of its own mantra - “simplicity”.</p>
+
+<p data-bo="52711">It constantly takes power away from its users, reserving it for itself.</p>
+
+<p data-bo="52784">It constantly lies about how complicated real-world systems are, and optimize
+for the 90% case, ignoring correctness.</p>
+
+<p data-bo="52903">It is a minefield of subtle gotchas that have very real implications -
+everything looks simple <em>on the surface</em>, but nothing is.</p>
+
+<p data-bo="53033">The <a href="https://dave.cheney.net/2014/03/19/channel-axioms">Channel Axioms</a> are a
+good example. There is nothing explicit about them. They are invented truths,
+that were convenient to implement, and who everyone must now work around.</p>
+
+<p data-bo="53264">Here’s a fun gotcha I haven’t mentioned yet:</p>
+
+<figure role="region" aria-label="Go code block" class="code-block has-language-tag" translate="no" data-lang="go" data-bo="53310"><span class="language-tag" title="Go"></span><code class="scroll-wrapper"><a-c>// IdleTimingConn is a net.Conn that wraps another net.Conn and that times out</a-c>
+<a-c>// if idle for more than idleTimeout.</a-c>
+<a-k>type</a-k> <a-t>IdleTimingConn</a-t> <a-k>struct</a-k> {
+  <a-c>// Keep 64-bit words at the top to make sure 64-bit alignment, see</a-c>
+  <a-c>// https://golang.org/pkg/sync/atomic/#pkg-note-BUG</a-c>
+  <a-pr>lastActivityTime</a-pr> <a-t>uint64</a-t>
+
+  <a-c>// (cut)</a-c>
+}
+</code></figure><p data-bo="53630">The documentation reads:</p>
+
+<blockquote><p data-bo="53658">BUGS</p>
+
+<p data-bo="53667">On ARM, x86-32, and 32-bit MIPS, it is the caller’s responsibility to arrange
+for 64-bit alignment of 64-bit words accessed atomically. The first word in a
+variable or in an allocated struct, array, or slice can be relied upon to be
+64-bit aligned.</p>
+
+</blockquote>
+<p data-bo="53923">If the condition isn’t satisfied, it panics at run-time. Only on 32-bit
+platforms. I didn’t have to go far to hit this one - I got bit by this bug
+multiple times in the last few years.</p>
+
+<p data-bo="54109">It’s a footnote. Not a compile-time check. There’s an <a href="https://github.com/golang/go/issues/11891">in-progress
+lint</a>, for very simple cases, because
+Go’s simplicity made it extremely hard to check for.</p>
+
+<p data-bo="54311">This fake “simplicity” runs deep in the Go ecosystem. Rust has the opposite
+problem - things look scary at first, but it’s for a good reason. The problems
+tackled have inherent complexity, and it takes some effort to model them
+appropriately.</p>
+
+<p data-bo="54555">At this point in time, I deeply regret investing in Go.</p>
+
+<p data-bo="54612">Go is a Bell Labs fantasy, and not a very good one at that.</p>
+
+<a id="april-2022-update" href="#april-2022-update" class="anchor"><h2>April 2022 Update</h2></a>
+<p data-bo="54695">I wrote this in 2020, and have changed jobs twice since. Both jobs involved Go
+in some capacity, where it’s supposed to shine (web services). It has not been a
+pleasant experience either - I’ve lost count of the amount of incidents directly
+caused by poor error handling, or Go default values.</p>
+
+<p data-bo="54990">If folks walk away with only one new thought from this, please let it be that:
+<em>defaults matter</em>. Go lets you whip something up quickly, but making the result
+“production-ready” is left as an exercise to the writer. Big companies that have
+adopted it have developed tons of tooling around it, use all available linters,
+do code generation, check the disassembly, and regularly pay the engineering
+cost of just using Go at all.</p>
+
+<p data-bo="55418">That’s not how most Go code is written though. I’m interested not in what the
+language lets you do, but what is typical for a language - what is idiomatic,
+what “everyone ends up doing”, because it is encouraged.</p>
+
+<p data-bo="55632">Because that’s the kind of code I inevitably end up being on-call for, and I’m
+tired of being woken up due to the same classes of preventable errors, all the
+time. It doesn’t matter that I don’t personally write Go anymore: it’s
+inescapable. If it’s not internal Go code, it’s in a SAAS we pay for: and no
+matter who writes it, it fails in all the same predictable ways.</p>
+
+<p data-bo="56004">Generics will not solve this. It is <em>neat</em> that they found a way to sneak them
+into the language, but it’s not gonna change years of poor design decisions, and
+it’s definitely not gonna change the enormous amount of existing Go code out
+there, especially as <a href="https://planetscale.com/blog/generics-can-make-your-go-code-slower">the
+discourse</a>
+around them not being the usability+performance win everyone thought they would
+be keeps unfolding.</p>
+
+<p data-bo="56447">As I’ve mentioned <a href="https://twitter.com/fasterthanlime/status/1519455555517136902">recently on
+Twitter</a>, what
+makes everything worse is that you cannot replace Go piecemeal once it has taken
+hold in a codebase: its FFI story is painful, the only good boundary with Go is
+a network boundary, and there’s often a latency concern there.</p>
+
+<p data-bo="56781">Lastly: pointing out that I have been teaching Rust is a lazy and dismissive
+response to this. For me personally, I have found it to be the least awful
+option in a bunch of cases. I am yearning for even better languages, ones that
+tackle the same kind of issues but do it even better. I like to remind everyone
+that we’re not out there cheering for sports team, just discussing our tools.</p>
+
+<p data-bo="57171">If you’re looking to reduce the whole discourse to “X vs Y”, let it be
+“<a href="https://serde.rs/">serde</a> vs crossing your fingers and hoping user input is
+well-formed”. It is one of the better reductions of the problem: it really is
+“specifying behavior that should be allowed (and rejecting everything else)” vs
+“manually checking that everything is fine in a thousand tiny steps”, which
+inevitably results in missed combinations because the human brain is not
+designed to hold graphs that big.</p>
+
+
+
+    
+
+    
+
+    
+
+    
+    <aside>
+        Discuss this page on
+        <a target="_blank" href="https://fasterthanli.me/api/comments?url=https%3A%2F%2Ffasterthanli.me%2Farticles%2Fi-want-off-mr-golangs-wild-ride&title=I+want+off+Mr.+Golang%27s+Wild+Ride">Reddit</a> .
+    </aside>
+    
+
+    
+        <div class="gentle-nudge-island" data-context="end-of-page">
+            (JavaScript is required to see this. Or maybe my stuff broke)
+        </div>
+     
+
+    
+
+
+
+    <div class="bottom-nav">
+        <p style="margin-bottom: 0.8em;">
+            Did you know I also make videos? Check them out on <a href="https://youtube.com/@fasterthanlime">YouTube</a>!
+        </p>
+
+        
+        
+            <p style="margin-bottom: 0.8em;">
+                Here's another article just for you:
+            </p>
+            
+
+    
+
+
+
+
+<div
+    class="post-list-item random"
+    
+    
+>
+    
+
+    
+
+    <div class="post-list-item-inner">
+        
+            
+            
+        
+        <h2 class="post-list-title">
+            <a class="post-link" href="https://fasterthanli.me/articles/recursive-iterators-rust" rel="noopener">
+                
+
+                
+                    Recursive iterators in Rust
+                
+            </a>
+         </h2>
+          <div class="post-blocks">
+              <div class="post-block small">
+                  <div class="post-metadata">
+                      <div class="post-date">May 08, 2019</div>
+                      <span class="reading-time">
+        
+
+        <abbr title="Estimated reading time, at 220 words per minute, where one word = 5 characters">
+            
+                7 min
+            
+        </abbr>
+    </span>
+                      
+    <span class="tags">
+        
+            
+                <span><a href="/tags/rust">#rust</a></span>
+            
+            
+        
+    </span>
+                      <span class="indicators">
+    
+        
+
+        
+    
+
+    
+</span>
+                  </div>
+              </div>
+
+              <div class="post-block big">
+                  <a class="post-block-link" href="https://fasterthanli.me/articles/recursive-iterators-rust" rel="noopener">
+                    <div class="post-summary markup-container "><p data-bo="137">I’ve been looking for this blog post everywhere, but it doesn’t exist,
+so I guess it’s my turn to write about Some Fun with Rust.</p>
+
+<a id="the-task-at-hand" href="#the-task-at-hand" class="anchor"><h2>The task at hand</h2></a>
+<p data-bo="289">Let’s say you have a recursive, acyclic data structure, like so:</p>
+
+<figure role="region" aria-label="Rust code block" class="code-block has-language-tag" translate="no" data-lang="rust" data-bo="355"><span class="language-tag" title="Rust"></span><code class="scroll-wrapper"><a-k>struct</a-k> <a-t>Node</a-t> <a-p>{</a-p>
+    <a-pr>values</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>i32</a-t><a-p>&gt;,</a-p>
+    <a-pr>children</a-pr><a-p>:</a-p> <a-t>Vec</a-t><a-p>&lt;</a-p><a-t>Node</a-t><a-p>&gt;,</a-p>
+<a-p>}</a-p>
+</code></figure><p data-bo="431">This allows you to represent a tree-like structure:</p>
+
+<figure role="region" aria-label="Code block" class="code-block" translate="no" data-lang="" data-bo="484"><code class="scroll-wrapper">   [1, 2, 3]
+       /\
+      /  \
+     /    \
+    /      \
+   /        \
+[4, 5]    [6, 7]
+</code></figure>
+
+<a id="a-naive-implementation" href="#a-naive-implementation" class="anchor"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="a-bad-solution" href="#a-bad-solution" class="anchor"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="a-better-solution" href="#a-better-solution" class="anchor"></a>
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="conclusion" href="#conclusion" class="anchor"></a>
+
+
+
+
+
+
+
+<a id="acknowledgements" href="#acknowledgements" class="anchor"></a>
+
+
+</div>
+                  </a>
+
+                  <div class="read-more">
+                      <a href="https://fasterthanli.me/articles/recursive-iterators-rust" rel="noopener">
+                          Read more
+                      </a>
+                  </div>
+              </div>
+          </div>
+    </div>
+</div>
+        
+    </div>
+  
+  </div>
+
+    </div>
+
+    
+    
+    <nav class="table-of-contents">
+        <menu>
+            <a href="#home-page-top" class="toc-entry">
+              <h2 class="toc-header">
+                  Contents
+              </h2>
+            </a>
+
+            
+            <li data-level="2">
+              <a class="toc-entry" href="#garden-variety-takes-on-go">Garden-variety takes on Go</a>
+            </li>
+            
+            <li data-level="2">
+              <a class="toc-entry" href="#simple-is-a-lie">Simple is a lie</a>
+            </li>
+            
+            <li data-level="2">
+              <a class="toc-entry" href="#lots-of-little-things">Lots of little things</a>
+            </li>
+            
+            <li data-level="2">
+              <a class="toc-entry" href="#parting-words">Parting words</a>
+            </li>
+            
+            <li data-level="2">
+              <a class="toc-entry" href="#april-2022-update">April 2022 Update</a>
+            </li>
+            
+        </menu>
+    </nav>
+    
+
+  </main>
+</div> <!-- content -->
+<div class="nav-bottom">
+    <div class="nav-content">
+        <div class="nav-outlinks icons">
+            <a href="/discord" title="Discord">
+                <span class="inline-icon-container">
+                    
+                </span>
+                Discord
+            </a>
+            <a rel="me" href="https://github.com/sponsors/fasterthanlime" title="GitHub Sponsors" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                GitHub Sponsors
+            </a>
+
+            <a href="https://patreon.com/fasterthanlime" title="Patreon" target="_blank">
+                <span class="inline-icon-container">
+                    <?xml version="1.0" encoding="utf-8"?>
+
+                </span>
+                Patreon
+            </a>
+        </div>
+
+        <div class="nav-outlinks icons">
+            <a rel="me" href="https://bsky.app/profile/fasterthanli.me" title="Bluesky" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                Bluesky
+            </a>
+
+            <a rel="me" href="https://www.linkedin.com/in/fasterthanlime" title="LinkedIn" target="_blank" >
+                <span class="inline-icon-container">
+                    
+                </span>
+                LinkedIn
+            </a>
+
+            <a rel="me" href="https://hachyderm.io/@fasterthanlime" title="Mastodon" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                Mastodon
+            </a>
+
+            <a href="https://youtube.com/@fasterthanlime" title="YouTube" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                YouTube
+            </a>
+        </div>
+
+        <div class="nav-outlinks icons">
+            <a href="https://www.tiktok.com/@fasterthanlime" title="TikTok" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                TikTok
+            </a>
+
+            <a href="https://www.instagram.com/fasterthanlime" title="Instagram" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                Instagram
+            </a>
+
+            <a href="/index.xml" title="RSS" target="_blank">
+                <span class="inline-icon-container">
+                    
+                </span>
+                RSS
+            </a>
+        </div>
+    </div>
+
+    <div class="nav-content">
+        <div class="nav-outlinks">
+            <a href="/about">About</a>
+
+            <a href="/legal-notice">Legal Notice</a>
+
+            <a href="/privacy-policy">Privacy Policy</a>
+
+            <a href="/terms-and-conditions">Terms and Conditions</a>
+        </div>
+    </div>
+</div> <!-- nav-bottom -->
+</div> <!-- body-wrapper -->
+
+
+</body>
+</html>

@@ -23,7 +23,8 @@ class PageCorpusTests(unittest.TestCase):
         self.assertGreaterEqual(len(expectations), 20)
         for name, expected in expectations.items():
             self.assertTrue((corpus.PAGES_DIR / f"{name}.html").exists(), name)
-            self.assertTrue(expected.get("url", "").startswith("https://"), name)
+            # incompleteideas.net is served over plain http only.
+            self.assertTrue(expected.get("url", "").startswith(("https://", "http://")), name)
             for check, reason in (expected.get("known_gaps") or {}).items():
                 self.assertIn(check, corpus.CHECKS, f"{name}: unknown check {check!r}")
                 self.assertIn(check, expected, f"{name}: a gap for {check!r}, which the page does not check")
@@ -43,7 +44,7 @@ class PageCorpusTests(unittest.TestCase):
 
     def test_the_corpus_stays_small(self):
         size = sum(path.stat().st_size for path in corpus.PAGES_DIR.iterdir())
-        self.assertLess(size, 4_000_000)
+        self.assertLess(size, 5_000_000)     # 54 pages, 4.4 MB (issue 0053)
 
 
 if __name__ == "__main__":

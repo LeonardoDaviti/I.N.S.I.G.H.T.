@@ -64,10 +64,7 @@
     "first": "With a reimagined screen, refined mechanics, and elevated style",
     "last": "for more information on batt",
     "images": 3,
-    "must_not": ["Your browser does not support the audio element", "Get the latest news from Google in your inbox", "Related stories", "Explore other styles", "Just one step more"],
-    "known_gaps": {
-      "last": "The footnotes sit after the <article> element, in <main>."
-    }
+    "must_not": ["Your browser does not support the audio element", "Get the latest news from Google in your inbox", "Related stories", "Explore other styles", "Just one step more"]
   },
   "9to5google": {
     "url": "https://9to5google.com/2026/10/27/nest-wifi-october-2026-update/",
@@ -77,10 +74,7 @@
     "last": "The Nest Wifi Pro received its last notable update in March",
     "images": 1,
     "figures": [1, 0],
-    "must_not": ["FTC: We use income earning", "Check out 9to5Google on YouTube", "Editor-in-chief", "More on Google Nest"],
-    "known_gaps": {
-      "must_not": "The YouTube promo ('article__youtube-video') and the in-body 'More on Google Nest:' list carry no chrome name."
-    }
+    "must_not": ["FTC: We use income earning", "Check out 9to5Google on YouTube", "Editor-in-chief", "More on Google Nest"]
   },
   "oldnewthing": {
     "url": "https://devblogs.microsoft.com/oldnewthing/20261027-00/?p=112800",
@@ -110,10 +104,7 @@
     "images": 2,
     "figures": [1, 0],
     "must_not": ["Related tags", "Follow on Social Media", "Subscribe to receive notifications"],
-    "contains": ["\"mode\": \"on\""],
-    "known_gaps": {
-      "must_not": "The tags, social links and subscribe box sit in 'post-extras' inside <article>, with no chrome name."
-    }
+    "contains": ["\"mode\": \"on\""]
   },
   "lilianweng": {
     "url": "https://lilianweng.github.io/posts/2026-06-24-scaling-laws/",
@@ -180,10 +171,7 @@
     "last": "create your first agent, and start building!",
     "images": 3,
     "figures": [3, 0],
-    "must_not": ["Back to Blog", "5 min read", "0%"],
-    "known_gaps": {
-      "must_not": "The category eyebrow, 'Back to Blog', the read time and a '0%' progress label sit in plain <div>s inside <article>."
-    }
+    "must_not": ["Back to Blog", "5 min read", "0%"]
   },
   "arstechnica": {
     "url": "https://arstechnica.com/space/2026/10/chinas-top-secret-spaceplane-cant-hide-in-low-earth-orbit/",
@@ -213,11 +201,7 @@
     "last": "look it up .",
     "images": 1,
     "must_not": ["hidden\">", "Datasets mentioned in this article", "Sign up or log in to comment", "More Articles from our Blog"],
-    "contains": ["import pandas as pd"],
-    "known_gaps": {
-      "images": "The upvoters' avatars are plain 'rounded-full' images with no size, inside the blog's content block.",
-      "must_not": "The mentioned-datasets, more-articles and comments panels follow the post inside <main>, with no chrome name."
-    }
+    "contains": ["import pandas as pd"]
   },
   "jvns": {
     "url": "https://jvns.ca/blog/2026/07/21/more-nice-django-things/",
@@ -237,9 +221,7 @@
     "images": 1,
     "must_not": ["Share:", "We do newsletters, too", "Related posts", "More on Git"],
     "known_gaps": {
-      "last": "<main> holds the 'Related posts' cards after the post, in an unnamed section.",
-      "images": "The cover is in a <header> outside any <article>; the three 'Related posts' cards' images are kept.",
-      "must_not": "'Share:' is a plain list; 'Related posts' (see last)."
+      "images": "The cover is in a <header> outside any <article> and outside <main>; nothing on the page ties it to the post but its place (the 'Related posts' cards and their images go since 0053)."
     }
   },
   "fastapi_docs": {
@@ -262,5 +244,297 @@
     "tables": [54],
     "figures": [4, 4],
     "must_not": ["Backlinks", "Similar Links", "Bibliography"]
+  },
+  "paulgraham_greatwork": {
+    "url": "https://paulgraham.com/greatwork.html",
+    "fetched": "2026-10-30",
+    "title": "How to Do Great Work",
+    "first": "If you collected lists of techniques for doing great work in a lot of different fields",
+    "last": "and my younger son for suggestions and for reading drafts.",
+    "images": 0,
+    "contains": ["The way to figure out what to work on is by working."]
+  },
+  "incompleteideas": {
+    "url": "http://www.incompleteideas.net/IncIdeas/BitterLesson.html",
+    "fetched": "2026-10-30",
+    "title": "The Bitter Lesson",
+    "first": "The biggest lesson that can be read from 70 years of AI research",
+    "last": "only makes it harder to see how the discovering process can be done.",
+    "images": 0
+  },
+  "fasterthanli": {
+    "url": "https://fasterthanli.me/articles/i-want-off-mr-golangs-wild-ride",
+    "fetched": "2026-10-30",
+    "title": "I want off Mr. Golang's Wild Ride",
+    "first": "My honeymoon with the Go language is extremely over.",
+    "last": "because the human brain is not designed to hold graphs that big.",
+    "images": 11,
+    "figures": [77, 0],
+    "must_not": ["Here's another article just for you", "Recursive iterators in Rust"],
+    "contains": ["$ go run main.go /etc/hosts", "package main"]
+  },
+  "hn_item": {
+    "url": "https://news.ycombinator.com/item?id=49978171",
+    "fetched": "2026-10-30",
+    "title": "Show HN: Parseable, an open observability datalake, handles 100M time-series/min",
+    "first": "Low level how does this compare to Victoriametrics",
+    "known_gaps": {
+      "first": "A link post's item page holds only its discussion: the comments sit in a 'comment-tree' table, chrome by name, and the post has no text of its own (an Ask HN's text would be read: it is loose text in a table cell). Reading a discussion is the comments kind's job (0017)."
+    }
+  },
+  "danluu": {
+    "url": "https://danluu.com/input-lag/",
+    "fetched": "2026-10-30",
+    "title": "Computer latency: 1977-2017",
+    "first": "I've had this nagging feeling that the computers I use today feel slower",
+    "last": "for comments/corrections/discussion.",
+    "images": 0,
+    "tables": [115, 111]
+  },
+  "fabiensanglard": {
+    "url": "https://fabiensanglard.net/doom_fire_psx/",
+    "fetched": "2026-10-30",
+    "title": "How DOOM fire was done",
+    "first": "The Game Engine Black Book: DOOM features a whole chapter",
+    "last": "Twitter post, March 25th 2018",
+    "images": 4,
+    "tables": [6]
+  },
+  "matklad": {
+    "url": "https://matklad.github.io/2021/02/06/ARCHITECTURE.md.html",
+    "fetched": "2026-10-30",
+    "title": "ARCHITECTURE.md",
+    "first": "If you maintain an open-source project in the range of 10k-200k lines of code",
+    "last": "A good example of ARCHITECTURE document is this one from rust-analyzer",
+    "images": 0
+  },
+  "karpathy_bearblog": {
+    "url": "https://karpathy.bearblog.dev/the-space-of-minds/",
+    "fetched": "2026-10-30",
+    "title": "The space of minds",
+    "first": "The space of intelligences is large",
+    "last": "will be stuck thinking about it incorrectly like an animal.",
+    "images": 1
+  },
+  "seangoedecke": {
+    "url": "https://seangoedecke.com/radical-responsibility-means-treating-people-like-tools/",
+    "fetched": "2026-10-30",
+    "title": "Radical responsibility means treating people like tools",
+    "first": "A lot of people think that good leadership requires radical responsibility",
+    "last": "where he describes the “objective attitude”.",
+    "images": 0,
+    "must_not": ["Here's a preview of a related post", "How to protect yourself from workslop"],
+    "known_gaps": {
+      "last": "After the post and its footnotes, a preview of a related post (its title in a <blockquote>, its first paragraphs) sits in the same unnamed block, with no link that marks it.",
+      "must_not": "The related post's preview (see last)."
+    }
+  },
+  "simonwillison": {
+    "url": "https://simonwillison.net/2026/Jul/13/doomql/",
+    "fetched": "2026-10-30",
+    "title": "DOOMQL",
+    "first": "Peter Gostev built this using GPT-5.6 Sol.",
+    "last": "recipe from above) to try it yourself.",
+    "images": 2,
+    "contains": ["DOOMQL ( via )"]
+  },
+  "aleksagordic": {
+    "url": "https://www.aleksagordic.com/blog/transformer",
+    "fetched": "2026-10-30",
+    "title": "Inside the Transformer: The Life of a Token",
+    "first": "I'll do a deep dive into the internals of a modern dense transformer",
+    "last": "https://arxiv.org/abs/2512.02556",
+    "images": 21
+  },
+  "ir_vuzix": {
+    "url": "https://ir.vuzix.com/news-events/press-releases/detail/2183/vuzix-introduces-shrike-defense-display-platform-and-ships",
+    "fetched": "2026-10-30",
+    "title": "Vuzix Introduces Shrike Defense Display Platform and Ships Initial Evaluation Units",
+    "first": "Vuzix® Corporation (NASDAQ: VUZI), a supplier of AI-powered smart glasses",
+    "last": "SOURCE Vuzix Corporation",
+    "images": 1,
+    "tables": [15],
+    "known_gaps": {
+      "images": "The company's logo in the release body (PR Newswire's 'Vuzix Corporation logo') has no size and no telling name."
+    }
+  },
+  "nvidianews": {
+    "url": "https://nvidianews.nvidia.com/news/nvidia-commits-1-billion-to-advance-us-science-over-the-next-five-years",
+    "fetched": "2026-10-30",
+    "title": "NVIDIA Commits $1 Billion to Advance US Science Over the Next Five Years",
+    "first": "NVIDIA announces commitments valued at $1 billion to advance U.S. science",
+    "last": "trademarks of the respective companies with which they are associated.",
+    "images": 1,
+    "figures": [1, 0],
+    "must_not": ["News Summary:"]
+  },
+  "displaydaily": {
+    "url": "https://displaydaily.com/microled-capital-is-following-millimeters-not-inches/",
+    "fetched": "2026-10-30",
+    "title": "MicroLED Capital Is Following Millimeters, Not Inches",
+    "first": "A Shenzhen-based MicroLED developer closing a relatively modest funding round",
+    "last": "the two-year horizon is when they start paying off.",
+    "images": 1
+  },
+  "lexfridman": {
+    "url": "https://lexfridman.com/dave-plummer/",
+    "fetched": "2026-10-30",
+    "title": "#479 – Dave Plummer: Programming, Autism, and Old-School Microsoft Stories",
+    "first": "Dave Plummer is a programmer, former Microsoft software engineer",
+    "last": "Clips Channel: https://www.youtube.com/lexclips",
+    "images": 0,
+    "must_not": ["Play in new window"],
+    "known_gaps": {
+      "must_not": "The podcast player's line ('Podcast: Play in new window | Download', 'Subscribe: Apple Podcasts | …') opens the post: links and words in one paragraph, not most of it a link."
+    }
+  },
+  "androidauthority": {
+    "url": "https://www.androidauthority.com/viture-beast-review-3686604/",
+    "fetched": "2026-10-30",
+    "title": "The VITURE Beast are the first pair of XR glasses I want to bring on every trip",
+    "first": "I’m confident smart glasses and XR devices are mature enough to go mainstream",
+    "last": "worth it for any gaming handheld user in my book.",
+    "images": 12,
+    "must_not": ["Affiliate links on Android Authority may earn us a commission"],
+    "known_gaps": {
+      "images": "The review's product box (its 'AA Recommended' badges and the shop's picture) and the 'Google Discover' follow button's logos are plain images in unnamed blocks, with no size.",
+      "must_not": "The affiliate notice is a whole sentence ending with a link, before the title: prose to the edge rule."
+    }
+  },
+  "auganix": {
+    "url": "https://www.auganix.org/xr-news-lumus-crystal-optech-manufacturing-agreement/",
+    "fetched": "2026-10-30",
+    "title": "Lumus Signs Manufacturing Deal With Crystal-Optech",
+    "first": "Lumus has signed a manufacturing agreement with Chinese precision-optics manufacturer",
+    "last": "please visit the company’s website.",
+    "images": 2,
+    "figures": [1, 1],
+    "must_not": ["Subscribe to the Auganix XR Newsletter", "Sam is the Founder and Managing Editor"],
+    "known_gaps": {
+      "last": "A newsletter box, a note on reuse and the author's box ('m-a-box-bio', a plugin's own names) follow the post inside its content block; the box's words are prose.",
+      "must_not": "The newsletter box and the author's box (see last)."
+    }
+  },
+  "techcrunch": {
+    "url": "https://techcrunch.com/2026/09/02/norway-considers-ban-on-camera-enabled-wearable-pervert-glasses/",
+    "fetched": "2026-10-30",
+    "title": "Norway considers ban on camera-enabled wearable 'pervert glasses'",
+    "first": "Norway is considering a ban on smart glasses and other camera-enabled wearable headsets",
+    "last": "better protecting people’s privacy rights.",
+    "images": 1,
+    "figures": [1, 1],
+    "must_not": ["Posted:", "Latest in Privacy", "Waymo taps Toyota", "Subscribe for the industry"]
+  },
+  "roadtovr": {
+    "url": "https://roadtovr.com/everything-you-should-know-steam-frame/",
+    "fetched": "2026-10-30",
+    "title": "Everything You Should Know Before Buying Steam Frame",
+    "first": "So you’re looking to buy Valve’s first standalone VR headset",
+    "last": "let us know in the comments below",
+    "images": 3,
+    "tables": [42],
+    "figures": [4, 3],
+    "must_not": ["World-bending ‘Mario 64’ VR Mod", "Valve: We Still Believe in VR"]
+  },
+  "tomsguide": {
+    "url": "https://www.tomsguide.com/computing/smart-glasses/i-went-hands-on-with-the-halliday-g2-the-smart-glasses-made-for-meetings",
+    "fetched": "2026-10-30",
+    "title": "I went hands-on with the Halliday G2 — the smart glasses made for meetings",
+    "first": "Rather than creating a jack-of-all trades pair of specs",
+    "last": "when the Halliday G2 glasses — and Meeting Flow — rolls out.",
+    "images": 4,
+    "figures": [4, 4],
+    "must_not": ["You must confirm your public display name", "These Skechers are the best slip-in shoes", "Follow Tom's Guide on Google News"],
+    "known_gaps": {
+      "images": "The 'Follow Tom's Guide on Google News' promo closes the article body: a linked picture, then a paragraph that is under half link and long enough to read as prose.",
+      "figures": "The promo's picture is a <figure> inside a link (see images).",
+      "must_not": "'Follow Tom's Guide on Google News' (see images)."
+    }
+  },
+  "uploadvr": {
+    "url": "https://www.uploadvr.com/phoenix-everything-we-know-so-far-meta-next-headset/",
+    "fetched": "2026-10-30",
+    "title": "Everything We Know (So Far) About Meta's Next Headset",
+    "first": "It has been widely reported by multiple reputable sources",
+    "last": "pic.twitter.com/hS6hL6UBLV",
+    "images": 36,
+    "figures": [58, 38],
+    "known_gaps": {
+      "images": "Ghost's bookmark cards ('kg-bookmark-card'), links to ten other UploadVR articles placed in the body, keep each its site icon and its thumbnail (20 images)."
+    }
+  },
+  "skarredghost": {
+    "url": "https://skarredghost.com/2026/07/30/canon-mr-headset-impressions/",
+    "fetched": "2026-10-30",
+    "title": "Hands-on Canon's $20K headset and very small MR prototype",
+    "first": "One of the most incredible experiences I had at AWE was trying out Canon’s mixed-reality headsets.",
+    "last": "so they also can know about these special headsets!",
+    "images": 10,
+    "figures": [16, 14]
+  },
+  "kguttag": {
+    "url": "https://kguttag.com/2025/09/16/meta-rayban-ar-glasses-shows-lumus-waveguide-structures-in-leaked-video/",
+    "fetched": "2026-10-30",
+    "title": "Meta Ray-Ban AR Glasses Show Lumus Waveguide Structures in Leaked Video",
+    "first": "Just a short note today.",
+    "last": "please send meeting requests to meet@kgontech.com",
+    "images": 4,
+    "figures": [4, 0]
+  },
+  "about_fb": {
+    "url": "https://about.fb.com/news/2026/09/threads-expands-podcast-toolkit-for-creators-and-listeners/",
+    "fetched": "2026-10-30",
+    "title": "Threads Expands Podcast Toolkit for Creators and Listeners",
+    "first": "We’re announcing new Threads tools for podcast creators and listeners",
+    "last": "join conversations about your favorite shows.",
+    "images": 0,
+    "must_not": ["Share this article", "DOWNLOAD ALL IMAGES"]
+  },
+  "pluralistic": {
+    "url": "https://pluralistic.net/2023/01/21/potemkin-ai/",
+    "fetched": "2026-10-30",
+    "title": "Pluralistic: Tiktok’s enshittification (21 Jan 2023)",
+    "first": "Here is how platforms die: first, they are good to their users",
+    "last": "you make sarsaparilla",
+    "images": 5,
+    "known_gaps": {
+      "title": "The page has no og:title and its <title> ends in a 43-character site name (' – Pluralistic: Daily links from Cory Doctorow'), longer than a site suffix is allowed to be.",
+      "images": "The colophon's Creative Commons badge ('by.svg.png') is a plain image with no size."
+    }
+  },
+  "solosglasses": {
+    "url": "https://solosglasses.com/blogs/news/which-ar-glasses-suit-daily-use",
+    "fetched": "2026-10-30",
+    "title": "Which AR Glasses Suit Daily Use?",
+    "first": "AR glasses in 2026 split into audio-first fashion",
+    "last": "Read full article here",
+    "images": 1,
+    "must_not": ["SHOP SMARTGLASSES WITH SOLOS", "Argon 4S Smartglasses"]
+  },
+  "sivers": {
+    "url": "https://sive.rs/hellyeah",
+    "fetched": "2026-10-30",
+    "title": "No “yes.” Either “HELL YEAH!” or “no.”",
+    "first": "Use this rule if you’re often over-committed or too scattered.",
+    "last": "Saying yes to less is the way out.",
+    "images": 0,
+    "must_not": ["Michael.J.Ramplin", "Good to Great is one of my favorites"]
+  },
+  "vuzix": {
+    "url": "https://www.vuzix.com/blogs/vuzix-blog/how-ai-orchestrated-workers-are-key-to-warehouse-automation",
+    "fetched": "2026-10-30",
+    "title": "How AI Orchestrated Workers are Key to Warehouse Automation",
+    "first": "Warehousing organizations face rising costs due to errors in stocking",
+    "last": "machine learning pattern-recognition, and AR smart glasses.",
+    "images": 0,
+    "must_not": ["See All Posts"]
+  },
+  "lesswrong": {
+    "url": "https://www.lesswrong.com/posts/uMQ3cqWDPHhjtiesc/agi-ruin-a-list-of-lethalities",
+    "fetched": "2026-10-30",
+    "title": "AGI Ruin: A List of Lethalities",
+    "first": "I have several times failed to write up a well-organized list of reasons why AGI will kill you.",
+    "last": "on a system which successfully generalizes capabilities that far at all.",
+    "images": 0
   }
 }
