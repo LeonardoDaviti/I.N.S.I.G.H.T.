@@ -17,7 +17,7 @@ place**: tuning on the server is a one-line change.
   source in it is new, the name does not surge. A shorter name whose posts a longer one covers is
   dropped.
   arXiv titles are left out.
-- **A classic** is a page linked by 2+ of your voices (not the page's own), with links 30+ days
+- **A classic** is a page linked by 2+ of your voices (not the page's own), with links 180+ days
   apart: a stored post or an outside page. Reference pages (a path segment like `docs`,
   `pricing`, `help`) and home pages are not classics.
 """
@@ -50,7 +50,7 @@ NAME_TITLE_DAYS = 32                # the job reads the titles of the last 32 da
 NAME_MAX_WORDS = 3
 NAME_SKIP_KINDS = frozenset({"arxiv"})
 CLASSIC_MIN_VOICES = 2
-CLASSIC_MIN_SPREAD = timedelta(days=30)
+CLASSIC_MIN_SPREAD = timedelta(days=180)   # measured on the server's data, 2026-10-30: at 30 days most were news with legs
 CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first
 BACKGROUND_SHOWN = 2
 # A reference page's path segment: a vocabulary of page kinds, not a list of sites.
@@ -310,7 +310,11 @@ def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetim
         voices = {c.voice for c in counted}
         if len(voices) < CLASSIC_MIN_VOICES:
             continue
-        first = min(post[1], cites[0].t) if post is not None else cites[0].t
+        # The spread starts at the stored post's own date, else at the second voice's first link:
+        # one voice's date alone can't make a classic (a page rewritten under an old date, like
+        # Gwern's, dated a 2026 link 2023 on the server's data).
+        firsts = sorted({c.voice: c.t for c in reversed(counted)}.values())
+        first = post[1] if post is not None else firsts[1]
         last = cites[-1].t
         if last - first < CLASSIC_MIN_SPREAD:
             continue

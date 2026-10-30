@@ -69,7 +69,7 @@ Posts that share a surging name join one story **for News only**. A name never f
 - **Reading a story from News** marks it the way 0050 does.
 
 ### 4. Classics
-- **A classic is a page linked by 2+ of your voices** (not counting the page's own site), with links at least 30 days apart. It can be a stored post or an outside page.
+- **A classic is a page linked by 2+ of your voices** (not counting the page's own site), with links at least 180 days apart, counted from the page's own date when it's a stored post, else from the second voice's first link. It can be a stored post or an outside page. (Changed 2026-10-30 from "30 days apart, from the first link", measured on the server's data: see "Real data".)
 - **Reference pages aren't classics:** an address with a path segment like `docs`, `documentation`, `product(s)`, `pricing`, `support`, `help`, `api`, `reference`, `release-notes`, `changelog`, `wiki`, `articles`, `collections`, `download`, `login` or `signup`, and home pages. This is a vocabulary of page kinds, not a list of sites.
 - **Ordered by voices, then by how long it has been cited.** A page's age never counts against it.
 - **Cited again comes first:** a classic one of your sources cited in the last 7 days goes to the top, marked "cited again this week". Old doesn't mean unimportant: it can be the foundation of something new.
@@ -166,4 +166,9 @@ Measured in the lab on a copy of the server's 41,543 posts:
   - once: 26, ~75% (6 of 8);
   - twice or more: 60, ~27% (3 of 11). Generic phrases like "has been", "world cup", "open weights" and "time series" all came from this group.
   - The rule is now "at most once". Its cost: an ongoing story whose name was already in use isn't found by name (RTX Spark, Le Chonk; the preview's Steam Frame launch day).
-- **Classics and Discover:** the rehearsal found problems; they're measured separately before any change.
+- **Classics:** 1,244 under the 30-day rule, and all of the top 30 were "cited again this week".
+  - **Most were news with legs,** not classics: the Hugging Face incident, Navier–Stokes, "We Must Pace the Frontier". By citation spread, a random sample of each bucket held about 15% real classics at 30–60 days, ~45% at 90–180 days and ~80% at a year or more.
+  - **A Gwern page dated 2023** links a 2026 post (GPT-6 Astra), which gave it a 1,307-day spread. Gwern rewrites pages under their old dates, and 62 classics started from a Gwern link.
+  - **The rule now:** 180+ days, counted from the second voice's first link, so one voice's date alone can't make a classic. That leaves 172 classics, ~80% real in a random sample of 30. "Cited again this week" (30 of them) now shows the Bitter Lesson, "The Adolescence of Technology", the Law of Leaky Abstractions (2002), grokking, Sleeper Agents, emergent misalignment and Toby Ord on RL scaling.
+  - **What's left as noise:** code repositories and model pages (llama.cpp, vLLM, OpenClaw, Codex CLI, Hugging Face model cards), a license page and two news figures. Not fixed: no rule tells a repository from an article without naming sites.
+- **Discover:** the rehearsal found its platform test wrong on real data; measured separately before any change.

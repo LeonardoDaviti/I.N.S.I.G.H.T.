@@ -166,19 +166,26 @@ def cite(voice, days, target, *, stored=None, text=None, source=None):
 class ClassicRulesTests(unittest.TestCase):
     page = "https://essays.example/essay/machines-of-loving-grace"
 
-    def test_two_voices_thirty_days_apart(self):
-        [c] = classics([cite("a", 0, self.page, text="Machines of Loving Grace"), cite("b", 31, self.page,
-                                                                                    text="this essay")], {})
-        self.assertEqual((c.voices, c.days, c.title), (2, 31, "Machines of Loving Grace"))
+    def test_cited_by_two_voices_over_180_days(self):
+        [c] = classics([cite("a", 0, self.page, text="Machines of Loving Grace"), cite("b", 10, self.page, text="this essay"),
+                        cite("a", 200, self.page)], {})
+        self.assertEqual((c.voices, c.days, c.title), (2, 190, "Machines of Loving Grace"))
         self.assertEqual([x["name"] for x in c.citers], ["a", "b"])
-        self.assertEqual(classics([cite("a", 0, self.page), cite("b", 29, self.page)], {}), [], "29 days")
-        self.assertEqual(classics([cite("a", 0, self.page), cite("a", 100, self.page)], {}), [], "one voice")
+        self.assertEqual(classics([cite("a", 0, self.page), cite("b", 10, self.page), cite("a", 189, self.page)], {}), [],
+                         "179 days from the second voice")
+        self.assertEqual(classics([cite("a", 0, self.page), cite("a", 400, self.page)], {}), [], "one voice")
+
+    def test_one_voices_date_alone_makes_no_classic(self):
+        """On the server's data a Gwern page dated 2023 linked a 2026 post: the spread starts at the
+        second voice's first link, so one early date can't stretch it."""
+        self.assertEqual(classics([cite("gwern", -1300, self.page), cite("b", 0, self.page), cite("c", 30, self.page)], {}),
+                         [])
 
     def test_a_stored_post_counts_from_its_date_and_not_its_own_voice(self):
-        stored = {"p": ("site:lab.test", T0 - timedelta(days=40), "Golden Gate Claude")}
+        stored = {"p": ("site:lab.test", T0 - timedelta(days=200), "Golden Gate Claude")}
         url = "https://lab.test/news/golden-gate-claude"
         [c] = classics([cite("x", 0, url, stored="p"), cite("y", 1, url, stored="p")], stored)
-        self.assertEqual((c.post_id, c.days, c.title), ("p", 41, "Golden Gate Claude"))
+        self.assertEqual((c.post_id, c.days, c.title), ("p", 201, "Golden Gate Claude"))
         self.assertEqual(classics([cite("x", 0, url, stored="p"), cite("site:lab.test", 1, url, stored="p")], stored), [],
                          "the page's own voice does not count")
 
@@ -188,15 +195,16 @@ class ClassicRulesTests(unittest.TestCase):
                     "https://example.com/api/reference", "https://example.com/", "https://x.com/karpathy",
                     "https://example.com/release-notes/2026"):
             self.assertTrue(is_reference(url), url)
-            self.assertEqual(classics([cite("a", 0, url), cite("b", 90, url)], {}), [], url)
+            self.assertEqual(classics([cite("a", 0, url), cite("b", 10, url), cite("a", 300, url)], {}), [], url)
         for url in ("https://arxiv.org/abs/2001.08361", "https://incompleteideas.net/IncIdeas/BitterLesson.html",
                     "https://example.com/blog/apis-i-like"):
             self.assertFalse(is_reference(url), url)
 
     def test_most_voices_first_then_cited_longest(self):
         a, b, c = (f"https://essays.example/essay/number-{n}" for n in range(3))
-        found = classics([cite("x", 0, a), cite("y", 40, a), cite("x", 0, b), cite("y", 400, b),
-                          cite("x", 0, c), cite("y", 40, c), cite("z", 41, c)], {})
+        found = classics([cite("x", 0, a), cite("y", 10, a), cite("x", 200, a),
+                          cite("x", 0, b), cite("y", 10, b), cite("x", 600, b),
+                          cite("x", 0, c), cite("y", 10, c), cite("z", 11, c), cite("x", 200, c)], {})
         self.assertEqual([f.target for f in found], [c, b, a])
 
 
@@ -312,10 +320,11 @@ class NewsJobTests(unittest.TestCase):
         self.essay = f"https://essays-{self.mark}.test/essay/machines-of-loving-grace"
         self.docs = f"https://lab-{self.mark}.test/docs/getting-started-with-it"
         self.recent = f"https://papers-{self.mark}.test/abs/scaling-laws-for-models"
-        for source, site, days in ((self.x, "xeno", 200), (self.y, "yolk", 100)):
+        for source, site, days in ((self.x, "xeno", 500), (self.y, "yolk", 400), (self.x, "xeno", 150)):
             self._post(source, site=site, hours_ago=24 * days,
                        html=self._link(self.essay, "Machines of Loving Grace") + self._link(self.docs, "the docs here"))
-        self._post(self.x, site="xeno", hours_ago=24 * 90, html=self._link(self.recent, "Scaling Laws for Neural Models"))
+        for source, site, days in ((self.x, "xeno", 400), (self.y, "yolk", 300)):
+            self._post(source, site=site, hours_ago=24 * days, html=self._link(self.recent, "Scaling Laws for Neural Models"))
         self.citing = self._post(self.z, site="zinc", hours_ago=24 * 2,
                                  html=self._link(self.recent, "Scaling Laws for Neural Models"))
         self._job()
@@ -331,13 +340,13 @@ class NewsJobTests(unittest.TestCase):
         self.assertFalse(found[1]["cited_again"])
         self.assertEqual(found[1]["title"], "Machines of Loving Grace")
         self.assertEqual([c["name"] for c in found[1]["citers"]], ["Xeno", "Yolk"])
-        self.assertEqual((found[1]["voices"], found[1]["days"]), (2, 100))
+        self.assertEqual((found[1]["voices"], found[1]["days"]), (2, 250), "from Yolk's first link (400 days) to the last (150)")
 
     def test_hide_and_background(self):
         self._classics()
         background = self.news.background(self.cur, self.citing)
         self.assertEqual([(b["url"], b["voices"], b["title"]) for b in background],
-                         [(normalize_url(self.recent), 2, "Scaling Laws for Neural Models")])
+                         [(normalize_url(self.recent), 3, "Scaling Laws for Neural Models")])
         plain = self._post(self.z, site="zinc", hours_ago=1, html=self._link(f"https://else-{self.mark}.test/a/b-c-d-e"))
         self.assertEqual(self.news.background(self.cur, plain), [], "nothing without a classic")
         self.news.repo.hide_classic(self.cur, normalize_url(self.recent))
@@ -349,7 +358,7 @@ class NewsJobTests(unittest.TestCase):
     def test_background_shows_at_most_two(self):
         self._classics()
         pages = [f"https://essays-{self.mark}.test/essay/part-number-{n}" for n in range(3)]
-        for source, site, days in ((self.x, "xeno", 200), (self.y, "yolk", 100)):
+        for source, site, days in ((self.x, "xeno", 500), (self.y, "yolk", 400)):
             self._post(source, site=site, hours_ago=24 * days, html="".join(self._link(p) for p in pages))
         reader = self._post(self.z, site="zinc", hours_ago=1, html="".join(self._link(p) for p in pages))
         self._job()
