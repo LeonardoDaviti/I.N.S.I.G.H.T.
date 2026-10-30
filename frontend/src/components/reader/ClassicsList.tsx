@@ -10,6 +10,7 @@ import { UNREAD_COUNTS_KEY } from '../../hooks/useFeed';
 import { errorMessage } from '../../lib/apiError';
 import { postHref } from '../../lib/feedContext';
 import { citedBy, classicTitle } from '../../lib/classics';
+import { sourceLabelList } from '../../lib/sourceLabel';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK } from '../states';
 
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:opacity-60 coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
@@ -45,7 +46,7 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
         </h3>
         <p className="min-w-0 truncate text-[0.8125rem] leading-5 text-fg-3 tabular-nums">
           {classic.cited_again ? <span className="text-fg">cited again this week · </span> : null}
-          <span title={classic.citers.map((c) => c.name).join(', ')}>{citedBy(classic)}</span>
+          <span title={sourceLabelList(classic.citers.map((c) => c.name))}>{citedBy(classic)}</span>
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 coarse:-my-2.5">

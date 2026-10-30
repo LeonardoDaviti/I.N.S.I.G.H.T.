@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { coveredBy, suggestionReason } from './story.ts';
+import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
 
@@ -19,4 +20,16 @@ test('suggestionReason says how many of your sources link it, who, and how many 
     key: 'darioamodei.com', url: 'https://darioamodei.com', voices: 4, article_count: 8, link_count: 8,
     voice_names: ['A', 'B', 'C', 'D'], articles: [], classics: 2,
   }), 'linked by 4 of your sources (A, B, C, +1) · 8 articles · 2 classics', 'a site that holds classics says so (issue 0051)');
+});
+
+test('a story, a suggestion and a classic name a source without a display name by its address (server data)', () => {
+  // The backend sends the address when a source has no display name, or an empty one.
+  assert.equal(coveredBy(story(['https://github.com/anthropics/claude-code/commits.atom', 'https://danluu.com/atom.xml'])),
+    'covered by 2 · anthropics/claude-code, danluu.com');
+  assert.equal(suggestionReason({
+    key: 'metr.org', url: 'https://metr.org', voices: 2, article_count: 1, link_count: 2,
+    voice_names: ['https://www.reddit.com/r/LocalLLaMA/.rss', 'http://antirez.com/rss'], articles: [],
+  }), 'linked by 2 of your sources (r/LocalLLaMA, antirez.com) · 1 article');
+  assert.equal(citedBy({ citers: [{ name: 'https://www.theatlantic.com/feed/author/derek-thompson/', at: '2026-03-15T12:00:00Z' }] }),
+    'theatlantic.com, Mar 2026');
 });

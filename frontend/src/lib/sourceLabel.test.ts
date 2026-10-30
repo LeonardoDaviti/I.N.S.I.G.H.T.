@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sourceLabel } from './sourceLabel.ts';
+import { sourceLabel, sourceLabelList } from './sourceLabel.ts';
 
 const DERIVED: Array<[string, string]> = [
   ['https://github.com/anthropics/claude-code/commits.atom', 'anthropics/claude-code'],
@@ -46,4 +46,10 @@ test('sourceLabel: the first real display name wins over a URL', () => {
 test('sourceLabel: a missing name says so', () => {
   assert.equal(sourceLabel(null), 'Unknown source');
   assert.equal(sourceLabel('  ', undefined), 'Unknown source');
+});
+
+test('sourceLabelList names each source by the one rule', () => {
+  assert.equal(sourceLabelList(['Simon Willison', 'https://github.com/anthropics/claude-code/commits.atom', 'danluu.com/atom.xml']),
+    'Simon Willison, anthropics/claude-code, danluu.com');
+  assert.equal(sourceLabelList([]), '');
 });

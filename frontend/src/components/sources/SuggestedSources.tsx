@@ -10,7 +10,7 @@ import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
 import { formatCount } from '../../lib/format';
 import { shortAddress } from '../../lib/addresses';
-import { sourceLabel } from '../../lib/sourceLabel';
+import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { suggestionReason } from '../../lib/story';
 
 export const SUGGESTED_SOURCES_KEY = ['suggested-sources'] as const;
@@ -50,7 +50,7 @@ function Suggestion({ suggestion, onFollow, onHide }: {
             return (
               <li key={article.url} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
                 <ExternalLink href={article.url} dir="auto" className="min-w-0 truncate text-fg" title={article.url}>{title}</ExternalLink>
-                <span className="shrink-0 truncate" title={article.linked_by.join(', ')}>
+                <span className="shrink-0 truncate" title={sourceLabelList(article.linked_by)}>
                   · {article.linked_by.length === 1 ? sourceLabel(article.linked_by[0]) : `${formatCount(article.linked_by.length)} sources`}
                 </span>
               </li>

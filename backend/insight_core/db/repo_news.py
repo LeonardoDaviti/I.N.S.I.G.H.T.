@@ -107,7 +107,8 @@ class NewsRepository:
                    CASE WHEN p.source_id = ANY(%(reddit)s::uuid[]) THEN p.content_html END
             FROM post_links pl
             JOIN posts p ON p.id = pl.post_id
-            LEFT JOIN posts t ON t.normalized_url = pl.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
+                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE NOT pl.boilerplate AND {POST_TIME} IS NOT NULL AND NOT (p.source_id = ANY(%(saved)s::uuid[]))
             ORDER BY p.id, pl.position
             """,
@@ -195,7 +196,8 @@ class NewsRepository:
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
                    t.id, t.title, left(t.content, 400), r.read_at, r.later_at
             FROM classics c
-            LEFT JOIN posts t ON t.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = c.target_url
+                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             WHERE NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
               AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.citers) ci
@@ -227,7 +229,8 @@ class NewsRepository:
             SELECT c.target_url, c.voices, c.title, t.id, t.title, left(t.content, 400)
             FROM post_links pl
             JOIN classics c ON c.target_url = pl.target_url
-            LEFT JOIN posts t ON t.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = c.target_url
+                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE pl.post_id = %s AND NOT pl.boilerplate AND t.id IS DISTINCT FROM pl.post_id
               AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
             ORDER BY c.voices DESC, c.last_at - c.first_at DESC, c.target_url

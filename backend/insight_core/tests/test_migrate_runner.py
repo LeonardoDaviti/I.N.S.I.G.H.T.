@@ -454,7 +454,7 @@ class GwernNoiseMigrationTests(unittest.TestCase):
 
 @unittest.skipIf(not DATABASE_URL, "No DATABASE_URL found, skipping migration tests")
 class OnePostOneAddressMigrationTests(unittest.TestCase):
-    """0038 merges the posts stored twice under one normalized_url (issue 0049)."""
+    """0038 merges the posts stored twice under one normalized_url and title (issue 0049)."""
 
     @requires_test_db
     def test_0038_merges_copies_and_keeps_the_owners_state(self):
@@ -462,13 +462,11 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
         conn = psycopg.connect(DATABASE_URL)
         try:
             cur = conn.cursor()
-            # The copies predate the index; this transaction is rolled back.
-            cur.execute("DROP INDEX posts_normalized_url_unique")
             source = insert_scratch_source(cur)
             tag = os.urandom(4).hex()
             base = f"https://simon.test/{tag}"
             posts = {}
-            for name, url, normalized, days_ago in [
+            for name, url, normalized, days_ago, *title in [
                 ("only_new_old", f"{base}/a/#atom-everything", f"{base}/a", 2),
                 ("only_new_new", f"{base}/a/", f"{base}/a", 1),
                 ("both_old", f"{base}/b/#atom-everything", f"{base}/b", 2),
@@ -480,10 +478,21 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                 ("http_new", f"{base}/d", f"{base}/d", 1),
                 ("spa_1", f"{base}/#!/post/1", f"{base}/", 2),
                 ("spa_2", f"{base}/#!/post/2", f"{base}/", 1),
+                # The same title under post_title_key: merged.
+                ("ent_old", f"http://{tag}.test/atomic/", f"http://{tag}.test/atomic", 2, "Atomic design in&nbsp;1998"),
+                ("ent_new", f"https://{tag}.test/atomic/", f"https://{tag}.test/atomic", 1, " Atomic  Design in 1998"),
+                # Daring Fireball's shapes on the server: one address, other posts, other titles.
+                ("df_post", f"{base}/dma", f"{base}/dma", 2, "★ What Is the Point of the DMA?"),
+                ("df_fn", f"{base}/dma#fn1-2026-08-24", f"{base}/dma", 1, "Footnote Regarding the GDPR"),
+                ("df_iphone", f"{base}/iphones", f"{base}/iphones", 2, "★ The iPhones 18 Pro"),
+                ("df_text", f"{base}/iphones#:~:text=OR%20IS%20IT", f"{base}/iphones", 1, "One More Thing"),
+                ("df_q2", f"{base}/auth-md?utm_campaign=q22026", f"{base}/auth-md", 3, "Auth.md"),
+                ("df_q3", f"{base}/auth-md?utm_campaign=q32026", f"{base}/auth-md", 2, "WorkOS: Agents"),
+                ("df_q4", f"{base}/auth-md?utm_campaign=q42026", f"{base}/auth-md", 1, "[Sponsor] WorkOS"),
             ]:
                 cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content, fetched_at) "
-                            "VALUES (%s, %s, %s, 't', 'c', now() - make_interval(days => %s)) RETURNING id",
-                            (source, url, normalized, days_ago))
+                            "VALUES (%s, %s, %s, %s, 'c', now() - make_interval(days => %s)) RETURNING id",
+                            (source, url, normalized, (title or ["t"])[0], days_ago))
                 posts[name] = cur.fetchone()[0]
             cur.execute("INSERT INTO post_reader_state (post_id, read_at) VALUES (%s, now())",
                         (posts["only_new_new"],))
@@ -503,7 +512,8 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
             cur.execute("SELECT id FROM posts WHERE id = ANY(%s)", (list(posts.values()),))
             left = {r[0] for r in cur.fetchall()}
             kept = {name for name, post_id in posts.items() if post_id in left}
-            self.assertEqual(kept, {"only_new_new", "both_old", "none_old", "http_old", "spa_1", "spa_2"})
+            self.assertEqual(kept, {"only_new_new", "both_old", "none_old", "http_old", "spa_1", "spa_2", "ent_old",
+                                    "df_post", "df_fn", "df_iphone", "df_text", "df_q2", "df_q3", "df_q4"})
             cur.execute("SELECT url FROM posts WHERE id = %s", (posts["both_old"],))
             self.assertEqual(cur.fetchone(), (f"{base}/b/#atom-everything",), "the kept row keeps its url")
             cur.execute("SELECT normalized_url FROM posts WHERE id = ANY(%s) ORDER BY url",
@@ -547,6 +557,62 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
             before = snapshot()
             cur.execute(sql)  # a second run changes nothing
             self.assertEqual(snapshot(), before)
+        finally:
+            conn.rollback()
+            conn.close()
+
+    @requires_test_db
+    def test_0041_drops_the_unique_index_the_first_0038_made(self):
+        sql = (MIGRATIONS_DIR / "0041_same_post_same_title.sql").read_text(encoding="utf-8")
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+
+            def indexes():
+                cur.execute("SELECT indexname, indexdef LIKE 'CREATE UNIQUE%%' FROM pg_indexes "
+                            "WHERE tablename = 'posts' AND indexdef LIKE '%%(normalized_url)'")
+                return sorted(cur.fetchall())
+
+            self.assertEqual(indexes(), [("posts_normalized_url_idx", False)])
+            # A database that ran the first 0038 (insight_preview, insight_lab): no function, and
+            # the unique index in place of the plain one.
+            cur.execute("DROP INDEX posts_normalized_url_idx")
+            cur.execute("DROP FUNCTION post_title_key(text)")
+            cur.execute("CREATE UNIQUE INDEX posts_normalized_url_unique ON posts (normalized_url)")
+            cur.execute(sql)
+            self.assertEqual(indexes(), [("posts_normalized_url_idx", False)])
+            cur.execute("SELECT post_title_key('A&amp;B')")
+            self.assertEqual(cur.fetchone(), ("a&b",))
+            cur.execute(sql)  # a second run changes nothing
+            self.assertEqual(indexes(), [("posts_normalized_url_idx", False)])
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_0038_and_0041_define_one_title_rule(self):
+        def definition(name):
+            text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+            start = text.index("CREATE OR REPLACE FUNCTION post_title_key")
+            return text[start:text.index("$fn$;", start)]
+
+        self.assertEqual(definition("0038_one_post_one_address.sql"), definition("0041_same_post_same_title.sql"))
+
+    @requires_test_db
+    def test_post_title_key(self):
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            for title, key in [
+                (None, ""), ("", ""), ("  Two   words\n", "two words"),
+                ("Atomic design in&nbsp;1998", "atomic design in 1998"),
+                ("Atomic Design in\u00a01998", "atomic design in 1998"),
+                ("Tom &amp; Jerry", "tom & jerry"), ("Tom &#38; Jerry", "tom & jerry"),
+                ("&lt;b&gt; &quot;q&quot; &apos;a&apos; &#39;b&#x27;", "<b> \"q\" 'a' 'b'"),
+                ("It&#8217;s &rsquo;", "it’s ’"), ("&amp;lt;", "&lt;"), ("&#38;#65;", "&#65;"),
+                ("&#0; &#xD800; ok", "ok"), ("★ The iPhones 18 Pro", "★ the iphones 18 pro"),
+            ]:
+                cur.execute("SELECT post_title_key(%s)", (title,))
+                self.assertEqual(cur.fetchone()[0], key, title)
         finally:
             conn.rollback()
             conn.close()

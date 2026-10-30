@@ -66,6 +66,11 @@ export function sourceLabel(...candidates: Array<string | null | undefined>): st
   return deriveFromUrl(values[0]);
 }
 
+/** Several sources named as one line, each by `sourceLabel`: a story's, a classic's or a suggestion's list. */
+export function sourceLabelList(names: Array<string | null | undefined>): string {
+  return names.map((name) => sourceLabel(name)).join(', ');
+}
+
 /**
  * A post's source name on the post page: a YouTube post names its channel (the
  * stored source is the channel id); everything else goes through `sourceLabel`.
