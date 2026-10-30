@@ -848,9 +848,10 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   const bodyImageSrc = useCallback((src: string) => proxiedImage(postId, src), [postId]);
   // The same element while the body is the same: the renderer's blocks are not rebuilt on
   // every state change (a star, an announcement), so a block keeps its focus (issue 0030).
+  const internalLinks = post?.internal_links;
   const markdownBody = useMemo(
-    () => <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} />,
-    [renderContent, bodyImageSrc, bodyHtml],
+    () => <MarkdownRenderer content={renderContent} imageSrc={bodyImageSrc} html={bodyHtml !== null} internalLinks={internalLinks} />,
+    [renderContent, bodyImageSrc, bodyHtml, internalLinks],
   );
   const isYouTubePost = post?.platform === 'youtube';
   // A blog post that carries a YouTube video: the player stands in for the hero.

@@ -1,5 +1,5 @@
 """The post page knows what INSIGHT has: its story (issue 0055, "covered by" at the end of the
-post).
+post) and the links of its text that are stored posts (issue 0057, they open in INSIGHT).
 
 On the database, one transaction per test, rolled back; assertions are scoped to the test's own
 rows (the story job regroups every post it sees, and nothing of it is kept).
@@ -22,9 +22,29 @@ from insight_core.db.repo_stories import StoriesRepository
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_db
+from insight_core.utils.post_links import body_hrefs
 from insight_core.utils.url_normalization import normalize_url
 
 LONG = "x" * 200   # a text long enough to be a copy
+
+
+class BodyHrefsTests(unittest.TestCase):
+    def test_html_hrefs_each_once_entities_decoded(self):
+        html = ('<a href="https://a.test/1?x=1&amp;y=2">a</a> <a href=\'/rel\'>b</a>'
+                '<a href="https://a.test/1?x=1&amp;y=2">again</a>')
+        self.assertEqual(body_hrefs(html, "ignored https://c.test/2"), ["https://a.test/1?x=1&y=2", "/rel"])
+
+    def test_escaped_html_as_the_reader_decodes_it(self):
+        self.assertEqual(body_hrefs('&lt;a href=&quot;https://a.test/1?x=1&amp;amp;y=2&quot;&gt;a&lt;/a&gt;'),
+                         ["https://a.test/1?x=1&y=2"])
+
+    def test_plain_text_bare_addresses_without_trailing_punctuation(self):
+        text = "See https://t.me/chan/1. And (https://b.test/x), [it](https://c.test/y)!"
+        self.assertEqual(body_hrefs(None, text), ["https://t.me/chan/1", "https://b.test/x", "https://c.test/y"])
+
+    def test_nothing(self):
+        self.assertEqual(body_hrefs(None, None), [])
+        self.assertEqual(body_hrefs("", "no links here"), [])
 
 
 @requires_db
@@ -122,6 +142,63 @@ class PostPageTests(unittest.TestCase):
                          " (%s, %s, 'share', 'v')", (a, a, b, a))
         self.assertIsNone(self._story(a))
         self.assertIsNone(self._story(b))
+
+    # ---- 0057: the links that are stored posts --------------------------------------------------
+
+    def _links(self, post_id, url, html=None, content=None):
+        return PostDetailService.internal_links(self.cur, post_id, url, html, content)
+
+    def _linking(self, *hrefs, url=None):
+        source = self._source("Linking")
+        url = url or f"https://t.me/chan{self.mark}/200"
+        html = "".join(f'<a href="{h}">{h}</a> ' for h in hrefs)
+        return self._post(source, url=url, html=html), url, html
+
+    def test_a_link_into_the_same_platform(self):
+        channel = self._source("Channel")
+        earlier = self._post(channel, url=f"https://t.me/chan{self.mark}/9951", hours_ago=24 * 20)
+        href = f"https://t.me/chan{self.mark}/9951"
+        post, url, html = self._linking(href)
+        self.assertEqual(self._links(post, url, html), {href: earlier})
+
+    def test_a_link_to_another_site_and_one_not_stored(self):
+        blog = self._source("Blog")
+        article = self._post(blog, url=f"https://blog-{self.mark}.test/2026/10/a-post")
+        stored = f"https://blog-{self.mark}.test/2026/10/a-post"
+        missing = f"https://blog-{self.mark}.test/2026/10/never-stored"
+        post, url, html = self._linking(stored, missing)
+        self.assertEqual(self._links(post, url, html), {stored: article})
+
+    def test_another_form_of_the_address(self):
+        blog = self._source("Blog")
+        article = self._post(blog, url=f"https://blog-{self.mark}.test/2026/10/a-post/")
+        tagged = f"http://www.blog-{self.mark}.test/2026/10/a-post?utm_source=rss&amp;utm_medium=x#comments"
+        post, url, html = self._linking(tagged)
+        self.assertEqual(self._links(post, url, html),
+                         {f"http://www.blog-{self.mark}.test/2026/10/a-post?utm_source=rss&utm_medium=x#comments": article},
+                         "the key is the href as the reader gets it, entities decoded")
+
+    def test_two_posts_at_one_address_the_first_seen_unless_one_is_the_exact_url(self):
+        blog = self._source("Blog")
+        base = f"https://blog-{self.mark}.test/2026/10/shared"
+        first = self._post(blog, url=f"{base}#fn1", title="One", fetched_hours_ago=10)
+        second = self._post(blog, url=f"{base}#fn2", title="Two", fetched_hours_ago=5)
+        post, url, html = self._linking(f"{base}?utm_campaign=x", f"{base}#fn2")
+        self.assertEqual(self._links(post, url, html), {f"{base}?utm_campaign=x": first, f"{base}#fn2": second})
+
+    def test_relative_links_plain_text_and_not_the_post_itself(self):
+        blog = self._source("Blog")
+        url = f"https://blog-{self.mark}.test/2026/10/this-post"
+        older = self._post(blog, url=f"https://blog-{self.mark}.test/2026/09/older")
+        this = self._post(blog, url=url, html='<a href="/2026/09/older">older</a> <a href="#top">top</a>')
+        self.assertEqual(self._links(this, url, '<a href="/2026/09/older">older</a> <a href="#top">top</a>'),
+                         {"/2026/09/older": older}, "made absolute against the post; itself never")
+        text = f"Earlier: https://blog-{self.mark}.test/2026/09/older."
+        self.assertEqual(self._links(this, url, None, text), {f"https://blog-{self.mark}.test/2026/09/older": older})
+
+    def test_a_malformed_link_is_skipped(self):
+        post, url, html = self._linking("https://bad.test:not a port/x", "mailto:a@b.test", "javascript:void(0)")
+        self.assertEqual(self._links(post, url, html), {})
 
 
 if __name__ == "__main__":

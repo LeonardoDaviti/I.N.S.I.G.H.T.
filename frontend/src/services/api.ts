@@ -64,6 +64,8 @@ export interface Post {
   background?: BackgroundClassic[];
   /** Its story with 2+ voices, the feed row's object (issue 0055); null when it is in none. */
   story?: FeedStory | null;
+  /** Each link of its text that is a stored post: href as written -> that post's id (issue 0057). */
+  internal_links?: Record<string, string>;
 }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */

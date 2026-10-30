@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown';
+import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
@@ -14,6 +15,9 @@ interface MarkdownRendererProps {
    * a literal "<details>" or "&lt;p&gt;" in it shows as text, never as an element.
    */
   html?: boolean;
+  /** Links that are stored posts, href as written -> post id (issue 0057): each opens that post
+   *  in INSIGHT, with a small ↗ beside it for the original. */
+  internalLinks?: Record<string, string>;
 }
 
 function decodeHtmlEntities(input: string): string {
@@ -81,7 +85,7 @@ const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugi
   ],
 ];
 
-export default function MarkdownRenderer({ content, className = "", imageSrc, html = true }: MarkdownRendererProps) {
+export default function MarkdownRenderer({ content, className = "", imageSrc, html = true, internalLinks }: MarkdownRendererProps) {
   if (!content) {
     return <p className="text-fg-3">No content available</p>;
   }
@@ -263,16 +267,28 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
               {children}
             </td>
           ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-link [overflow-wrap:anywhere]"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const postId = href ? internalLinks?.[href.trim()] : undefined;
+            const original = (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={postId ? 'ml-[0.15em] text-[0.85em] text-fg-3 no-underline hover:text-fg' : 'text-link [overflow-wrap:anywhere]'}
+                {...(postId ? { 'aria-label': 'Open the original', title: 'Open the original', 'data-original-link': '' } : {})}
+              >
+                {postId ? '↗' : children}
+              </a>
+            );
+            return postId ? (
+              <>
+                <Link to={`/posts/${encodeURIComponent(postId)}`} data-internal-link className="text-link [overflow-wrap:anywhere]">
+                  {children}
+                </Link>
+                {original}
+              </>
+            ) : original;
+          },
           hr: () => (
             <hr className="my-[2em] border-t border-line" />
           ),

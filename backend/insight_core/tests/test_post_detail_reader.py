@@ -93,6 +93,26 @@ class PostDetailReaderStateTests(unittest.TestCase):
                                           {"url": "https://x.invalid/b.png"}])
         self.assertEqual(post["video"], {"provider": "youtube", "id": "rHCpgtc5nzs"})
 
+    def test_detail_carries_its_story_and_its_links_to_stored_posts(self):
+        """Issues 0055 and 0057, through the route: no story here; a link to a stored post maps to it."""
+        target = f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}"
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT source_id FROM posts WHERE id = %s", (self.post_id,))
+            source = cur.fetchone()[0]
+            cur.execute("INSERT INTO posts (source_id, url, normalized_url, title, content) VALUES (%s, %s, %s, 'U', 'B')"
+                        " RETURNING id", (source, target, target))
+            other = str(cur.fetchone()[0])
+            cur.execute("UPDATE posts SET content_html = %s WHERE id = %s",
+                        (f'<p><a href="{target}?utm_source=x">it</a> <a href="https://nowhere.invalid/x">no</a></p>',
+                         self.post_id))
+            conn.commit()
+        previous = registry.use(SimpleNamespace(post_detail=self.service))
+        self.addCleanup(registry.use, previous)
+        status, _, body = call(main.app, "GET", f"/api/posts/item/{self.post_id}")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["post"]["story"])
+        self.assertEqual(body["post"]["internal_links"], {f"{target}?utm_source=x": other})
+
     def test_detail_without_media(self):
         post = self.service.get_post_by_id(self.post_id)
         self.assertEqual(post["images"], [])

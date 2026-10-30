@@ -11,7 +11,8 @@ import { postKey } from '../hooks/usePost';
 import { resetStoredChoices } from '../hooks/useShortcutPreference';
 import type { Api, FeedStory, Post, PostDetailResponse } from '../services/api';
 
-// The post page knows what INSIGHT has: "Covered by" at the end (issue 0055).
+// The post page knows what INSIGHT has: "Covered by" at the end (issue 0055), and links to
+// stored posts that open here, with ↗ for the original (issue 0057).
 
 const LAB = '00000000-0000-4000-8000-0000000000a1';
 const CHANNEL = '00000000-0000-4000-8000-0000000000a2';
@@ -116,5 +117,41 @@ describe('PostDetailPage covered by (issue 0055)', () => {
     await screen.findByRole('article', { name: 'Post content' });
     expect(screen.queryByRole('region', { name: 'Covered by' })).toBeNull();
     expect(screen.queryByText(/Covered by/)).toBeNull();
+  });
+});
+
+describe('PostDetailPage links to stored posts (issue 0057)', () => {
+  const html = '<p>See <a href="https://t.me/data_secrets/9951">the earlier post</a> and '
+    + '<a href="https://openai.com/index/securing">OpenAI\'s post</a>.</p>';
+
+  it('a link to a stored post opens it in INSIGHT; ↗ beside it opens the original', async () => {
+    const user = userEvent.setup();
+    renderPage(byId({
+      [POST_ID]: rssPost({ content_html: html, internal_links: { 'https://t.me/data_secrets/9951': TAKE } }),
+      [TAKE]: rssPost({ id: TAKE, title: 'Ноам Браун заявил', content_html: '<p>Earlier.</p>' }),
+    }));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    const inside = within(article).getByRole('link', { name: 'the earlier post' });
+    expect(inside).toHaveAttribute('href', `/posts/${TAKE}`);
+    expect(inside).not.toHaveAttribute('target');
+    const original = within(article).getByRole('link', { name: 'Open the original' });
+    expect(original).toHaveAttribute('href', 'https://t.me/data_secrets/9951');
+    expect(original).toHaveAttribute('target', '_blank');
+    // A page INSIGHT doesn't have works as before.
+    const outside = within(article).getByRole('link', { name: "OpenAI's post" });
+    expect(outside).toHaveAttribute('href', 'https://openai.com/index/securing');
+    expect(outside).toHaveAttribute('target', '_blank');
+    expect(within(article).getAllByRole('link', { name: 'Open the original' })).toHaveLength(1);
+
+    await user.click(inside);
+    expect(screen.getByTestId('location')).toHaveTextContent(`/posts/${TAKE}`);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Ноам Браун заявил' })).toBeInTheDocument();
+  });
+
+  it('without internal links every link leaves as before', async () => {
+    renderPage(baseApi(rssPost({ content_html: html })));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    expect(within(article).getByRole('link', { name: 'the earlier post' })).toHaveAttribute('target', '_blank');
+    expect(within(article).queryByRole('link', { name: 'Open the original' })).toBeNull();
   });
 });

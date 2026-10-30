@@ -122,12 +122,13 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         url: 'https://t.me/ai_newz/3150',
       }, now);
     case 'story':
-      // Covered by (issue 0055): a Russian/English story.
+      // Covered by (issue 0055) and a link to a stored post (issue 0057): a Russian/English story.
       return detail('p-story', {
         title: 'Introducing Kimi K3.1 Pro',
         url: 'https://simonwillison.net/2026/Oct/23/kimi-k31-pro/',
         content_html: STORY_HTML,
         content: STORY_HTML.replace(/<[^>]+>/g, ''),
+        internal_links: { 'https://t.me/data_secrets/9951': 'p-article' },
         story: {
           id: 'p-story-ai-newz', voices: 4, first: 'p-story-ai-newz',
           sources: [{ id: 's-newz', name: 'ai_newz' }, { id: 's-ds', name: 'data_secrets' },

@@ -130,6 +130,30 @@ def _link_text(content_html: str, start: int) -> Optional[str]:
     return text[:LINK_TEXT_MAX] or None
 
 
+# A bare address in stored plain text (a post with no HTML body), as the reader links it.
+BARE_URL = re.compile(r'https?://[^\s<>"\'`\]\[(){}]+', re.I)
+BODY_HREFS_MAX = 500
+
+
+def body_hrefs(content_html: Optional[str], content: Optional[str] = None) -> List[str]:
+    """Every link target of a post's text as the reader gets it (issue 0057): the HTML's hrefs,
+    entities decoded; with no HTML, the bare addresses of the plain text (without trailing
+    punctuation). Each once, first seen first; any platform, the post's own site included."""
+    if content_html and not HREF.search(content_html) and "&lt;a" in content_html:
+        content_html = html.unescape(content_html)   # escaped HTML (Reddit's): the reader decodes it too
+    if content_html:
+        found = (html.unescape(m.group(1)).strip() for m in HREF.finditer(content_html))
+    else:
+        found = (m.group(0).rstrip(".,;:!?'\"") for m in BARE_URL.finditer(content or ""))
+    out: List[str] = []
+    for href in found:
+        if href and href not in out:
+            out.append(href)
+            if len(out) >= BODY_HREFS_MAX:
+                break
+    return out
+
+
 def extract_links(content_html: Optional[str], post_url: Optional[str], kind: str) -> List[PostLink]:
     """The outside links of one post, first seen first, each address once."""
     if not content_html:
