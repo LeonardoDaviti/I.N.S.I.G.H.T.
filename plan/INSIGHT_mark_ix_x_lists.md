@@ -22,7 +22,8 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - full arXiv papers (0037), which are 45% of all posts;
   - PDF text (0038);
   - the reader's known gaps: pages laid out in tables that read as 0 words (paulgraham.com), code written as `<figure><code>` (fasterthanli.me), from 0042 and 0039's checks;
-  - Hacker News with its comments (0017), read in place.
+  - Hacker News with its comments (0017), read in place;
+  - History: the posts I opened, newest first, by day (0052).
 - **v9.7, find and follow up:**
   - one story, many sources (0050): the links inside posts, a story shown once with "covered by N", and Discover from what your sources link;
   - News and Classics (0051): what many of your sources cover now, and what they keep citing, ranked without AI;
