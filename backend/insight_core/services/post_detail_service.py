@@ -67,6 +67,7 @@ class PostDetailService:
                 row = cur.fetchone()
                 # The classics this post builds on (issue 0051): at most 2, none without one.
                 background = self.news.background(cur, post_id) if row else []
+                story = self.story(cur, post_id) if row else None
 
         if not row:
             return None
@@ -101,7 +102,17 @@ class PostDetailService:
             "source": row[22],
             "source_display_name": source_settings.get("display_name") or row[22],
             "background": background,
+            "story": story,
         }
+
+    @staticmethod
+    def story(cur: psycopg.Cursor, post_id: str) -> Optional[Dict[str, Any]]:
+        """The post's story as the feed's lead carries it (issue 0055: the same `story`, from the
+        same query), when it has 2+ voices; else None (no story, or copies of one voice)."""
+        item: Dict[str, Any] = {"id": str(post_id)}
+        ReaderRepository.attach_stories(cur, [item])
+        story = item.get("story")
+        return story if story and story["voices"] >= 2 else None
 
     def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn:

@@ -1,7 +1,7 @@
 ```meta
 kind: page
 routes: /posts/:postId
-states: article, media, long-title, headings, missing-title, loading, error
+states: article, media, long-title, headings, missing-title, story, loading, error
 ```
 
 # Post
@@ -38,6 +38,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **Body:** the content in full (a body that is exactly the title is not repeated) as wrapped prose through `MarkdownRenderer` at the reading measure (~68ch); monospace only for real code blocks, which scroll on their own. Tables keep their header cells, rows and columns, in a hairline frame; a figure keeps its image with its caption under it, in `text-2` at 0.875em (issue 0042). A post with no HTML body shows its stored plain text read as markdown only: a literal `<details>` in it is text, never an element.
 - **More images** after the body.
 - **Background** (decision 036): when the post links a classic, one quiet `small` `text-3` line under it per classic, at most 2, the most cited first: `Builds on: Scaling Laws for Neural Language Models · cited by 3 of your sources`, the title a quiet link (a stored post opens in the reader, an outside page in a new tab). Nothing when it links none, or only classics you hid.
+- **Covered by** (issue 0055, the feed's folded list of decision 035): when the post is in a story with 2+ voices, one quiet `small` `text-3` block after the text and Background, before the next post in the stream: `Covered by 4` (`· this post was first` when it was), then the story's other posts as the feed lists them, an indented hairline list (unread dot, source, title opening the post here, `· share`, `· first` on the story's first report, date). Read posts look read. Nothing when the post is in no story.
 - **YouTube posts:** the player, a line of duration / views / likes / transcript source, a "Watch progress" card (progress bar, position slider, Save progress, Mark complete), then the transcript in collapsed blocks with "Set progress here" and "Open at m:ss".
 - **Reddit posts:** a "Discussion" section with the stored comments, only when some are stored; there is no "Fetch comments": Reddit refuses it (issue 0012), and its backend is removed (issue 0029).
 - Column: `grid-cols-[minmax(0,42rem)]`, centred, page `max-w-6xl`, `pb-24`.
@@ -49,6 +50,7 @@ Read one post, whole, in one centred column with nothing beside it (P4). It is t
 - **media:** a hero image, more images after the body, and a video (YouTube embed or watch mode).
 - **long-title:** a title of several lines (up to 120 characters from the API) wraps, never truncated further, and balances with `pretty`.
 - **headings:** a body using h1–h6, lists, quotes, tables (one wide, with a caption), a captioned figure and code, to check the prose scale.
+- **story:** a post in a Russian/English story of 4 sources: `Covered by 4` at the end, one read entry, a share and the first report marked.
 - **missing-title:** a Telegram or commit post with no real title, or a tweet whose whole text is the title: the H1 is the text's first line or first sentence.
 - **loading:** a skeleton in the same frame and column as the loaded page, so nothing jumps on arrival.
 - **error:** "Post not found" with the error message and "Back to the feed". An action that fails (keep, Later, copy) shows an error `Notice` with Dismiss above the body.

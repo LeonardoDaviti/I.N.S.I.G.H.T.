@@ -62,6 +62,8 @@ export interface Post {
   source_display_name?: string;
   /** The classics this post links (issue 0051), at most 2; empty or absent when none. */
   background?: BackgroundClassic[];
+  /** Its story with 2+ voices, the feed row's object (issue 0055); null when it is in none. */
+  story?: FeedStory | null;
 }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
@@ -148,6 +150,8 @@ export interface ClassicsResponse { success: true; classics: Classic[]; }
 export interface FeedStory {
   id: string;
   voices: number;
+  /** Its first report, else its first share. */
+  first?: string | null;
   sources: { id: string; name: string }[];
   posts: StoryPost[];
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { ArrowUpRight, Check, Loader2 } from 'lucide-react';
 import MarkdownRenderer from '../components/ui/MarkdownRenderer';
@@ -14,6 +14,7 @@ import { EmptyState, FOCUS_RING, Notice } from '../components/states';
 import { useDevFixtureApi } from '../hooks/useDevFixtureApi';
 import DevDataSwitch from '../components/ops/DevDataSwitch';
 import ShortcutHelp from '../components/reader/ShortcutHelp';
+import { StatusIcon } from '../components/ui/StatusGlyph';
 import { postQueryOptions, usePost, usePrefetchPost } from '../hooks/usePost';
 import { usePostNeighbors } from '../hooks/usePostNeighbors';
 import { findFeedItems, patchFeeds, useReaderMutations } from '../hooks/useReaderMutations';
@@ -28,7 +29,7 @@ import {
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
-import { postSourceName } from '../lib/sourceLabel';
+import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
 import { middleTruncate, plural } from '../lib/format';
@@ -38,6 +39,7 @@ import { formatClock } from '../lib/duration';
 import type {
   Api,
   FeedItem,
+  FeedStory,
   Post,
   PostDetailResponse,
   ReaderState,
@@ -71,6 +73,57 @@ function postFixtureApi(name: string): Partial<Api> | null {
     recordPostReadingSession: ok,
     togglePostFavorite: ok,
   };
+}
+
+/**
+ * "Covered by 4" at the end of a post (issue 0055): its story's other posts, as the feed's folded
+ * row lists them (unread dot, source, title opening it here, "· share", date), the story's first
+ * report marked "first". Its own block, so the reader's initial JS does not grow.
+ */
+function CoveredBy({ story, postId }: { story: FeedStory; postId: string }) {
+  const now = new Date();
+  return (
+    <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
+      <p>
+        Covered by {story.sources.length}
+        {story.first === postId ? ' · this post was first' : null}
+      </p>
+      <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">
+        {story.posts.map((post) => (
+          <li key={post.id} className="flex min-w-0 items-baseline gap-1.5">
+            {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
+            <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>
+              {middleTruncate(sourceLabel(post.source_display_name), 32)}
+            </span>
+            <span aria-hidden="true" className="shrink-0">·</span>
+            <Link
+              to={postHref(post.id, null)}
+              dir="auto"
+              className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+            >
+              {post.title?.trim() || 'Untitled post'}
+            </Link>
+            {post.role === 'share' ? <span className="shrink-0">· share</span> : null}
+            {post.id === story.first ? <span className="shrink-0">· first</span> : null}
+            <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
+              {feedDateLabel(post.sort_at, now)}
+            </time>
+            {!post.read_at ? <span className="sr-only">Unread</span> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** A post read here reads as read in every cached post page's "covered by" (issue 0055). */
+function patchStoryRead(queryClient: QueryClient, postId: string, readAt: string | null) {
+  queryClient.setQueriesData<PostDetailResponse>({ queryKey: ['post'] }, (data) => {
+    const story = data?.post?.story;
+    if (!data?.post || !story?.posts.some((p) => p.id === postId && Boolean(p.read_at) !== Boolean(readAt))) return data;
+    const posts = story.posts.map((p) => (p.id === postId ? { ...p, read_at: readAt } : p));
+    return { ...data, post: { ...data.post, story: { ...story, posts } } };
+  });
 }
 
 /** Plain text of a post for the clipboard: the stored text, else the HTML's text. */
@@ -701,6 +754,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       // The server marks an opened post read: so do the cached feed and counts.
       mutations.noteOpened(postId);
       const recordedAt = response.event?.created_at || new Date().toISOString();
+      patchStoryRead(queryClient, postId, recordedAt);
       setReaderState((state) => ({
         ...state,
         post_id: postId,
@@ -712,7 +766,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
         read_at: state?.read_at || recordedAt,
       }));
     });
-  }, [api, meta, mutations, postId]);
+  }, [api, meta, mutations, postId, queryClient]);
 
   // One post at a time: opening it is reading it.
   useEffect(() => {
@@ -881,6 +935,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
     setReaderState((current) => ({ ...current, post_id: postId, read_at: read ? new Date().toISOString() : null, ...(read ? { later_at: null } : {}) }));
     try {
       await mutations.setRead(item, read);
+      patchStoryRead(queryClient, postId, read ? new Date().toISOString() : null);
       setAnnouncement(read ? 'Marked as read' : 'Marked as unread');
     } catch (failure) {
       setReaderState((current) => ({ ...current, post_id: postId, ...previous }));
@@ -1164,6 +1219,9 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ))}
         </div>
       ) : null}
+
+      {/* ---- Covered by (issue 0055): the post's story, its other posts, open ---- */}
+      {post.story?.posts.length ? <CoveredBy story={post.story} postId={postId} /> : null}
 
       {/* ---- Reddit discussion ---- */}
       {isRedditPost && comments.length > 0 && (
