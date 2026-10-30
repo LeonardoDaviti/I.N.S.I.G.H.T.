@@ -2,7 +2,8 @@
  * The search page's URL (issue 0040): `/search?q=&scope=&filter=&days=&order=`, so a
  * search survives a reload and Back. No `scope` searches every post; the scope you searched
  * from (the Main feed `all`, a track, a source) is the first chip and can be taken off.
- * Later and Kept, and the last week, month or year, are the other chips.
+ * Later, Kept, News and Classics (one at a time), and the last week, month or year, are the
+ * other chips.
  */
 import type { SearchFilter, SearchOrder } from '../services/api';
 import { isValidScope } from './feedContext.ts';
@@ -30,7 +31,8 @@ export function parseSearch(params: URLSearchParams): SearchState {
   return {
     q: params.get('q') ?? '',
     scope: scope && isValidScope(scope) ? scope : null,
-    filter: filter === 'later' || filter === 'starred' ? filter : 'all',
+    // The lists to search, one at a time: Later, Kept, News and Classics (issue 0056).
+    filter: /^(later|starred|news|classics)$/.test(filter ?? '') ? filter as SearchFilter : 'all',
     days: SEARCH_DAYS.some((choice) => choice.days === days) ? days : null,
     order: params.get('order') === 'best' ? 'best' : 'newest',
   };

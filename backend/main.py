@@ -47,13 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 def fill_search_vectors() -> None:
-    """The posts stored before search (issue 0040) become searchable, in the background."""
+    """The posts stored before search (issue 0040), or indexed by an older rule (issue 0056's
+    version names, migration 0042), become searchable as search reads them now, in the background."""
     try:
         filled = services().reader.fill_search_vectors()
         if filled:
-            logger.info("Search: indexed %s posts stored before search", filled)
+            logger.info("Search: indexed %s posts stored before search or indexed by an older rule", filled)
     except Exception:
-        logger.exception("Search: could not index the posts stored before search")
+        logger.exception("Search: could not index the posts stored before search or indexed by an older rule")
 
 
 def recompute_stories() -> None:
@@ -634,9 +635,13 @@ async def get_feed(scope: str = "all", filter: str = "all", view: str = "stream"
 async def search_posts(q: str, scope: str | None = None, filter: str = "all", days: int | None = None,
                        order: str = "newest", cursor: str | None = None, limit: int = 30):
     """Search every post (issue 0040): title, source name and full text, word forms in English
-    and Russian, "phrases", -word. scope: none (every post) | all (the Main feed) | source:<uuid>
-    | folder:<uuid>; filter: all | later | starred; days: the last N days;
-    order: newest (keyset cursor) | best (offset cursor). Items carry `snippet`."""
+    and Russian, "phrases", -word; a version word by its parts ("kimi 3.1" finds K3.1, issue 0056).
+    scope: none (every post) | all (the Main feed) | source:<uuid> | folder:<uuid>;
+    filter: all | later | starred | news (News stories, any date) | classics (titles and addresses);
+    days: the last N days; order: newest (keyset cursor) | best (offset cursor; Classics: always).
+    Items carry `snippet`; a story shows once, at its best-matching post, with its `story`
+    (not in one source, Later or Kept); under News each with `story` and `news`. Classics answer
+    {classics, next_cursor}, shaped as GET /api/classics."""
     query = SearchQuery.parse(q=q, scope=scope, filter=filter, days=days, order=order, cursor=cursor,
                               limit=limit)
     return services().reader.search(query)

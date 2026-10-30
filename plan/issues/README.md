@@ -60,7 +60,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0053](0053-reader-gaps.md) | Reader gaps: pages built from tables, code in figures, and the gaps nobody has listed yet | built, not deployed (v9.6) |
 | [0054](0054-source-anatomy.md) | Source anatomy: how each source is read, and what it gives | built, not deployed (v9.6) |
 | [0055](0055-covered-by-on-the-post.md) | "Covered by" on the post page, not only in the feed | built, not deployed (v9.8) |
-| [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | spec (v9.8) |
+| [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | built, not deployed (v9.8) |
 | [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | built, not deployed (v9.8) |
 | [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
 | [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | spec (v9.8) |

@@ -35,14 +35,17 @@ class ReaderService:
         return {"success": True, key: rows, "next_cursor": next_cursor.encode() if next_cursor else None}
 
     def search(self, query: SearchQuery) -> Dict[str, Any]:
-        """SearchPage {items (each with its snippet), next_cursor}."""
+        """SearchPage {items (each with its snippet; a story's with its `story`), next_cursor};
+        under Classics {classics, next_cursor}, as GET /api/classics shapes them."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             items, next_cursor = self.search_repo.search(cur, query, now=self.clock())
-        return {"success": True, "items": items, "next_cursor": next_cursor}
+        key = "classics" if query.filter == "classics" else "items"
+        return {"success": True, key: items, "next_cursor": next_cursor}
 
     def fill_search_vectors(self) -> int:
-        """Give every post stored before search (0033) its search vector, FILL_BATCH posts a
-        transaction, so no write waits on a long one. Returns how many were filled."""
+        """Give every post whose search vector is missing (stored before 0033) or made by an
+        older rule (0042's search_version) its vector, FILL_BATCH posts a transaction, so no
+        write waits on a long one. Returns how many were filled."""
         filled = 0
         while True:
             with db.transaction(self.db_url) as cur:

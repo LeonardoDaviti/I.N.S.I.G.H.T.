@@ -195,8 +195,9 @@ export interface FeedParams {
 
 // ---- Search: GET /api/search (issue 0040) ----
 
-/** Search narrows to Later or Kept, never to read state. */
-export type SearchFilter = 'all' | 'later' | 'starred';
+/** Search narrows to Later or Kept, never to read state; or searches News stories or Classics
+ *  (issue 0056: `classics` answers ClassicsResponse with `next_cursor`, not a FeedPage). */
+export type SearchFilter = 'all' | 'later' | 'starred' | 'news' | 'classics';
 export type SearchOrder = 'newest' | 'best';
 export interface SearchParams {
   q: string;

@@ -5,19 +5,32 @@ import { toast } from 'sonner';
 import { Clock, EyeOff } from 'lucide-react';
 
 import { useApi } from '../../services/ApiContext';
-import type { Classic, ClassicsResponse } from '../../services/api';
+import type { Classic, ClassicsResponse, SearchOrder } from '../../services/api';
 import { UNREAD_COUNTS_KEY } from '../../hooks/useFeed';
 import { errorMessage } from '../../lib/apiError';
 import { postHref } from '../../lib/feedContext';
 import { citedBy, classicTitle } from '../../lib/classics';
 import { sourceLabelList } from '../../lib/sourceLabel';
-import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK } from '../states';
+import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 
 const ICON_BUTTON = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-raised hover:text-fg disabled:opacity-60 coarse:h-11 coarse:w-11 ${PRESS_FEEDBACK} ${FOCUS_RING}`;
 
 function classicsKey(scope: string) {
   return ['classics', scope];
 }
+
+/** Searching Classics (issue 0056): the words, and the search's scope, dates and order. */
+export interface ClassicsSearch {
+  q: string;
+  scope: string | null;
+  days: number | null;
+  order: SearchOrder;
+  /** The empty state's way out ("Search everything"). */
+  emptyAction?: EmptyStateAction;
+}
+
+/** One page is every classic a search shows: there are a few hundred classics at most. */
+const SEARCH_LIMIT = 100;
 
 /**
  * One classic: its title (Read: a stored post opens in the reader; an outside page is saved
@@ -76,14 +89,22 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
  * an outside page or put it in Later: then it is saved (Save any page) and reads like any post.
  * Hide is "I know it" and "not for me" in one: a hidden classic never comes back.
  */
-export default function ClassicsList({ scope }: { scope: string }) {
+export default function ClassicsList({ scope, search }: { scope: string; search?: ClassicsSearch }) {
   const api = useApi();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const key = classicsKey(scope);
+  // A search's classics live under the same root key, so reading, Later and Hide patch them too.
+  const key = search
+    ? ['classics', 'search', search.q, search.scope ?? '', search.days ?? 0, search.order]
+    : classicsKey(scope);
   const query = useQuery({
     queryKey: key,
-    queryFn: ({ signal }) => api.getClassics({ scope, signal }),
+    queryFn: ({ signal }) => (search
+      // Classics (issue 0056): their titles and addresses, as GET /api/classics shapes them.
+      ? api.searchPosts({
+        q: search.q, scope: search.scope, days: search.days, order: search.order, filter: 'classics', limit: SEARCH_LIMIT, signal,
+      }) as unknown as Promise<ClassicsResponse>
+      : api.getClassics({ scope, signal })),
     // Reading one changes it: coming back shows it read.
     staleTime: 0,
     refetchOnWindowFocus: false,
@@ -146,9 +167,20 @@ export default function ClassicsList({ scope }: { scope: string }) {
     );
   };
 
-  if (query.isPending) return <LoadingState label="Loading classics" rows={6} />;
-  if (query.isError) return <ErrorState title="Could not load Classics" error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isPending) return <LoadingState label={search ? 'Searching' : 'Loading classics'} rows={6} />;
+  if (query.isError) {
+    return <ErrorState title={search ? 'Could not search' : 'Could not load Classics'} error={query.error} onRetry={() => void query.refetch()} />;
+  }
   const classics = query.data.classics;
+  if (!classics.length && search) {
+    return (
+      <EmptyState
+        title={`No classics match “${search.q}”`}
+        description="Classics are searched by their title and their address."
+        action={search.emptyAction}
+      />
+    );
+  }
   if (!classics.length) {
     return (
       <EmptyState
