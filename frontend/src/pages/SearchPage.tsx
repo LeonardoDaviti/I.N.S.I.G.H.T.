@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { X } from 'lucide-react';
 
-import type { SearchOrder } from '../services/api';
+import type { SearchFilter, SearchOrder } from '../services/api';
 import { PostList } from '../components/reader/FeedList';
 import { ReaderToolbar } from '../components/reader/FeedToolbar';
 import ReaderNavRail from '../components/reader/ReaderNavRail';
@@ -17,6 +17,15 @@ import { middleTruncate } from '../lib/format';
 import { SEARCH_DAYS, isNarrowed, parseSearch, searchHref, type SearchState } from '../lib/search';
 
 const ShortcutHelp = lazy(() => import('../components/reader/ShortcutHelp'));
+const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
+
+/** The chips that narrow to a list, one at a time (issue 0056 adds News and Classics). */
+const LISTS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
+  { value: 'later', label: 'Later' },
+  { value: 'starred', label: 'Kept' },
+  { value: 'news', label: 'News' },
+  { value: 'classics', label: 'Classics' },
+];
 
 const ORDERS: ReadonlyArray<{ value: SearchOrder; label: string }> = [
   { value: 'newest', label: 'Newest' },
@@ -26,9 +35,12 @@ const ORDERS: ReadonlyArray<{ value: SearchOrder; label: string }> = [
 /**
  * Search across every post (issue 0040), the reader's one results view: `/search?q=…`.
  * The rail and the toolbar are the reader's; the field holds the words, the chips beside
- * it narrow them (the scope searched from first, then Later, Kept and a date), and a rail
- * link narrows the search to that track or source. The results are the reader's rows with
- * their matching line, so read, Later and Keep work on them as anywhere else.
+ * it narrow them (the scope searched from first, then Later, Kept, News or Classics, and a
+ * date), and a rail link narrows the search to that track or source. The results are the
+ * reader's rows with their matching line, so read, Later and Keep work on them as anywhere
+ * else; a story shows once, at its best-matching post, with its "covered by" line, as the Main
+ * feed folds it (issue 0056). News searches News stories of any date; Classics, the classics'
+ * titles and addresses, as their list shows them.
  */
 export default function SearchPage() {
   const [params] = useSearchParams();
@@ -52,13 +64,16 @@ export default function SearchPage() {
   const scopeName = state.scope ? scopeLabel(state.scope, folders.data, sourceNames) : null;
   const days = SEARCH_DAYS.find((choice) => choice.days === state.days);
   const narrowed = isNarrowed(state);
+  const list = LISTS.find((choice) => choice.value === state.filter);
   const chips = [
     scopeName ? `In ${scopeName}` : null,
-    state.filter === 'later' ? 'Later' : state.filter === 'starred' ? 'Kept' : null,
+    list?.label ?? null,
     days?.label ?? null,
   ].filter(Boolean).join(' · ');
   const searchEverything = useCallback(() => go({ scope: null, filter: 'all', days: null }), [go]);
   const emptyAction = useMemo(() => (narrowed ? { label: 'Search everything', onClick: searchEverything } : undefined), [narrowed, searchEverything]);
+  const classics = useMemo(() => ({ q: state.q, scope: state.scope, days: state.days, order: state.order, emptyAction }),
+    [emptyAction, state.days, state.order, state.q, state.scope]);
 
   return (
     <LiveRegionProvider>
@@ -91,8 +106,15 @@ export default function SearchPage() {
                   </span>
                 </FilterChip>
               ) : null}
-              <FilterChip selected={state.filter === 'later'} onClick={() => go({ filter: state.filter === 'later' ? 'all' : 'later' })}>Later</FilterChip>
-              <FilterChip selected={state.filter === 'starred'} onClick={() => go({ filter: state.filter === 'starred' ? 'all' : 'starred' })}>Kept</FilterChip>
+              {LISTS.map((choice) => (
+                <FilterChip
+                  key={choice.value}
+                  selected={state.filter === choice.value}
+                  onClick={() => go({ filter: state.filter === choice.value ? 'all' : choice.value })}
+                >
+                  {choice.label}
+                </FilterChip>
+              ))}
               {SEARCH_DAYS.map((choice) => (
                 <FilterChip
                   key={choice.days}
@@ -108,14 +130,18 @@ export default function SearchPage() {
             </div>
           </ReaderToolbar>
           <div className="w-full max-w-5xl px-3 pb-32 pt-3 sm:px-6 lg:px-8">
-            {state.q ? (
+            {state.q && state.filter === 'classics' ? (
+              <Suspense fallback={null}>
+                <ClassicsList scope={state.scope ?? 'all'} search={classics} />
+              </Suspense>
+            ) : state.q ? (
               <PostList
                 feed={results}
                 scope={state.scope ?? 'all'}
-                filter={state.filter}
+                filter={state.filter === 'later' || state.filter === 'starred' ? state.filter : 'all'}
                 view="stream"
                 search
-                emptyTitle={`No posts match “${state.q}”`}
+                emptyTitle={state.filter === 'news' ? `No News stories match “${state.q}”` : `No posts match “${state.q}”`}
                 emptyDescription={narrowed ? chips : 'Try other words, or fewer of them.'}
                 emptyAction={emptyAction}
                 helpOpen={helpOpen}
@@ -124,7 +150,8 @@ export default function SearchPage() {
             ) : (
               <p className="px-1 text-[0.875rem] text-fg-2">
                 Search every post: its title, its text and its source. Word forms count in English and Russian;
-                “quoted phrases” and -word work.
+                “quoted phrases” and -word work, and “kimi 3.1” finds Kimi K3.1. News searches the stories many of
+                your sources covered; Classics, the pages they keep citing.
               </p>
             )}
           </div>

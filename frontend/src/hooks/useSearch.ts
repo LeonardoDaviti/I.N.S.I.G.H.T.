@@ -30,7 +30,8 @@ export function useSearch(state: SearchState) {
       cursor: pageParam, limit: SEARCH_PAGE_SIZE, signal,
     }),
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    enabled: Boolean(state.q.trim()),
+    // Classics answer classics, not rows: their list loads them (ClassicsList).
+    enabled: Boolean(state.q.trim()) && state.filter !== 'classics',
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

@@ -20,7 +20,7 @@ grouped "all" view) back to the last N days; unset or 0 means no window.
 One story, many sources (issue 0050): the Main feed and a track (the stream, Show unread or all)
 show a story once, at its lead: its first report among the posts the view shows, else its first
 share. The lead carries `story` (who covered it and its other posts). A source's own view, the
-by-source view, Later, Kept and search show every post. The Main feed's and a track's unread
+by-source view, Later and Kept show every post; search folds at the best-matching post (0056). The Main feed's and a track's unread
 counts count rows; marking a story's lead read marks its shares read too.
 """
 from __future__ import annotations

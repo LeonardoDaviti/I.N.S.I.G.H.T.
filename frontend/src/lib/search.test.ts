@@ -14,6 +14,15 @@ test('search URL: only what differs from the defaults, and back', () => {
   });
 });
 
+test('search URL: News and Classics are lists to search, as Later and Kept (issue 0056)', () => {
+  for (const filter of ['news', 'classics'] as const) {
+    const href = searchHref({ q: 'kimi 3.1', scope: 'all', filter });
+    assert.equal(href, `/search?q=kimi+3.1&scope=all&filter=${filter}`);
+    assert.equal(parseSearch(new URL(href, 'http://x').searchParams).filter, filter);
+  }
+  assert.equal(isNarrowed(parseSearch(new URLSearchParams('q=x&filter=news'))), true);
+});
+
 test('search URL: an unknown scope, filter, date or order is the default', () => {
   const state = parseSearch(new URLSearchParams('q=x&scope=tag:x&filter=unread&days=3&order=oldest'));
   assert.deepEqual(state, { q: 'x', scope: null, filter: 'all', days: null, order: 'newest' });

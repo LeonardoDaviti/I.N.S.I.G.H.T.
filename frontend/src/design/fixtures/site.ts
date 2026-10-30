@@ -90,8 +90,11 @@ function search({ query }: FixtureRequest, site: Site) {
   const words = (query.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   const scope = query.get('scope');
   const filter = query.get('filter');
+  // The fixture site holds no classics; its News stories are its rows with a story (issue 0056).
+  if (filter === 'classics') return { success: true, classics: [], next_cursor: null };
   const matches = site.items
     .filter(scope ? inScope(site, scope) : () => true)
+    .filter((item) => filter !== 'news' || Boolean(item.story))
     .filter((item) => filter !== 'starred' || item.starred_at !== null)
     .filter((item) => filter !== 'later' || Boolean(item.later_at))
     .filter((item) => words.every((word) => `${item.title} ${item.excerpt} ${item.source_display_name}`.toLowerCase().includes(word)))
