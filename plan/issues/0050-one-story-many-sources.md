@@ -1,6 +1,6 @@
 # 0050 — One story, many sources: the links inside posts, story groups, "covered by", and Discover
 
-Status: **spec** (2026-10-30) for v9.7 (owner, 2026-10-30: "yes we can go"). It replaces "also discussed on HN / Reddit". Prioritization is 0051 and builds on this.
+Status: **built, not deployed** (2026-10-30, migration 0039) for v9.7 (owner, 2026-10-30: "yes we can go"). It replaces "also discussed on HN / Reddit". Prioritization is 0051 and builds on this.
 
 ## The idea
 Every post carries links. Saved once, as data, those links answer three questions without AI:
@@ -114,3 +114,64 @@ A story is a group of posts from 2+ sources.
 - Ranking (News, Classic): 0051.
 - Stories without a shared link or title, translation and entities: Mark X.
 - HN points and Reddit scores as popularity: later, if News needs them.
+
+## Built
+- **The rules** (pure, ported from the prototype; thresholds in one place):
+  - `backend/insight_core/utils/post_links.py`: a post's outside links from its `content_html`, made absolute and normalized with 0049's normalizer; not kept: the post's own site, media files, links back into its platform (Reddit, HN, X, t.me, YouTube). Also `site_of`, `is_home`, `is_article`, the source kind, the Reddit author.
+  - `backend/insight_core/utils/story_rules.py`: voices, the four joining rules, roundups and mentions, roles, voices per story, Discover's filters and platform accounts.
+- **Migration 0039** (`0039_post_links_and_stories.sql`), all derived and recomputable:
+  - `post_links (post_id, target_url, target_site, position, link_text, boilerplate)`: position 0 is the first link (0051's first-link flag); `link_text` is the title of a page that isn't stored; `boilerplate` marks a source's signature (25% of its posts, 4+) and links to its source's own site (the most common site of its posts). `posts.links_scanned_at` says a post's links were read.
+  - `stories (id = its first post, first_at, voices)`, `story_posts (post_id, story_id, role report|share, reasons text[] of text/title/link/citation, voice)`, `story_mentions (story_id, post_id)` for roundups.
+  - `discover_hidden (key, reason not_interested|removed)`.
+- **Saving:** the saver reads a post's links from what it stored (inside the existing after-save savepoint: still at most two savepoints a post); a full-text repair clears `links_scanned_at`, so the next job reads them again.
+- **The story job** (`services/stories_service.py`, `db/repo_stories.py`): reads the links of every post not read yet (500 a transaction), marks boilerplate, groups the posts of the last 30 days (the first run: every post), writes only what differs; a story begun before the window is frozen. One at a time (advisory lock), never raises. It runs after a fetch run that saved posts (the runner's `stories` port) and in the background when the backend starts (the post links backfill). Its last summary is in `system_settings.stories`.
+- **The reader** (`db/repo_reader.py`):
+  - The Main feed and a track, Show unread or all, show a story once at its lead (its first report the view shows, else its first share); the lead carries `story` {id, voices, sources, posts}. A source's view, by source, Later, Kept, History (0052) and search show every post; History has its own query and never folds.
+  - Marking read (open, the circle, mark-through) a story's report reads its shares, not its other reports; the returned ids include them, so Undo works. Mark-through marks only the rows the unread view shows.
+  - The Main feed's and a track's unread counts count rows (a story once); a source's count stays posts.
+- **Discover:** `GET /api/sources/suggested`, `POST /api/sources/suggested/hide {key}`. A removed source (any delete, Tidy up included) is hidden: a website by its site, a platform account by its account.
+- **UI** (design decision 035; `pages/reader.md`, `pages/sources.md`):
+  - A folded row has one quiet line under its excerpt, `▸ covered by 4 · Anthropic News, @denissexy, +2`, which opens the story's other posts (unread dot, source, title linking to the post, `· share`, date).
+  - Sources gets a `suggested` tab: each site or account with `linked by 7 of your sources (…) · 32 articles` opening its most linked articles, **Follow…** (Add source opened on its address: the feed finder and page watching) and **Not interested**.
+- **Tests:**
+  - Backend: `test_stories.py` (30): links; each joining rule with a must-join and a must-not; one voice never joining itself; a Reddit user in two subreddits as one voice; citations; home pages; roundups and mentions; roles; Discover's filters and platform accounts; the saver; backfill and signatures; stories, roles and reasons; a second run (full and windowed) changing nothing; a frozen story; the folded feed and the lead; History not folding; read propagation; mark-through; row counts; a removed source; the Discover service. Plus the runner calling the job, and 0049's table check knowing the derived tables. **Suite: 911 tests, OK** (after merging main at e49b520).
+  - Frontend: the folded row and its list (`FeedList.test.tsx`), the suggested tab (`SourcesConfig.test.tsx`), `lib/story.test.ts`. Typecheck, lint, **170 node + 621 vitest tests**, build OK.
+  - The reader's initial JS: **477,646 bytes**, +0.54% on the 475,065 baseline (0052's change included).
+- **Screens** (dev server against the copy of the preview, light and dark; not committed): `~/.cache/insight-checks/0050-shots/` (`0050-folded-row-*`, `0050-folded-row-open-*`, `0050-feed-folded-*`, `0050-discover-*`).
+
+### Reproduction on a copy of the preview (2026-10-30)
+`insight_preview` copied by pg_dump into a `_test` database, migrations 0038 and 0039 run, then the job.
+
+| | prototype (`expected-report.txt`) | built |
+|---|---|---|
+| stories with 2+ voices | 24 (20 × 2, 3 × 3, 1 × 4) | **24** (20 × 2, 3 × 3, 1 × 4), the same groups |
+| copy groups (1 voice) | 18 | **17** |
+| posts in stories | 98 | 94 |
+| Discover | 31 sites and accounts | **the same 31, same counts and order** (openai.com 7 voices / 32 of 49 … 9to5mac.com) |
+| backfill and first run | | 7,718 posts, 1,237 with kept links (4,973 kept links), **3.4 s**; a second run 0.05 s, 0 rows changed |
+
+The differences, explained:
+- **The 18th copy group** is one Reddit user posting the same link to r/augmentedreality and r/Xreal with different titles. The prototype joined them by the link (it treats the subreddit as the voice) and then counted one voice. The spec makes the person the voice and says a voice never joins itself through links, so they stay apart. **Spec vs evidence:** the evidence counts this cross-post as a copy to fold; the rule forbids it. If the owner wants cross-posts folded, the one-line change is to join links by subreddit while counting voices by person (the prototype's behaviour).
+- **4 fewer posts in stories:** 2 are that pair; 2 are Simon Willison's `#atom-everything` copies that 0038 merges (the same stories, one row fewer each).
+- **Links:** 12 fewer links kept than the prototype (5,019 vs 5,031 on the same rows): the post's own site is dropped per post, as the spec says, besides the source's own site (digilens.com posts on other hosts, aleksagordic.com on medium.com), and links into X from X posts.
+
+Discover suggests openai.com, metr.org, darioamodei.com, transformer-circuits.pub and epoch.ai; not en.wikipedia.org, a store, or a followed site. It still lists facebook.com, chatgpt.com and support.claude.com, the prototype's known misses (the feed finder turns them down on Follow…).
+
+Folding on the copy: the Main feed shows 2,173 rows for 2,215 posts (42 folded); its unread count is 1,992 rows for 2,030 unread posts. Over every post, 53 of 7,718 fold (the spec's 56, less the 3 above).
+
+### Before deploying: a read-only count on the server
+From the compose directory (service `postgres`, user and database `insight`; change `-U` / `-d` if `.env` sets others). The backfill reads every post's HTML once, in the background, after the backend starts: 3.4 s for 7,718 posts on the preview, so expect well under a minute for 41k.
+
+```sh
+docker compose exec -T postgres psql -U insight -d insight -v ON_ERROR_STOP=1 -c "SET default_transaction_read_only = on" -c "SELECT count(*) AS posts, count(*) FILTER (WHERE content_html ~* '<a\s[^>]*href') AS posts_with_links, count(*) FILTER (WHERE COALESCE(published_at, fetched_at) >= now() - interval '30 days') AS posts_last_30_days FROM posts"
+```
+On `insight_preview` it gives `7735 | 2546 | 466` (posts_with_links counts any link, own site included; 1,237 keep an outside one).
+
+### Left open
+- **Reddit cross-posts** (above): the spec's voice rule keeps them apart; the owner decides.
+- **`blog.google` and `google.com` are not one voice.** The spec calls them one site, but by registrable domain `blog.google` is its own (`.google` is a top-level domain). Making them one needs a list of who owns what, which the rules avoid. The prototype treats them as two too.
+- **"A roundup is a post with 3+ links into stories":** built as the prototype does it, 3+ anchors (article links), since which links are "into stories" is only known after grouping.
+- **Signatures are stored, marked:** a source's signature is known only over all its posts, so its links are saved and marked `boilerplate` by the job rather than not saved; nothing reads them.
+- **A frozen story** (begun more than 30 days ago) takes no new posts; a late copy of a month-old post starts a new story.
+- **Discover's "followed"** is by site, as in the prototype: following one GitHub feed (or one Telegram channel) hides every account on github.com (t.me) from suggestions; x.com accounts are suggested because X is read through Nitter.
+- A post that joins an old story under Show unread can lead it (it is the first unread report shown); nothing marks late shares of a story already read.
