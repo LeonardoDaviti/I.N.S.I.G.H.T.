@@ -29,7 +29,7 @@ function lengthLabel(item: FeedItemData): string | null {
  * opens the story's other posts, each a quiet link to the post (its source, title and date; a
  * share says so). Opening one comes back to the lead's row.
  */
-function StoryPosts({ story, leadId, now }: { story: FeedStory; leadId: string; now?: Date }) {
+function StoryPosts({ story, label, leadId, now }: { story: FeedStory; label: string; leadId: string; now?: Date }) {
   const [open, setOpen] = useState(false);
   const listId = `${feedItemDomId(leadId)}-story`;
   return (
@@ -42,7 +42,7 @@ function StoryPosts({ story, leadId, now }: { story: FeedStory; leadId: string; 
         className={`-ml-1 inline-flex max-w-full items-center gap-1 rounded-sm px-1 text-[0.8125rem] leading-5 text-fg-3 hover:text-fg-2 coarse:min-h-[44px] ${FOCUS_RING}`}
       >
         {open ? <ChevronDown aria-hidden="true" className="h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0" />}
-        <span className="truncate">{coveredBy(story)}</span>
+        <span className="truncate">{label}</span>
       </button>
       {open ? (
         <ul id={listId} data-story-posts className="mt-1 mb-1 flex flex-col gap-1 border-l border-line pl-3">
@@ -102,6 +102,8 @@ export interface FeedItemProps {
   showSource?: boolean;
   /** A search result's matching line (issue 0040), shown instead of the excerpt, its words in bold. */
   snippet?: SnippetPart[] | null;
+  /** A story's line in place of "covered by …": News says what its score is made of (issue 0051). */
+  storyLine?: string;
 }
 
 /**
@@ -116,7 +118,7 @@ export interface FeedItemProps {
  */
 function FeedItem({
   item, selected, tabbable, href, onSelect, onOpen, onToggleRead, onToggleStar, onToggleLater, dateColumn = 'date', dayLabel, position, setSize, now, showSource = true,
-  snippet,
+  snippet, storyLine,
 }: FeedItemProps) {
   const [thumbFailed, setThumbFailed] = useState(false);
   const isRead = Boolean(item.read_at);
@@ -254,7 +256,7 @@ function FeedItem({
             {excerpt}
           </p>
         ) : null}
-        {item.story ? <StoryPosts story={item.story} leadId={item.id} now={now} /> : null}
+        {item.story ? <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story)} leadId={item.id} now={now} /> : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">

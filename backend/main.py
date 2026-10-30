@@ -350,6 +350,10 @@ class DiscoverHideRequest(BaseModel):
     key: str = ""
 
 
+class ClassicHideRequest(BaseModel):
+    url: str = ""
+
+
 
 # ============= JOBS =============
 # Work that outlives the request runs as a background task with a job_runs row the frontend
@@ -830,6 +834,35 @@ async def save_page(request: SavePageRequest):
     400 when url is empty or not http(s). A POST from INSIGHT's own save page: a website cannot
     save silently."""
     return await services().saved.save(FEED_FINDER_HTTP, request.url, request.title)
+
+
+@app.get("/api/news")
+@error_detail("load News")
+async def get_news(scope: str = "all"):
+    """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 7
+    days, with a post from the scope's sources (all | folder:<uuid>; the score counts every
+    source). A FeedPage (no next page): each item is a story's lead with its `story` and `news`
+    {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions, score},
+    recent first, then by score, then the newest."""
+    return await asyncio.to_thread(services().news.news, scope)
+
+
+@app.get("/api/classics")
+@error_detail("load Classics")
+async def get_classics(scope: str = "all"):
+    """Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope
+    among them, that you did not hide. Cited again this week first, then most voices, then cited
+    longest. {classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again,
+    citers [{name, at}], read_at, later_at}]}. Nothing is fetched: an outside page is read
+    through Save any page (POST /api/saved), on click."""
+    return await asyncio.to_thread(services().news.classics, scope)
+
+
+@app.post("/api/classics/hide")
+@error_detail("hide the classic")
+async def hide_classic(request: ClassicHideRequest):
+    """Hide a classic ({url}): "I know it" and "not for me" in one; it never comes back."""
+    return services().news.hide(request.url)
 
 
 @app.get("/api/sources/suggested")

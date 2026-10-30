@@ -15,4 +15,8 @@ test('suggestionReason says how many of your sources link it, who, and how many 
   assert.equal(suggestionReason({
     key: 'metr.org', url: 'https://metr.org', voices: 1, article_count: 1, link_count: 1, voice_names: ['Simon Willison'], articles: [],
   }), 'linked by 1 of your sources (Simon Willison) · 1 article');
+  assert.equal(suggestionReason({
+    key: 'darioamodei.com', url: 'https://darioamodei.com', voices: 4, article_count: 8, link_count: 8,
+    voice_names: ['A', 'B', 'C', 'D'], articles: [], classics: 2,
+  }), 'linked by 4 of your sources (A, B, C, +1) · 8 articles · 2 classics', 'a site that holds classics says so (issue 0051)');
 });

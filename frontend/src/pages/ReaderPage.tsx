@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
-import type { FeedFilter, FeedView, UnreadCounts } from '../services/api';
+import type { FeedFilter, FeedView, ReaderView, UnreadCounts } from '../services/api';
 import FeedList from '../components/reader/FeedList';
 import FeedToolbar from '../components/reader/FeedToolbar';
 import NewPostsPill from '../components/reader/NewPostsPill';
@@ -47,6 +47,14 @@ function useNewPosts(current: number | null, resetKey: string, scope: string) {
     setState((prev) => ({ ...prev, baseline: value }));
   }, []);
   return { count, onUnreadDelta, reset };
+}
+
+// News and Classics (issue 0051): their own chunks, loaded the first time they are shown (the reader's JS budget).
+const NewsList = lazy(() => import('../components/reader/NewsList'));
+const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
+
+function isReaderView(value: string | null): value is ReaderView {
+  return value === 'stream' || value === 'by_source' || value === 'news' || value === 'classics';
 }
 
 /** What Later costs (issue 0022): "Later · 6 posts · 52 min"; null when Later is empty. */
@@ -98,9 +106,13 @@ function Reader({ scope }: { scope: string }) {
   const queryClient = useQueryClient();
   const rawFilter = params.get('filter');
   const filter: FeedFilter = isFeedFilter(rawFilter) ? rawFilter : 'unread';
-  // One source has nothing to group by source, so it is always a stream.
+  // One source has nothing to group by source, so it is always a stream; News and Classics
+  // (issue 0051) are views of the Main feed or a track.
   const oneSource = scope.startsWith('source:');
-  const view: FeedView = !oneSource && params.get('view') === 'by_source' ? 'by_source' : 'stream';
+  const rawView = params.get('view');
+  const readerView: ReaderView = !oneSource && isReaderView(rawView) ? rawView : 'stream';
+  const ranked = readerView === 'news' || readerView === 'classics';
+  const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
   const { fixture, pending: fixturePending } = useDevFeedFixture(isFeedFixtureName(dataName) ? dataName : null);
   const [navOpen, setNavOpen] = useState(false);
@@ -134,12 +146,12 @@ function Reader({ scope }: { scope: string }) {
     const keep = new URLSearchParams();
     // Later and Kept are the Main feed's lists, not a way to read a track or source; History
     // is a way to look back in each (issue 0052), so it stays as All does.
-    if (filter === 'all' || filter === 'history') keep.set('filter', filter);
-    if (view !== 'stream') keep.set('view', view);
+    if (!ranked && (filter === 'all' || filter === 'history')) keep.set('filter', filter);
+    if (readerView !== 'stream') keep.set('view', readerView);
     if (dataName) keep.set('data', dataName);
     const text = keep.toString();
     return text ? `?${text}` : '';
-  }, [dataName, filter, view]);
+  }, [dataName, filter, ranked, readerView]);
 
   const showNewPosts = useCallback(() => {
     void queryClient.resetQueries({ queryKey: currentKey, exact: true });
@@ -186,8 +198,10 @@ function Reader({ scope }: { scope: string }) {
   const later = laterSummary(counts.data);
   let subtitle = scopeCount !== null && filter !== 'starred' && filter !== 'later' && filter !== 'updated' && filter !== 'history' ? `${formatCount(scopeCount)} unread` : null;
   if (filter === 'later') subtitle = scope === 'all' ? later : null;
+  // News and Classics are not the unread feed: no count, no Later line, no pill.
+  if (ranked) subtitle = null;
   // On the Main feed, one quiet line leads to Later while it holds anything.
-  const laterLine = scope === 'all' && filter !== 'later' && later ? later : null;
+  const laterLine = scope === 'all' && filter !== 'later' && !ranked && later ? later : null;
 
   return (
     <LiveRegionProvider>
@@ -207,12 +221,12 @@ function Reader({ scope }: { scope: string }) {
             filter={filter}
             onFilterChange={(value) => setParam('filter', value === 'unread' ? null : value)}
             updates={updates || filter === 'updated'}
-            view={view}
+            view={readerView}
             onViewChange={(value) => setParam('view', value === 'stream' ? null : value)}
             onOpenNav={() => setNavOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
             oneSource={oneSource}
-            pill={<NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
+            pill={ranked ? null : <NewPostsPill count={newPosts.count} onShow={showNewPosts} />}
             // Scoped to what is on screen: this scope, and Later or Kept when that is the list shown.
             onSearch={(q) => navigate(searchHref({ q, scope, filter: filter === 'later' || filter === 'starred' ? filter : 'all' }))}
           />
@@ -234,7 +248,15 @@ function Reader({ scope }: { scope: string }) {
                   <TextLink to="/?filter=later" data-testid="reader-later-line" className="text-fg-2 decoration-transparent hover:decoration-fg-3">{laterLine}</TextLink>
                 </p>
               ) : null}
-              {fixturePending ? <LoadingState label="Loading demo data" rows={6} /> : (
+              {readerView === 'news' ? (
+                <Suspense fallback={<LoadingState label="Loading News" rows={6} />}>
+                  <NewsList scope={scope} helpOpen={helpOpen} onHelpOpenChange={setHelpOpen} onUnreadDelta={newPosts.onUnreadDelta} />
+                </Suspense>
+              ) : readerView === 'classics' ? (
+                <Suspense fallback={<LoadingState label="Loading Classics" rows={6} />}>
+                  <ClassicsList scope={scope} />
+                </Suspense>
+              ) : fixturePending ? <LoadingState label="Loading demo data" rows={6} /> : (
               <FeedList
                 scope={scope}
                 filter={filter}

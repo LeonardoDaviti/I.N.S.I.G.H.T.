@@ -60,6 +60,15 @@ export interface Post {
   metadata?: Record<string, unknown>;
   handle_or_url?: string;
   source_display_name?: string;
+  /** The classics this post links (issue 0051), at most 2; empty or absent when none. */
+  background?: BackgroundClassic[];
+}
+
+/** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
+export interface BackgroundClassic {
+  url: string; post_id: string | null; title: string | null;
+  /** How many of your sources cited it. */
+  voices: number;
 }
 
 export interface ReaderState {
@@ -85,6 +94,8 @@ export interface ReaderState {
  *  `history`, the posts you opened or read, last open first (issue 0052). */
 export type FeedFilter = 'all' | 'unread' | 'later' | 'starred' | 'updated' | 'history';
 export type FeedView = 'stream' | 'by_source';
+/** The reader's View: the feed's two, and News and Classics next to it (issue 0051). */
+export type ReaderView = FeedView | 'news' | 'classics';
 
 export interface FeedItem {
   id: string; title: string; excerpt: string; url: string;   // title already falls back to the excerpt
@@ -106,7 +117,33 @@ export interface FeedItem {
   /** The Main feed and a track (issue 0050): the story this row leads, its other posts folded
    *  under it; null or absent when the post is in no story (or the view shows every post). */
   story?: FeedStory | null;
+  /** News only (issue 0051): the story's part of the week and what its score is made of. */
+  news?: NewsScore | null;
 }
+/** A News story's numbers (issue 0051): each voice once, in its strongest role. */
+export interface NewsScore {
+  /** recent: begun in the last 48 hours; earlier: earlier this week. */
+  part: 'recent' | 'earlier';
+  first_at: string;
+  reports: number; shares: number; mentions: number;
+  score: number;
+}
+/** A page your sources keep citing (issue 0051): a stored post (`post_id`) or an outside page. */
+export interface Classic {
+  url: string;
+  post_id: string | null;
+  /** The stored post's title, else the link's most common words; null: show its address. */
+  title: string | null;
+  voices: number;
+  days: number;
+  first_at: string; last_at: string;
+  /** One of your sources cited it in the last 7 days. */
+  cited_again: boolean;
+  /** Each voice once, at its first citation, first first. */
+  citers: { name: string; at: string }[];
+  read_at: string | null; later_at: string | null;
+}
+export interface ClassicsResponse { success: true; classics: Classic[]; }
 /** One story, many sources (issue 0050). `sources` in the order they covered it. */
 export interface FeedStory {
   id: string;
@@ -639,6 +676,8 @@ export interface SuggestedSource {
   link_count: number;
   /** The most linked of its articles (up to 20): the link's own words when it had some. */
   articles: { url: string; title: string | null; linked_by: string[] }[];
+  /** How many of its pages are classics (issue 0051): a suggestion that holds some comes first. */
+  classics?: number;
 }
 export interface SuggestedSourcesResponse { success: true; suggestions: SuggestedSource[]; }
 
@@ -831,6 +870,14 @@ export function createApi() {
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),
+    /** News (issue 0051): this week's stories of a scope (`all` or `folder:<id>`), one page. */
+    getNews: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
+      request<FeedPage>(`/api/news?scope=${enc(scope)}`, { signal }),
+    /** Classics (issue 0051): the pages a scope's sources keep citing, cited again first. */
+    getClassics: ({ scope, signal }: { scope: string; signal?: AbortSignal }) =>
+      request<ClassicsResponse>(`/api/classics?scope=${enc(scope)}`, { signal }),
+    /** Hide a classic: "I know it" and "not for me"; it never comes back. */
+    hideClassic: (url: string) => request<Envelope>('/api/classics/hide', { method: 'POST', body: { url } }),
     /** Show one source in the Main feed (true) or leave it out (false). */
     setSourceMainDigest: (sourceId: string, inMainDigest: boolean) =>
       request<{ success: true; source_id: string; in_main_digest: boolean }>(
