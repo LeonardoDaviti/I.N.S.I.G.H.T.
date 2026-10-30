@@ -108,6 +108,13 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
 - **Entity collection, even from skipped posts:** a Hacker News post about Tailscale, skipped in the Main feed, shows up later under *Company: Tailscale* or *Product: Tailscale* (0001 entity pages, filled automatically).
 - **"Palantir for news"**, keeping the owner in charge without the noise: collect everything (Mark IX), find anything (search), connect the dots (dedup, entities, first reporter), notice what matters (watchlists, trend spikes, priority), trust it (every claim links to its posts; nothing hidden by a black box).
 
+### Measured on the owner's real data (2026-10-30)
+`plan/research/mark-x-from-real-data.md`: what Mark X needs, in order of measured value.
+- **The "same story?" check:** link joins through digests are ~85% right; no link rule fixes the rest.
+- **Stories by meaning:** 71% of X and 55% of Telegram posts have no link.
+- **Translation:** 34% of stories already mix Russian and English.
+- **Entities and page types, claims and timelines** (page history from 0039).
+
 ### From the 0050/0051 work (owner, 2026-10-30)
 Mark IX finds what is cited and when (0051's Classics, "cited again", Background). Mark X adds the understanding:
 - **Why an old page is a foundation:** "this post applies the Bitter Lesson's argument to agents". This needs AI reading both texts.
