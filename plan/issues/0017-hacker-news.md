@@ -21,6 +21,16 @@ Status: **first version built** 2026-10-27 (reading through hnrss.org), not depl
 - **Comments (with 0012):** `GET /api/v1/items/<hn_id>` returns the whole tree in one request. Load on open, keep with the post, as Reddit's are kept. The stored tree is the discussion the analysis version will read.
 - **Pacing:** Algolia allows about 10,000 requests an hour per IP; the shared host limiter (0016) is enough.
 
+## Found on the server's data (2026-10-30), for the owner to decide with the kind
+- **"An article and the same article from its own blog's feed are one post" costs HN its voice.**
+  - With 0050 a story counts its sources. When HN and the site share one row, the story is "covered by 1": Hacker News never appears as a voice next to the site.
+  - **The site also loses its own post.** In the lab, adding the Cloudflare blog saved 19 of its 20 posts. The 20th (`kv-cache-exposure-remediation`) already belonged to the HN source and stayed HN's row.
+  - **It isn't rare:** 26 of the server's 62 HN posts (3 days) are articles from sites you already have posts from (openai.com, anthropic.com, apple.com, wired.com, bbc.com…).
+- **Proposal for the kind:**
+  - an HN post's address is its discussion (`news.ycombinator.com/item?id=…`), with the article as its first link;
+  - the article's text can stay its body when you don't follow the site.
+  - Then 0050's rules do the rest with no HN-specific code. If the site's post is stored, HN cites it, a citation within 72 hours, and the story reads "covered by 2 · Cloudflare Blog, Hacker News", HN as a share. Points and comments ride on the HN post.
+
 ## Out of Scope (now)
 - Analysis of the discussion (the future analysis version).
 - HN users, favourites, job posts.
