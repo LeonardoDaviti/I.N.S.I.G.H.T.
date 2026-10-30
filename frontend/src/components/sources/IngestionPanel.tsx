@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -19,16 +19,20 @@ import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
 import IngestionArchive from './IngestionArchive';
 import IngestionLogs from './IngestionLogs';
-import { Notice } from '../states';
+import { LoadingState, Notice } from '../states';
+
+// Source anatomy (issue 0054): its own chunk, loaded when the view opens.
+const SourceAnatomy = lazy(() => import('./SourceAnatomy'));
 
 const sectionTitle = 'text-[1.0625rem] font-semibold leading-[1.35] tracking-[-0.01em] text-fg';
 
 /**
  * Sources → ingestion (reading-finish R3, S4): the useful parts of the old
  * ingestion page, under the sources it fetches. Views as `?sub=`: overview,
- * archive (backfill, issue 0005 slice 3), jobs and logs.
+ * sources (how each is read and what it gives, issue 0054; a row opens its sheet
+ * through `onOpenSource`), archive (backfill, issue 0005 slice 3), jobs and logs.
  */
-export default function IngestionPanel() {
+export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: string) => void }) {
   const api = useApi();
   const queryClient = useQueryClient();
   const [sessionReport, setSessionReport] = useState<RunReport | null>(null);
@@ -102,7 +106,11 @@ export default function IngestionPanel() {
         ))}
       </nav>
       {error ? <Notice tone="error" title={error} action={{ label: 'Dismiss', onClick: () => setError(null) }} /> : null}
-      {sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : sub === 'archive' ? <IngestionArchive /> : sub === 'logs' ? <IngestionLogs /> : (
+      {sub === 'sources' ? (
+        <Suspense fallback={<LoadingState label="Loading sources" rows={8} />}>
+          <SourceAnatomy onOpen={onOpenSource} />
+        </Suspense>
+      ) : sub === 'jobs' ? <IngestionJobs jobs={jobs} loading={overview.isPending} /> : sub === 'archive' ? <IngestionArchive /> : sub === 'logs' ? <IngestionLogs /> : (
         <div className="space-y-10">
           <section aria-labelledby="ingestion-scheduler" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-3">

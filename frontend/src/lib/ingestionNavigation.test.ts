@@ -40,7 +40,9 @@ test('sourcesIngestionHref carries the query across but not a stale tab or sub',
   );
 });
 
-test('the ingestion tab has an overview, archive, jobs and logs; anything else is the overview', () => {
+test('the ingestion tab has an overview, sources, archive, jobs and logs; anything else is the overview', () => {
+  assert.equal(normalizeIngestionSubView('sources'), 'sources');
+  assert.equal(ingestionSubViewHref('sources'), '?tab=ingestion&sub=sources');
   assert.equal(normalizeIngestionSubView('archive'), 'archive');
   assert.equal(normalizeIngestionSubView('logs'), 'logs');
   assert.equal(normalizeIngestionSubView('jobs'), 'jobs');

@@ -13,8 +13,12 @@ export function normalizeIngestionTab(tab?: string | null): IngestionTabKey {
   return 'main';
 }
 
-/** The ingestion tab's views under sources, as `?sub=`: the overview (default), archive backfill, the job history and the logs. */
-export const INGESTION_SUB_VIEWS = ['overview', 'archive', 'jobs', 'logs'] as const;
+/** The ingestion tab's views under sources, as `?sub=`: the overview (default), every source's
+ *  anatomy (issue 0054), archive backfill, the job history and the logs. */
+export const INGESTION_SUB_VIEWS = ['overview', 'sources', 'archive', 'jobs', 'logs'] as const;
+
+/** The anatomy view's query (issue 0054); here, not in its lazy chunk, so the sheet can refresh it. */
+export const SOURCE_ANATOMY_KEY = ['source-anatomy'] as const;
 export type IngestionSubView = (typeof INGESTION_SUB_VIEWS)[number];
 
 export function normalizeIngestionSubView(sub?: string | null): IngestionSubView {
