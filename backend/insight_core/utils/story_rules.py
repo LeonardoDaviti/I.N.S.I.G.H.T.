@@ -123,10 +123,11 @@ def _order(post: StoryPost) -> Tuple[datetime, str]:
 
 def anchors(post: StoryPost) -> List[Tuple[str, str]]:
     """What a post points at: ('post', id) for a stored post, ('url', address) for an outside page.
-    Home and profile pages, and the post itself, are no anchor."""
+    Home and profile pages, and the post itself, are no anchor. A stored post is never a home
+    page, however short its address (blog.cloudflare.com/yandex-outage is one segment)."""
     out: Dict[Tuple[str, str], None] = {}
     for url, stored_id in post.links:
-        if is_home(url) or stored_id == post.id:
+        if stored_id == post.id or (not stored_id and is_home(url)):
             continue
         out[("post", stored_id) if stored_id else ("url", url)] = None
     return list(out)

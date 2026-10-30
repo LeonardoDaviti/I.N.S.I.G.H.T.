@@ -137,6 +137,14 @@ class JoiningRulesTests(unittest.TestCase):
         self.assertEqual(group([cited, post("b", "s3", site="s1.test", hours=10,
                                             links=[("https://s1.test/2026/10/a-post", "a")])]), [], "its own voice")
 
+    def test_a_cited_stored_post_with_a_one_segment_address_still_joins(self):
+        """Found on the server's data: @denissexy cited blog.cloudflare.com/yandex-outage 2.8 hours
+        after Cloudflare posted it, and the one-segment address was taken for a profile page."""
+        cited = post("cf", "cloudflare", site="cloudflare.com", hours=0)
+        citer = post("tg", "denissexy", kind="telegram", hours=2.8,
+                     links=[("https://blog.cloudflare.com/yandex-outage", "cf")])
+        self.assertEqual(ids(group([cited, citer])), [["cf", "tg"]])
+
     def test_home_and_profile_pages_join_nothing(self):
         self.assertEqual(group([post("a", "s1", links=[("https://x.com/karpathy", None)]),
                                 post("b", "s2", links=[("https://x.com/karpathy", None)])]), [])
