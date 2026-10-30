@@ -6,19 +6,48 @@ need and writes what they return, touching only the rows that differ.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import PostLink, bare, extract_links, host_of, reddit_author, site_of, source_kind
+from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, reddit_author, site_of,
+                                          source_kind)
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
 # The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words.
 HTML_KINDS = ("reddit", "hn")
+
+
+def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
+    """The platform account a source follows, as Discover keys it (post_links.account_key): a
+    Telegram channel read through a bridge is t.me/<channel>, a Nitter feed x.com/<user>, a
+    subreddit reddit.com/r/<sub>, a YouTube channel youtube.com/channel/<id>, any other address
+    the account its path is under (github.com/<owner>). The kinds' own parsers read the address."""
+    from insight_core.ingestion.kinds import nitter_rss, reddit, telegram_rss
+
+    handle = (handle or "").strip()
+    kind = source_kind(platform, handle)
+    try:
+        if kind == "telegram":
+            channel = telegram_rss._username(handle) if "://" in handle else handle
+            return "t.me/" + channel.lstrip("@").lower()
+        if kind == "x" and "nitter" in handle:
+            return "x.com/" + nitter_rss._username(handle).lower()
+        if kind == "reddit":
+            return "reddit.com/r/" + reddit.subreddit_name(handle).lower()
+    except ValueError:
+        return None
+    if kind == "youtube":
+        channel = (parse_qs(urlparse(handle).query).get("channel_id") or [handle if "://" not in handle else ""])[0]
+        if channel:
+            return "youtube.com/" + (channel.lower() if channel.startswith("@") else "channel/" + channel.lower())
+    url = normalize_url(handle) if "://" in handle else None
+    return account_key(url) if url else None
 
 
 class SourceFacts:
@@ -29,6 +58,7 @@ class SourceFacts:
         rows = cur.fetchall()
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
+        self.account = {str(r[0]): source_account(r[1], r[2]) for r in rows}
         # The Saved source's pages come from any site: it has no site of its own.
         self.handle_site = {str(r[0]): site_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
@@ -45,6 +75,10 @@ class SourceFacts:
     def followed(self) -> Set[str]:
         """The sites you follow: each source's own site, and the site of its address."""
         return {s for s in (*self.site.values(), *self.handle_site.values()) if s}
+
+    def followed_accounts(self) -> Set[str]:
+        """The platform accounts you follow (source_account): on a platform, only these are followed."""
+        return {a for a in self.account.values() if a}
 
     def html_sources(self) -> List[str]:
         return [source_id for source_id, kind in self.kind.items() if kind in HTML_KINDS]
@@ -289,20 +323,15 @@ class StoriesRepository:
         )
 
     def hide_removed_source(self, cur: Cursor, source_id: str) -> None:
-        """A source about to be removed is never suggested again: a website by its site, an
-        account on a platform (a channel, a subreddit) by the account its posts are under."""
+        """A source about to be removed is never suggested again: a website by its site, and any
+        source by the platform account it follows (a channel, a subreddit, a GitHub owner)."""
         cur.execute("SELECT platform, handle_or_url FROM sources WHERE id = %s", (source_id,))
         row = cur.fetchone()
         if row is None:
             return
-        cur.execute("SELECT url FROM posts WHERE source_id = %s AND url IS NOT NULL ORDER BY fetched_at DESC LIMIT 200",
-                    (source_id,))
-        urls = [normalize_url(r[0]) for r in cur.fetchall()]
-        urls = [url for url in urls if url] or ([normalize_url(row[1])] if "://" in (row[1] or "") else [])
-        if not urls:
-            return
+        keys = {source_account(row[0], row[1])}
         if source_kind(row[0], row[1]) == "site":
-            keys = Counter(site_of(host_of(url)) for url in urls)
-        else:
-            keys = Counter("/".join(bare(url).split("/")[:2]).lower() for url in urls)
-        self.hide(cur, [keys.most_common(1)[0][0]], "removed")
+            cur.execute("SELECT url_host, count(*) FROM posts WHERE source_id = %s AND url_host IS NOT NULL GROUP BY 1",
+                        (source_id,))
+            keys.add(source_site(cur.fetchall()) or site_of(host_of(row[1] if "://" in (row[1] or "") else "")))
+        self.hide(cur, keys, "removed")

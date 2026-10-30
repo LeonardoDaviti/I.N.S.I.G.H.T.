@@ -21,10 +21,10 @@ import psycopg
 from insight_core.db.repo_posts import PostDraft, PostsRepository
 from insight_core.db.repo_reader import FeedQuery, FeedScope, ReaderRepository, FeedCursor
 from insight_core.db.repo_sources import SourcesRepository
-from insight_core.db.repo_stories import SourceFacts, StoriesRepository
+from insight_core.db.repo_stories import SourceFacts, StoriesRepository, source_account
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
-from insight_core.utils.post_links import extract_links, is_home, site_of, source_kind
+from insight_core.utils.post_links import account_key, extract_links, is_home, site_of, source_kind
 from insight_core.utils.story_rules import StoryPost, count_voices, group, roles, suggestions
 from insight_core.utils.url_normalization import normalize_url
 
@@ -110,15 +110,18 @@ class JoiningRulesTests(unittest.TestCase):
         self.assertEqual(group([post("a", "s1", site="roadtovr.com", links=[(page, None)]),
                                 post("b", "s2", site="roadtovr.com", links=[(page, None)])]), [])
 
-    def test_a_reddit_user_in_two_subreddits_is_one_voice(self):
+    def test_a_reddit_cross_post_is_one_story_of_one_voice(self):
         page = "https://news.example/2026/10/the-launch"
-        a = post("a", "r1", kind="reddit", author="alice", links=[(page, None)], words=10)
-        b = post("b", "r2", kind="reddit", author="alice", links=[(page, None)], words=10)
-        self.assertEqual(group([a, b]), [], "one voice: no join through the link")
-        a.title = b.title = "My new glasses arrived today finally"
+        a = post("a", "r1", kind="reddit", author="alice", title="XREAL 1S is one of my favourites", links=[(page, None)],
+                 words=10)
+        b = post("b", "r2", kind="reddit", author="alice", hours=1, title="I'm really enjoying hand gestures",
+                 links=[(page, None)], words=10)
         [story] = group([a, b])
-        self.assertEqual(story.voices, 1, "a cross-post with one title is one story of one voice")
-        c = post("c", "r1", kind="reddit", author="bob", title="My new glasses arrived today finally", hours=1)
+        self.assertEqual((ids([story]), story.voices), ([["a", "b"]], 1), "links join by subreddit, voices count people")
+        self.assertEqual(story.roles, {"a": "share", "b": "share"})
+        same_sub = post("c", "r1", kind="reddit", author="bob", hours=2, links=[(page, None)], words=10)
+        self.assertEqual(group([a, same_sub]), [], "one subreddit, one story source: no join through the link")
+        c = post("c", "r1", kind="reddit", author="bob", title="XREAL 1S is one of my favourites", hours=1)
         self.assertEqual(count_voices([a, b, c]), 2, "the person, not the subreddit")
 
     def test_a_citation_of_another_voice_within_72_hours(self):
@@ -189,6 +192,31 @@ class DiscoverRulesTests(unittest.TestCase):
         links += self.links("social.example", ["v1", "v2", "v3"], ["status/what-a-day-it-has-been"])
         found = suggestions(links, followed=set(), hidden=set())
         self.assertEqual([s.key for s in found], ["social.example/karpathy"])
+
+    def test_on_a_platform_only_the_account_you_follow_is_followed(self):
+        links = []
+        for n in range(8):   # t.me is a platform: links to eight channels
+            links += self.links("t.me", ["v1"], [f"channel{n}/1"])
+        for channel in ("seeallochnaya", "denissexy"):
+            links += self.links("t.me", ["v1", "v2", "v3"], [f"{channel}/2026-10-a-long-post-here",
+                                                             f"{channel}/notes-on-a-new-model-today"])
+        followed = suggestions(links, followed={"t.me"}, hidden=set(), followed_accounts={"t.me/seeallochnaya"})
+        self.assertEqual([s.key for s in followed], ["t.me/denissexy"], "following one channel hides no other")
+        hidden = suggestions(links, followed=set(), hidden={"t.me", "t.me/denissexy"})
+        self.assertEqual([s.key for s in hidden], ["t.me/seeallochnaya"])
+
+    def test_a_source_follows_the_account_its_address_names(self):
+        self.assertEqual(source_account("rss", "https://tg.i-c-a.su/rss/SeeAllOchnaya?limit=50"), "t.me/seeallochnaya")
+        self.assertEqual(source_account("rss", "https://telegram.local/rss/denissexy?limit=50"), "t.me/denissexy")
+        self.assertEqual(source_account("telegram", "ai_newz"), "t.me/ai_newz")
+        self.assertEqual(source_account("rss", "https://nitter.local/karpathy/rss"), "x.com/karpathy")
+        self.assertEqual(source_account("rss", "https://www.reddit.com/r/Xreal/.rss"), "reddit.com/r/xreal")
+        self.assertEqual(source_account("reddit", "r/LocalLLaMA"), "reddit.com/r/localllama")
+        self.assertEqual(source_account("rss", "https://github.com/anthropics/claude-code/releases.atom"),
+                         "github.com/anthropics")
+        self.assertEqual(source_account("youtube", "https://www.youtube.com/feeds/videos.xml?channel_id=UCabc"),
+                         "youtube.com/channel/ucabc")
+        self.assertEqual(account_key(normalize_url("https://www.reddit.com/r/Xreal/comments/1/x")), "reddit.com/r/xreal")
 
 
 # ---- the job, the feed and the counts, on the database ----------------------------------------

@@ -6,8 +6,10 @@ Ported from the prototype (`plan/research/dedup-prototype/stories.py`, `rank.py`
 the reference the real code reproduces. The thresholds are here, in one place.
 
 - A **voice** is one site for websites (its registrable domain), one channel or account for
-  Telegram, X and YouTube, and on Reddit the person who posted. Posts by one voice never join
-  each other through links.
+  Telegram, X and YouTube, and on Reddit the person who posted: a story's voices count people.
+  Joining by links, and telling a copy, go by where a post was said (`place`): the voice, but
+  on Reddit the subreddit, so one person posting a link to two subreddits makes one story of
+  one voice (a copy), as the prototype does. Posts of one place never join through links.
 - Posts join when they share a text (the same content_hash, 120+ characters, within 30 days),
   a title (5+ words, within 7 days), an outside page linked by 2+ voices within 72 hours, or one
   cites a stored post of another voice within 72 hours. A post with 3+ anchors is a roundup: it
@@ -22,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import bare, is_article, is_home, site_of
+from insight_core.utils.post_links import account_key, bare, is_article, is_home, site_of
 
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
@@ -69,6 +71,11 @@ class StoryPost:
         if self.kind == "reddit" and self.author:
             return "reddit:" + self.author
         return "source:" + self.source_id
+
+    @property
+    def place(self) -> str:
+        """Where it was said: its voice, but a subreddit (not its poster) on Reddit."""
+        return "source:" + self.source_id if self.kind == "reddit" else self.voice
 
     @property
     def text_key(self) -> Optional[str]:
@@ -168,13 +175,13 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
             if cited is None:
                 continue   # a stored post outside the posts recomputed
             for p in ps:
-                if p.voice != cited.voice and abs(p.t - cited.t) <= LINK_WITHIN:
+                if p.place != cited.place and abs(p.t - cited.t) <= LINK_WITHIN:
                     uf.union(p.id, cited.id)
                     why[p.id].add("citation")
                     why[cited.id].add("citation")
         else:
             near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
-            if len({p.voice for p in near}) >= 2:
+            if len({p.place for p in near}) >= 2:
                 for p in near:
                     uf.union(p.id, "U:" + target)
                     why[p.id].add("link")
@@ -205,21 +212,21 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
-    """report (its own writing) or share: a copy of an earlier post's text or title by another
-    voice, or a Reddit or HN post that is mostly a link. `posts` in time order."""
+    """report (its own writing) or share: a copy of an earlier post's text or title from another
+    place, or a Reddit or HN post that is mostly a link. `posts` in time order."""
     first_text: Dict[str, str] = {}
     first_title: Dict[str, str] = {}
     out = {}
     for p in posts:
         text, title = p.text_key, p.title_key
-        copy = (text and text in first_text and first_text[text] != p.voice) or \
-               (title and title in first_title and first_title[title] != p.voice)
+        copy = (text and text in first_text and first_text[text] != p.place) or \
+               (title and title in first_title and first_title[title] != p.place)
         link_post = p.kind in ("reddit", "hn") and (p.words or 0) < LINK_POST_MAX_WORDS
         out[p.id] = "share" if copy or link_post else "report"
         if text:
-            first_text.setdefault(text, p.voice)
+            first_text.setdefault(text, p.place)
         if title:
-            first_title.setdefault(title, p.voice)
+            first_title.setdefault(title, p.place)
     return out
 
 
@@ -250,10 +257,13 @@ class Suggestion:
     links: int                       # every address of it linked
 
 
-def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden: Set[str]) -> List[Suggestion]:
+def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden: Set[str],
+                followed_accounts: Set[str] = frozenset()) -> List[Suggestion]:
     """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
-    links, that you don't follow (`followed`: sites) and did not hide (`hidden`: keys or sites).
-    `links`: (voice, address) for every kept outside link. Most voices first."""
+    links, that you don't follow and did not hide. On a platform the unit is the account: it is
+    followed, or hidden, only as that account (`followed_accounts`, post_links.account_key), so
+    following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
+    keys or sites). `links`: (voice, address) for every kept outside link. Most voices first."""
     links = list(links)
     segments: Dict[str, Counter] = defaultdict(Counter)
     for _, url in links:
@@ -268,16 +278,16 @@ def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden:
     found: Dict[str, Tuple[Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set()))
     for voice, url in links:
         host, _, rest = bare(url).partition("/")
-        if site_of(host) in followed:
-            continue
-        key = host
         if host in platforms:
-            first = rest.split("/")[0].lower()
-            if first in NOT_ACCOUNT:
+            if rest.split("/")[0].lower() in NOT_ACCOUNT:
                 continue
-            key = host + "/" + first
-        if key in hidden or site_of(host) in hidden:
-            continue
+            key = account_key(url)
+            if key in followed_accounts or key in hidden:
+                continue
+        else:
+            key = host
+            if site_of(host) in followed or key in hidden or site_of(host) in hidden:
+                continue
         voices, articles, every = found[key]
         voices.add(voice)
         every.add(url)

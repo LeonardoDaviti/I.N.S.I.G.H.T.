@@ -96,6 +96,22 @@ def is_home(url: str) -> bool:
     return "/" not in rest and "?" not in rest and "#" not in rest
 
 
+# A first path segment that names a kind of account, the account's name following it:
+# reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
+ACCOUNT_NAMESPACES = frozenset({"r", "u", "user", "c", "channel"})
+
+
+def account_key(url: str) -> str:
+    """The account an address on a platform is under: `host/first segment`, two segments when the
+    first only says what kind of account follows (`reddit.com/r/xreal`). Lowercase."""
+    host, _, rest = bare(url).partition("/")
+    segments = rest.split("?", 1)[0].split("/")
+    first = segments[0].lower()
+    if first in ACCOUNT_NAMESPACES and len(segments) > 1 and segments[1]:
+        return f"{host.lower()}/{first}/{segments[1].lower()}"
+    return f"{host.lower()}/{first}"
+
+
 def is_article(url: str) -> bool:
     _, _, rest = bare(url).partition("/")
     return bool(ARTICLE.search("/" + rest.lower()))

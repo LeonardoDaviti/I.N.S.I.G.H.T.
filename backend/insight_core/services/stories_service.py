@@ -129,7 +129,8 @@ class StoriesService:
             linked_by[link["url"]].add(post.voice)
             if link["text"]:
                 texts[link["url"]][link["text"]] += 1
-        found = suggestions(pairs, followed=sources.followed(), hidden=hidden)
+        found = suggestions(pairs, followed=sources.followed(), hidden=hidden,
+                            followed_accounts=sources.followed_accounts())
         out = []
         for s in found:
             articles = sorted(s.articles, key=lambda url: (-len(linked_by[url]), url))[:DISCOVER_ARTICLES_SHOWN]
