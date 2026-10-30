@@ -73,6 +73,11 @@ print(message.content)</code></pre>
 <p>The last paragraph, after a rule.</p>
 `;
 
+const STORY_HTML = `
+<p>Moonshot released <a href="https://moonshotai.github.io/Kimi-K3.1/">Kimi K3.1 Pro</a> today: 2.8T parameters, 104B active, open weights.</p>
+<p>data_secrets wrote about the <a href="https://t.me/data_secrets/9951">isolated-computer experiment</a> last month, which INSIGHT has stored; the release notes are elsewhere.</p>
+`;
+
 const TELEGRAM = 'Новая открытая модель возглавила многоязычный рейтинг 🚀\n\n'
   + 'A new open-weights model tops the multilingual leaderboard this morning, ahead of last month’s leader by two points on average. '
   + 'Weights are on the hub under a permissive licence; the tech report is promised for next week.\n\n'
@@ -116,7 +121,34 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         content_html: undefined,
         url: 'https://t.me/ai_newz/3150',
       }, now);
+    case 'story':
+      // Covered by (issue 0055) and a link to a stored post (issue 0057): a Russian/English story.
+      return detail('p-story', {
+        title: 'Introducing Kimi K3.1 Pro',
+        url: 'https://simonwillison.net/2026/Oct/23/kimi-k31-pro/',
+        content_html: STORY_HTML,
+        content: STORY_HTML.replace(/<[^>]+>/g, ''),
+        internal_links: { 'https://t.me/data_secrets/9951': 'p-article' },
+        story: {
+          id: 'p-story-ai-newz', voices: 4, first: 'p-story-ai-newz',
+          sources: [{ id: 's-newz', name: 'ai_newz' }, { id: 's-ds', name: 'data_secrets' },
+            { id: 's-simon', name: 'Simon Willison’s Weblog' }, { id: 's-denis', name: 'denissexy' }],
+          posts: [
+            storyPost('p-story-ai-newz', 'ai_newz', 'Moonshot выпустили K3.1 Pro', 'report', now, 9, true),
+            storyPost('p-story-ds', 'data_secrets', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false),
+            storyPost('p-story-denis', 'denissexy', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false),
+          ],
+        },
+      }, now);
     default:
       return null;
   }
+}
+
+function storyPost(id: string, source: string, title: string, role: 'report' | 'share', now: Date, hoursAgo: number, read: boolean) {
+  const at = new Date(now.getTime() - hoursAgo * HOUR).toISOString();
+  return {
+    id, title, url: `https://t.me/${source}/1`, source_id: sourceId('s-newz'), source_display_name: source, platform: 'telegram',
+    sort_at: at, published_at: at, read_at: read ? at : null, role,
+  };
 }

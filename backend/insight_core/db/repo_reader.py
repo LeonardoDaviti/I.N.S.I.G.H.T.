@@ -359,8 +359,9 @@ class ReaderRepository:
 
     @staticmethod
     def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
-        """Give each item that leads a story its `story` (else None): {id, voices, sources: [{id,
-        name}] in the order they covered it, posts: the story's other posts, first posted first}."""
+        """Give each item that leads a story its `story` (else None): {id, voices, first (its first
+        report, else its first share: issue 0055), sources: [{id, name}] in the order they covered
+        it, posts: the story's other posts, first posted first}. The post page (0055) asks it too."""
         if not items:
             return
         cur.execute(
@@ -382,7 +383,10 @@ class ReaderRepository:
         stories: Dict[str, Dict[str, Any]] = {}
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role) in cur.fetchall():
-            story = stories.setdefault(str(lead), {"id": str(story_id), "voices": int(voices), "sources": [], "posts": []})
+            story = stories.setdefault(str(lead), {"id": str(story_id), "voices": int(voices), "first": None,
+                                                   "sources": [], "posts": []})
+            if story["first"] is None or (role == "report" and story["_first_role"] != "report"):
+                story["first"], story["_first_role"] = str(post_id), role
             if not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
             if str(post_id) != str(lead):
@@ -391,6 +395,8 @@ class ReaderRepository:
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
                 })
+        for story in stories.values():
+            del story["_first_role"]
         for item in items:
             item["story"] = stories.get(item["id"])
 

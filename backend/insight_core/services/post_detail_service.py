@@ -4,7 +4,8 @@ One post for the reader: detail, reader state (opens, reading time, favourite) (
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import urljoin
 
 import psycopg
 
@@ -15,6 +16,8 @@ from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_reader import ReaderRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
+from insight_core.utils.post_links import body_hrefs
+from insight_core.utils.url_normalization import normalize_url
 from insight_core.utils.post_fields import display_title
 
 
@@ -67,6 +70,8 @@ class PostDetailService:
                 row = cur.fetchone()
                 # The classics this post builds on (issue 0051): at most 2, none without one.
                 background = self.news.background(cur, post_id) if row else []
+                story = self.story(cur, post_id) if row else None
+                internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
 
         if not row:
             return None
@@ -101,7 +106,52 @@ class PostDetailService:
             "source": row[22],
             "source_display_name": source_settings.get("display_name") or row[22],
             "background": background,
+            "story": story,
+            "internal_links": internal,
         }
+
+    @staticmethod
+    def story(cur: psycopg.Cursor, post_id: str) -> Optional[Dict[str, Any]]:
+        """The post's story as the feed's lead carries it (issue 0055: the same `story`, from the
+        same query), when it has 2+ voices; else None (no story, or copies of one voice)."""
+        item: Dict[str, Any] = {"id": str(post_id)}
+        ReaderRepository.attach_stories(cur, [item])
+        story = item.get("story")
+        return story if story and story["voices"] >= 2 else None
+
+    @staticmethod
+    def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],
+                       content_html: Optional[str], content: Optional[str]) -> Dict[str, str]:
+        """{href as the post's text has it: the id of the stored post at that address} (issue
+        0057). Any link counts, the post's own platform included; looked up by address: the post
+        with that exact url, else the first seen (0049) at its normalized address. Not the post
+        itself."""
+        hrefs: List[str] = []
+        urls: List[str] = []
+        normalized: List[str] = []
+        for href in body_hrefs(content_html, content):
+            try:   # a malformed address (a "port" that is a sentence) is skipped, never fatal
+                absolute = urljoin(post_url or "", href)
+                address = normalize_url(absolute) if absolute.lower().startswith(("http://", "https://")) else None
+            except ValueError:
+                continue
+            if address:
+                hrefs.append(href)
+                urls.append(absolute)
+                normalized.append(address)
+        if not hrefs:
+            return {}
+        cur.execute(
+            """
+            SELECT k.href, t.id
+            FROM unnest(%s::text[], %s::text[], %s::text[]) AS k(href, url, address)
+            JOIN LATERAL (SELECT tp.id FROM posts tp
+                          WHERE (tp.url = k.url OR tp.normalized_url = k.address) AND tp.id <> %s::uuid
+                          ORDER BY tp.url = k.url DESC, tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
+            """,
+            (hrefs, urls, normalized, str(post_id)),
+        )
+        return {href: str(target) for href, target in cur.fetchall()}
 
     def get_post_reader_state(self, post_id: str) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn:
