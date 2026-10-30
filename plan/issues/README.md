@@ -62,7 +62,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0055](0055-covered-by-on-the-post.md) | "Covered by" on the post page, not only in the feed | spec (v9.8) |
 | [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | spec (v9.8) |
 | [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | spec (v9.8) |
-| [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | spec (v9.8) |
+| [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 
 ## Analysis archive

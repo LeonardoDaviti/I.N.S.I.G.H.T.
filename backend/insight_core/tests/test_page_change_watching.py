@@ -348,6 +348,7 @@ try:
     from insight_core.db.repo_page_watch import PageWatchRepository
     from insight_core.db.repo_posts import BACKLOG_KEY, PostDraft, PostsRepository
     from insight_core.db.repo_reader import FeedQuery, FeedScope, ReaderRepository
+    from insight_core.utils.url_normalization import normalize_url
     from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 except ImportError:  # pragma: no cover - outside the backend image
     requires_test_db = unittest.skip("no database driver")
@@ -499,6 +500,116 @@ class DueAndReaderTests(unittest.TestCase):
         self.assertEqual(items[0]["update"], {"words_added": 120})
         updated, _ = reader.list_posts(self.cur, FeedQuery(scope=FeedScope("source", self.source), filter="updated"), now=NOW)
         self.assertEqual([i["id"] for i in updated], [changed])
+
+
+MIGRATION_0043 = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0043_known_news_is_not_new.sql"
+
+
+@requires_test_db
+class KnownNewsTests(unittest.TestCase):
+    """Issue 0058: a page another of your sources linked before it was first seen is known news,
+    not new to you; the saver and migration 0043 apply the same condition."""
+
+    def setUp(self):
+        self.repo = PostsRepository(db_url())
+        self.conn = psycopg.connect(db_url())
+        with self.conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            self.source = insert_scratch_source(cur)
+            self.other = insert_scratch_source(cur)
+        self.conn.commit()
+        self.url = f"https://test.invalid/mark-ix-post/known/{uuid.uuid4().hex}"
+
+    def tearDown(self):
+        self.conn.rollback()
+        with self.conn.cursor() as cur:
+            delete_scratch_sources(cur)
+        self.conn.commit()
+        self.conn.close()
+
+    def link(self, target: str, *, source: str | None = None, fetched_at: datetime | None = None) -> None:
+        """A stored post of `source` (the other source by default) linking `target`."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO posts (source_id, url, title, content, published_at, fetched_at)
+                   VALUES (%s, %s, 'Links', 'A link post', now(), COALESCE(%s, now())) RETURNING id""",
+                (source or self.other, f"https://test.invalid/mark-ix-post/links/{uuid.uuid4().hex}", fetched_at),
+            )
+            cur.execute(
+                """INSERT INTO post_links (post_id, target_url, target_site, position)
+                   VALUES (%s, %s, 'test.invalid', 0)""",
+                (cur.fetchone()[0], normalize_url(target)),
+            )
+        self.conn.commit()
+
+    def save(self, body: str = BODY, *, watch=False, surface=True, date=NOW - timedelta(days=60)):
+        post = {"url": self.url, "title": "Protein design", "content": parsing.strip_html(body),
+                "content_html": body, "date": date, "metadata": {}}
+        return self.repo.save_batch(self.conn, [PostDraft(self.source, post, watch=watch, surface=surface)])
+
+    def surfaced(self, url: str | None = None):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT surfaced_at FROM posts WHERE url = %s", (url or self.url,))
+            found = cur.fetchone()[0]
+        self.conn.commit()
+        return found
+
+    def test_a_never_linked_old_page_still_surfaces(self):
+        self.link("https://test.invalid/somewhere-else")
+        self.save()
+        self.assertIsNotNone(self.surfaced())
+
+    def test_a_page_another_source_linked_before_keeps_its_date(self):
+        self.link(self.url.replace("https://", "http://www."))     # the same address, as normalized
+        self.save()
+        self.assertIsNone(self.surfaced())
+
+    def test_a_link_from_the_same_source_does_not_count(self):
+        self.link(self.url, source=self.source)
+        self.save()
+        self.assertIsNotNone(self.surfaced())
+
+    def test_a_link_made_after_the_page_was_seen_does_not_count(self):
+        self.link(self.url, fetched_at=datetime.now(timezone.utc) + timedelta(hours=1))
+        self.save()
+        self.assertIsNotNone(self.surfaced())
+
+    def test_an_update_of_a_linked_page_still_surfaces(self):
+        self.link(self.url)
+        self.save(watch=True)
+        self.assertIsNone(self.surfaced())
+        result = self.save(BODY + "\n<h2>Results</h2>\n" + paragraphs(SENTENCE * 20), watch=True)
+        self.assertEqual(len(result.resurfaced_ids), 1)
+        self.assertIsNotNone(self.surfaced())
+
+    def test_the_migration_clears_only_linked_pages_surfaced_as_new_to_you(self):
+        def stored(slug: str, *, update: bool = False) -> str:
+            url = f"https://test.invalid/mark-ix-post/known/{uuid.uuid4().hex}/{slug}"
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO posts (source_id, url, normalized_url, title, content, published_at,
+                                          fetched_at, surfaced_at, metadata)
+                       VALUES (%s, %s, %s, %s, 'Text', now() - interval '60 days', now() - interval '1 day',
+                               CASE WHEN %s THEN now() ELSE now() - interval '1 day' END,
+                               CASE WHEN %s THEN '{"page_update": {"words_added": 120}}'::jsonb ELSE '{}'::jsonb END)""",
+                    (self.source, url, normalize_url(url), slug, update, update),
+                )
+            self.conn.commit()
+            return url
+
+        known, updated, unlinked, own, later = (stored("known"), stored("updated", update=True), stored("unlinked"),
+                                                stored("own"), stored("later"))
+        long_ago = datetime.now(timezone.utc) - timedelta(days=10)
+        self.link(known, fetched_at=long_ago)
+        self.link(updated, fetched_at=long_ago)
+        self.link(own, source=self.source, fetched_at=long_ago)
+        self.link(later)                                           # linked now, after it was first seen
+        with self.conn.cursor() as cur:
+            cur.execute(MIGRATION_0043.read_text())
+        self.conn.commit()
+        self.assertIsNone(self.surfaced(known))
+        for url in (updated, unlinked, own, later):
+            self.assertIsNotNone(self.surfaced(url), url)
 
 
 if __name__ == "__main__":
