@@ -44,7 +44,14 @@ function passes(filter: string | null): (item: FeedItem) => boolean {
 }
 
 function feedItems(site: Site, query: URLSearchParams): FeedItem[] {
-  return site.items.filter(inScope(site, query.get('scope') ?? 'all')).filter(passes(query.get('filter')));
+  const inIt = site.items.filter(inScope(site, query.get('scope') ?? 'all'));
+  if (query.get('filter') === 'history') {
+    // What you opened (issue 0052): the read posts, at the time read, latest first.
+    return inIt.filter((item) => item.read_at !== null)
+      .map((item) => ({ ...item, sort_at: item.read_at as string, opened_at: item.read_at }))
+      .sort((a, b) => b.sort_at.localeCompare(a.sort_at));
+  }
+  return inIt.filter(passes(query.get('filter')));
 }
 
 /** One page of a list, with the offset as the cursor. */

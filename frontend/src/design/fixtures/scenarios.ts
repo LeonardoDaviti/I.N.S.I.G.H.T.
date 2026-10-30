@@ -74,6 +74,12 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'reader', state: 'worst', label: 'Long, unbroken, RTL and CJK titles; 1,000+ items', url: '/', routes: site(worstSite), documented: true },
   { page: 'reader', state: 'search', label: 'Search results in the Main feed, the words marked', url: '/search?q=prompt&scope=all', routes: site(normalSite), documented: true },
   { page: 'reader', state: 'search-empty', label: 'No posts match, narrowed: Search everything', url: '/search?q=quantum%20knitting&scope=all&days=7', routes: site(normalSite), documented: true },
+  { page: 'reader', state: 'history', label: 'Show history: what you opened, by the day you opened it', url: '/?filter=history', routes: (now) => withSite(now, (s) => {
+    // The read posts, opened over the last few days, some long after they were published.
+    let k = 0;
+    return { ...s, items: s.items.map((item) => (item.read_at ? { ...item, read_at: at(now, -(0.4 + 9 * k++) * HOUR) } : item)) };
+  }), documented: true },
+  { page: 'reader', state: 'history-empty', label: 'Show history, nothing opened yet', url: '/?filter=history', routes: (now) => withSite(now, (s) => ({ ...s, items: s.items.map((item) => ({ ...item, read_at: null })) })), documented: true },
   { page: 'reader', state: 'track', label: 'Scoped to one track', url: `/read/folder/${TRACKS.ai.id}`, routes: site(normalSite), documented: false },
   { page: 'reader', state: 'source', label: 'Scoped to one source', url: `/read/source/${sourceId('s-simon')}`, routes: site(normalSite), documented: false },
 
