@@ -404,7 +404,7 @@ class NewsJobTests(unittest.TestCase):
                 self.assertEqual(dict(post["links"])[normalize_url(self.essay)], first)
         citations = [c for c in self.news.repo.citations(self.cur, reddit=[], saved=[])
                      if c["target"] == normalize_url(self.essay)]
-        self.assertEqual(len(citations), 2, "one row per citing post")
+        self.assertEqual(len(citations), 3, "one row per citing post (the fixture has three)")
         self.assertEqual({c["stored"] for c in citations}, {first})
         essay = [c for c in self._mine_classics() if c["url"] == normalize_url(self.essay)]
         self.assertEqual([c["post_id"] for c in essay], [first])
