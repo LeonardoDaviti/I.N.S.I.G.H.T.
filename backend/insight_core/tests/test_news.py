@@ -391,8 +391,8 @@ class NewsJobTests(unittest.TestCase):
         from insight_core.db.repo_stories import SourceFacts
         self._classics()
         essays = self._source("Essays")
-        first = self._post(essays, site="essays", url=self.essay, title="Machines of Loving Grace")
-        second = self._post(essays, site="essays", url=self.essay + "#fn1-2026", title="A footnote")
+        first = self._post(essays, site="essays", url=self.essay, title="Machines of Loving Grace", hours_ago=24 * 600)
+        second = self._post(essays, site="essays", url=self.essay + "#fn1-2026", title="A footnote", hours_ago=24 * 600)
         self.cur.execute("UPDATE posts SET fetched_at = fetched_at + interval '1 minute' WHERE id = %s", (second,))
         self._job()
 
