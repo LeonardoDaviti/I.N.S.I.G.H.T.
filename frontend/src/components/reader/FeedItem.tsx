@@ -24,8 +24,9 @@ function lengthLabel(item: FeedItemData): string | null {
   return null;
 }
 
-/** A story line, and its indent in the tree (issue 0064): two levels at most, one on a phone (issue 0068). */
-const STORY_LINE = 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3';
+/** A story line, and its indent in the tree (issue 0064): two levels at most, one on a phone (issue 0068),
+ *  where the title takes a line of its own under source and date (issue 0070). */
+const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap text-[0.8125rem] leading-5 text-fg-3';
 const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
 
 /** On a phone, a line at the deepest indent names its parent instead (issue 0068): "↳ Mat Duggan". */
@@ -85,14 +86,14 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     const { site, title, linkedBy } = originLabel(line.origin);
     return (
       <li data-depth={line.depth} className={indent}>
-        <span className="max-w-[40%] shrink-0 truncate" title={site}>{middleTruncate(site, 32)}</span>
-        <span aria-hidden="true" className="shrink-0">·</span>
+        <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={site}>{middleTruncate(site, 32)}</span>
+        <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
         <Link
           to={originHref(line.origin)}
           onClick={() => rememberSelection(lead.id)}
           dir="auto"
           title={line.origin.url}
-          className={`min-w-0 truncate rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
+          className={`min-w-0 truncate rounded-sm text-fg-2 max-sm:order-1 max-sm:basis-full underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
         >
           {title}
         </Link>
@@ -105,9 +106,9 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     return (
       <li data-depth={line.depth} aria-current="true" className={indent}>
         <Under name={line.under} />
-        <span className="max-w-[40%] shrink-0 truncate">{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
-        <span aria-hidden="true" className="shrink-0">·</span>
-        <span dir="auto" className="min-w-0 truncate text-fg-2">{lead.title?.trim() || 'Untitled post'}</span>
+        <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate">{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
+        <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
+        <span dir="auto" className="min-w-0 truncate text-fg-2 max-sm:order-1 max-sm:basis-full">{lead.title?.trim() || 'Untitled post'}</span>
         <span className="shrink-0">· this post</span>
       </li>
     );
@@ -117,13 +118,13 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     <li data-depth={line.depth} className={indent}>
       <Under name={line.under} />
       {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-      <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
-      <span aria-hidden="true" className="shrink-0">·</span>
+      <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
+      <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
       <Link
         to={postHref(post.id, null)}
         onClick={() => rememberSelection(lead.id)}
         dir="auto"
-        className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+        className={`min-w-0 truncate rounded-sm underline-offset-4 max-sm:order-1 max-sm:basis-full hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
       >
         {post.title?.trim() || 'Untitled post'}
       </Link>
@@ -265,7 +266,7 @@ function FeedItem({
             {title}
           </Link>
         </h3>
-        <p className="flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums">
+        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums sm:flex-nowrap">
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isLater ? <Clock aria-hidden="true" className="h-3 w-3 shrink-0 text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
@@ -278,8 +279,10 @@ function FeedItem({
               {middleTruncate(source, 56)}
             </TextLink>
           ) : null}
-          {/* A repost (issue 0066): its author, beside the source that reposted it (issue 0070). */}
-          {item.repost ? <span className="min-w-0 truncate">{repostLine(item.repost)}</span> : null}
+          {/* A repost (issue 0066): its author, beside the source that reposted it. On a phone it and a page's
+              note take a second line, so the source keeps its name (issue 0070). */}
+          {item.repost || pageNote ? <span aria-hidden="true" className="h-0 basis-full max-sm:order-1 sm:hidden" /> : null}
+          {item.repost ? <span className="min-w-0 truncate max-sm:order-1">{repostLine(item.repost)}</span> : null}
           {/* A Hacker News item's counts (issue 0070), no longer its text. */}
           {item.counts ? (
             <>
@@ -308,9 +311,10 @@ function FeedItem({
           ) : null}
           {pageNote ? (
             <>
-              {showSource || length ? <span aria-hidden="true" className="shrink-0">·</span> : null}
+              {showSource || length || item.repost
+                ? <span aria-hidden="true" className={`shrink-0 max-sm:order-1 ${item.repost ? '' : 'max-sm:hidden'}`}>·</span> : null}
               {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
-              <span data-page-note className="min-w-0 truncate" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
+              <span data-page-note className="min-w-0 truncate max-sm:order-1" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
             </>
           ) : null}
           {!isRead ? <span className="sr-only">Unread</span> : null}
