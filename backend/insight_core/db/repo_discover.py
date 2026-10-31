@@ -10,7 +10,7 @@ It is story_rules.suggestions (the reference, kept as a pure function) in SQL, o
   Discover itself for an address it finds missing;
 - a key is a candidate with 2+ article-like addresses that are 40%+ of its addresses, unless you
   follow it or hid it (story_rules.discover_open): this needs the addresses only;
-- only the candidates' links are then read for their voices (StoryPost.voice: `site:<own site>`
+- only the candidates' links are then read for their voices (StoryPost.voice: `site:<publication>`
   for a website, `reddit:<author>` for a Reddit post whose feed names its author, else
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
@@ -236,7 +236,8 @@ class DiscoverRepository:
         roundups (the voices linking it only in roundups, issue 0067), article_count, link_count,
         classics (its addresses that are classics, hidden or not) and its `shown` top articles
         [(url, voices, title)].
-        `kinds` and `own_sites`: each source's kind (source_kind) and own site (SourceFacts.own_site);
+        `kinds` and `own_sites`: each source's kind (source_kind) and publication, its website voice
+        (SourceFacts.publication, issue 0069);
         `accounts`: the platform account of each source that follows one (SourceFacts.platform_accounts),
         whose posts at another account's address are reposts, counted as links to that address;
         `mirrors`: the hosts where tweets are found (DiscoverRepository.mirrors)."""

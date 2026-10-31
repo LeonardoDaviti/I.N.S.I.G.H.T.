@@ -104,7 +104,7 @@ class StoriesService:
         reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
         author_source = sources.of_account.get("x.com/" + row["author"].lower()) if kind == "x" and row["author"] else None
         return StoryPost(
-            id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.own_site(row["source_id"]),
+            id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
             words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
             author=reddit_author(html) if kind == "reddit" else row["author"],
@@ -156,7 +156,7 @@ class StoriesService:
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. {stamp, found (DiscoverRepository.counts), mirrors, scanned_to}."""
         accounts = sources.platform_accounts()
-        ask = dict(kinds=sources.kind, own_sites={i: sources.own_site(i) for i in sources.kind}, accounts=accounts,
+        ask = dict(kinds=sources.kind, own_sites={i: sources.publication(i) for i in sources.kind}, accounts=accounts,
                    shown=DISCOVER_ARTICLES_SHOWN)
         stamp = DiscoverRepository.stamp(cur, sorted((i, sources.kind[i], ask["own_sites"][i], accounts.get(i, ""))
                                                      for i in sources.site))
@@ -184,7 +184,7 @@ class StoriesService:
             counted = self._counted(cur, sources)
             followed, hidden, classics = sources.followed(), self.repo.hidden(cur), set(self.news.classic_urls(cur))
             roots = DiscoverRepository.story_origins(cur, kinds=sources.kind,
-                                                     own_sites={i: sources.own_site(i) for i in sources.kind})
+                                                     own_sites={i: sources.publication(i) for i in sources.kind})
             held = self._held(cur, sources, roots, followed)
             started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]))
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
