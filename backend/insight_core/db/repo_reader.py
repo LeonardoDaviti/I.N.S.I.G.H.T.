@@ -390,7 +390,8 @@ class ReaderRepository:
         Issue 0068: each post (and the item's own place) carries `reposted_by`, the accounts that
         reposted it, and your sources that wrote or reposted it join `sources`; `roundups` [{id, title,
         source_display_name}] are the roundups that mention the story and are not in it, each
-        source once (its first)."""
+        source once. Issue 0069: a source's roundup is the one that links the story's pages earliest
+        in it, then the first, and a source in the story has none."""
         if not items:
             return
         cur.execute(
@@ -462,24 +463,35 @@ class ReaderRepository:
                         source = followed.get("x.com/" + account.lower())
                         if source and source["id"] not in {s["id"] for s in sources}:
                             sources.append(source)
+        # Each source's roundup that is most about the story (issue 0069): the one that links the story's
+        # pages earliest in it (post_links.position), then the first; none of a source in the story.
         cur.execute(
             f"""
             SELECT * FROM (
                 SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, p.title, left(p.content, 400),
-                       COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), {SORT_KEY} AS at
+                       COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.source_id,
+                       {SORT_KEY} AS at
                 FROM story_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
+                LEFT JOIN LATERAL (
+                    SELECT min(pl.position) AS position FROM post_links pl
+                    WHERE pl.post_id = m.post_id AND pl.target_url IN (
+                        SELECT COALESCE(sp_p.normalized_url, sp_p.url) FROM story_posts sp
+                        JOIN posts sp_p ON sp_p.id = sp.post_id WHERE sp.story_id = m.story_id
+                        UNION ALL SELECT origin_url FROM stories WHERE id = m.story_id)
+                ) linked ON TRUE
                 WHERE m.story_id = ANY(%s::uuid[])
-                ORDER BY m.story_id, p.source_id, {SORT_KEY}, p.id) first
+                ORDER BY m.story_id, p.source_id, linked.position NULLS LAST, {SORT_KEY}, p.id) first
             ORDER BY at, id
             """,
             ([story["id"] for story in stories.values()],),
         )
-        roundups: Dict[str, List[Dict[str, Any]]] = {}
-        for story_id, post_id, title, content, name, _ in cur.fetchall():
+        roundups: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+        for story_id, post_id, title, content, name, source_id, _ in cur.fetchall():
             roundups.setdefault(str(story_id), []).append(
-                {"id": str(post_id), "title": display_title(title, content), "source_display_name": name})
+                (str(source_id), {"id": str(post_id), "title": display_title(title, content), "source_display_name": name}))
         for story in stories.values():
-            story["roundups"] = roundups.get(story["id"], [])
+            voices = {source["id"] for source in story["sources"]}
+            story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]
         for item in items:
             item["story"] = stories.get(item["id"])
 
