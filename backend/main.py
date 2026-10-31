@@ -1335,6 +1335,13 @@ async def get_operations_overview():
     return services().operations.get_operations_overview()
 
 
+@app.get("/api/operations/background")
+@error_detail("load the background work")
+async def get_background_work():
+    """What runs on its own (issue 0062): stories, the search index, link reading. Read only."""
+    return await asyncio.to_thread(services().operations.background_work)
+
+
 @app.get("/api/operations/jobs/{job_id}")
 @error_detail("load the job")
 async def get_operation_job(job_id: str):

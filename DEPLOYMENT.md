@@ -72,8 +72,10 @@ docker compose build
 docker compose up -d --remove-orphans
 ```
 
-`./update` does the same without the dump: `git pull`, `docker compose down`, build, `up -d`.
-It reuses the cached base images and dependency installs, so a code-only update rebuilds
+`./update` does the same without the dump: `git pull`, build, then `up -d`. The build runs
+while the old containers keep serving; `up -d` then recreates only the containers whose image
+or config changed, so the site is down only while those containers restart (seconds), not for
+the build. It reuses the cached base images and dependency installs, so a code-only update rebuilds
 only the code layers. `./update --refresh` (or `docker compose build --pull`) also pulls
 fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
 and then for security patches, and after changing `requirements.txt` or `package.json`

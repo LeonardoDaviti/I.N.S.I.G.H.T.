@@ -5,7 +5,7 @@
  * `components/ops/fixtures.ts`, `components/connections/fixtures.ts`), so the
  * studio shows what the tests assert. Dates are relative to `now`.
  */
-import type { FeedItem, Folder, JobRun, SchedulerConfig, SourceHealthRow } from '../../services/api';
+import type { BackgroundWorkResponse, FeedItem, Folder, JobRun, SchedulerConfig, SourceHealthRow } from '../../services/api';
 import { feedFixture, feedItem, worstFeedItems } from '../../components/reader/fixtures';
 import { healthRow, runReport, worstHealthRows, worstRunReport } from '../../components/ops/fixtures';
 import { demoCredentials } from '../../components/connections/fixtures';
@@ -176,6 +176,21 @@ export function scheduler(now: Date, overrides: Partial<SchedulerConfig> = {}): 
     state: { last_tick_at: at(now, -12 * MINUTE), next_tick_at: at(now, 48 * MINUTE) },
     ...overrides,
   };
+}
+
+/** Background work (issue 0062): all done by default; `afterUpdate` is the minutes after an update. */
+export function backgroundWork(now: Date, { afterUpdate = false }: { afterUpdate?: boolean } = {}): BackgroundWorkResponse {
+  const lastRun = {
+    computed_at: at(now, -12 * MINUTE), seconds: 4.77, full: false, posts: 5018, stories: 86, news: 90, classics: 175, links_filled: 0,
+  };
+  return afterUpdate
+    ? {
+      success: true,
+      stories: { running: true, last_run: { ...lastRun, computed_at: at(now, -6 * HOUR) } },
+      search: { total: 41689, pending: 29689 },
+      links: { total: 41689, pending: 40489 },
+    }
+    : { success: true, stories: { running: false, last_run: lastRun }, search: { total: 41689, pending: 0 }, links: { total: 41689, pending: 0 } };
 }
 
 export function ingestionJob(now: Date, report = runReport(), overrides: Partial<JobRun> = {}): JobRun {

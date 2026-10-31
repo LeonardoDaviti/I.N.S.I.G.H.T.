@@ -17,16 +17,16 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from insight_core.db import database as db
+from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils.post_links import host_of, reddit_author
-from insight_core.utils.story_rules import StoryPost, group, suggestions
+from insight_core.utils.story_rules import StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class StoriesService:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         # News and Classics (issue 0051) are refreshed by this job, on its transaction.
         self.news = news or NewsService(db_url, clock=self.clock)
-        # Discover reads every kept link (138k on the server's data: 2.6 s), and its inputs change only
+        # Discover counts every kept link in the database (138k on the server's data), and its inputs change only
         # with a story run, a source or a hidden suggestion: the last list is kept until they do.
         self._discovered: tuple = ("", None)
 
@@ -80,6 +80,7 @@ class StoriesService:
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {
                 **summary, "full_at": now.isoformat() if full else previous.get("full_at"),
             })
+        self.fill_discover_addresses()
         return summary
 
     def regroup(self, cur: Any, *, cutoff: Optional[datetime]) -> Dict[str, int]:
@@ -120,49 +121,50 @@ class StoriesService:
 
     # ---- Discover -----------------------------------------------------------------------
 
+    def fill_discover_addresses(self) -> int:
+        """After a story run: work out the addresses its links point to that Discover has not met
+        (issue 0062), so Discover's first open after the run needn't. Never raises: Discover does
+        it itself when they are missing."""
+        try:
+            with db.transaction(self.db_url) as cur:
+                return DiscoverRepository.fill_addresses(cur)
+        except Exception:  # noqa: BLE001 - derived; Discover fills what is missing
+            logger.exception("Stories: Discover's addresses were not filled")
+            return 0
+
     def discover(self) -> Dict[str, Any]:
         """Sites and accounts your sources keep linking that you don't follow, each with why."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             inputs = self.repo.discover_inputs(cur)
             if self._discovered[0] == inputs and self._discovered[1] is not None:
                 return self._discovered[1]
+            # Grouped and counted in the database (issue 0062): the kept links never come to Python.
             sources = SourceFacts(cur)
-            links = self.repo.kept_links(cur, sources)
-            hidden = self.repo.hidden(cur)
-            classic_urls = set(self.news.classic_urls(cur))
-        pairs = []
-        names: Dict[str, str] = {}
-        linked_by: Dict[str, set] = defaultdict(set)
-        texts: Dict[str, Counter] = defaultdict(Counter)
-        for link in links:
-            post = StoryPost(id="", source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
-                             own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"])
-            names.setdefault(post.voice, sources.voice_name(post.voice, link["source_id"]))
-            pairs.append((post.voice, link["url"]))
-            linked_by[link["url"]].add(post.voice)
-            if link["text"]:
-                texts[link["url"]][link["text"]] += 1
-        found = suggestions(pairs, followed=sources.followed(), hidden=hidden,
-                            followed_accounts=sources.followed_accounts())
-        # A suggestion that holds classics (issue 0051) comes first; the order stays within each part.
-        held = {s.key: len(s.addresses & classic_urls) for s in found}
-        found = sorted(found, key=lambda s: held[s.key] == 0)
+            ask = dict(kinds=sources.kind, own_sites={i: sources.own_site(i) for i in sources.kind},
+                       followed=sources.followed(), followed_accounts=sources.followed_accounts(),
+                       hidden=self.repo.hidden(cur), classic_urls=self.news.classic_urls(cur),
+                       shown=DISCOVER_ARTICLES_SHOWN)
+            found, unknown = DiscoverRepository.counts(cur, **ask)
+            if unknown:   # addresses no story run has worked out yet (the job does it after reading links)
+                DiscoverRepository.fill_addresses(cur)
+                found, _ = DiscoverRepository.counts(cur, **ask)
+        # Most voices first, then articles, links, key (story_rules.suggestions); a suggestion that
+        # holds classics (issue 0051) comes first, the order staying within each part.
+        found.sort(key=lambda s: (-len(s["voices"]), -s["article_count"], -s["link_count"], s["key"]))
+        found.sort(key=lambda s: s["classics"] == 0)
         out = []
         for s in found:
-            articles = sorted(s.articles, key=lambda url: (-len(linked_by[url]), url))[:DISCOVER_ARTICLES_SHOWN]
+            names = {voice: sources.voice_name(voice, source_id or "") for voice, source_id in s["voices"]}
             out.append({
-                "key": s.key,
-                "url": "https://" + s.key,
-                "voices": len(s.voices),
-                "voice_names": sorted(names[v] for v in s.voices),
-                "article_count": len(s.articles),
-                "link_count": s.links,
-                "classics": held[s.key],
-                "articles": [{
-                    "url": url,
-                    "title": texts[url].most_common(1)[0][0] if texts[url] else None,
-                    "linked_by": sorted(names[v] for v in linked_by[url]),
-                } for url in articles],
+                "key": s["key"],
+                "url": "https://" + s["key"],
+                "voices": len(names),
+                "voice_names": sorted(names.values()),
+                "article_count": s["article_count"],
+                "link_count": s["link_count"],
+                "classics": s["classics"],
+                "articles": [{"url": url, "title": title, "linked_by": sorted(names[v] for v in voices)}
+                             for url, voices, title in s["articles"]],
             })
         result = {"success": True, "suggestions": out}
         self._discovered = (inputs, result)

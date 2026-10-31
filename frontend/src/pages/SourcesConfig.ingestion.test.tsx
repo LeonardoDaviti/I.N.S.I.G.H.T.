@@ -6,7 +6,7 @@ import SourcesConfig from './SourcesConfig';
 import { healthResponse, healthRow, runReport } from '../components/ops/fixtures';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
-import type { Api, ArchiveCatalogEntry, ArchiveStatusResponse, JobRun, SchedulerConfig } from '../services/api';
+import type { Api, ArchiveCatalogEntry, ArchiveStatusResponse, BackgroundWorkResponse, JobRun, SchedulerConfig } from '../services/api';
 
 
 const MINUTE = 60_000;
@@ -38,6 +38,19 @@ function job(overrides: Partial<JobRun> = {}): JobRun {
   };
 }
 
+
+function background(overrides: Partial<BackgroundWorkResponse> = {}): BackgroundWorkResponse {
+  return {
+    success: true,
+    stories: {
+      running: false,
+      last_run: { computed_at: new Date(Date.now() - 12 * MINUTE).toISOString(), seconds: 4.77, posts: 5018, stories: 86, news: 90, classics: 175 },
+    },
+    search: { total: 41689, pending: 0 },
+    links: { total: 41689, pending: 0 },
+    ...overrides,
+  };
+}
 
 function catalogEntry(overrides: Partial<ArchiveCatalogEntry> = {}): ArchiveCatalogEntry {
   return {
@@ -79,6 +92,7 @@ function setup({
     getOperationJob: vi.fn().mockResolvedValue({ success: true, job: job({ payload: { ...runReport() } }) }),
     runIngestionCycle: vi.fn().mockResolvedValue(runReport({ posts_inserted: 7 })),
     getVersion: vi.fn().mockResolvedValue({ version: null, commit: null, commit_date: null }),
+    getBackgroundWork: vi.fn().mockResolvedValue(background()),
     ...overrides,
   };
   const utils = renderWithProviders(<SourcesConfig />, { api: makeFakeApi(methods), route });
@@ -127,6 +141,48 @@ describe('Sources → ingestion tab', () => {
     const lastRun = await screen.findByRole('region', { name: 'Last run' });
     expect((await within(lastRun).findAllByText(/48 new posts/)).length).toBeGreaterThan(0);
     expect(within(lastRun).queryByText(/enrich/i)).toBeNull();
+  });
+
+  it('background work, all done: the last story run and its counts, the index and links done; nothing to press', async () => {
+    setup();
+    const block = await screen.findByRole('region', { name: 'Background work' });
+    expect(await within(block).findByText('done')).toBeInTheDocument();
+    expect(within(block).getByText('Last run 12m ago, took 5s · next run: after the next fetch run')).toBeInTheDocument();
+    expect(within(block).getByText('5,018 posts grouped · 86 stories · 90 in News · 175 Classics')).toBeInTheDocument();
+    expect(within(block).getByText('up to date')).toBeInTheDocument();
+    expect(within(block).getByText('all read')).toBeInTheDocument();
+    expect(within(block).queryAllByRole('button')).toEqual([]);
+    expect(within(block).queryAllByRole('textbox')).toEqual([]);
+  });
+
+  it('background work right after an update: re-indexing, reading links, building stories', async () => {
+    setup({
+      overrides: {
+        getBackgroundWork: vi.fn().mockResolvedValue(background({
+          stories: { running: true, last_run: background().stories.last_run },
+          search: { total: 41689, pending: 29689 },
+          links: { total: 41689, pending: 40489 },
+        })),
+      },
+    });
+    const block = await screen.findByRole('region', { name: 'Background work' });
+    expect(await within(block).findByText('building stories, News and Classics now')).toBeInTheDocument();
+    expect(within(block).getByText('re-indexing 12,000 of 41,689')).toBeInTheDocument();
+    expect(within(block).getByText('reading 1,200 of 41,689')).toBeInTheDocument();
+    expect(block.querySelectorAll('[data-status="running"]')).toHaveLength(3);
+  });
+
+  it('background work on a new install: stories not run yet', async () => {
+    setup({ overrides: { getBackgroundWork: vi.fn().mockResolvedValue(background({ stories: { running: false, last_run: null } })) } });
+    const block = await screen.findByRole('region', { name: 'Background work' });
+    expect(await within(block).findByText('not run yet')).toBeInTheDocument();
+    expect(within(block).getByText('Runs after the next fetch run')).toBeInTheDocument();
+  });
+
+  it('background work that cannot be read says so', async () => {
+    setup({ overrides: { getBackgroundWork: vi.fn().mockRejectedValue(new Error('500')) } });
+    const block = await screen.findByRole('region', { name: 'Background work' });
+    expect(await within(block).findByText('Could not read the background work.')).toBeInTheDocument();
   });
 
   it('the scheduler status says how often it checks and when it next ticks', async () => {

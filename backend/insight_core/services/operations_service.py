@@ -673,6 +673,15 @@ class OperationsService:
             "finished_at": row[10].isoformat() if row[10] else None,
         }
 
+    def background_work(self) -> Dict[str, Any]:
+        """Sources -> Ingestion -> overview's Background work (issue 0062): the story job's last run
+        and whether it runs now, and how far search indexing and link reading are. Read only."""
+        from insight_core.db.repo_background import background_work
+        from insight_core.services.stories_service import LOCK_KEY, SETTINGS_KEY
+
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return {"success": True, **background_work(cur, stories_key=SETTINGS_KEY, stories_lock=LOCK_KEY)}
+
     def get_operations_overview(self) -> Dict[str, Any]:
         # The SQL projection above is what fixed the memory, not this limit, so keep
         # enough history for the alerts panel to still catch a stale failure.

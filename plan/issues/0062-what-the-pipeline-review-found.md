@@ -1,6 +1,6 @@
 # 0062 — What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see
 
-Status: **spec** (2026-10-31) for v9.9 (owner, 2026-10-31: "that is already for 9.9, so spec them").
+Status: **built, not deployed** (2026-10-31) for v9.9 (owner, 2026-10-31: "that is already for 9.9, so spec them"). Item 1 moved to 0064; items 2–5 built 2026-10-31.
 
 Found by running the whole update and the recurring work on a fresh copy of the server's data (41,608 posts, 489 MB), and by the owner reading the lab.
 
@@ -69,3 +69,62 @@ Found by running the whole update and the recurring work on a fresh copy of the 
 ## Done when (all)
 - Backend suite and frontend checks green; bundle within the gzip budget (0061).
 - Every case in `plan/research/lab/cases.json` that passed still passes.
+
+## Built (items 3-5, 2026-10-31, branch `issue-0062-ops`, not deployed)
+
+### 3. The update builds before restarting
+- `./update` no longer runs `docker compose down`. It runs `git pull`, then `build` (the stamp exported as before and passed through `sudo --preserve-env`, `--refresh` still adds `--pull`), then `up -d --remove-orphans`, which recreates only the containers whose image changed.
+- `DEPLOYMENT.md` says the build runs while the old containers serve, and the site is down only while the changed containers restart.
+- **Dry run** on this machine, a scratch compose project `i0062-scratch` (its own images and ports 18621/18622; the real `insight` project and containers untouched). Three nginx services built from one Dockerfile with a 25 s step, stand-ins for `git` (no network) and `sudo` (keeps only the preserved variables, as sudo does). Both ports polled every 0.5 s while the script ran:
+  - old script (`down` first): 52 of 57 samples down, from the start of the build to the restart (26 s);
+  - new script: the old build answered for the whole 27 s build (55 samples), then 1 sample down at the restart, then the new build;
+  - the stamp reached the images through sudo (`Mark IX v9.9-scratch scr0062 2026-10-31`); `--refresh` (dry, an echo-only docker) passes `build --pull backend ingestion frontend`.
+  - The scratch project, its images and the scripts were removed after.
+
+### 4. Discover counts in the database
+- `db/repo_discover.py` (new), migration `0046_discover_addresses.sql`:
+  - `discover_addresses` keeps what Discover reads of each linked address: its key, site, whether the site is a platform, and whether it reads like an article. Each is worked out once, in Python, by the same function the rules use (`story_rules.discover_address`, which `suggestions()` now calls too), so nothing of `site_of`, `account_key` or `is_article` is written twice. A `rules` fingerprint (the platform and page lists, the article pattern, a version) redoes the rows when the rules change.
+  - Filled by the story job after it reads links (`StoriesService.fill_discover_addresses`, one call at the end of `recompute`, never raising), and by Discover itself when an address is missing (the query counts them; Discover fills and asks again). Rows no kept link points to are dropped when it fills.
+  - One query: the candidates first, from the addresses alone (2+ article-like addresses, 40%+, not followed or hidden); then only those keys' links are read for their voices (`site:`, `reddit:<author>`, `source:`), 3+ voices kept; the top 20 articles with their voices and the words they are most often linked by. A website voice two sources share is named after the source of its first kept link, as before. Python only sorts and names.
+  - The cache (0050's fix) is unchanged.
+- **Measured** on a `_test` copy of `insight_lab` (41,689 posts, 138,650 kept links, 576 suggestions), in the backend image with the API's imports loaded, three runs each:
+
+  | | first open | API memory |
+  | --- | --- | --- |
+  | before | 2.31-2.44 s (2.56-2.67 s after a story run) | +706 MB (peak 765 MB) |
+  | after, the first open after a story run | 0.42-0.56 s (the spread is this machine's load) | +9 MB (peak 68 MB) |
+  | after, once, with `discover_addresses` empty (no story run since the update) | 1.44 s | +29 MB |
+
+  - The result is byte-identical to the old walk's JSON (same suggestions, same order, same articles, titles and names), before and after a story run on that copy.
+  - The story job's fill costs 45 ms when nothing is new.
+- **Tests:** `test_discover_counts.py` (7). The oracle is the old walk, kept in the test as it was, compared whole on the test database after rows that hit the edges: an account on a platform, a platform page that names no account, `@ТЕСТ` lowercased as Python does, a host with a port, `co.uk`, 40% exactly and just under, Reddit authors as voices, a site two sources share, more than 20 articles, a classic, a followed site and a hidden key. Plus Discover filling a missing address, the story job filling them, a row of older rules redone, and an unlinked row dropped.
+
+### 5. Background work you can see
+- `GET /api/operations/background` (`db/repo_background.py`, `OperationsService.background_work`), one query:
+  - **stories:** the `stories` setting's last summary (when, seconds, posts grouped, stories, News, Classics), and `running` while a run holds the story job's advisory lock (`pg_locks`);
+  - **search:** posts whose vector is missing or of an older `search_version`, of all posts;
+  - **links:** posts whose links were never read (`links_scanned_at IS NULL`), of all posts.
+  - 30-160 ms on the lab copy. No POST, no setting.
+- **Sources → ingestion → overview** ends with **Background work** (`components/sources/BackgroundWork.tsx`, `lib/backgroundWork.ts`). Three rows, a glyph and words:
+  - Stories: `done` with "Last run 12m ago, took 5s · next run: after the next fetch run" and "5,018 posts grouped · 86 stories · 90 in News · 175 Classics"; `building stories, News and Classics now`; `not run yet`, "Runs after the next fetch run";
+  - Search index: `up to date` or `re-indexing 12,000 of 41,689`;
+  - Links: `all read` or `reading 1,200 of 41,689`.
+  - It refreshes every 5 seconds while anything runs, else every minute. No buttons. It lives in the Sources chunk: the feed route grew 31 bytes gzip (169,551 against 169,520).
+- **Tests:**
+  - backend `test_background_work.py` (7): never run, done, running while the lock is held (and not for another advisory lock), re-indexing then up to date, reading links then all read, and the route (GET only);
+  - frontend `lib/backgroundWork.test.ts` (4) and `SourcesConfig.ingestion.test.tsx` (4 more): all done with nothing to press, right after an update, never run, and an error.
+- **Screens** (Design Studio frames `sources/background-after-update`, `background-done`, `background-never`, at 1400 and 390, light and dark): `/tmp/i0062-shots/`.
+- `design/docs/pages/sources.md` describes the block and lists the three states.
+
+### Checks
+- Backend suite: 1055 tests OK. Frontend: typecheck, 197 node + 662 vitest tests, lint and build clean, the bundle within the 0061 budget.
+
+## Left open (items 3-5)
+- **3:** `up -d` still restarts the API whenever its image changed, so an update is a few seconds down, plus the API's own start. A migration that runs long runs in that window, as before.
+- **4:**
+  - The first Discover open after the deploy that brings 0046, before any story run, works out every address (115k on the lab: 1.4 s once). The backend's start runs the story job, which does it first in the usual case.
+  - The 0.5 s target holds on this machine with little to spare (0.42-0.56 s under other agents' load). Most of what is left is reading the 138k kept addresses once to count them; a further cut would need the counts kept between runs.
+  - A Reddit author is lowercased in SQL with ICU (`und-x-icu`). The `pgvector/pgvector:pg15` image has it; a Postgres built without ICU would fail Discover.
+- **5:**
+  - "Running" for stories is the regroup step (the lock). The link reading before it shows in Links, not in Stories.
+  - Search and Links count what is left, not whether the API's background thread is alive: a thread that died would show "re-indexing" until the next start.

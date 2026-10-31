@@ -578,6 +578,32 @@ export interface RunRequestOptions {
   onAccepted?: (job: JobAccepted) => void;
 }
 
+/** The story job's last run, as it recorded it (the `stories` system setting, issue 0050). */
+export interface StoriesRunSummary {
+  computed_at: string;
+  seconds?: number | null;
+  full?: boolean | null;
+  /** The posts it grouped: the last 30 days, every post on a full run. */
+  posts?: number | null;
+  stories?: number | null;
+  news?: number | null;
+  classics?: number | null;
+  links_filled?: number | null;
+}
+
+/** Of `total` posts, `pending` still to do. */
+export interface BackgroundProgress {
+  total: number;
+  pending: number;
+}
+
+/** What runs on its own (issue 0062), read only: GET /api/operations/background. */
+export interface BackgroundWorkResponse extends Envelope {
+  stories: { running: boolean; last_run: StoriesRunSummary | null };
+  search: BackgroundProgress;
+  links: BackgroundProgress;
+}
+
 export interface OperationsOverviewResponse extends Envelope {
   scheduler?: SchedulerConfig;
   jobs?: JobRun[];
@@ -981,6 +1007,7 @@ export function createApi() {
     fetchFolderNow: (folderId: string, { limit, ...opts }: { limit?: number } & RunRequestOptions = {}) =>
       runIngestionJob(`/api/folders/${enc(folderId)}/ingest`, limit ? { limit } : {}, opts),
     getOperationsOverview: () => request<OperationsOverviewResponse>('/api/operations/overview'),
+    getBackgroundWork: () => request<BackgroundWorkResponse>('/api/operations/background'),
     getOperationJob: (jobId: string) => request<OperationJobResponse>(`/api/operations/jobs/${jobId}`),
     getSchedulerConfig: () => request<SchedulerResponse>('/api/operations/scheduler'),
     updateSchedulerConfig: (config: Partial<SchedulerConfig>) => settle(request<SchedulerResponse>('/api/operations/scheduler', {
