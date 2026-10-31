@@ -71,7 +71,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0065](0065-discover-the-sources-your-stories-start-from.md) | Discover suggests the sources your stories start from | built, not deployed (v9.9) |
 | [0066](0066-x-reposts-quotes-and-threads.md) | X: reposts, quotes and threads become connections | built, not deployed (v9.9) |
 | [0067](0067-discover-clean-less-noise.md) | Discover: cleaner, less noise (a roundup weighs half in the order; languages and mirrors aren't sites) | built, not deployed (v9.9) |
-| [0068](0068-reading-v9.9-gaps.md) | What reading v9.9 would show: threads, roundups, reposts, origin titles, phones, labels | spec (v9.10) |
+| [0068](0068-reading-v9.9-gaps.md) | What reading v9.9 would show: threads, roundups, reposts, origin titles, phones, labels, shared blog hosts | built, not deployed (v9.10) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 
 ## Analysis archive

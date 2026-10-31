@@ -1,8 +1,10 @@
 /**
  * Stories as trees (issue 0064), from the lab's real cases: GPT-6.1 Terra (OpenAI's own post is
- * the origin; HN's row of its address and two citers under it, LessWrong under Simon) and
- * Claude Fable 5 (the origin is Anthropic's page, outside INSIGHT, linked by 14; this row is one
- * of its citers, a copy under another).
+ * the origin; HN's row of its address and two citers under it; LessWrong's roundup mentions it,
+ * issue 0068), Claude Fable 5 (the origin is Anthropic's page, outside INSIGHT, linked by 14; this
+ * row is one of its citers, a copy under another) and Ghostty leaving GitHub (mitchellh.com's post,
+ * read, is the origin; @steipete's repost of Mitchell's tweet and this row, Mat Duggan's, under it;
+ * Andrew Nesbitt's under Duggan: on a phone "↳ matduggan.com" in place of a second indent).
  */
 import type { FeedItem, StoryPost, StoryParentReason } from '../../services/api';
 import { feedItem } from '../../components/reader/fixtures';
@@ -45,6 +47,9 @@ export function xItems(now: Date): FeedItem[] {
     id: 'p-steipete-rt', title: 'how i work with agents in 2026.', excerpt: 'ignore all other guides on here.',
     source_id: sourceId('s-steipete'), source_display_name: 'steipete', sort_at: at(now, -2 * HOUR), published_at: at(now, -2 * HOUR),
     url: 'https://nitter.local/badlogicgames/status/2114444636303364349#m', read_at: null, repost: { by: ['steipete'], author: 'badlogicgames' },
+    // Issue 0068: badlogicgames, whom you follow, wrote it; steipete reposted it: two voices.
+    story: { id: 'p-steipete-rt', voices: 2, first: 'p-steipete-rt', parent_id: null, parent_reason: null, origin: null, reposted_by: ['steipete'],
+      sources: [{ id: sourceId('s-steipete'), name: 'steipete' }, { id: sourceId('s-bg'), name: 'badlogicgames' }], posts: [] },
   }, now);
   return [repost, thread];
 }
@@ -56,15 +61,14 @@ export function storyTreeItems(now: Date): FeedItem[] {
     url: 'https://openai.com/index/introducing-gpt-6-1-terra', source_id: sourceId('s-openai'), source_display_name: 'OpenAI News',
     sort_at: at(now, -6 * HOUR), published_at: at(now, -6 * HOUR), read_at: null,
     story: {
-      id: 'p-terra', voices: 5, first: 'p-terra', parent_id: null, parent_reason: null, origin: null,
+      id: 'p-terra', voices: 4, first: 'p-terra', parent_id: null, parent_reason: null, origin: null,
       sources: [{ id: sourceId('s-openai'), name: 'OpenAI News' }, { id: sourceId('s-hn'), name: 'Hacker News: Front Page' },
-        { id: sourceId('s-ds'), name: 'data_secrets' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' },
-        { id: sourceId('s-lw'), name: 'LessWrong' }],
+        { id: sourceId('s-ds'), name: 'data_secrets' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
+      roundups: [{ id: 'p-terra-lw', title: 'Against Moloch #49', source_display_name: 'LessWrong' }],
       posts: [
         storyPost(now, 'p-terra-hn', 's-hn', 'Hacker News: Front Page', 'GPT-6.1 Terra', 5.5, 'p-terra', 'address', { role: 'share' }),
         storyPost(now, 'p-terra-ds', 's-ds', 'data_secrets', 'Вышла GPT-6.1 Terra: почти как Sol, но в пять раз дешевле', 5.3, 'p-terra', 'citation'),
         storyPost(now, 'p-terra-simon', 's-simon', 'Simon Willison’s Weblog', 'GPT-6.1 Terra', 3, 'p-terra', 'citation', { read_at: at(now, -HOUR) }),
-        storyPost(now, 'p-terra-lw', 's-lw', 'LessWrong', 'AI #192: the week in models, with notes on Terra’s pricing', 1, 'p-terra-simon', 'citation'),
       ],
     },
   }, now);
@@ -77,6 +81,8 @@ export function storyTreeItems(now: Date): FeedItem[] {
       origin: { url: 'https://www.anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5 and Mythos 5', linked_by: 14 },
       sources: [{ id: sourceId('s-newz'), name: 'ai_newz' }, { id: sourceId('s-denis'), name: 'denissexy' },
         { id: sourceId('s-toshoseti'), name: 'toshoseti' }, { id: sourceId('s-simon'), name: 'Simon Willison’s Weblog' }],
+      roundups: [{ id: 'p-fable-lw', title: 'Claude Fable 5 and Mythos 5: Capabilities', source_display_name: 'LessWrong' },
+        { id: 'p-fable-evil', title: 'Эпоха дешёвого AI походу того', source_display_name: 'evilfreelancer' }],
       posts: [
         storyPost(now, 'p-fable-denis', 's-denis', 'denissexy', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.9, null, 'citation'),
         storyPost(now, 'p-fable-tosho', 's-toshoseti', 'toshoseti', 'Вышла новая модель от Claude: Fable 5, которая кодит лучше чем Opus', 7.5, 'p-fable-denis', 'copy', { role: 'share' }),
@@ -84,5 +90,23 @@ export function storyTreeItems(now: Date): FeedItem[] {
       ],
     },
   }, now);
-  return [terra, fable];
+  const ghostty = feedItem({
+    id: 'p-ghostty-duggan', title: 'If I Could Make My Own GitHub', source_id: sourceId('s-duggan'),
+    source_display_name: 'https://matduggan.com/rss/', excerpt: 'Ghostty leaving GitHub got me thinking about what I would want instead.',
+    sort_at: at(now, -10 * HOUR), published_at: at(now, -10 * HOUR), read_at: null,
+    story: {
+      id: 'p-ghostty', voices: 4, first: 'p-ghostty', parent_id: 'p-ghostty', parent_reason: 'citation', origin: null,
+      sources: [{ id: sourceId('s-mitchell'), name: 'https://mitchellh.com/feed.xml' }, { id: sourceId('s-steipete'), name: 'steipete' },
+        { id: sourceId('s-duggan'), name: 'https://matduggan.com/rss/' }, { id: sourceId('s-nesbitt'), name: 'https://nesbitt.io/feed.xml' }],
+      roundups: [{ id: 'p-ghostty-armin', title: 'Before GitHub', source_display_name: 'https://lucumr.pocoo.org/feed.atom' }],
+      posts: [
+        storyPost(now, 'p-ghostty', 's-mitchell', 'https://mitchellh.com/feed.xml', 'Ghostty Is Leaving GitHub', 12, null, 'citation',
+          { parent_reason: null, read_at: at(now, -HOUR) }),
+        storyPost(now, 'p-ghostty-rt', 's-steipete', 'steipete', 'Ghostty is leaving GitHub. I’m GitHub user 1299, joined Feb 2008.', 11,
+          'p-ghostty', 'citation', { role: 'share', reposted_by: ['steipete'] }),
+        storyPost(now, 'p-ghostty-nesbitt', 's-nesbitt', 'https://nesbitt.io/feed.xml', 'A GitHub for maintainers', 9, 'p-ghostty-duggan', 'citation'),
+      ],
+    },
+  }, now);
+  return [terra, fable, ghostty];
 }

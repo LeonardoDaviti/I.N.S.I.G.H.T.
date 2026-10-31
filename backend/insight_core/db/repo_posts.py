@@ -871,6 +871,29 @@ class PostsRepository:
         cur.executemany("UPDATE posts SET content = %s, content_hash = %s, updated_at = now() WHERE id = %s::uuid",
                         rows)
 
+    @staticmethod
+    def drop_hidden_link_labels(cur: Cursor) -> int:
+        """Take the screen-reader labels inside links (0063's rule, parsing._without_hidden_link_labels)
+        out of the bodies stored before the reader dropped them (issue 0068), from the stored HTML
+        only: nothing is fetched. The plain text follows when it is that HTML's text; the hash
+        follows, and the next story job reads the post's links again. Returns how many changed."""
+        from insight_core.ingestion.kinds.parsing import HIDDEN_HINT_RE, _without_hidden_link_labels, strip_html
+
+        cur.execute("SELECT id, title, content, content_html FROM posts WHERE content_html ~* %s",
+                    (HIDDEN_HINT_RE.pattern.removeprefix("(?i)"),))
+        rows = []
+        for post_id, title, content, html in cur.fetchall():
+            new = _without_hidden_link_labels(html)
+            if new != html:
+                text = strip_html(new) if content == strip_html(html) else content
+                rows.append((new, text, hash_post_content(title, text, new), str(post_id)))
+        cur.executemany(
+            """UPDATE posts SET content_html = %s, content = %s, content_hash = %s, links_scanned_at = NULL,
+                   updated_at = now() WHERE id = %s::uuid""",
+            rows,
+        )
+        return len(rows)
+
     def _build_content_hash(self, title: Optional[str], content: str, content_html: Optional[str]) -> str:
         """Create a stable digest for dedupe and update tracking."""
         payload = "\n".join(

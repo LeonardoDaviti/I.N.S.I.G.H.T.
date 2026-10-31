@@ -104,6 +104,7 @@ class StoriesService:
         kind = sources.kind.get(row["source_id"], "site")
         html = row["html"]
         reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
+        author_source = sources.of_account.get("x.com/" + row["author"].lower()) if kind == "x" and row["author"] else None
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.own_site(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
@@ -117,6 +118,11 @@ class StoriesService:
             and sources.account.get(row["source_id"]) != "x.com/" + row["author"].lower(),
             reply_to=reply.group(1) if reply else None,
             quoted=quoted_tweet(html) if kind == "x" else None,
+            # Who else of your sources put it before you (issue 0068): its author's own source, when
+            # another source holds it, and the sources that reposted it. Voices of its story.
+            reposters=tuple(sorted({sources.of_account.get("x.com/" + by.lower()) for by in row["reposted_by"]}
+                                   - {None, row["source_id"], author_source})),
+            author_source=author_source if author_source != row["source_id"] else None,
         )
 
     def recompute_safely(self) -> Optional[Dict[str, Any]]:

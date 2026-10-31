@@ -169,7 +169,13 @@ export interface FeedStory {
   parent_reason?: StoryParentReason | null;
   /** One account's replies to itself, or its quotes of itself (issue 0066): read as a thread. */
   thread?: boolean;
+  /** Who reposted this row's (or this post page's) tweet (issue 0068), as each post's. */
+  reposted_by?: string[] | null;
+  /** The roundups that mention the story and are not in it, each source once (issue 0068). */
+  roundups?: StoryRoundup[];
 }
+/** A roundup mentioning a story (issue 0068): opens that post. */
+export interface StoryRoundup { id: string; title: string; source_display_name: string; }
 /** Why a post hangs from its parent, the most certain first (issues 0064, 0066). */
 export type StoryParentReason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 /** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
@@ -187,6 +193,11 @@ export interface StoryPost {
   parent_reason?: StoryParentReason | null;
   /** A thread's reply (issue 0066): its own words, read in order on the post page. */
   text?: string | null;
+  /** On the post page, a thread's reply as stored (issue 0068): read as the post's body is, with its links to stored posts. */
+  html?: string | null;
+  internal_links?: Record<string, string>;
+  /** The accounts that reposted it (issue 0068): "↻ reposted by @steipete, @badlogicgames". */
+  reposted_by?: string[] | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */

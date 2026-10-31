@@ -46,6 +46,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.parse import unquote
 
 from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, host_of,
                                           is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
@@ -116,6 +117,15 @@ class StoryPost:
     reposted: bool = False          # a tweet of another account its source reposted (issue 0066)
     reply_to: Optional[str] = None  # the account a tweet replies to
     quoted: Optional[str] = None    # the tweet it quotes (normalized)
+    # Who else of your sources put this tweet before you (issue 0068): the sources that reposted it
+    # (from posts.reposted_by), each a share voice in its story, and its author's own source when
+    # the row is another source's repost, a report voice. Never the row's own source.
+    reposters: Tuple[str, ...] = ()
+    author_source: Optional[str] = None
+
+    @property
+    def other_sources(self) -> Tuple[str, ...]:
+        return ((self.author_source,) if self.author_source else ()) + self.reposters
 
     @property
     def voice(self) -> str:
@@ -194,7 +204,7 @@ class Story:
     # (None, None, None); a post under the outside page origin has (None, origin_url, reason).
     parents: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = field(default_factory=dict)
     origin_url: Optional[str] = None       # the origin, when it is a page outside INSIGHT
-    origin_title: Optional[str] = None     # its most common titled link words (0051's rule)
+    origin_title: Optional[str] = None     # its title by evidence (origin_title, issue 0068)
     origin_linked_by: int = 0              # how many of the story's posts are about it
 
 
@@ -360,8 +370,9 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
 
     stories = []
     for root, group_posts in members.items():
-        # 2+ sources, or one account's thread or quote of itself (issue 0066).
-        if len({p.source_id for p in group_posts}) < 2 and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
+        # 2+ sources (a reposter is one, issue 0068), or one account's thread or quote of itself (0066).
+        if len({s for p in group_posts for s in (p.source_id, *p.other_sources)}) < 2 \
+                and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
             continue
         first = group_posts[0]
         shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
@@ -493,10 +504,54 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
     if first is not None:
         return Tree(out)
     url = origin[len(_PAGE):]
-    texts = Counter(text for text in (by_id[pid].link_texts.get(url) for pid in page_posts[url])
-                    if titled_link_text(text))
-    title = min(texts.items(), key=lambda kv: (-kv[1], kv[0]))[0] if texts else None
-    return Tree(out, url, title, len(set(page_posts[url])))
+    return Tree(out, url, origin_title(url, [by_id[pid] for pid in dict.fromkeys(page_posts[url])]),
+                len(set(page_posts[url])))
+
+
+# An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
+# letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
+SLUG_MIN_WORDS = 3
+_SLUG = re.compile(r"[-_+]+")
+_TOKENS = re.compile(r"\w+", re.U)
+
+
+def _slug_words(url: str) -> List[str]:
+    """The words of an address's last path segment (its slug), its extension aside."""
+    _, _, rest = bare(url).partition("/")
+    slug = unquote(re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1])
+    return [w for w in _SLUG.split(re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I)) if w]
+
+
+def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
+    """An outside origin's title (issue 0068), from evidence, never one signal, nothing fetched.
+    `posts`: those linking it. A page that is stored is no outside origin: it is the root, with its
+    own title. Measured on the lab (30 roots checked by hand): link words that 2+ voices agree on
+    are often a bare word ("Блогпост", "Веса", "Video"), and a slug loses a title's case and dots
+    ("Introducing chatgpt images 2 5"), so each signal needs another's support:
+    1. link words 2+ voices agree on (copies of one text are one voice) that read as a title
+       (0051's rule, titled_link_text);
+    2. else link words the address's slug confirms (the same words): the words, as written;
+    3. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
+    4. else one voice's link words that read as a title;
+    5. else None: the reader shows the address."""
+    said: Dict[str, List[StoryPost]] = defaultdict(list)
+    for p in posts:
+        text = " ".join((p.link_texts.get(url) or "").split())
+        if text and not re.match(r"https?://", text):
+            said[text.casefold()].append(p)
+    form = {key: Counter(" ".join(p.link_texts[url].split()) for p in ps).most_common(1)[0][0] for key, ps in said.items()}
+    by_use = sorted(said, key=lambda key: (-count_voices(said[key]), -len(said[key]), key))
+    agreed = [key for key in by_use if count_voices(said[key]) >= 2 and titled_link_text(form[key])]
+    words = _slug_words(url)
+    slug = _TOKENS.findall(" ".join(words).casefold())
+    confirmed = [key for key in by_use if len(slug) >= 2 and _TOKENS.findall(key) == slug]
+    if agreed or confirmed:
+        return form[(agreed or confirmed)[0]]
+    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
+        text = " ".join(words)
+        return text[0].upper() + text[1:]
+    titled = [key for key in by_use if titled_link_text(form[key])]
+    return form[titled[0]] if titled else None
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
@@ -519,19 +574,28 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
 
 
 def count_voices(posts: Sequence[StoryPost]) -> int:
-    """How many voices a story has: posts of one voice, and copies of one text, are one."""
+    """How many voices a story has: posts of one voice, and copies of one text, are one. A source
+    that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
+    with its posts in the story, if it has some."""
     uf = _UnionFind()
     keys: Dict[str, str] = {}
-    for p in posts:
-        uf.find(p.id)
-        for key in (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice):
+    nodes = [(p.id, (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice)) for p in posts]
+    nodes += [(f"{p.id}>{s}", (None, "voice:" + reposter_voice(s))) for p in posts for s in p.other_sources]
+    for node, node_keys in nodes:
+        uf.find(node)
+        for key in node_keys:
             if key is None:
                 continue
             if key in keys:
-                uf.union(p.id, keys[key])
+                uf.union(node, keys[key])
             else:
-                keys[key] = p.id
-    return len({uf.find(p.id) for p in posts})
+                keys[key] = node
+    return len({uf.find(node) for node, _ in nodes})
+
+
+def reposter_voice(source_id: str) -> str:
+    """A reposting source's voice, as StoryPost.voice says an X account's (issue 0068)."""
+    return "source:" + source_id
 
 
 # ---- Discover --------------------------------------------------------------------------------

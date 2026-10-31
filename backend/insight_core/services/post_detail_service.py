@@ -122,7 +122,18 @@ class PostDetailService:
         item: Dict[str, Any] = {"id": str(post_id)}
         ReaderRepository.attach_stories(cur, [item])
         story = item.get("story")
-        return story if story and (story["voices"] >= 2 or story["thread"]) else None
+        if not story or not (story["voices"] >= 2 or story["thread"]):
+            return None
+        # A thread's replies read as the post does (issue 0068): each its stored HTML and the
+        # links in it to stored posts, rendered by the post page's reader.
+        replies = {p["id"]: p for p in story["posts"] if p["parent_reason"] == "thread"}
+        if replies:
+            cur.execute("SELECT id, url, content_html, content FROM posts WHERE id = ANY(%s::uuid[])", (list(replies),))
+            for reply_id, url, content_html, content in cur.fetchall():
+                reply = replies[str(reply_id)]
+                reply["html"] = content_html
+                reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url, content_html, content)
+        return story
 
     @staticmethod
     def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],

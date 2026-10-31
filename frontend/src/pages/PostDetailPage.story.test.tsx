@@ -133,7 +133,7 @@ describe('PostDetailPage covered by, as a tree (issue 0064)', () => {
     expect(depths(block)).toEqual([
       ['0', expect.stringMatching(/^Anthropic News·Introducing Kimi K3\.1 Pro· first/)],
       ['1', expect.stringMatching(/·My notes on Kimi K3\.1· this post$/)],
-      ['2', expect.stringMatching(/^@data_secrets·Вышла Kimi K3\.1· share/)],
+      ['2', expect.stringMatching(/^↳ simonwillison\.net@data_secrets·Вышла Kimi K3\.1· share/)],   // on a phone: its parent, not more indent (0068)
     ]);
     expect(within(block).getAllByRole('listitem')[1]).toHaveAttribute('aria-current', 'true');
     expect(within(within(block).getAllByRole('listitem')[1]).queryByRole('link')).toBeNull();
@@ -149,7 +149,7 @@ describe('PostDetailPage covered by, as a tree (issue 0064)', () => {
     }) })));
     const block = await screen.findByRole('region', { name: 'Covered by' });
     expect(depths(block).map(([depth, text]) => [depth, text?.split('·')[0]])).toEqual([
-      ['0', 'kimi.com'], ['1', 'simonwillison.net'], ['1', 'Anthropic News'], ['2', '@data_secrets'],
+      ['0', 'kimi.com'], ['1', 'simonwillison.net'], ['1', 'Anthropic News'], ['2', '↳ Anthropic News@data_secrets'],
     ]);
     expect(within(block).getAllByRole('listitem')[0]).toHaveTextContent(/^kimi\.com·Kimi K3\.1 Pro tech bloglinked by 8$/);
     await user.click(within(block).getByRole('link', { name: 'Kimi K3.1 Pro tech blog' }));
@@ -218,5 +218,38 @@ describe('PostDetailPage threads and reposts (issue 0066)', () => {
     await screen.findByRole('article', { name: 'Post content' });
     expect(screen.getByText('↻ @steipete, from @badlogicgames')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Thread' })).toBeNull();
+  });
+});
+
+describe('PostDetailPage: what reading v9.9 would show (issue 0068)', () => {
+  it('a thread reply reads as a post: its link is a link, a stored post opens here, its picture shows through the cache', async () => {
+    const reply = {
+      id: '00000000-0000-4000-8000-000000000201', title: 'see this', url: 'https://nitter.local/badlogicgames/status/2',
+      source_id: 'bg', source_display_name: 'badlogicgames', platform: 'rss', sort_at: '2026-10-27T08:52:00+00:00',
+      published_at: null, read_at: null, role: 'report' as const, parent_id: POST_ID, parent_reason: 'thread' as const, text: 'see this',
+      html: '<p>see <a href="https://blog.test/post">this post</a> and <a href="https://example.com/x">that</a></p>'
+        + '<img src="https://nitter.local/pic/media%2Fgiraffe.jpg" alt="a giraffe" />',
+      internal_links: { 'https://blog.test/post': TAKE },
+    };
+    const thread = story({ voices: 1, thread: true, sources: [{ id: 'bg', name: 'badlogicgames' }], posts: [reply] });
+    renderPage(baseApi(rssPost({ title: 'software is dead. sad.', story: thread })));
+    await screen.findByRole('article', { name: 'Post content' });
+    const read = screen.getByRole('region', { name: 'Thread' });
+    expect(within(read).getByRole('link', { name: 'this post' })).toHaveAttribute('href', `/posts/${TAKE}`);
+    expect(within(read).getByRole('link', { name: 'that' })).toHaveAttribute('href', 'https://example.com/x');
+    expect(within(read).getByRole('img', { name: 'a giraffe' })).toHaveAttribute('src',
+      `/api/media?post=${reply.id}&url=${encodeURIComponent('https://nitter.local/pic/media%2Fgiraffe.jpg')}`);
+  });
+
+  it('under the tree: who reposted a tweet, and the roundups that mention the story, each opening it', async () => {
+    const tweet = { ...story().posts[1], reposted_by: ['steipete', 'badlogicgames'] };
+    renderPage(baseApi(rssPost({ story: story({ posts: [story().posts[0], tweet], roundups: [
+      { id: TAKE, title: 'AI #192: Anthropic Is Going Public', source_display_name: 'Lesswrong' },
+      { id: CHANNEL, title: 'not much happened today', source_display_name: 'Smol' },
+    ] }) })));
+    const covered = await screen.findByRole('region', { name: 'Covered by' });
+    expect(within(covered).getByText('↻ reposted by @steipete, @badlogicgames')).toBeInTheDocument();
+    expect(within(covered).getByText(/^Also in roundups:/)).toHaveTextContent('Also in roundups: Lesswrong, Smol');
+    expect(within(covered).getByRole('link', { name: 'Lesswrong' })).toHaveAttribute('href', `/posts/${TAKE}`);
   });
 });

@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
+from insight_core.db.repo_stories import source_account
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
@@ -385,14 +386,19 @@ class ReaderRepository:
         `parent_id` hangs from the story's `origin` {url, title, linked_by}, a page outside INSIGHT
         (else `origin` is None). The item's own place: `parent_id` and `parent_reason` of the story.
         On X (issue 0066): `thread` when the story is one account's replies to itself or quotes of
-        itself; a reply in it carries its `text`, and its title loses Nitter's "R to @…: "."""
+        itself; a reply in it carries its `text`, and its title loses Nitter's "R to @…: ".
+        Issue 0068: each post (and the item's own place) carries `reposted_by`, the accounts that
+        reposted it, and your sources that wrote or reposted it join `sources`; `roundups` [{id, title,
+        source_display_name}] are the roundups that mention the story and are not in it, each
+        source once (its first)."""
         if not items:
             return
         cur.execute(
             f"""
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
-                   r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by
+                   r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
+                   p.reposted_by, p.author
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -405,15 +411,19 @@ class ReaderRepository:
             ([item["id"] for item in items],),
         )
         stories: Dict[str, Dict[str, Any]] = {}
+        reposts: Dict[str, List[Tuple[Optional[str], List[str]]]] = {}   # lead -> (a tweet's author, its reposters)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by) in cur.fetchall():
+             origin_linked_by, reposted_by, author) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
                 "origin": {"url": origin_url, "title": origin_title, "linked_by": int(origin_linked_by or 0)}
                           if origin_url else None,
+                "reposted_by": None, "roundups": [],
             })
+            if reposted_by:
+                reposts.setdefault(str(lead), []).append((author, reposted_by))
             story["thread"] |= parent_reason in ("thread", "quote")
             # The origin post first (issue 0064); before the tree is drawn, the first report.
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
@@ -421,7 +431,8 @@ class ReaderRepository:
                 story["first"], story["_first_rank"] = str(post_id), rank
             if not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
-            parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason}
+            parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason,
+                      "reposted_by": reposted_by or None}
             if str(post_id) != str(lead):
                 thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
@@ -440,6 +451,35 @@ class ReaderRepository:
             if story["origin"] is not None and story["_first_rank"][0] != 0:
                 story["first"] = None
             del story["_first_rank"]
+        if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
+            cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url)"
+                        " FROM sources ORDER BY id DESC")
+            followed = {source_account(r[1], r[2]): {"id": str(r[0]), "name": r[3]} for r in cur.fetchall()}
+            for lead, found in reposts.items():
+                sources = stories[lead]["sources"]
+                for author, by in found:
+                    for account in (author or "", *by):
+                        source = followed.get("x.com/" + account.lower())
+                        if source and source["id"] not in {s["id"] for s in sources}:
+                            sources.append(source)
+        cur.execute(
+            f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, p.title, left(p.content, 400),
+                       COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), {SORT_KEY} AS at
+                FROM story_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
+                WHERE m.story_id = ANY(%s::uuid[])
+                ORDER BY m.story_id, p.source_id, {SORT_KEY}, p.id) first
+            ORDER BY at, id
+            """,
+            ([story["id"] for story in stories.values()],),
+        )
+        roundups: Dict[str, List[Dict[str, Any]]] = {}
+        for story_id, post_id, title, content, name, _ in cur.fetchall():
+            roundups.setdefault(str(story_id), []).append(
+                {"id": str(post_id), "title": display_title(title, content), "source_display_name": name})
+        for story in stories.values():
+            story["roundups"] = roundups.get(story["id"], [])
         for item in items:
             item["story"] = stories.get(item["id"])
 

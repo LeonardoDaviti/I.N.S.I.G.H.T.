@@ -464,4 +464,38 @@ describe('FeedList', () => {
     const [, repost] = screen.getAllByRole('article');
     expect(repost).toHaveTextContent('steipete·↻ @steipete, from @badlogicgames');
   });
+  it('a story names the roundups that mention it, who reposted a tweet, and on a phone a deep line its parent (issue 0068)', async () => {
+    const user = userEvent.setup();
+    const post = (n: number, name: string, title: string, parent: string, extra = {}) => ({
+      id: ID(n), title, url: `https://x.test/${n}`, source_id: `s${n}`, source_display_name: name, platform: 'rss',
+      sort_at: `2026-10-26T1${n}:00:00Z`, published_at: null, read_at: null, role: 'report' as const, parent_id: parent,
+      parent_reason: 'citation' as const, ...extra,
+    });
+    // Ghostty leaves GitHub: mitchellh.com's post (read) is the origin; @steipete's tweet (reposted) and Mat Duggan's row
+    // under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.
+    const ghostty = {
+      id: ID(1), voices: 4, first: ID(1), parent_id: ID(1), parent_reason: 'citation' as const, origin: null,
+      sources: [{ id: 's1', name: 'mitchellh.com' }, { id: 's2', name: 'steipete' }, { id: 's3', name: 'Mat Duggan' }, { id: 's4', name: 'Andrew Nesbitt' }],
+      posts: [{ ...post(1, 'mitchellh.com', 'Ghostty is leaving GitHub', ''), parent_id: null, parent_reason: null },
+        post(2, 'steipete', 'ghostty is leaving github', ID(1), { reposted_by: ['steipete', 'badlogicgames'] }),
+        post(4, 'Andrew Nesbitt', 'A GitHub for maintainers', ID(3))],
+      roundups: [{ id: ID(7), title: 'AI #192: Anthropic Is Going Public', source_display_name: 'Lesswrong' },
+        { id: ID(8), title: 'not much happened today', source_display_name: 'Smol' }],
+    };
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(3), title: 'GitHub is not your home', source_display_name: 'Mat Duggan', sort_at: '2026-10-26T13:00:00Z', story: ghostty }),
+    ])) });
+    await user.click(await screen.findByRole('button', { name: /^covered by 4/ }));
+    const list = document.querySelector('[data-story-posts]') as HTMLElement;
+    const items = within(list).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent?.split('·')[0])).toEqual(
+      ['mitchellh.com', 'steipete', '↻ reposted by @steipete, @badlogicgames', 'Mat Duggan', '↳ Mat DugganAndrew Nesbitt']);
+    expect(items.map((li) => li.dataset.depth)).toEqual(['0', '1', '1', '1', '2']);
+    expect(items[4]).toHaveClass('pl-2', 'sm:pl-8');
+    expect(within(items[4]).getByText('↳ Mat Duggan')).toHaveClass('sm:hidden');
+    const roundups = screen.getByText(/^Also in roundups:/);
+    expect(roundups).toHaveTextContent('Also in roundups: Lesswrong, Smol');
+    expect(within(roundups).getByRole('link', { name: 'Lesswrong' })).toHaveAttribute('href', `/posts/${ID(7)}`);
+    expect(within(list).queryByText('Lesswrong')).toBeNull();
+  });
 });

@@ -82,11 +82,12 @@ const SCENARIOS: FrameScenario[] = [
   }), documented: true },
   { page: 'reader', state: 'history-empty', label: 'Show history, nothing opened yet', url: '/?filter=history', routes: (now) => withSite(now, (s) => ({ ...s, items: s.items.map((item) => ({ ...item, read_at: null })) })), documented: true },
   {
-    page: 'reader', state: 'story', label: 'Two stories open as trees: an origin post, and an outside page as the origin', url: '/', documented: true,
+    page: 'reader', state: 'story', label: 'Three stories open as trees: an origin post, an outside page as the origin, a deep line', url: '/', documented: true,
     routes: (now) => withSite(now, (s) => ({ ...s, items: [...storyTreeItems(now), ...s.items] })),
     setup: async (frame) => {
-      await frame.click('button[aria-controls$="-story"]', /covered by 5/);
-      await frame.click('button[aria-controls$="-story"]', /covered by 4/);
+      await frame.click('button[aria-controls$="-story"]', /covered by 4 · OpenAI/);
+      await frame.click('button[aria-controls$="-story"]', /covered by 4 · ai_newz/);
+      await frame.click('button[aria-controls$="-story"]', /covered by 4 · mitchellh/);
     },
   },
   {

@@ -17,7 +17,9 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from functools import lru_cache
+from pathlib import Path
+from typing import FrozenSet, List, Optional
 from urllib.parse import urljoin, urlparse
 
 from insight_core.utils.url_normalization import TWEET_PATH, normalize_url
@@ -83,12 +85,30 @@ def source_kind(platform: Optional[str], handle_or_url: Optional[str]) -> str:
     return "site"
 
 
+@lru_cache(maxsize=1)
+def _hosting_suffixes() -> FrozenSet[str]:
+    """The Public Suffix List's private section (public_suffix_private.dat): the hosting platforms
+    that register there so each subdomain is its own site (github.io, bearblog.dev). Its rules as
+    written: a suffix, `*.` before one, `!` before an exception."""
+    path = Path(__file__).with_name("public_suffix_private.dat")
+    return frozenset(line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith("//"))
+
+
 def site_of(host: Optional[str]) -> str:
-    """The registrable part of a host: its last two labels, three for a co.uk-like ending."""
+    """The registrable part of a host: one label under a hosting platform's suffix (issue 0068:
+    karpathy.github.io and lilianweng.github.io are two sites), else its last two labels, three for
+    a co.uk-like ending."""
     host = (host or "").lower()
     if host.startswith("www."):
         host = host[4:]
     parts = host.split(".")
+    suffixes = _hosting_suffixes()
+    for i in range(1, len(parts)):   # the longest suffix first
+        suffix = ".".join(parts[i:])
+        if "!" + suffix in suffixes:
+            return suffix
+        if suffix in suffixes or (i + 1 < len(parts) and "*." + ".".join(parts[i + 1:]) in suffixes):
+            return ".".join(parts[i - 1:])
     if len(parts) >= 3 and len(parts[-2]) <= 3 and len(parts[-1]) == 2:
         return ".".join(parts[-3:])
     return ".".join(parts[-2:])

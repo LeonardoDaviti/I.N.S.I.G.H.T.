@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -29,7 +29,7 @@ import {
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
-import { coveredBy, originHref, originLabel, repostLine, storyTree } from '../lib/story';
+import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree } from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
@@ -77,9 +77,13 @@ function postFixtureApi(name: string): Partial<Api> | null {
   };
 }
 
-/** A story line on the post page, and its indent in the tree (issue 0064): two levels at most. */
+/** A story line on the post page, and its indent in the tree (issue 0064): two levels at most, one on a
+ *  phone, where a line at the deepest indent names its parent instead, "↳ Mat Duggan" (issue 0068).
+ *  As the feed row's, kept here so the reader's initial JS does not grow. */
 const STORY_LINE = 'flex min-w-0 items-baseline gap-1.5';
-const INDENT = ['', 'pl-2 sm:pl-4', 'pl-4 sm:pl-8'];
+const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
+const Under = ({ name }: { name?: string }) =>
+  name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
 
 /**
  * "Covered by 4" at the end of a post (issue 0055): its story's other posts, as the feed's folded
@@ -91,6 +95,8 @@ const INDENT = ['', 'pl-2 sm:pl-4', 'pl-4 sm:pl-8'];
  */
 function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; postId: string }) {
   const now = new Date();
+  const lines = storyTree(story, postId, post.published_at ?? post.fetched_at, postSourceName(post));
+  if (!lines.length && !story.roundups?.length) return null;
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
       <p>
@@ -98,8 +104,9 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
         {story.first === postId ? ' · this post was first' : null}
       </p>
       <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">
-        {storyTree(story, postId, post.published_at ?? post.fetched_at).map((line) => {
+        {lines.map((line, i) => {
           const indent = `${STORY_LINE} ${INDENT[line.depth] ?? ''}`;
+          if (line.kind === 'reposts') return <li key={i} data-depth={line.depth} className={indent}>{repostedBy(line.by)}</li>;
           if (line.kind === 'page') {
             const { site, title, linkedBy } = originLabel(line.origin);
             return (
@@ -121,6 +128,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
           if (line.kind === 'self') {
             return (
               <li key="self" data-depth={line.depth} aria-current="true" className={indent}>
+                <Under name={line.under} />
                 <span className="max-w-[40%] shrink-0 truncate">{middleTruncate(postSourceName(post), 32)}</span>
                 <span aria-hidden="true" className="shrink-0">·</span>
                 <span dir="auto" className="min-w-0 truncate text-fg-2">{post.title?.trim() || 'Untitled post'}</span>
@@ -131,6 +139,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
           const other = line.post;
           return (
             <li key={other.id} data-depth={line.depth} className={indent}>
+              <Under name={line.under} />
               {!other.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
               <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(other.source_display_name)}>
                 {middleTruncate(sourceLabel(other.source_display_name), 32)}
@@ -153,11 +162,29 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
           );
         })}
       </ul>
+      {story.roundups?.length ? (
+        // The roundups that mention the story and are not in it, each source once (issue 0068).
+        <p className="mt-1 [overflow-wrap:anywhere]">
+          Also in roundups:{' '}
+          {story.roundups.map((roundup, i) => (
+            <Fragment key={roundup.id}>
+              {i ? ', ' : null}
+              <TextLink to={postHref(roundup.id, null)} title={roundup.title} muted>
+                {sourceLabel(roundup.source_display_name)}
+              </TextLink>
+            </Fragment>
+          ))}
+        </p>
+      ) : null}
     </section>
   );
 }
 
-/** A thread read in order (issue 0066): the replies that follow this post, each its own words and date. */
+/**
+ * A thread read in order (issue 0066): the replies that follow this post, each its date opening it.
+ * Each reply reads as the post's body does (issue 0068): the same reader, its links as links (a stored
+ * post's opening here), its pictures through the image cache.
+ */
 function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
   const next: StoryPost[] = [];
   for (let at = postId, reply; (reply = story.posts.find((p) => p.parent_id === at && p.parent_reason === 'thread')); at = reply.id) {
@@ -167,7 +194,11 @@ function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
     <section data-thread aria-label="Thread" className="mt-6">
       {next.map((reply) => (
         <div key={reply.id} className="border-t border-line py-4">
-          <p dir="auto" className="whitespace-pre-line [overflow-wrap:anywhere]">{reply.text}</p>
+          {reply.html ? (
+            <MarkdownRenderer content={reply.html} imageSrc={(src) => proxiedImage(reply.id, src)} internalLinks={reply.internal_links} />
+          ) : (
+            <p dir="auto" className="whitespace-pre-line [overflow-wrap:anywhere]">{reply.text}</p>
+          )}
           <Link to={postHref(reply.id, null)} className={`text-[0.8125rem] text-fg-3 ${FOCUS_RING}`}>
             {feedDateLabel(reply.sort_at)}
           </Link>
@@ -1286,7 +1317,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
       {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 
       {/* ---- Covered by (issue 0055): the post's story, its other posts, open ---- */}
-      {post.story?.posts.length ? <CoveredBy story={post.story} post={post} postId={postId} /> : null}
+      {post.story ? <CoveredBy story={post.story} post={post} postId={postId} /> : null}
 
       {/* ---- Reddit discussion ---- */}
       {isRedditPost && comments.length > 0 && (
