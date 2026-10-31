@@ -407,3 +407,10 @@ class SearchRepository:
             (batch,),
         )
         return cur.rowcount
+
+    @staticmethod
+    def missing_vectors(cur: Cursor) -> bool:
+        """Whether a post still waits for its vector (fill_missing_vectors), locked rows too."""
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts"
+                    " WHERE search_vector IS NULL OR search_version IS DISTINCT FROM search_vector_version())")
+        return cur.fetchone()[0]

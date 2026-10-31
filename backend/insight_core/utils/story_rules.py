@@ -5,8 +5,9 @@ job (services/stories_service.py) loads the posts and writes what these return.
 Ported from the prototype (`plan/research/dedup-prototype/stories.py`, `rank.py`, `report.py`),
 the reference the real code reproduces. The thresholds are here, in one place.
 
-- A **voice** is one site for websites (its registrable domain), one channel or account for
-  Telegram, X and YouTube, and on Reddit the person who posted: a story's voices count people.
+- A **voice** is one publication for websites (the host its source publishes at, issue 0069),
+  one channel or account for Telegram, X and YouTube, and on Reddit the person who posted: a
+  story's voices count people.
   Joining by links, and telling a copy, go by where a post was said (`place`): the voice, but
   on Reddit the subreddit, so one person posting a link to two subreddits makes one story of
   one voice (a copy), as the prototype does. Posts of one place never join through links.
@@ -45,13 +46,17 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote
 
 from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, host_of,
                                           is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
 from insight_core.utils.url_normalization import TWEET_PATH
 
+# The version of the rules stories are grouped by (issue 0069). Bump it with a change to these rules,
+# to post_links (site_of, a publication) or to how a source's voice is told (SourceFacts): the next
+# story run then regroups every story, the frozen ones too. 1: issue 0069, a voice is its publication.
+RULES_VERSION = 1
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
 SAME_TITLE_WITHIN = timedelta(days=7)
@@ -102,7 +107,7 @@ class StoryPost:
     id: str
     source_id: str
     kind: str                       # post_links.source_kind
-    own_site: str                   # the site of its source
+    own_site: str                   # its source's publication (SourceFacts.publication): a website's voice
     t: datetime                     # published_at, else fetched_at
     title: Optional[str] = None
     content_hash: Optional[str] = None
@@ -161,7 +166,7 @@ class StoryPost:
     def on_own_site(self) -> bool:
         """It is at an address on the site its source publishes on: that address's own page. A repost
         is another account's tweet: never its own page."""
-        home = self.home_site if self.home_site is not None else ("" if self.kind in NOT_PUBLISHERS else self.own_site)
+        home = self.home_site if self.home_site is not None else ("" if self.kind in NOT_PUBLISHERS else site_of(self.own_site))
         return bool(home and self.url and not self.reposted and site_of(host_of(self.url)) == home)
 
     @property
@@ -761,11 +766,12 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
     return out
 
 
-def source_site(hosts: Iterable[Tuple[str, int]]) -> str:
-    """A source's own site: the most common site of its posts' hosts ((host, posts) pairs)."""
+def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = site_of) -> str:
+    """A source's own site: the most common site of its posts' hosts ((host, posts) pairs); with
+    `of=publication_of`, its publication (issue 0069)."""
     sites: Counter = Counter()
     for host, n in hosts:
-        sites[site_of(host)] += n
+        sites[of(host)] += n
     return sites.most_common(1)[0][0] if sites else ""
 
 

@@ -59,11 +59,16 @@ services:
     command: ["/app/docker/start-backend.sh"]
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    # The frontend starts once this passes (depends_on below), so an update's downtime is the API's
+    # start (issue 0069): checked every second from the start, then every 30 s. The start period
+    # leaves migrations time; a failure in it doesn't count. start_interval: Engine 25+, Compose 2.20.2+.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 120s
+      start_interval: 1s
     networks:
       - insight-network
 

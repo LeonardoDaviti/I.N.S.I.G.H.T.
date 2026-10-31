@@ -45,14 +45,8 @@ class ReaderService:
     def fill_search_vectors(self) -> int:
         """Give every post whose search vector is missing (stored before 0033) or made by an
         older rule (0042's search_version) its vector, FILL_BATCH posts a transaction, so no
-        write waits on a long one. Returns how many were filled."""
-        filled = 0
-        while True:
-            with db.transaction(self.db_url) as cur:
-                batch = self.search_repo.fill_missing_vectors(cur)
-            filled += batch
-            if not batch:
-                return filled
+        write waits on a long one, until none is left (issue 0069). Returns how many were filled."""
+        return db.fill_until_done(self.db_url, self.search_repo.fill_missing_vectors, self.search_repo.missing_vectors)
 
     def unread_counts(self) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:

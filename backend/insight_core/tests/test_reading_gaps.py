@@ -211,6 +211,32 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.assertIn(member, {p["id"] for p in story["posts"]}, "a roundup whose first link is the story is in it")
         self.assertNotIn(member, {r["id"] for r in story["roundups"]})
 
+    def test_a_sources_name_opens_its_roundup_most_about_the_story(self):
+        # Issue 0069: the one that links the story's page earliest in it, then the first.
+        self._story_and_roundups()
+        page = f"https://openai-{self.mark}.test/index/introducing-terra"
+        lw = self.cur.execute("SELECT source_id FROM posts WHERE id = %s", (self.lw[0],)).fetchone()[0]
+        about = self._post(lw, f"https://lw-{self.mark}.test/3", "AI Village reacts to Terra", hours=0.5,
+                           html=f'<p><a href="https://village-{self.mark}.test/x/y-z">x</a></p><p><a href="{page}">Terra</a></p>'
+                           + "".join(f'<p><a href="https://village-{self.mark}-{i}.test/x/y-z">x</a></p>' for i in range(2)))
+        self._regroup()
+        story = self._row(self.a)["story"]
+        self.assertEqual([(r["source_display_name"], r["id"]) for r in story["roundups"]],
+                         [("Smol", self.smol), ("LessWrong", about)],
+                         "LessWrong's roundup linking Terra second, not its earlier ones linking it fourth; then in"
+                         " the order the roundups opened came")
+
+    def test_a_source_in_the_story_is_not_named_in_roundups(self):
+        self._story_and_roundups()
+        lw = self.cur.execute("SELECT source_id FROM posts WHERE id = %s", (self.lw[0],)).fetchone()[0]
+        self._post(lw, f"https://lw-{self.mark}.test/own", "LessWrong on Terra", hours=5.5,
+                   html=f'<p><a href="https://openai-{self.mark}.test/index/introducing-terra">Terra</a></p>')
+        self._regroup()
+        story = self._row(self.a)["story"]
+        self.assertIn("LessWrong", [s["name"] for s in story["sources"]], "LessWrong covers it")
+        self.assertEqual([r["source_display_name"] for r in story["roundups"]], ["Smol"],
+                         "so it isn't named again as a roundup")
+
     # ---- 3. a repost by one of your sources is its voice ----------------------------------------
 
     def test_a_tweet_your_other_source_reposted_is_a_story_and_the_reader_names_who(self):

@@ -74,13 +74,27 @@ docker compose up -d --remove-orphans
 
 `./update` does the same without the dump: `git pull`, build, then `up -d`. The build runs
 while the old containers keep serving; `up -d` then recreates only the containers whose image
-or config changed, so the site is down only while those containers restart (seconds), not for
-the build. It reuses the cached base images and dependency installs, so a code-only update rebuilds
-only the code layers. `./update --refresh` (or `docker compose build --pull`) also pulls
+or config changed, so the site is down only while those containers restart, not for the build.
+The frontend starts again as soon as the API's healthcheck passes, which is checked every second
+while the API starts (`start_interval`, Docker Engine 25+ and Compose 2.20.2+), so the downtime
+is the API's own start: about 4 s on the build machine with the lab's data (it was 32 s while
+the first check waited 30 s). Migrations run inside that start, so a long one makes it longer.
+It reuses the cached base images and dependency installs, so a code-only update rebuilds only
+the code layers; npm packages are reinstalled only when `package.json` or `package-lock.json`
+changes (the build stamp comes after `npm ci`). `./update --refresh` (or `docker compose build --pull`) also pulls
 fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
 and then for security patches, and after changing `requirements.txt` or `package.json`
 (those rebuild their install layer anyway).
 If only environment variables changed: `docker compose up -d --force-recreate`.
+
+After the restart the API catches up in the background while the reader already works: it
+re-indexes search when the search rule changed, reads the links of posts never read, and runs
+the story job (stories, News, Classics). Sources → Ingestion → Background work shows each. They
+finish by themselves, without a restart: the search refill and the link reading wait for each
+other's rows rather than stopping early. When an update changes the story rules (their version,
+`RULES_VERSION` in `utils/story_rules.py`), the first story run regroups every story, old ones
+too: one full run, about 17 s on the lab's data (the v9.9 rehearsal measured a ~450 MB memory
+peak in the API during a full run).
 
 ### Version
 

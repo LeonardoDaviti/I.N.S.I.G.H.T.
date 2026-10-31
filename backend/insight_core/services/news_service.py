@@ -48,7 +48,7 @@ class NewsService:
         since = None if full else self.clock() - timedelta(days=NAME_TITLE_DAYS)
         titled = [
             StoryPost(id=row["id"], source_id=row["source_id"], kind=sources.kind.get(row["source_id"], "site"),
-                      own_site=sources.own_site(row["source_id"]), t=row["t"], title=row["title"])
+                      own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])
             for row in self.repo.load_titles(cur, since)
         ]
         found = surges(titled, self.repo.followed_since(cur))
@@ -79,7 +79,7 @@ class NewsService:
     @staticmethod
     def _voice(sources: SourceFacts, source_id: str, author: Optional[str]) -> str:
         return StoryPost(id="", source_id=source_id, kind=sources.kind.get(source_id, "site"),
-                         own_site=sources.own_site(source_id), t=datetime.min, author=author).voice
+                         own_site=sources.publication(source_id), t=datetime.min, author=author).voice
 
     # ---- News ---------------------------------------------------------------------------
 

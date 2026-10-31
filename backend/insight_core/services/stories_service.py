@@ -6,7 +6,8 @@ once when the backend starts (main.py, in the background):
 2. it marks each source's signature links and links to its own site as boilerplate;
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
    A story that began before the window is frozen. The first run (no `stories` setting yet)
-   groups every post.
+   groups every post, and so does a run whose rules differ from the setting's (`RULES_VERSION`,
+   issue 0069: a rule change reaches the frozen stories too).
 4. it refreshes News (the names surging in titles join stories, for News only) and Classics
    (issue 0051, services/news_service.py), on the same transaction.
 It is deterministic and idempotent: a second run over the same posts writes nothing. One job at a
@@ -28,8 +29,9 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils.post_fields import REPLY_TO_RE
 from insight_core.utils.post_links import host_of, quoted_tweet, reddit_author, site_of
-from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
-                                           StoryPost, discover_address, discover_open, discover_place, group, origins)
+from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, RULES_VERSION,
+                                           Origin, StoryPost, discover_address, discover_open, discover_place, group,
+                                           origins)
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -57,14 +59,9 @@ class StoriesService:
     # ---- the job ------------------------------------------------------------------------
 
     def fill_links(self) -> int:
-        """Read the links of every post never read, a batch a transaction. Returns how many."""
-        filled = 0
-        while True:
-            with db.transaction(self.db_url) as cur:
-                batch = self.repo.fill_missing_links(cur)
-            filled += batch
-            if not batch:
-                return filled
+        """Read the links of every post never read, a batch a transaction, until none is left
+        (issue 0069: the search refill may hold some for a moment). Returns how many."""
+        return db.fill_until_done(self.db_url, self.repo.fill_missing_links, self.repo.missing_links)
 
     def recompute(self, *, full: bool = False) -> Dict[str, Any]:
         """The story job. `full` regroups every post (the first run always does). Returns a summary."""
@@ -76,13 +73,14 @@ class StoriesService:
                 return {"skipped": True, "links_filled": filled}
             now = self.clock()
             settings = SystemSettingsRepository.get(cur, SETTINGS_KEY)
-            full = full or settings is None
+            previous = (settings or ({}, None))[0] or {}
+            # Stories grouped by other rules are all regrouped, the frozen ones too (issue 0069).
+            full = full or settings is None or previous.get("rules") != RULES_VERSION
             summary = {"computed_at": now.isoformat(), "full": full, "links_filled": filled,
                        **self.regroup(cur, cutoff=None if full else now - STORY_WINDOW),
                        "seconds": round(time.monotonic() - started, 2)}
-            previous = (settings or ({}, None))[0] or {}
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {
-                **summary, "full_at": now.isoformat() if full else previous.get("full_at"),
+                **summary, "rules": RULES_VERSION, "full_at": now.isoformat() if full else previous.get("full_at"),
             })
         self.fill_discover_addresses()
         return summary
@@ -106,7 +104,7 @@ class StoriesService:
         reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
         author_source = sources.of_account.get("x.com/" + row["author"].lower()) if kind == "x" and row["author"] else None
         return StoryPost(
-            id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.own_site(row["source_id"]),
+            id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
             words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
             author=reddit_author(html) if kind == "reddit" else row["author"],
@@ -158,7 +156,7 @@ class StoriesService:
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. {stamp, found (DiscoverRepository.counts), mirrors, scanned_to}."""
         accounts = sources.platform_accounts()
-        ask = dict(kinds=sources.kind, own_sites={i: sources.own_site(i) for i in sources.kind}, accounts=accounts,
+        ask = dict(kinds=sources.kind, own_sites={i: sources.publication(i) for i in sources.kind}, accounts=accounts,
                    shown=DISCOVER_ARTICLES_SHOWN)
         stamp = DiscoverRepository.stamp(cur, sorted((i, sources.kind[i], ask["own_sites"][i], accounts.get(i, ""))
                                                      for i in sources.site))
@@ -186,7 +184,7 @@ class StoriesService:
             counted = self._counted(cur, sources)
             followed, hidden, classics = sources.followed(), self.repo.hidden(cur), set(self.news.classic_urls(cur))
             roots = DiscoverRepository.story_origins(cur, kinds=sources.kind,
-                                                     own_sites={i: sources.own_site(i) for i in sources.kind})
+                                                     own_sites={i: sources.publication(i) for i in sources.kind})
             held = self._held(cur, sources, roots, followed)
             started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]))
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
