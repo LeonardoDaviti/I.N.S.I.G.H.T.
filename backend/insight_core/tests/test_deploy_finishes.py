@@ -3,8 +3,10 @@
 - The background fills (the search refill, the link reading) take their rows `FOR UPDATE SKIP LOCKED`.
   While another worker holds rows, a batch comes back empty: each fill waits and goes on until no post
   is pending, instead of stopping there (the rehearsal's run 3 left 311 posts un-indexed).
+- The stories setting records the rules version the stories were grouped by: when the code's differs,
+  the next story run is full, so a rule change reaches the frozen stories too.
 
-They commit (the fills run their own transactions), so they run only on a `_test` database.
+Both commit (the fills run their own transactions), so they run only on a `_test` database.
 """
 from __future__ import annotations
 
@@ -21,9 +23,11 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 from insight_core.db import database
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.services.reader_service import ReaderService
-from insight_core.services.stories_service import StoriesService
+from insight_core.services.stories_service import SETTINGS_KEY, StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.utils.story_rules import RULES_VERSION
 
 HELD_SECONDS = 0.5
 
@@ -105,6 +109,50 @@ class FillsFinishTests(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(ReaderService(db_url()).fill_search_vectors(), 0)
         self.assertLess(time.monotonic() - started, 1)
+
+
+@requires_test_db
+class RulesVersionTests(unittest.TestCase):
+    """The story job's choice of a full or a windowed run, from the stories setting (its regroup
+    stubbed: what it groups is the other suites')."""
+
+    def setUp(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            kept = SystemSettingsRepository.get(cur, SETTINGS_KEY)
+        self.addCleanup(self._restore, kept[0] if kept else None)
+        self.service = StoriesService(db_url())
+        self.cutoffs = []
+        for name, value in (("fill_links", lambda: 0), ("fill_discover_addresses", lambda: 0),
+                            ("regroup", lambda cur, cutoff: self.cutoffs.append(cutoff) or {})):
+            patch = mock.patch.object(self.service, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _restore(self, value):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            if value is None:
+                cur.execute("DELETE FROM system_settings WHERE key = %s", (SETTINGS_KEY,))
+            else:
+                SystemSettingsRepository.upsert(cur, SETTINGS_KEY, value)
+
+    def _setting(self, value):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            SystemSettingsRepository.upsert(cur, SETTINGS_KEY, value)
+
+    def test_stories_grouped_by_other_rules_are_all_regrouped(self):
+        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": True, "full_at": "2026-10-31T12:44:20+00:00"})
+        summary = self.service.recompute()
+        self.assertTrue(summary["full"], "a setting without a rules version: a full run")
+        self.assertEqual(self.cutoffs, [None])
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertEqual(SystemSettingsRepository.get(cur, SETTINGS_KEY)[0]["rules"], RULES_VERSION)
+
+        self.assertFalse(self.service.recompute()["full"], "the same rules: the window only")
+        self.assertIsNotNone(self.cutoffs[-1])
+
+        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": False, "rules": RULES_VERSION - 1})
+        self.assertTrue(self.service.recompute()["full"], "an older version: a full run")
+        self.assertEqual(self.cutoffs[-1], None)
 
 
 if __name__ == "__main__":

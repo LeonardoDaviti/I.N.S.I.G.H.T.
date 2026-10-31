@@ -6,7 +6,8 @@ once when the backend starts (main.py, in the background):
 2. it marks each source's signature links and links to its own site as boilerplate;
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
    A story that began before the window is frozen. The first run (no `stories` setting yet)
-   groups every post.
+   groups every post, and so does a run whose rules differ from the setting's (`RULES_VERSION`,
+   issue 0069: a rule change reaches the frozen stories too).
 4. it refreshes News (the names surging in titles join stories, for News only) and Classics
    (issue 0051, services/news_service.py), on the same transaction.
 It is deterministic and idempotent: a second run over the same posts writes nothing. One job at a
@@ -28,8 +29,9 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils.post_fields import REPLY_TO_RE
 from insight_core.utils.post_links import host_of, quoted_tweet, reddit_author, site_of
-from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
-                                           StoryPost, discover_address, discover_open, discover_place, group, origins)
+from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, RULES_VERSION,
+                                           Origin, StoryPost, discover_address, discover_open, discover_place, group,
+                                           origins)
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -71,13 +73,14 @@ class StoriesService:
                 return {"skipped": True, "links_filled": filled}
             now = self.clock()
             settings = SystemSettingsRepository.get(cur, SETTINGS_KEY)
-            full = full or settings is None
+            previous = (settings or ({}, None))[0] or {}
+            # Stories grouped by other rules are all regrouped, the frozen ones too (issue 0069).
+            full = full or settings is None or previous.get("rules") != RULES_VERSION
             summary = {"computed_at": now.isoformat(), "full": full, "links_filled": filled,
                        **self.regroup(cur, cutoff=None if full else now - STORY_WINDOW),
                        "seconds": round(time.monotonic() - started, 2)}
-            previous = (settings or ({}, None))[0] or {}
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {
-                **summary, "full_at": now.isoformat() if full else previous.get("full_at"),
+                **summary, "rules": RULES_VERSION, "full_at": now.isoformat() if full else previous.get("full_at"),
             })
         self.fill_discover_addresses()
         return summary

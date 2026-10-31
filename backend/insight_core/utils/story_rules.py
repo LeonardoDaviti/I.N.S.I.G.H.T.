@@ -52,6 +52,10 @@ from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_
                                           is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
 from insight_core.utils.url_normalization import TWEET_PATH
 
+# The version of the rules stories are grouped by (issue 0069). Bump it with a change to these rules,
+# to post_links (site_of, a publication) or to how a source's voice is told (SourceFacts): the next
+# story run then regroups every story, the frozen ones too. 1: issue 0069, a voice is its publication.
+RULES_VERSION = 1
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
 SAME_TITLE_WITHIN = timedelta(days=7)
