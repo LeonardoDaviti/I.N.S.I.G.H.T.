@@ -58,7 +58,14 @@ def fill_search_vectors() -> None:
 
 
 def recompute_stories() -> None:
-    """The posts stored before stories (issue 0050) get their links and stories, in the background."""
+    """The posts stored before stories (issue 0050) get their links and stories, in the background.
+    First the stored bodies catch up with the reader's rules (issue 0068), so the job reads their links."""
+    try:
+        changed = services().posts.catch_up_stored_bodies()
+        if changed:
+            logger.info("Stored bodies: %s posts brought up to the reader's rules", changed)
+    except Exception:
+        logger.exception("Stored bodies: could not bring the stored bodies up to the reader's rules")
     services().stories.recompute_safely()
 
 

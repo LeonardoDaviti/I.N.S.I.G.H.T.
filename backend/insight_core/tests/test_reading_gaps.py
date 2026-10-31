@@ -99,5 +99,62 @@ class OriginTitleTests(unittest.TestCase):
                          "the stored post is the root; the reader shows its title")
 
 
+class StoredBodiesTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def test_the_link_labels_leave_the_stored_bodies_and_nothing_else(self):
+        source = insert_scratch_source(self.cur)
+        labelled = ('<p>We worked with <a href="https://x.test/a">partners<span class="sr-only">(opens in a new window)</span>'
+                    '</a> and <span class="visually-hidden">a chart: 66 %</span>.</p>')
+        rows = {}
+        for name, html in (("labelled", labelled), ("plain", "<p>We worked with <a href=\"https://x.test/a\">partners</a>.</p>")):
+            self.cur.execute(
+                """INSERT INTO posts (source_id, url, title, content, content_html, content_hash, links_scanned_at)
+                   VALUES (%s, %s, %s, %s, %s, 'h', now()) RETURNING id""",
+                (source, f"https://x.test/{uuid.uuid4().hex}", name, strip_html(html), html))
+            rows[name] = str(self.cur.fetchone()[0])
+        self.assertGreaterEqual(PostsRepository.drop_hidden_link_labels(self.cur), 1)
+        self.cur.execute("SELECT id, content_html, content, content_hash <> 'h', links_scanned_at IS NULL FROM posts"
+                         " WHERE id = ANY(%s::uuid[])", (list(rows.values()),))
+        got = {str(r[0]): r[1:] for r in self.cur.fetchall()}
+        self.assertEqual(got[rows["labelled"]][0], '<p>We worked with <a href="https://x.test/a">partners</a> and '
+                                                   '<span class="visually-hidden">a chart: 66 %</span>.</p>',
+                         "the label inside the link goes; hidden text outside a link stays")
+        self.assertEqual(got[rows["labelled"]][1], "We worked with partners and a chart: 66 % .")
+        self.assertEqual(got[rows["labelled"]][2:], (True, True), "its hash follows; the job reads its links again")
+        self.assertEqual(got[rows["plain"]][2:], (False, False), "a body without labels is untouched")
+        self.assertEqual(PostsRepository.drop_hidden_link_labels(self.cur), 0, "twice over: nothing more")
+
+
+@requires_test_db
+class StoredBodiesCatchUpTests(unittest.TestCase):
+    """The repair runs once, in the background, as a version the stored bodies are brought up to."""
+
+    def setUp(self):
+        self.service = PostsService(db_url())
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.saved = SystemSettingsRepository.get(cur, STORED_BODIES_KEY)
+            cur.execute("DELETE FROM system_settings WHERE key = %s", (STORED_BODIES_KEY,))
+
+    def tearDown(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM system_settings WHERE key = %s", (STORED_BODIES_KEY,))
+            if self.saved:
+                SystemSettingsRepository.upsert(cur, STORED_BODIES_KEY, self.saved[0])
+
+    def test_once_then_never_again(self):
+        self.service.catch_up_stored_bodies()
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            self.assertEqual(SystemSettingsRepository.get(cur, STORED_BODIES_KEY)[0]["version"], 1)
+        self.assertEqual(self.service.catch_up_stored_bodies(), 0, "at the version: nothing is read again")
+
+
 if __name__ == "__main__":
     unittest.main()
