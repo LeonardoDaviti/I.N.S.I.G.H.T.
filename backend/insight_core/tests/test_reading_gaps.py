@@ -99,6 +99,74 @@ class OriginTitleTests(unittest.TestCase):
                          "the stored post is the root; the reader shows its title")
 
 
+class ReadingGapsJobTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.mark = uuid.uuid4().hex[:8]
+        self.service = StoriesService(db_url(), clock=lambda: self.now)
+        self.repo = PostsRepository(db_url())
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def _source(self, name, handle=None):
+        source = insert_scratch_source(self.cur, in_main_digest=True)
+        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text),"
+                         " handle_or_url = COALESCE(%s, handle_or_url) WHERE id = %s", (name, handle, source))
+        return source
+
+    def _x(self, user):
+        return self._source(user, f"https://nitter.local/{user}/rss")
+
+    def _post(self, source, url, title, *, hours, html):
+        self.cur.execute(
+            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
+                                  published_at)
+               VALUES (%s, %s, %s, %s, %s, 'Body', %s, %s, %s) RETURNING id""",
+            (source, url, normalize_url(url), url.split("/")[2], title, html, uuid.uuid4().hex,
+             self.now - timedelta(hours=hours)),
+        )
+        return str(self.cur.fetchone()[0])
+
+    def _tweet(self, source, user, n, title, *, minutes=0, html=None):
+        text = title.split(": ", 1)[-1] if title.startswith(("RT by @", "R to @")) else title
+        post = {"url": f"https://nitter.local/{user}/status/{n}#m", "title": title, "content": text,
+                "content_html": html or f"<p>{text}</p>", "date": self.now - timedelta(hours=3) + timedelta(minutes=minutes),
+                "external_id": str(n)}
+        return self.repo.upsert_post(self.cur, post, source)[0]
+
+    def _regroup(self):
+        while StoriesRepository().fill_missing_links(self.cur):
+            pass
+        return self.service.regroup(self.cur, cutoff=None)
+
+    def _row(self, post_id):
+        """The feed row that is the post, or that its story folds it under."""
+        items, _ = ReaderRepository(unread_window_days=None).list_posts(self.cur, FeedQuery(limit=100), now=self.now)
+        return next(i for i in items if i["id"] == post_id
+                    or any(p["id"] == post_id for p in ((i.get("story") or {}).get("posts") or [])))
+
+    # ---- 1. a thread's replies read as posts ---------------------------------------------------
+
+    def test_a_thread_reply_carries_its_html_and_its_links_to_stored_posts(self):
+        user = f"badlogic{self.mark}"
+        source = self._x(user)
+        cited = self._post(self._source("Blog"), f"https://blog-{self.mark}.test/post", "A post", hours=9, html="<p>x</p>")
+        root = self._tweet(source, user, ID, "software is dead. sad.")
+        html = (f'<p>see <a href="https://blog-{self.mark}.test/post">this</a></p>'
+                f'<img src="https://nitter.local/pic/media%2Fgiraffe.jpg" />')
+        reply = self._tweet(source, user, ID + 1, f"R to @{user}: see this", minutes=2, html=html)
+        self._regroup()
+        [line] = [p for p in PostDetailService.story(self.cur, root)["posts"] if p["parent_reason"] == "thread"]
+        self.assertEqual((line["id"], line["html"], line["internal_links"]),
+                         (reply, html, {f"https://blog-{self.mark}.test/post": cited}))
+        self.assertFalse(any("html" in p for p in self._row(root)["story"]["posts"]), "the feed row carries no reply's HTML")
+
+
 class StoredBodiesTests(unittest.TestCase):
     def setUp(self):
         self.conn = psycopg.connect(db_url())
