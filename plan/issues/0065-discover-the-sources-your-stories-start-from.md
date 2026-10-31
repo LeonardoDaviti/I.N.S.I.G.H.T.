@@ -6,9 +6,8 @@ Status: **spec** (2026-10-31) for v9.9 (owner, 2026-10-31: on storing origin pag
 - **The origins of your stories are mostly pages you don't follow.** Of 358 stories with a page linked by 2+ of their posts, 326 have that page outside your sources (0064). By site:
   - by site: openai.com 42, huggingface.co 42, github.com 33, anthropic.com 24, arxiv.org 22;
   - by section: openai.com/index 38, arxiv.org/abs 21, **anthropic.com/news 14**, youtube.com/watch 9, huggingface.co/collections 7, qwen.ai/blog 7, blog.google/innovation-and-ai 6, **anthropic.com/research 6**, github.com/openai 5, z.ai/blog 5, cursor.com/blog 4;
-  - qwen.ai, claude.com and blog.google originate 7, 7 and 6.
 - **Discover ranks by how many of your sources link a site.** It never says "this site starts the news you read".
-- **Discover hides a site by its domain once any part of it is followed.** You follow `anthropic.com/research`, so Anthropic is never suggested, while `anthropic.com/news` originates 24 of your stories.
+- **Discover hides a site by its domain once any part of it is followed.** You follow `anthropic.com/research`, so Anthropic is never suggested, while `anthropic.com/news` originates 14 of your stories (24 across all of anthropic.com).
 - **A followed site can still miss origins:** openai.com's feed holds only its latest 20 posts.
 
 ## Decided

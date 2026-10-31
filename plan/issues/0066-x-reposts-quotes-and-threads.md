@@ -8,7 +8,7 @@ Status: **spec** (2026-10-31) for v9.9 (owner, 2026-10-31: "I love this approach
   - **721** of them point at tweets you have stored (606 tweets), and none of them joins.
 - **Reposts:** **3,951** posts are "RT by @reposter: …".
   - The repost's address is the **original author's** status, so the original author is known for free.
-  - **327** of them repost someone you also follow, so the same tweet arrives twice.
+  - **20** of them repost someone else you also follow, so the same tweet arrives twice. Another 307 are authors reposting themselves. A count of 327 made earlier included those self-reposts and was wrong.
 - **Quotes:** **2,423** X posts quote another tweet (a `<blockquote>` with the quoted status's link). That's an explicit "built on".
 - **Threads:** **1,920 of 1,928** replies ("R to @x") are replies to **the author themselves**, one person continuing their own post. Today each is a separate row.
 
