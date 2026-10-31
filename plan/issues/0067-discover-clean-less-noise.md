@@ -1,6 +1,6 @@
 # 0067 — Discover: cleaner, less noise
 
-Status: **spec** (2026-10-31) for v9.9. Owner, 2026-10-31: on the 467 X accounts, "not noise because we sort them by impact, priority and sourced by", then "yes please, discover should be more clean and less noise left". Builds on 0065 (Discover by origins) and 0066 (one address per tweet).
+Status: **spec** (2026-10-31) for v9.9; item 4 added 2026-10-31. Owner, 2026-10-31: on the 467 X accounts, "not noise because we sort them by impact, priority and sourced by", then "yes please, discover should be more clean and less noise left". Builds on 0065 (Discover by origins) and 0066 (one address per tweet).
 
 ## The case (the lab, after 0065 and 0066 merged: 1,063 suggestions, 467 of them X accounts)
 - **Two digests carry most of "linked by" for X accounts.**
@@ -22,7 +22,11 @@ Status: **spec** (2026-10-31) for v9.9. Owner, 2026-10-31: on the 467 X accounts
    - The card's "linked by N of your sources" is unchanged. Its names list non-roundup voices first.
 2. **A language segment is not a section.** A first path segment that is a language tag (`en`, `ru-RU`, `zh-hans`, by the tag's shape, not a list of sites) is skipped when reading a site's section (0060's `section_of`). `openai.com/ru-RU/index/…` reads as `openai.com/index`.
 3. **A tweet mirror is X, not a site.** A host where Discover finds tweets by shape (0066's `TWEET_PATH`) is an X form. Its other pages (`t.co`, `i/…`) belong to X's kinds of page (`NOT_ACCOUNT`), never a site suggestion. Decided by shape, with no host list.
-4. **No new settings, no fetching, no new UI.**
+4. **Discover's first open under 0.5 s, by keeping its counts between runs** (0062's and 0065's Left open; owner, 2026-10-31, with 0068). Today each first open after a start or a story run counts 138k links again: about 0.6 s, against 0.4 s before 0065's X accounts.
+   - The story job, which already fills `discover_addresses`, also keeps the per-place counts Discover needs, in the database, updated in the same pass. Discover's open then reads them.
+   - The result must be byte-identical to today's (0062's test style: compare against the current walk).
+   - Measure the first open and memory before and after, back to back on one copy. Record the story job's extra time.
+5. **No new settings, no fetching, no new UI.
 
 ## Expected on the lab (the build must reproduce these, or explain each difference)
 - **The bar:** the same 1,063 suggestions minus the misreadings of item 2 and 3 (`openai.com/ru-RU`, `help.openai.com/en`, `nitter.net`). `openai.com/ru-RU`'s stories move to the section they belong to.
