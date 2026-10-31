@@ -7,9 +7,11 @@ A page already stored (its URL, or the one it redirects to, normalised) is not s
 "already", with that post.
 
 Every save puts the post in Later at the save time (issue 0022, owner's decision), through
-ReaderService.set_later, and a new saved post is dated by that time (its published_at, which
-the feed sorts by), so it tops the feed and sorts by when it was saved, not by the article's own
-date (kept as metadata.article_published_at). A page already stored keeps its date. Otherwise the page is read as page watch reads an article
+ReaderService.set_later. A new saved post is dated by the page (issue 0063): its published_at is
+the date the page states (page_watch.page_date: meta tags, JSON-LD, <time>), else the save time.
+It still sorts by when it was saved, so it tops the feed: an older page date puts the save time
+in surfaced_at, the feed's sort key (0039). When it was saved stays fetched_at. A page already
+stored keeps its date. Otherwise the page is read as page watch reads an article
 (page_watch.article_post: the full-text reader, title, date, images). A page that cannot be
 read as an article (built with JavaScript, blocked, an error) is still saved, with its title
 (the page's, else the one the bookmarklet sent) and its address, and the answer says why
@@ -63,12 +65,14 @@ def _web_page(address: str) -> bool:
     return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
 
 
-def dated_by_save(post: Dict[str, Any], saved_at: datetime) -> Dict[str, Any]:
-    """The post dated by when it was saved; the page's own date stays in its metadata."""
-    metadata = dict(post.get("metadata") or {})
-    if not metadata.get("unreadable") and isinstance(post.get("date"), datetime):
-        metadata["article_published_at"] = post["date"].isoformat()
-    return {**post, "date": saved_at, "metadata": metadata}
+def dated_by_page(post: Dict[str, Any], saved_at: datetime) -> Tuple[Dict[str, Any], Optional[datetime]]:
+    """(the post dated by the date its page states, when it sorts in the feed): post["date"] is
+    that date or None. No date, or one after the save (a clock off), is the save time and sorts
+    as itself (None); an earlier one sorts at the save time."""
+    stated = post.get("date")
+    if not isinstance(stated, datetime) or stated >= saved_at:
+        return {**post, "date": saved_at}, None
+    return post, saved_at
 
 
 class SavedService:
@@ -96,7 +100,7 @@ class SavedService:
         if stored:
             return await self._already(stored, saved_at)
         source_id = await asyncio.to_thread(self.saved_source_id)
-        post_id = await asyncio.to_thread(self._insert, source_id, dated_by_save(post, saved_at))
+        post_id = await asyncio.to_thread(self._insert, source_id, *dated_by_page(post, saved_at))
         await asyncio.to_thread(self.reader.set_later, [post_id], True, saved_at)
         return {
             "success": True,
@@ -126,10 +130,12 @@ class SavedService:
             logger.info("Save a page: %s could not be read (%s)", address, str(exc)[:300])
             reason = _reason(exc)
         url = landed or address
-        post = article_post(page, saved.HANDLE, url, page_date(page), adapter=ADAPTER, platform=saved.PLATFORM) if page else None
+        stated = page_date(page) if page else None
+        post = article_post(page, saved.HANDLE, url, stated, adapter=ADAPTER, platform=saved.PLATFORM) if page else None
         if post is not None:
-            # A saved page's identity is its whole address: two sites' "/" are two posts.
-            return {**post, "external_id": url}, None
+            # A saved page's identity is its whole address: two sites' "/" are two posts. Its
+            # date is the one the page states, or None (dated_by_page).
+            return {**post, "external_id": url, "date": stated}, None
         named = page_title(page, url) if page else url
         image = parsing.normalize_media_url(parsing.meta_content(page, "og:image")) if page else None
         return {
@@ -141,7 +147,7 @@ class SavedService:
             "title": named if named != url else (title or url),
             "content": "",
             "content_html": None,
-            "date": datetime.now(timezone.utc),
+            "date": None,
             "media_urls": [image] if image else [],
             "categories": [],
             "metadata": {"adapter": ADAPTER, "unreadable": True},
@@ -187,9 +193,13 @@ class SavedService:
             row = cur.fetchone()
         return str(row[0]) if row else None
 
-    def _insert(self, source_id: str, post: Dict[str, Any]) -> str:
+    def _insert(self, source_id: str, post: Dict[str, Any], sorts_at: Optional[datetime] = None) -> str:
+        """The new post, saved; sorts_at (the save time, for a page dated earlier) is where the
+        feed sorts it (surfaced_at)."""
         with db.transaction(self.db_url) as cur:
             post_id, _ = self.posts.upsert_post(cur, post, source_id)
+            if sorts_at is not None:
+                cur.execute("UPDATE posts SET surfaced_at = %s WHERE id = %s::uuid", (sorts_at, post_id))
         return str(post_id)
 
     def unfollowed_feed(self, finding: FeedFinding) -> Optional[Dict[str, str]]:
