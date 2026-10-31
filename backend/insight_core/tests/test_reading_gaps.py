@@ -28,6 +28,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.news_rules import news, tally
+from insight_core.utils.post_links import site_of
 from insight_core.utils.story_rules import StoryPost, group, origin_title, roles
 from insight_core.utils.url_normalization import normalize_url
 
@@ -276,6 +277,28 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.assertEqual((line["id"], line["html"], line["internal_links"]),
                          (reply, html, {f"https://blog-{self.mark}.test/post": cited}))
         self.assertFalse(any("html" in p for p in self._row(root)["story"]["posts"]), "the feed row carries no reply's HTML")
+
+
+class HostingPlatformTests(unittest.TestCase):
+    """Item 8: a hosting platform's subdomain is its own site, as the Public Suffix List's private
+    section says; an ordinary subdomain is its site's."""
+
+    def test_a_platform_subdomain_is_its_own_site_an_ordinary_one_is_not(self):
+        self.assertEqual([site_of(h) for h in ("karpathy.github.io", "www.lilianweng.github.io", "herman.bearblog.dev",
+                                               "blog.x.com", "blog.ncase.me", "news.bbc.co.uk", "github.io")],
+                         ["karpathy.github.io", "lilianweng.github.io", "herman.bearblog.dev",
+                          "x.com", "ncase.me", "bbc.co.uk", "github.io"])
+        self.assertEqual(site_of("gwern.substack.com"), "substack.com", "Substack is not in the list (measured; see the issue)")
+
+    def test_two_writers_on_one_platform_are_two_voices(self):
+        page = "https://example.org/papers/attention"
+
+        def blog(pid, host, hours):
+            return StoryPost(id=pid, source_id=pid, kind="site", own_site=site_of(host), t=NOON + timedelta(hours=hours),
+                             url=f"https://{host}/{pid}", links=[(page, None)])
+        [story] = group([blog("k", "karpathy.github.io", 0), blog("l", "lilianweng.github.io", 1)])
+        self.assertEqual(story.voices, 2)
+        self.assertEqual(group([blog("a", "blog.ncase.me", 0), blog("b", "ncase.me", 1)]), [], "one writer: one voice, no story")
 
 
 class StoredBodiesTests(unittest.TestCase):
