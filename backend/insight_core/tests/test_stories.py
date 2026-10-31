@@ -182,7 +182,7 @@ class RolesTests(unittest.TestCase):
 
 class DiscoverRulesTests(unittest.TestCase):
     def links(self, site, voices, paths):
-        return [(v, f"https://{site}/{p}") for v in voices for p in paths]
+        return [(v, f"https://{site}/{p}", False) for v in voices for p in paths]
 
     def test_three_voices_and_article_like_pages(self):
         articles = ["2026/10/a-thing", "blog/how-we-built-the-thing"]
