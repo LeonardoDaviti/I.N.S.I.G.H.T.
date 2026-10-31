@@ -27,7 +27,8 @@ from insight_core.tests._db import db_url, insert_scratch_source, requires_db, r
 from insight_core.tests.test_news import T0, followed, post
 from insight_core.utils.news_rules import names, surges
 from insight_core.utils.post_links import extract_links
-from insight_core.utils.story_rules import title_key
+from insight_core.tests import test_story_trees as trees
+from insight_core.utils.story_rules import group, title_key
 from insight_core.utils.url_normalization import normalize_url
 
 
@@ -114,6 +115,36 @@ class PublicationLinksTests(unittest.TestCase):
                 ' <a href="https://writers.test/about">the platform</a>')
         self.assertEqual([link.url for link in extract_links(html, "https://gary.writers.test/p/new", "site")],
                          ["https://gwern.writers.test/p/scaling", "https://writers.test/about"])
+
+
+class PostAboutOneStoryTests(unittest.TestCase):
+    """A platform's post with 3+ links whose first link into a story is its origin is a member (A6)."""
+
+    ORIGIN = "https://mistral.ai/news/mistral-large-4-oss"
+    MODEL = "https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B"
+
+    def story(self, kind="reddit", extra=()):
+        links = [("https://huggingface.co/ggml-org/Mistral-Large-4-GGUF", None), ("https://huggingface.co/unsloth/m-GGUF", None),
+                 (self.ORIGIN, None), *extra, (self.MODEL, None)]
+        posts = [trees.post("a", "reddit-sub", kind="reddit", links=[(self.ORIGIN, None)]),
+                 trees.post("b", "akhaliq", kind="x", hours=0.2, links=[(self.ORIGIN, None), (self.MODEL, None)]),
+                 trees.post("c", "reddit-sub2" if kind == "reddit" else "blog", kind=kind, hours=0.3, links=links)]
+        return group(posts)
+
+    def test_a_release_post_listing_links_is_a_member(self):
+        [story] = self.story()
+        self.assertEqual(sorted(p.id for p in story.posts), ["a", "b", "c"])
+        self.assertEqual(story.mentions, set())
+        self.assertEqual(story.parents["c"], (None, self.ORIGIN, "citation"))
+
+    def test_an_article_or_a_post_linking_another_story_stays_a_mention(self):
+        [story] = self.story(kind="site")
+        self.assertEqual((sorted(p.id for p in story.posts), story.mentions), (["a", "b"], {"c"}), "an article: a roundup")
+        other = [trees.post("d", "d", hours=0.1, links=[("https://other.test/2026/news", None)]),
+                 trees.post("e", "e", hours=0.1, links=[("https://other.test/2026/news", None)])]
+        stories = group([*other, *[p for s in self.story(extra=[("https://other.test/2026/news", None)]) for p in s.posts]])
+        self.assertEqual(sorted(sorted(p.id for p in s.posts) for s in stories), [["a", "b"], ["d", "e"]],
+                         "it links two stories: a roundup of both")
 
 
 @requires_db

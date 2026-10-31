@@ -69,6 +69,7 @@ LINK_WITHIN = timedelta(hours=72)
 THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066)
 ROUNDUP_ANCHORS = 3
 LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share
+SHORT_KINDS = ("x", "telegram", "reddit", "hn")   # posts on a platform, not articles (issue 0070)
 SIGNATURE_SHARE = 0.25            # a link in 25% of a source's posts ...
 SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature
 DISCOVER_MIN_VOICES = 3
@@ -148,6 +149,11 @@ class StoryPost:
     def place(self) -> str:
         """Where it was said: its voice, but a subreddit (not its poster) on Reddit."""
         return "source:" + self.source_id if self.kind == "reddit" else self.voice
+
+    @property
+    def link_post(self) -> bool:
+        """A Reddit or HN post that is mostly a link (fewer than LINK_POST_MAX_WORDS words of its own)."""
+        return self.kind in ("reddit", "hn") and (self.words or 0) < LINK_POST_MAX_WORDS
 
     @property
     def text_key(self) -> Optional[str]:
@@ -327,6 +333,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     every: Dict[str, List[Tuple[str, str]]] = {}     # every anchor of a post: its citations
     focused: Dict[str, List[Tuple[str, str]]] = {}   # what it is about: a roundup's first anchor only
     quotes: Dict[str, str] = {}   # a quoting tweet -> the stored tweet it quotes (issue 0066)
+    listed: Dict[str, List[Tuple[str, str]]] = {}    # a roundup -> the anchors it mentions, in order
     for p in posts:
         every[p.id] = resolved(p)
         # A quote is what its tweet is about, never one of a roundup's listed links.
@@ -335,6 +342,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
         if len(points) >= ROUNDUP_ANCHORS:
             for anchor in points[1:]:
                 mentioned[anchor].add(p.id)
+            listed[p.id] = points[1:]
             points = points[:1]
         focused[p.id] = points + ([quote] if quote else [])
         for anchor in focused[p.id]:
@@ -367,9 +375,50 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
         why[child].add(reason)
         why[parent].add(reason)
 
-    members: Dict[str, List[StoryPost]] = defaultdict(list)
-    for p in posts:
-        members[uf.find(p.id)].append(p)
+    def grouped() -> Dict[str, List[StoryPost]]:
+        out: Dict[str, List[StoryPost]] = defaultdict(list)
+        for p in posts:
+            out[uf.find(p.id)].append(p)
+        return out
+
+    def is_story(group_posts: Sequence[StoryPost]) -> bool:
+        """2+ sources (a reposter is one, issue 0068), or one account's thread or quote of itself (0066)."""
+        return len({s for p in group_posts for s in (p.source_id, *p.other_sources)}) >= 2 \
+            or any(why[p.id] & {"thread", "quote"} for p in group_posts)
+
+    members = grouped()
+    # A post with links about one story (issue 0070): a platform's post (SHORT_KINDS) with 3+ links,
+    # whose first link joins no story, is a member of the story its first link into a story is the
+    # origin of, when it links that story twice or more (the origin and a page or post of the
+    # story's) and links no other story. r/LocalLLaMA's "mistralai/Mistral-Large-4-1T-A52B · Hugging
+    # Face" lists GGUFs, then Mistral's announcement (the origin) and the model page akhaliq links.
+    # An article or a digest with links stays a roundup: measured on the lab, websites' were mostly
+    # essays and digests building on the story (Mark X tells those apart by meaning).
+    story_of = {node: uf.find(node) for node in uf.parent if is_story(members[uf.find(node)])}
+    pages: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)   # a story -> what its posts are and link
+    for root, group_posts in members.items():
+        if is_story(group_posts):
+            for p in group_posts:
+                pages[root] |= {("post", p.id), *every[p.id]}
+    origins: Dict[str, Optional[str]] = {}
+    for pid, mentions in listed.items():
+        if by_id[pid].kind not in SHORT_KINDS or uf.find(pid) in pages:
+            continue
+        roots = {story_of.get(target if what == "post" else _PAGE + target) for what, target in mentions} - {None}
+        if len(roots) != 1:
+            continue
+        [root] = roots
+        first = next((what, target) for what, target in mentions
+                     if story_of.get(target if what == "post" else _PAGE + target) == root)
+        if root not in origins:
+            origins[root] = _origin_node(tree(members[root], every=every, focused=focused, origin_of=origin_of,
+                                              replies=replies, quotes=quotes))
+        node = first[1] if first[0] == "post" else _PAGE + first[1]
+        if origins[root] == node and len(pages[root].intersection(mentions)) >= 2:
+            uf.union(pid, node)
+            why[pid].add("citation" if first[0] == "post" else "link")
+            focused[pid] = [first] + focused[pid][1:]
+    members = grouped()
     mentions_of: Dict[str, Set[str]] = defaultdict(set)
     for (what, target), ps in mentioned.items():
         node = target if what == "post" else "U:" + target
@@ -380,9 +429,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
 
     stories = []
     for root, group_posts in members.items():
-        # 2+ sources (a reposter is one, issue 0068), or one account's thread or quote of itself (0066).
-        if len({s for p in group_posts for s in (p.source_id, *p.other_sources)}) < 2 \
-                and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
+        if not is_story(group_posts):
             continue
         first = group_posts[0]
         shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
@@ -518,6 +565,13 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
                 len(set(page_posts[url])))
 
 
+def _origin_node(shape: Tree) -> Optional[str]:
+    """A tree's origin as a node: its outside page ("U:" + address), else the post with no parent."""
+    if shape.origin_url:
+        return _PAGE + shape.origin_url
+    return next((pid for pid, parent in shape.parents.items() if parent == (None, None, None)), None)
+
+
 # An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
 # letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
 # A leading id (5+ digits: help.openai.com's 20001626-api-credits-...) or date (2026-01-13-pocket-tts)
@@ -592,8 +646,7 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
         text, title = p.text_key, p.title_key
         copy = (text and text in first_text and first_text[text] != p.place) or \
                (title and title in first_title and first_title[title] != p.place)
-        link_post = p.kind in ("reddit", "hn") and (p.words or 0) < LINK_POST_MAX_WORDS
-        out[p.id] = "share" if copy or link_post or p.reposted else "report"   # a repost is a share (0066)
+        out[p.id] = "share" if copy or p.link_post or p.reposted else "report"   # a repost is a share (0066)
         if text:
             first_text.setdefault(text, p.place)
         if title:
