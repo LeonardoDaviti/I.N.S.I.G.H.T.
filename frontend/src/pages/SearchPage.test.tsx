@@ -197,14 +197,14 @@ describe('search finds stories (issue 0056)', () => {
     render(fake, '/search?q=specs&scope=all');
     expect(await screen.findByText('No posts match “specs”')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'News' }));
+    await user.click(screen.getByRole('button', { name: 'News, last 30 days' }));
     expect(where()).toBe('/search?q=specs&scope=all&filter=news');
     expect(await screen.findByText('No News stories match “specs”')).toBeInTheDocument();
-    expect(screen.getByText('In Main feed · News')).toBeInTheDocument();
+    expect(screen.getByText('In Main feed · News, last 30 days')).toBeInTheDocument();
     expect(lastSearch(searchPosts)).toMatchObject({ q: 'specs', scope: 'all', filter: 'news' });
 
     await user.click(screen.getByRole('button', { name: 'Kept' }));
-    expect(screen.getByRole('button', { name: 'News' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'News, last 30 days' })).toHaveAttribute('aria-pressed', 'false');
     await user.click(screen.getByRole('button', { name: 'Classics' }));
     expect(where()).toBe('/search?q=specs&scope=all&filter=classics');
     expect(screen.getByRole('button', { name: 'Classics' })).toHaveAttribute('aria-pressed', 'true');
