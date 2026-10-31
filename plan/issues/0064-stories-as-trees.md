@@ -37,6 +37,18 @@ Status: **spec** (2026-10-31) for v9.9 (owner, 2026-10-31: "our idea is to use t
    - Minimal: no new controls and no new settings.
 5. **News and Classics** are unchanged, except that a story's lead is its origin.
 
+## Added 2026-10-31: the most-linked page is evidence, and often the origin
+- **The owner:** "What about a link that is mentioned many times, is not that a kind of point as well?"
+- **Measured on the lab:**
+  - of 465 stories with 2+ voices, 358 have a page linked by 2+ of their posts;
+  - in **326 (91%)** that page isn't a stored post: `anthropic.com/news/claude-fable-5-mythos-5` is linked by 14 posts of the Fable 5 story, `openai.com/index/gpt-6-astra` by 10, `kimi.com/blog/kimi-k3` by 8.
+- **Decided:**
+  - **A tree's root can be the outside page itself,** when 2+ focused posts of the story link it. Its title is the best title-like link text, else its address, and the linking posts are its children. No fake posts are stored.
+  - **In-degree (distinct voices linking a page) is evidence in the ensemble, never alone.** A stored post at the page's own site still beats the bare page, because it *is* that page.
+  - **Hubs aren't origins:** a roundup's many out-links never make it a root.
+  - **The root line** reads "Anthropic · Claude Fable 5 and Mythos 5 · linked by 14", and opens the page in INSIGHT if it's stored, else through Save any page.
+- **Recorded in Built:** how many stories get an outside root, the split of root kinds, and examples.
+
 ## Done when
 - **Backend tests:**
   - each rule, and the order of certainty when rules disagree: a citation against a later date; a date-only time; a Saved page; a copy;
