@@ -15,7 +15,7 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
-import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree, type StoryLine } from '../../lib/story';
+import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, type StoryLine } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -117,7 +117,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     <li data-depth={line.depth} className={indent}>
       <Under name={line.under} />
       {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-      <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
+      <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
       <span aria-hidden="true" className="shrink-0">·</span>
       <Link
         to={postHref(post.id, null)}
@@ -127,7 +127,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
       >
         {post.title?.trim() || 'Untitled post'}
       </Link>
-      {post.role === 'share' ? <span className="shrink-0">· share</span> : null}
+      {post.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(post.source_display_name)}</span> : post.role === 'share' ? <span className="shrink-0">· share</span> : null}
       <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
         {feedDateLabel(post.sort_at, now ?? new Date())}
       </time>
@@ -278,13 +278,8 @@ function FeedItem({
               {middleTruncate(source, 56)}
             </TextLink>
           ) : null}
-          {/* A repost (issue 0066): who reposted it, and its author. */}
-          {item.repost ? (
-            <>
-              {showSource ? <span aria-hidden="true" className="shrink-0">·</span> : null}
-              <span className="min-w-0 truncate">{repostLine(item.repost)}</span>
-            </>
-          ) : null}
+          {/* A repost (issue 0066): its author, beside the source that reposted it (issue 0070). */}
+          {item.repost ? <span className="min-w-0 truncate">{repostLine(item.repost)}</span> : null}
           {length ? (
             <>
               {showSource || item.repost ? <span aria-hidden="true" className="shrink-0">·</span> : null}

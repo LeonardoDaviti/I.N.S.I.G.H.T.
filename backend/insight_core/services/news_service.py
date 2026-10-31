@@ -126,7 +126,8 @@ class NewsService:
                     "id": p["id"], "title": p["title"], "url": p["url"], "source_id": p["source_id"],
                     "source_display_name": p["source_display_name"], "platform": p["platform"],
                     "sort_at": p["sort_at"], "published_at": p["published_at"], "read_at": p["read_at"],
-                    "role": p["role"], "reposted_by": (p["repost"] or {}).get("by"),   # issue 0068
+                    "role": p["role"], "repost": p["repost"],   # issue 0070: its line names the author
+                    "reposted_by": (p["repost"] or {}).get("by") or None,   # issue 0068
                 } for p in posts if p["id"] != lead_id],
             }
             item["news"] = {

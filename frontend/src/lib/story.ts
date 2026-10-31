@@ -117,9 +117,15 @@ export function coveredBy(story: FeedStory): string {
 /** "↻ reposted by @steipete, @badlogicgames": under a tweet in "covered by" (issue 0068). */
 export const repostedBy = (by: string[]) => `↻ reposted by @${by.join(', @')}`;
 
-/** "↻ @steipete, from @badlogicgames": who reposted a tweet, and its author (issue 0066). */
+/** "↻ from @thsottiaux" beside the source that reposted it, "↻ @steipete, from @thsottiaux" when other
+ *  accounts of yours reposted it too: the source is never named twice (issues 0066, 0070). */
 export function repostLine(repost: Repost): string {
-  return `↻ @${repost.by.join(', @')}, from @${repost.author}`;
+  return `↻ ${repost.by.length ? `@${repost.by.join(', @')}, ` : ''}from @${repost.author}`;
+}
+
+/** A story line's name: a repost's author ("@danintheory"), else its source (issue 0070). */
+export function storyPostName(post: Pick<StoryPost, 'repost' | 'source_display_name'>): string {
+  return post.repost ? `@${post.repost.author}` : sourceLabel(post.source_display_name);
 }
 
 /** The names a suggestion's reason shows before "+N". */

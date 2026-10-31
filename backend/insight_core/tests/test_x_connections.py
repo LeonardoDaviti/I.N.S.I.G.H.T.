@@ -19,7 +19,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 from insight_core.db.repo_posts import PostsRepository
-from insight_core.db.repo_reader import FeedQuery, ReaderRepository
+from insight_core.db.repo_reader import FeedQuery, ReaderRepository, repost_of
 from insight_core.db.repo_stories import StoriesRepository
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.stories_service import StoriesService
@@ -86,6 +86,16 @@ class AddressTests(unittest.TestCase):
         self.assertEqual(build_post_fields({"url": "https://blog.test/a", "title": "A"})["author"], None)
         self.assertEqual(display_title("RT by @steipete: how i work with agents in 2026.", "how i work"),
                          "how i work with agents in 2026.", "who reposted it is said beside the title")
+
+    def test_a_repost_line_names_its_source_once(self):
+        # Issue 0070: "badlogicgames ↻ from @thsottiaux", not "badlogicgames · ↻ @badlogicgames, from @thsottiaux".
+        nitter = "https://nitter.local/badlogicgames/rss"
+        self.assertEqual(repost_of("rss", nitter, "thsottiaux", ["badlogicgames"]), {"by": [], "author": "thsottiaux"})
+        self.assertEqual(repost_of("rss", nitter, "thsottiaux", ["BadlogicGames", "steipete"]),
+                         {"by": ["steipete"], "author": "thsottiaux"})
+        self.assertIsNone(repost_of("rss", "https://nitter.local/thsottiaux/rss", "thsottiaux", ["steipete"]),
+                          "the author's own row: the reposters are said in its story")
+        self.assertIsNone(repost_of("rss", nitter, None, None))
 
 
 class XRulesTests(unittest.TestCase):
@@ -214,7 +224,8 @@ class XJobTests(unittest.TestCase):
                                                sorted([f"akhaliq{self.mark}", f"steipete{self.mark}"])))
         items, _ = ReaderRepository(unread_window_days=None).list_posts(self.cur, FeedQuery(limit=100), now=self.now)
         [row] = [i for i in items if i["id"] == first]
-        self.assertEqual(row["repost"], {"by": sorted([f"akhaliq{self.mark}", f"steipete{self.mark}"]), "author": author})
+        # The row is steipete's: it names the other reposter, never its own source again (issue 0070).
+        self.assertEqual(row["repost"], {"by": [f"akhaliq{self.mark}"], "author": author})
         self.assertEqual(row["title"], "how i work with agents in 2026.")
 
     def test_two_copies_of_one_tweet_join_by_their_address(self):
@@ -248,6 +259,19 @@ class XJobTests(unittest.TestCase):
         self.assertTrue(PostDetailService.story(self.cur, root)["thread"], "the post page reads the thread too")
         marked = ReaderRepository(unread_window_days=None).set_read(self.cur, [root], True)
         self.assertEqual(set(marked), {root, *replies}, "opening the thread marks its posts read")
+
+    def test_a_replys_quote_of_its_own_thread_is_no_card(self):
+        # Issue 0070: pankajkumar_dev's replies each quote the thread's first tweet; it is read once.
+        user = f"pankaj{self.mark}"
+        source = self._x(user)
+        root = self._save(source, user, ID, "Gemini 4 Flash leaks: codenamed Hydrogen")
+        quote = (f'<p>Its out guys.<br>\n</p><p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n'
+                 f'<hr/>\n<blockquote>\n<b>Pankaj</b>\n<p>Gemini 4 Flash leaks</p>\n<footer>\n— <cite>'
+                 f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
+        reply = self._save(source, user, ID + 1, f"R to @{user}: Its out guys.", minutes=5, html=quote)
+        self._regroup()
+        [line] = [p for p in PostDetailService.story(self.cur, root)["posts"] if p["id"] == reply]
+        self.assertEqual((line["quotes_above"], line["html"]), (True, "<p>Its out guys.<br>\n</p>"))
 
 
 class MigrationTests(unittest.TestCase):

@@ -30,6 +30,7 @@ import binascii
 import math
 import re
 import uuid
+from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
@@ -248,13 +249,31 @@ def _excerpt(content: str | None) -> str:
     return clean_text(content)[:EXCERPT_CHARS]
 
 
+@lru_cache(maxsize=1024)
+def _own_account(platform: str | None, handle: str | None) -> str:
+    """The X account a source follows ("badlogicgames"), else ""."""
+    account = source_account(platform, handle) or ""
+    return account[len("x.com/"):] if account.startswith("x.com/") else ""
+
+
+def repost_of(platform: str | None, handle: str | None, author: str | None,
+              reposted_by: Sequence[str] | None) -> Dict[str, Any] | None:
+    """A row its source reposted (issue 0066): {by, author}, `by` the other accounts of yours that
+    reposted it, never the row's own source (issue 0070: "badlogicgames ↻ from @thsottiaux"). None
+    when the row's source didn't repost it (its author's own tweet, the others said in its story)."""
+    own = _own_account(platform, handle)
+    if not author or not own or own not in [a.lower() for a in reposted_by or ()]:
+        return None
+    return {"by": [a for a in reposted_by or () if a.lower() != own], "author": author}
+
+
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
 _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, 4000), p.url, p.source_id,
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
-    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by
+    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url
 """
 
 
@@ -289,7 +308,7 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         # A watched page's last meaningful change (issue 0039): {at, words, words_added, ...}.
         "update": row[17],
         # A repost (issue 0066): "↻ @by, from @author".
-        "repost": {"by": row[19], "author": row[18]} if row[19] else None,
+        "repost": repost_of(platform, row[20], row[18], row[19]),
     }
 
 
@@ -397,7 +416,9 @@ class ReaderRepository:
         reposted it, and your sources that wrote or reposted it join `sources`; `roundups` [{id, title,
         source_display_name}] are the roundups that mention the story and are not in it, each
         source once. Issue 0069: a source's roundup is the one that links the story's pages earliest
-        in it, then the first, and a source in the story has none."""
+        in it, then the first, and a source in the story has none. Issue 0070: a post its source
+        reposted carries `repost` {by, author}, and `reposted_by` leaves that source out (its line
+        names the author and the reposter once)."""
         if not items:
             return
         cur.execute(
@@ -405,7 +426,7 @@ class ReaderRepository:
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
-                   p.reposted_by, p.author
+                   p.reposted_by, p.author, s.handle_or_url
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -421,7 +442,7 @@ class ReaderRepository:
         reposts: Dict[str, List[Tuple[Optional[str], List[str]]]] = {}   # lead -> (a tweet's author, its reposters)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author) in cur.fetchall():
+             origin_linked_by, reposted_by, author, handle) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -438,8 +459,10 @@ class ReaderRepository:
                 story["first"], story["_first_rank"] = str(post_id), rank
             if not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
+            # A repost's line names its author and who of yours reposted it once (issue 0070).
+            repost = repost_of(platform, handle, author, reposted_by)
             parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason,
-                      "reposted_by": reposted_by or None}
+                      "reposted_by": (repost["by"] if repost else reposted_by) or None}
             if str(post_id) != str(lead):
                 thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
@@ -447,7 +470,7 @@ class ReaderRepository:
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
-                    **parent,
+                    "repost": repost, **parent,
                 })
             else:
                 story.update(parent)

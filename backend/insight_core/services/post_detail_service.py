@@ -3,6 +3,7 @@ One post for the reader: detail, reader state (opens, reading time, favourite) (
 """
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urljoin
@@ -13,12 +14,27 @@ from insight_core.db import database as db
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
-from insight_core.db.repo_reader import ReaderRepository
+from insight_core.db.repo_reader import ReaderRepository, repost_of
 from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
-from insight_core.utils.post_links import body_hrefs
+from insight_core.utils.post_links import body_hrefs, quoted_tweet
 from insight_core.utils.url_normalization import normalize_url
 from insight_core.utils.post_fields import display_title
+
+
+# A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
+# the quoted tweet; and the quoted tweet's bare address in the text above it.
+QUOTE_CARD = re.compile(r"\s*(?:<hr\s*/?>\s*)?<blockquote>(?:(?!</blockquote>).)*?<cite>.*?</blockquote>", re.I | re.S)
+_EMPTY_P = re.compile(r"<p>\s*</p>\s*", re.I)
+
+
+def without_quote(content_html: Optional[str]) -> str:
+    """A reply's HTML without its quote card and the quoted tweet's bare address (issue 0070)."""
+    quoted = quoted_tweet(content_html) or ""
+    status = re.escape(quoted.rsplit("/", 1)[-1])
+    html_ = QUOTE_CARD.sub("", content_html or "", count=1)
+    html_ = re.sub(rf'<a\b[^>]*href="[^"]*/status/{status}\b[^"]*"[^>]*>[^<\s]*</a>', "", html_)
+    return _EMPTY_P.sub("", html_).strip()
 
 
 class PostDetailService:
@@ -113,7 +129,7 @@ class PostDetailService:
             "background": background,
             "story": story,
             # A repost (issue 0066): "↻ @by, from @author", as the feed row says it.
-            "repost": {"by": row[25], "author": row[24]} if row[25] else None,
+            "repost": repost_of(row[21], row[22], row[24], row[25]),
             "internal_links": internal,
         }
 
@@ -128,13 +144,21 @@ class PostDetailService:
         if not story or not (story["voices"] >= 2 or story["thread"]):
             return None
         # A thread's replies read as the post does (issue 0068): each its stored HTML and the
-        # links in it to stored posts, rendered by the post page's reader.
+        # links in it to stored posts, rendered by the post page's reader. A reply's quote of a tweet
+        # of its own story is no card (issue 0070): it was read above, `quotes_above` says so.
         replies = {p["id"]: p for p in story["posts"] if p["parent_reason"] == "thread"}
         if replies:
-            cur.execute("SELECT id, url, content_html, content FROM posts WHERE id = ANY(%s::uuid[])", (list(replies),))
-            for reply_id, url, content_html, content in cur.fetchall():
-                reply = replies[str(reply_id)]
-                reply["html"] = content_html
+            cur.execute("SELECT id, url, content_html, content, normalized_url FROM posts WHERE id = ANY(%s::uuid[])",
+                        ([post_id, *(p["id"] for p in story["posts"])],))
+            rows = cur.fetchall()
+            in_story = {row[4] for row in rows}
+            for reply_id, url, content_html, content, _ in rows:
+                reply = replies.get(str(reply_id))
+                if reply is None:
+                    continue
+                quoted = quoted_tweet(content_html)
+                reply["quotes_above"] = quoted is not None and quoted in in_story
+                reply["html"] = without_quote(content_html) if reply["quotes_above"] else content_html
                 reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url, content_html, content)
         return story
 

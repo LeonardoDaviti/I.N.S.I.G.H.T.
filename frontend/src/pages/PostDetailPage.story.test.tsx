@@ -200,7 +200,7 @@ describe('PostDetailPage threads and reposts (issue 0066)', () => {
     published_at: null, read_at: null, role: 'report' as const, parent_id: parent, parent_reason: 'thread' as const, text,
   });
 
-  it('a thread reads in order after its first post, then lists as "Thread · 3 posts"', async () => {
+  it('a thread reads in order after its first post, and is not listed again (issue 0070)', async () => {
     const first = reply(1, 'pretty joyless now.\n\nguess i switch to gardening.', POST_ID);
     const second = reply(2, 'there will remain some niche holdouts', first.id);
     const thread = story({ voices: 1, thread: true, sources: [{ id: 'bg', name: 'badlogicgames' }], posts: [second, first] });
@@ -210,13 +210,36 @@ describe('PostDetailPage threads and reposts (issue 0066)', () => {
     expect(read.querySelectorAll('p')[0].textContent).toBe('pretty joyless now.\n\nguess i switch to gardening.');
     expect(read.querySelectorAll('p')[1].textContent).toBe('there will remain some niche holdouts');
     expect(within(read).getAllByRole('link')[1]).toHaveAttribute('href', `/posts/${second.id}`);
-    expect(screen.getByRole('region', { name: 'Covered by' })).toHaveTextContent(/^Thread · 3 posts/);
+    expect(screen.queryByRole('region', { name: 'Covered by' })).toBeNull();
+  });
+
+  it('opened at a reply, the thread lists what came before it; a reply quoting the thread shows no card (issue 0070)', async () => {
+    const second = { ...reply(2, 'Its out guys.', POST_ID), html: '<p>Its out guys.</p>', quotes_above: true };
+    const root = { ...reply(0, 'software is dead. sad.', ''), parent_id: null, parent_reason: null };
+    const thread = story({ voices: 1, thread: true, sources: [{ id: 'bg', name: 'badlogicgames' }], posts: [root, second] });
+    renderPage(baseApi(rssPost({ title: 'pretty joyless now.', story: { ...thread, parent_id: root.id, parent_reason: 'thread' } })));
+    await screen.findByRole('article', { name: 'Post content' });
+    const read = screen.getByRole('region', { name: 'Thread' });
+    expect(read).toHaveTextContent(/^Its out guys\.↩ quotes the post above ·/);
+    const listed = screen.getByRole('region', { name: 'Covered by' });
+    expect(listed).toHaveTextContent('software is dead. sad.');
+    expect(listed).not.toHaveTextContent('Its out guys.');
+  });
+
+  it('a repost in a story names its author, and its reposter once (issue 0070)', async () => {
+    const repost = { ...reply(3, 'We are announcing three new discoveries', ''), parent_id: null, parent_reason: null,
+      source_display_name: 'sama', role: 'share' as const, repost: { by: [], author: 'danintheory' } };
+    renderPage(baseApi(rssPost({ story: story({ posts: [repost] }) })));
+    await screen.findByRole('article', { name: 'Post content' });
+    const line = within(screen.getByRole('region', { name: 'Covered by' })).getByText('@danintheory').closest('li');
+    expect(line).toHaveTextContent(/^@danintheory·We are announcing three new discoveries· ↻ sama/);
+    expect(line).not.toHaveTextContent('share');
   });
 
   it('a repost says who reposted it, and its author', async () => {
-    renderPage(baseApi(rssPost({ title: 'how i work with agents in 2026.', repost: { by: ['steipete'], author: 'badlogicgames' } })));
+    renderPage(baseApi(rssPost({ title: 'how i work with agents in 2026.', repost: { by: [], author: 'badlogicgames' } })));
     await screen.findByRole('article', { name: 'Post content' });
-    expect(screen.getByText('↻ @steipete, from @badlogicgames')).toBeInTheDocument();
+    expect(screen.getByText('↻ from @badlogicgames')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Thread' })).toBeNull();
   });
 });

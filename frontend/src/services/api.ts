@@ -69,7 +69,7 @@ export interface Post {
   /** A repost (issue 0066): who reposted it, and its author; null when none. */
   repost?: Repost | null;
 }
-/** A tweet your sources reposted (issue 0066): their accounts, and the tweet's author. */
+/** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
@@ -196,8 +196,12 @@ export interface StoryPost {
   /** On the post page, a thread's reply as stored (issue 0068): read as the post's body is, with its links to stored posts. */
   html?: string | null;
   internal_links?: Record<string, string>;
+  /** A thread's reply that quotes a tweet of its story (issue 0070): no card, "↩ quotes the post above". */
+  quotes_above?: boolean;
   /** The accounts that reposted it (issue 0068): "↻ reposted by @steipete, @badlogicgames". */
   reposted_by?: string[] | null;
+  /** A tweet its source reposted (issue 0070): the line names its author, "@danintheory · … · ↻ sama". */
+  repost?: Repost | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */
