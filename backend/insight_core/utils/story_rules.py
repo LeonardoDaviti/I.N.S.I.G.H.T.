@@ -62,8 +62,9 @@ from insight_core.utils.url_normalization import TWEET_PATH
 # 2: issue 0070 C, an outside origin's title by the page's own words, a link post's title, a slug's id dropped.
 # 3: issue 0070 A, names counted in followed sources and later waves, titles as plain letters, a link to
 # another publication on a site of publications, a platform's post about one story, one page under two
-# paths, a Saved page no voice.
-RULES_VERSION = 3
+# paths, a Saved page no voice. 4: issue 0070 B, a quoted text titled as the reader titles it (a list's mark, a
+# letter's abbreviation: 16 of the lab's 4,528 quoted texts read otherwise).
+RULES_VERSION = 4
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
 SAME_TITLE_WITHIN = timedelta(days=7)
