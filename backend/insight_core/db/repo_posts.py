@@ -274,6 +274,8 @@ class PostsRepository:
             "normalized_url": normalized_url,
             "canonical_url": canonical_url,
             "url_host": url_host,
+            "author": fields.get("author"),
+            "reposted_by": fields.get("reposted_by") or [],
             "metadata": metadata,
             "media_urls": media_urls,
             "categories": categories,
@@ -297,6 +299,8 @@ class PostsRepository:
                 normalized_url,
                 canonical_url,
                 url_host,
+                author,
+                reposted_by,
                 metadata,
                 media_urls,
                 categories
@@ -316,6 +320,8 @@ class PostsRepository:
                 %(normalized_url)s,
                 %(canonical_url)s,
                 %(url_host)s,
+                %(author)s,
+                NULLIF(%(reposted_by)s::text[], '{{}}'),
                 %(metadata)s::jsonb,
                 %(media_urls)s::jsonb,
                 %(categories)s::jsonb
@@ -550,6 +556,10 @@ class PostsRepository:
             "normalized_url = %(normalized_url)s",
             "canonical_url = %(canonical_url)s",
             "url_host = %(url_host)s",
+            # Attribution (issue 0066): every feed that brings a tweet as its repost adds its account.
+            f"author = COALESCE(%(author)s, {row}author)",
+            f"reposted_by = NULLIF(ARRAY(SELECT DISTINCT a FROM unnest(COALESCE({row}reposted_by, '{{}}')"
+            f" || %(reposted_by)s::text[]) a ORDER BY 1), '{{}}')",
             # A kept body keeps how well its page was read too.
             f"metadata = CASE WHEN {keep} THEN ({metadata}) || jsonb_build_object('{FULL_TEXT_FLAG}', true)"
             f" || jsonb_strip_nulls(jsonb_build_object('{PAGE_READ_KEY}', {row}metadata -> '{PAGE_READ_KEY}'))"

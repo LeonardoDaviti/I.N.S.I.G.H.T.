@@ -60,7 +60,9 @@ class PostDetailService:
                       p.updated_at,
                       s.platform,
                       s.handle_or_url,
-                      s.settings
+                      s.settings,
+                      p.author,
+                      p.reposted_by
                     FROM posts p
                     JOIN sources s ON s.id = p.source_id
                     WHERE p.id = %s
@@ -107,17 +109,20 @@ class PostDetailService:
             "source_display_name": source_settings.get("display_name") or row[22],
             "background": background,
             "story": story,
+            # A repost (issue 0066): "↻ @by, from @author", as the feed row says it.
+            "repost": {"by": row[25], "author": row[24]} if row[25] else None,
             "internal_links": internal,
         }
 
     @staticmethod
     def story(cur: psycopg.Cursor, post_id: str) -> Optional[Dict[str, Any]]:
         """The post's story as the feed's lead carries it (issue 0055: the same `story`, from the
-        same query), when it has 2+ voices; else None (no story, or copies of one voice)."""
+        same query), when it has 2+ voices or is a thread (issue 0066); else None (no story, or
+        copies of one voice)."""
         item: Dict[str, Any] = {"id": str(post_id)}
         ReaderRepository.attach_stories(cur, [item])
         story = item.get("story")
-        return story if story and story["voices"] >= 2 else None
+        return story if story and (story["voices"] >= 2 or story["thread"]) else None
 
     @staticmethod
     def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],

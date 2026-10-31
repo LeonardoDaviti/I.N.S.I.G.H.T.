@@ -192,3 +192,31 @@ describe('PostDetailPage links to stored posts (issue 0057)', () => {
     expect(within(article).queryByRole('link', { name: 'Open the original' })).toBeNull();
   });
 });
+
+describe('PostDetailPage threads and reposts (issue 0066)', () => {
+  const reply = (n: number, text: string, parent: string) => ({
+    id: `00000000-0000-4000-8000-00000000010${n}`, title: text, url: `https://nitter.local/badlogicgames/status/${n}`,
+    source_id: 'bg', source_display_name: 'badlogicgames', platform: 'rss', sort_at: `2026-10-27T08:5${n}:00+00:00`,
+    published_at: null, read_at: null, role: 'report' as const, parent_id: parent, parent_reason: 'thread' as const, text,
+  });
+
+  it('a thread reads in order after its first post, then lists as "Thread · 3 posts"', async () => {
+    const first = reply(1, 'pretty joyless now.\n\nguess i switch to gardening.', POST_ID);
+    const second = reply(2, 'there will remain some niche holdouts', first.id);
+    const thread = story({ voices: 1, thread: true, sources: [{ id: 'bg', name: 'badlogicgames' }], posts: [second, first] });
+    renderPage(baseApi(rssPost({ title: 'software is dead. sad.', story: thread })));
+    await screen.findByRole('article', { name: 'Post content' });
+    const read = screen.getByRole('region', { name: 'Thread' });
+    expect(read.querySelectorAll('p')[0].textContent).toBe('pretty joyless now.\n\nguess i switch to gardening.');
+    expect(read.querySelectorAll('p')[1].textContent).toBe('there will remain some niche holdouts');
+    expect(within(read).getAllByRole('link')[1]).toHaveAttribute('href', `/posts/${second.id}`);
+    expect(screen.getByRole('region', { name: 'Covered by' })).toHaveTextContent(/^Thread · 3 posts/);
+  });
+
+  it('a repost says who reposted it, and its author', async () => {
+    renderPage(baseApi(rssPost({ title: 'how i work with agents in 2026.', repost: { by: ['steipete'], author: 'badlogicgames' } })));
+    await screen.findByRole('article', { name: 'Post content' });
+    expect(screen.getByText('↻ @steipete, from @badlogicgames')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Thread' })).toBeNull();
+  });
+});

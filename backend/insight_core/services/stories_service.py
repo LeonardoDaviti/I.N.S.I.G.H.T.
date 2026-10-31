@@ -25,7 +25,8 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
-from insight_core.utils.post_links import host_of, reddit_author
+from insight_core.utils.post_fields import REPLY_TO_RE
+from insight_core.utils.post_links import host_of, quoted_tweet, reddit_author
 from insight_core.utils.story_rules import StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
 
@@ -99,14 +100,20 @@ class StoriesService:
     def _story_post(row: Dict[str, Any], sources: SourceFacts) -> StoryPost:
         kind = sources.kind.get(row["source_id"], "site")
         html = row["html"]
+        reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.own_site(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
             words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
-            author=reddit_author(html) if kind == "reddit" else None,
+            author=reddit_author(html) if kind == "reddit" else row["author"],
             url=row["url"], links=row["links"],
             # The tree's evidence (issue 0064): link words, a page updated since its date, its own site.
             link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
+            # On X (issue 0066): a tweet of another account (a repost), the account a reply answers, a quote.
+            reposted=kind == "x" and bool(row["author"])
+            and sources.account.get(row["source_id"]) != "x.com/" + row["author"].lower(),
+            reply_to=reply.group(1) if reply else None,
+            quoted=quoted_tweet(html) if kind == "x" else None,
         )
 
     def recompute_safely(self) -> Optional[Dict[str, Any]]:

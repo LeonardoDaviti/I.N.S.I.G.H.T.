@@ -30,6 +30,14 @@ the reference the real code reproduces. The thresholds are here, in one place.
   The origin is the root linked by the most voices, a post at its own site first, then the
   earlier trustworthy time. One parent per post, no cycles. Mark X adds `meaning` and
   `attribution` to the reasons without changing the shape.
+- **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
+  - `repost`: a repost stored apart from its original (one address, 0049) hangs from it; a repost
+    is a share, and never its address's own page;
+  - `thread`: an author's reply to itself hangs from the post right before it in its source's
+    timeline, when that is the author's own (not a repost, not a reply to another account) and
+    within 24 hours. Its posts are one story, whatever the sources: a thread is one item;
+  - `quote`: a quoting tweet hangs from the tweet it quotes; a stored one joins its story
+    within 72 hours (as a citation), whatever the place.
 """
 from __future__ import annotations
 
@@ -39,8 +47,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import (PLATFORM_SITES, account_key, bare, host_of, is_article, is_home, site_of,
-                                          titled_link_text)
+from insight_core.utils.post_links import (PLATFORM_SITES, account_key, bare, host_of, is_article, is_home, is_tweet,
+                                          site_of, titled_link_text)
 
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
@@ -48,6 +56,7 @@ SAME_TITLE_WITHIN = timedelta(days=7)
 SAME_TITLE_MIN_WORDS = 5
 SAME_ADDRESS_WITHIN = timedelta(days=30)   # two posts at one address (0064), as a shared text
 LINK_WITHIN = timedelta(hours=72)
+THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066)
 ROUNDUP_ANCHORS = 3
 LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share
 SIGNATURE_SHARE = 0.25            # a link in 25% of a source's posts ...
@@ -66,9 +75,10 @@ NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "se
                          "share", "home", "explore", "wiki", "posts", "in"})
 WORD = re.compile(r"\w+", re.U)
 
-REASONS = ("address", "text", "title", "link", "citation")   # why a post is in its story; Mark X adds more
-# Why a post hangs from its parent (issue 0064), most certain first. Mark X adds meaning, attribution.
-PARENT_REASONS = ("address", "citation", "copy", "time", "none")
+REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   # why a post is in its story; Mark X adds more
+# Why a post hangs from its parent (issue 0064; repost, thread, quote: 0066), most certain first.
+# Mark X adds meaning, attribution.
+PARENT_REASONS = ("address", "repost", "thread", "quote", "citation", "copy", "time", "none")
 TIME_APART = timedelta(minutes=10)         # two trustworthy times closer than this make no order
 PAGE_ORIGIN_MIN_POSTS = 2                  # an outside page 2+ of a story's posts link can be its origin
 # Kinds whose posts' addresses are not their own pages: an HN item is the page it links, a Saved
@@ -90,12 +100,15 @@ class StoryPost:
     content_hash: Optional[str] = None
     text_chars: int = 0             # len(content)
     words: Optional[int] = None     # words of its own (Reddit, HN): the share rule
-    author: Optional[str] = None    # a Reddit post's author
+    author: Optional[str] = None    # a Reddit post's author; a tweet's account (issue 0066)
     url: Optional[str] = None       # normalized
     links: List[Tuple[str, Optional[str]]] = field(default_factory=list)   # (target, stored post id)
     link_texts: Dict[str, str] = field(default_factory=dict)              # target -> the link's words
     updated: bool = False           # a watched page that changed since its date (0037)
     home_site: Optional[str] = None  # the site its source publishes on; None: its own site (not HN, Saved)
+    reposted: bool = False          # a tweet of another account its source reposted (issue 0066)
+    reply_to: Optional[str] = None  # the account a tweet replies to
+    quoted: Optional[str] = None    # the tweet it quotes (normalized)
 
     @property
     def voice(self) -> str:
@@ -129,9 +142,16 @@ class StoryPost:
 
     @property
     def on_own_site(self) -> bool:
-        """It is at an address on the site its source publishes on: that address's own page."""
+        """It is at an address on the site its source publishes on: that address's own page. A repost
+        is another account's tweet: never its own page."""
         home = self.home_site if self.home_site is not None else ("" if self.kind in NOT_PUBLISHERS else self.own_site)
-        return bool(home and self.url and site_of(host_of(self.url)) == home)
+        return bool(home and self.url and not self.reposted and site_of(host_of(self.url)) == home)
+
+    @property
+    def own_tweet(self) -> bool:
+        """A tweet its source's account wrote, and not as a reply to another account (issue 0066)."""
+        return bool(self.kind == "x" and self.author and not self.reposted
+                    and (self.reply_to is None or self.reply_to.lower() == self.author.lower()))
 
 
 def title_key(title: Optional[str]) -> Optional[str]:
@@ -171,8 +191,10 @@ class Story:
     origin_linked_by: int = 0              # how many of the story's posts are about it
 
 
-def _order(post: StoryPost) -> Tuple[datetime, str]:
-    return post.t, post.id
+def _order(post: StoryPost) -> Tuple[datetime, int, str]:
+    """Time order. Tweets of one second follow their ids, which X gives in the order they were
+    written (issue 0066: a thread's replies often share a second)."""
+    return post.t, int(post.url.rsplit("/", 1)[-1]) if is_tweet(post.url) else 0, post.id
 
 
 def anchors(post: StoryPost) -> List[Tuple[str, str]]:
@@ -187,9 +209,9 @@ def anchors(post: StoryPost) -> List[Tuple[str, str]]:
     return list(out)
 
 
-def _time_key(post: StoryPost) -> Tuple[bool, datetime, str]:
+def _time_key(post: StoryPost) -> Tuple[bool, datetime, int, str]:
     """Earlier trustworthy time first; a time that can't order comes after every one that can."""
-    return not post.trusted_time, post.t, post.id
+    return (not post.trusted_time, *_order(post))
 
 
 def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
@@ -202,6 +224,22 @@ def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
     return {url: p.id for url, p in out.items()}
 
 
+def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
+    """Each reply of an author to itself -> its parent (issue 0066): the post right before it in
+    its source's timeline (reposts included), when that is the author's own tweet within 24 hours.
+    A thread starts at the author's own post, never at a repost of another account."""
+    timeline: Dict[str, List[StoryPost]] = defaultdict(list)
+    for p in sorted(posts, key=_order):
+        if p.kind == "x":
+            timeline[p.source_id].append(p)
+    out: Dict[str, str] = {}
+    for run in timeline.values():
+        for before, p in zip(run, run[1:]):
+            if p.own_tweet and p.reply_to and before.own_tweet and p.t - before.t <= THREAD_WITHIN:
+                out[p.id] = before.id
+    return out
+
+
 def group(posts: Sequence[StoryPost]) -> List[Story]:
     """The stories among `posts` (2+ sources each), first post first, each a tree (issue 0064)."""
     posts = sorted(posts, key=_order)
@@ -210,15 +248,25 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     # to (the first seen at the address) may be another source's post of that page (HN's).
     origin_of = address_origins(posts)
 
+    def resolve(what: str, target: str) -> Tuple[str, str]:
+        cited = by_id.get(target) if what == "post" else None
+        return what, origin_of.get(cited.url, target) if cited is not None and cited.url else target
+
     def resolved(post: StoryPost) -> List[Tuple[str, str]]:
         out: Dict[Tuple[str, str], None] = {}
         for what, target in anchors(post):
-            cited = by_id.get(target) if what == "post" else None
-            if cited is not None and cited.url:
-                target = origin_of.get(cited.url, target)
-            if (what, target) != ("post", post.id):
-                out[(what, target)] = None
+            anchor = resolve(what, target)
+            if anchor != ("post", post.id):
+                out[anchor] = None
         return list(out)
+
+    def quote_of(post: StoryPost) -> Optional[Tuple[str, str]]:
+        """The anchor of the tweet a tweet quotes (issue 0066), when it links it."""
+        links = dict(post.links)
+        if not post.quoted or post.quoted not in links:
+            return None
+        anchor = resolve("post", links[post.quoted]) if links[post.quoted] else ("url", post.quoted)
+        return anchor if anchor != ("post", post.id) else None
     uf = _UnionFind()
     why: Dict[str, Set[str]] = defaultdict(set)
     mentioned: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
@@ -251,15 +299,21 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     linkers: Dict[Tuple[str, str], List[StoryPost]] = defaultdict(list)
     every: Dict[str, List[Tuple[str, str]]] = {}     # every anchor of a post: its citations
     focused: Dict[str, List[Tuple[str, str]]] = {}   # what it is about: a roundup's first anchor only
+    quotes: Dict[str, str] = {}   # a quoting tweet -> the stored tweet it quotes (issue 0066)
     for p in posts:
-        points = every[p.id] = resolved(p)
+        every[p.id] = resolved(p)
+        # A quote is what its tweet is about, never one of a roundup's listed links.
+        quote = quote_of(p)
+        points = [anchor for anchor in every[p.id] if anchor != quote]
         if len(points) >= ROUNDUP_ANCHORS:
             for anchor in points[1:]:
                 mentioned[anchor].add(p.id)
             points = points[:1]
-        focused[p.id] = points
-        for anchor in points:
+        focused[p.id] = points + ([quote] if quote else [])
+        for anchor in focused[p.id]:
             linkers[anchor].append(p)
+        if quote and quote[0] == "post" and quote[1] in by_id:
+            quotes[p.id] = quote[1]
     for (what, target), ps in linkers.items():
         if what == "post":
             cited = by_id.get(target)
@@ -276,6 +330,15 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
                 for p in near:
                     uf.union(p.id, "U:" + target)
                     why[p.id].add("link")
+    # On X (issue 0066): a thread is one story, and a quote joins the stored tweet it quotes.
+    replies = threads(posts)
+    joins = [(child, parent, "thread") for child, parent in replies.items()]
+    joins += [(child, parent, "quote") for child, parent in quotes.items()
+              if abs(by_id[child].t - by_id[parent].t) <= LINK_WITHIN]
+    for child, parent, reason in joins:
+        uf.union(child, parent)
+        why[child].add(reason)
+        why[parent].add(reason)
 
     members: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in posts:
@@ -290,10 +353,11 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
 
     stories = []
     for root, group_posts in members.items():
-        if len({p.source_id for p in group_posts}) < 2:
+        # 2+ sources, or one account's thread or quote of itself (issue 0066).
+        if len({p.source_id for p in group_posts}) < 2 and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
             continue
         first = group_posts[0]
-        shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of)
+        shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
         stories.append(Story(
             id=first.id, first_at=first.t, posts=group_posts, voices=count_voices(group_posts),
             roles=roles(group_posts),
@@ -322,11 +386,13 @@ _NEVER = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
-         focused: Dict[str, List[Tuple[str, str]]], origin_of: Dict[str, str]) -> Tree:
+         focused: Dict[str, List[Tuple[str, str]]], origin_of: Dict[str, str],
+         replies: Optional[Dict[str, str]] = None, quotes: Optional[Dict[str, str]] = None) -> Tree:
     """Each post's parent in its story, by evidence in order of certainty (the module's notes).
     `posts`: one story's. `every` / `focused`: each post's anchors resolved to the address's own
     page (`group`): all of them, and those it is about (a roundup: its first only). `origin_of`:
-    address -> its own page."""
+    address -> its own page. `replies` / `quotes` (issue 0066): a thread's reply -> the post it
+    continues, a quoting tweet -> the stored tweet it quotes."""
     by_id = {p.id: p for p in posts}
     edges: List[Tuple[str, str, str]] = []          # (child, parent node, reason)
     about: Dict[str, Set[str]] = defaultdict(set)   # node -> the voices of the posts about it
@@ -334,8 +400,16 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
     for p in posts:
         own = origin_of.get(p.url or "")
         if own and own != p.id and own in by_id and by_id[own].source_id != p.source_id:
-            edges.append((p.id, own, "address"))
+            edges.append((p.id, own, "repost" if p.reposted else "address"))
             about[own].add(p.voice)
+    # On X (issue 0066): a reply continues the post before it; a quote is about the tweet it quotes.
+    for child, parent in (replies or {}).items():
+        if child in by_id and parent in by_id:
+            edges.append((child, parent, "thread"))
+    for child, parent in (quotes or {}).items():
+        if child in by_id and parent in by_id:
+            edges.append((child, parent, "quote"))
+            about[parent].add(by_id[child].voice)
     # 2. Citation: a post links another post of the story (any of its links: whatever the dates
     # say), or a page outside INSIGHT that 2+ of the story's posts are about (focused links).
     page_posts: Dict[str, List[str]] = defaultdict(list)
@@ -351,7 +425,7 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
                 if (what, target) in about_it:
                     about[target].add(p.voice)
             elif what == "url" and (what, target) in about_it and len(page_posts[target]) >= PAGE_ORIGIN_MIN_POSTS:
-                edges.append((p.id, _PAGE + target, "citation"))
+                edges.append((p.id, _PAGE + target, "quote" if target == p.quoted else "citation"))
                 about[_PAGE + target].add(p.voice)
     # 3. Copy: the same text or title from another source, the earlier trustworthy time the parent.
     for key in ("text_key", "title_key"):
@@ -368,7 +442,7 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
     def node_key(node: str) -> Tuple:
         """Equally certain parents: a stored post before a page, then the earlier trustworthy time."""
         if node.startswith(_PAGE):
-            return (1, True, _NEVER, node)
+            return (1, True, _NEVER, 0, node)
         return (0, *_time_key(by_id[node]))
 
     def origin_key(node: str) -> Tuple:
@@ -420,7 +494,7 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
     """report (its own writing) or share: a copy of an earlier post's text or title from another
-    place, or a Reddit or HN post that is mostly a link. `posts` in time order."""
+    place, a Reddit or HN post that is mostly a link, or a repost. `posts` in time order."""
     first_text: Dict[str, str] = {}
     first_title: Dict[str, str] = {}
     out = {}
@@ -429,7 +503,7 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
         copy = (text and text in first_text and first_text[text] != p.place) or \
                (title and title in first_title and first_title[title] != p.place)
         link_post = p.kind in ("reddit", "hn") and (p.words or 0) < LINK_POST_MAX_WORDS
-        out[p.id] = "share" if copy or link_post else "report"
+        out[p.id] = "share" if copy or link_post or p.reposted else "report"   # a repost is a share (0066)
         if text:
             first_text.setdefault(text, p.place)
         if title:
@@ -521,5 +595,5 @@ def source_site(hosts: Iterable[Tuple[str, int]]) -> str:
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "Suggestion", "Tree", "group", "tree", "address_origins", "roles", "count_voices", "suggestions",
+__all__ = ["StoryPost", "Story", "Suggestion", "Tree", "group", "tree", "threads", "address_origins", "roles", "count_voices", "suggestions",
            "discover_address", "discover_open", "source_site", "title_key", "anchors"]
