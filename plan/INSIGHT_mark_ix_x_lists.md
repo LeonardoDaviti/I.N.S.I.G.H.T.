@@ -35,6 +35,15 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - known news isn't "new to you" (0058);
   - Follow from Discover starts where your sources' links point, findings ranked by coverage (0060).
   - Classics are under discussion (0059).
+- **v9.9, stories as trees** (owner, 2026-10-31):
+  - each post in a story knows where it came from (0064);
+  - the pipeline review's fixes (0062);
+  - Saved pages keep their own date (0063).
+- **How INSIGHT connects what it reads** (owner, 2026-10-31: "use the most advanced ways of the data structures, just like brain stores and connects information. List → Tree, and with Mark X we will unlock top tier, graphs"):
+  - **List:** posts, one after another (Mark IX up to v9.8).
+  - **Tree:** a story with its origin, and who it came to next (v9.9).
+  - **Graph:** posts, stories, entities, claims and ideas linked across time (Mark X).
+  - **Rule: no signal decides alone.** Signals (address, citation, copy, time, later meaning) are ensembled, the certain ones first, and each is measured on real data.
 - **Mark IX is the groundwork for Mark X** (owner, 2026-10-30): search, post links and stories are the base that Mark X's dedup by meaning, entities, the first reporter and trends build on, not a second system.
 - **Only on a real case:** release updates (0024), native Bluesky and Mastodon, email-in.
 - **Cut** (features for their own sake, owner 2026-10-28): the installable app (PWA), the Fever / Google Reader API, a one-command install, optional login, notifications, a track published as RSS, podcasts, read aloud, export to Obsidian, webhooks.

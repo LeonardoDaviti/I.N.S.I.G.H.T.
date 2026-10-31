@@ -4,7 +4,7 @@ Status: **spec** (2026-10-31) for v9.9 (owner, 2026-10-31: "that is already for 
 
 Found by running the whole update and the recurring work on a fresh copy of the server's data (41,608 posts, 489 MB), and by the owner reading the lab.
 
-## 1. Two posts at one address are one story
+## 1. Two posts at one address are one story (moved to 0064, stories as trees, 2026-10-31)
 - **The case:**
   - OpenAI News' "Introducing GPT-6.1 Terra" (published 26 Oct 00:00) and Hacker News' "GPT-6.1 Terra" (26 Oct 18:01) are the same article, at `openai.com/index/introducing-gpt-6-1-terra`.
   - Their titles differ, so 0049 rightly keeps two rows.
