@@ -21,8 +21,8 @@ from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
 # The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words,
-# the tweet a tweet quotes (issue 0066).
-HTML_KINDS = ("reddit", "hn", "x")
+# the tweet a tweet quotes (issue 0066), the words of a page it quotes (a Telegram link preview, 0070).
+HTML_KINDS = ("reddit", "hn", "x", "telegram")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
@@ -75,6 +75,14 @@ class SourceFacts:
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
         self.host = {source_id: source_site(pairs, of=publication_of) for source_id, pairs in hosts.items()}
+        # A site of publications (issue 0070): one your website sources publish on at 2+ hosts
+        # (Substack's writers, github.io's). Elsewhere a site's other hosts are its publisher's own
+        # (tools.simonwillison.net, forms.technologyreview.com: measured on the lab).
+        hosts_of: Dict[str, Set[str]] = defaultdict(set)
+        for source_id, site in self.site.items():
+            if self.kind.get(source_id) == "site":
+                hosts_of[site].add(self.host[source_id])
+        self.shared_sites = {site for site, pubs in hosts_of.items() if len(pubs) >= 2}
         # How much of a source is on its own site (issue 0064): an aggregator's most common site
         # is only where it links most (Hacker News: 8% github.com on the server's data).
         self._site_share = {
@@ -191,20 +199,24 @@ class StoriesRepository:
     @staticmethod
     def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:
         """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
-        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. A
-        platform is no source's own site: what is kept of its links there (another tweet, issue
-        0066) is told by `extract_links`."""
-        own = [(source_id, site) for source_id, site in sources.site.items()
+        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. On a
+        site of publications (SourceFacts.shared_sites, issue 0070) its own is its publication: a
+        Substack writer linking another cites them. A platform is no source's own site: what is kept
+        of its links there (another tweet, issue 0066) is told by `extract_links`."""
+        own = [(source_id, *((sources.host[source_id], True) if site in sources.shared_sites else (site, False)))
+               for source_id, site in sources.site.items()
                if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
         cur.execute(
             """
             WITH n AS (SELECT source_id, count(*) AS posts FROM posts GROUP BY source_id),
             c AS (SELECT p.source_id, pl.target_url, count(*) AS posts
                   FROM post_links pl JOIN posts p ON p.id = pl.post_id GROUP BY 1, 2),
-            own AS (SELECT * FROM unnest(%s::uuid[], %s::text[]) AS o(source_id, site)),
+            own AS (SELECT * FROM unnest(%s::uuid[], %s::text[], %s::bool[]) AS o(source_id, own, by_host)),
             want AS (
                 SELECT pl.post_id, pl.target_url,
-                       (c.posts >= %s AND c.posts >= %s * n.posts) OR pl.target_site = own.site AS boilerplate
+                       (c.posts >= %s AND c.posts >= %s * n.posts)
+                       OR CASE WHEN own.by_host THEN substring(pl.target_url FROM '^[a-z]+://([^/?#:]+)') = own.own
+                               ELSE pl.target_site = own.own END AS boilerplate
                 FROM post_links pl
                 JOIN posts p ON p.id = pl.post_id
                 JOIN n ON n.source_id = p.source_id
@@ -216,17 +228,19 @@ class StoriesRepository:
             WHERE pl.post_id = want.post_id AND pl.target_url = want.target_url
               AND pl.boilerplate IS DISTINCT FROM COALESCE(want.boilerplate, false)
             """,
-            ([s for s, _ in own], [site for _, site in own], SIGNATURE_MIN_POSTS, SIGNATURE_SHARE),
+            ([o[0] for o in own], [o[1] for o in own], [o[2] for o in own], SIGNATURE_MIN_POSTS, SIGNATURE_SHARE),
         )
         return cur.rowcount
 
     # ---- the story job ----------------------------------------------------------------
 
     @staticmethod
-    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime]) -> List[Dict[str, Any]]:
+    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime],
+                   linking: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         """The posts the job recomputes: posted since `cutoff` (every post when None), less those in
-        a story that began before it (frozen). Each with its kept links, in order, and the stored
-        post each link is, if any."""
+        a story that began before it (frozen); with `linking`, only those with a kept link to one of
+        these addresses (Discover's articles, issue 0070). Each with its kept links, in order, and
+        the stored post each link is, if any."""
         cur.execute(
             """
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
@@ -238,8 +252,10 @@ class StoriesRepository:
               AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
               AND NOT EXISTS (SELECT 1 FROM story_posts sp JOIN stories st ON st.id = sp.story_id
                               WHERE sp.post_id = p.id AND st.first_at < %(cutoff)s)
+              AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
+                                                         WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
             """,
-            {"html": sources.html_sources(), "cutoff": cutoff},
+            {"html": sources.html_sources(), "cutoff": cutoff, "linking": None if linking is None else list(linking)},
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],

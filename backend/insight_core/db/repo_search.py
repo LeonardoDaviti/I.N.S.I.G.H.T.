@@ -66,10 +66,11 @@ MARK_TSQUERY = (f"(CASE WHEN querytree({TSQUERY}) = 'T' THEN {TSQUERY}"
                 f" ELSE replace(querytree({TSQUERY}), ' & ', ' | ')::tsquery END)")
 # A classic's words: its title (the stored post's, else its link words) and its address, read as
 # words but for a dot before a digit, so a version stays one (huggingface.co/Qwen/Qwen3.6-35B-A3B
-# reads "huggingface co Qwen Qwen3.6 35B A3B"). Written into a query with parameters: % doubled.
+# reads "huggingface co Qwen Qwen3.6 35B A3B"); its title's letters plain (NFKC, issue 0070), as the
+# posts' index. Written into a query with parameters: % doubled.
 CLASSIC_VECTOR = (
     "search_vector_with_parts("
-    "setweight(to_tsvector('russian', COALESCE(NULLIF(btrim(t.title), ''), c.title, '')), 'A')"
+    "setweight(to_tsvector('russian', normalize(COALESCE(NULLIF(btrim(t.title), ''), c.title, ''), NFKC)), 'A')"
     " || setweight(to_tsvector('russian', regexp_replace(c.target_url, '^https?://(www\\.)?|[/:_?=&#%%+-]+|\\.(?![0-9])', ' ', 'g')), 'B'))"
 )
 # The groups a result folds into: a story (0050) or a News story (0051), each post in at most one.

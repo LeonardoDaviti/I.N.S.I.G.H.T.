@@ -471,14 +471,14 @@ class DiscoverServiceTests(unittest.TestCase):
             for n in range(3):
                 source = insert_scratch_source(cur)
                 url = f"https://voice{n}-{self.mark}.test/p"
-                html = "".join(f'<a href="https://{self.site}/2026/10/the-story-{k}">Story {k}</a>' for k in range(2))
+                html = "".join(f'<a href="https://{self.site}/2026/10/the-story-{k}">The story {k}</a>' for k in range(2))
                 cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, content_html, published_at) "
                             "VALUES (%s, %s, %s, %s, %s, now())", (source, url, normalize_url(url), f"voice{n}-{self.mark}.test", html))
         service = StoriesService(db_url())
         service.fill_links()
         [found] = [s for s in service.discover()["suggestions"] if s["key"] == self.site]
         self.assertEqual((found["voices"], found["article_count"], found["link_count"]), (3, 2, 2))
-        self.assertEqual(found["articles"][0]["title"], "Story 0")
+        self.assertEqual(found["articles"][0]["title"], "The story 0", "words 3 voices agree on")
         self.assertEqual(len(found["articles"][0]["linked_by"]), 3)
         self.assertIs(service.discover(), service.discover(), "kept while nothing it reads changed")
         service.hide(self.site)

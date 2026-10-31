@@ -96,7 +96,8 @@ class TreeRulesTests(unittest.TestCase):
 
     def test_hacker_news_and_saved_pages_never_claim_an_address(self):
         story = only([post("hn", "hn", kind="hn", site="openai.com", url=PAGE, title="Terra"),
-                      post("saved", "sv", hours=1, kind="saved", site="openai.com", url=PAGE, title="Saved Terra")])
+                      post("saved", "sv", hours=1, kind="saved", site="openai.com", url=PAGE, title="Saved Terra"),
+                      post("hn2", "hn2", hours=2, kind="hn", site="openai.com", url=PAGE, title="Terra again")])
         self.assertEqual(story.reasons["saved"], ["address"], "still one story")
         self.assertNotIn("address", [r for _, r in parents(story).values()])
 
@@ -195,8 +196,10 @@ class TreeRulesTests(unittest.TestCase):
         self.assertEqual(parents(story)["day"], ("timed", "none"), "no claim of order")
 
     def test_a_saved_page_orders_nothing(self):
-        story = only([post("saved", "sv", kind="saved", hours=-24, text_hash="h"), post("orig", "a", text_hash="h")])
-        self.assertEqual(parents(story), {"orig": (None, None), "saved": ("orig", "none")})
+        # (A Saved page is no voice, issue 0070: a second source makes the story.)
+        story = only([post("saved", "sv", kind="saved", hours=-24, text_hash="h"), post("orig", "a", text_hash="h"),
+                      post("copy", "c", hours=1, text_hash="h")])
+        self.assertEqual(parents(story), {"orig": (None, None), "saved": ("orig", "none"), "copy": ("orig", "copy")})
 
     def test_a_page_updated_since_its_date_orders_nothing(self):
         story = only([post("gwern", "g", hours=-480, updated=True, text_hash="h"), post("orig", "a", text_hash="h")])

@@ -86,9 +86,8 @@ function Suggestion({ suggestion, onFollow, onHide }: {
       {open ? (
         <ul id={listId} className="mt-2 flex flex-col gap-1 border-l border-line pl-3">
           {suggestion.articles.map((article) => {
-            // A link's words name the page when they are a title, not a word inside a sentence ("announced").
-            const named = article.title && !/^https?:\/\//.test(article.title) && article.title.trim().split(/\s+/).length >= 3;
-            const title = named ? article.title : shortAddress(article.url);
+            // Titled as a story's origin is (issue 0070), else its address.
+            const title = article.title || shortAddress(article.url);
             return (
               <li key={article.url} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
                 <ExternalLink href={article.url} dir="auto" className="min-w-0 truncate text-fg" title={article.url}>{title}</ExternalLink>
