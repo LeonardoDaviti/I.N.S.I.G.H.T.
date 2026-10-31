@@ -62,7 +62,10 @@ class PostDetailService:
                       s.handle_or_url,
                       s.settings,
                       p.author,
-                      p.reposted_by
+                      p.reposted_by,
+                      -- A Telegram album's pictures (issue 0069): shown in its post's body.
+                      (SELECT string_agg(a.content_html, '' ORDER BY a.published_at, length(a.url), a.url)
+                         FROM posts a WHERE a.album_of = p.id)
                     FROM posts p
                     JOIN sources s ON s.id = p.source_id
                     WHERE p.id = %s
@@ -89,7 +92,7 @@ class PostDetailService:
             "fetched_at": row[5].isoformat() if row[5] else None,
             "title": display_title(row[6], row[7]),
             "content": row[7],
-            "content_html": row[8],
+            "content_html": row[8] + row[26] if row[8] and row[26] else row[8],
             "media_urls": row[9] or [],
             "images": media["images"],
             "video": media["video"],

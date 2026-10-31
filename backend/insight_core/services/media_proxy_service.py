@@ -121,14 +121,15 @@ class MediaProxyService:
     def _allowed(self, post_id: str) -> Set[str]:
         try:
             with db.connection(self.db_url) as conn, conn.cursor() as cur:
-                cur.execute("SELECT url, media_urls, content_html, content FROM posts WHERE id = %s::uuid",
-                            (post_id,))
-                row = cur.fetchone()
+                # A Telegram album's pictures are its post's (issue 0069).
+                cur.execute("SELECT url, media_urls, content_html, content FROM posts"
+                            " WHERE id = %s::uuid OR album_of = %s::uuid", (post_id, post_id))
+                rows = cur.fetchall()
         except (psycopg.errors.InvalidTextRepresentation, psycopg.DataError):
             raise MediaNotAllowed("no such post")
-        if not row:
+        if not rows:
             raise MediaNotAllowed("no such post")
-        return post_image_urls(row[0], row[1], row[2], row[3])
+        return set().union(*(post_image_urls(row[0], row[1], row[2], row[3]) for row in rows))
 
     # ------------------------------------------------------------------ the origin
 

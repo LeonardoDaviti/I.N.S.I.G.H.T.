@@ -32,7 +32,8 @@ from psycopg import Cursor
 
 from insight_core.db.repo_news import _scope_sql as news_scope_sql
 from insight_core.db.repo_reader import (
-    _ITEM_COLUMNS, _STORY_RANK, MAX_FEED_LIMIT, SORT_KEY, FeedCursor, FeedScope, ReaderRepository, _item, _on,
+    _ITEM_COLUMNS, _STORY_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
+    _item, _on,
 )
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
 from insight_core.utils.news_rules import NEWS_RECENT, cited_again, lead
@@ -176,7 +177,7 @@ class SearchRepository:
         since = now - timedelta(days=query.days) if query.days else None
         # The query is written out, not taken from a CTE, so the planner sees its words: a
         # common word walks the feed's order index, a rare one the GIN index.
-        where, params = [f"p.search_vector @@ {TSQUERY}"], [query.q]
+        where, params = [f"p.search_vector @@ {TSQUERY}", NOT_ALBUM_PIECE], [query.q]
         news = query.filter == "news"
         scope_sql, scope_params = "TRUE", []
         if query.scope is not None:
