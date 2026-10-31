@@ -544,6 +544,18 @@ class Suggestion:
     articles: List[str]              # its article-like addresses linked
     links: int                       # every address of it linked
     addresses: Set[str] = field(default_factory=set)   # those addresses (0051 counts its classics)
+    roundups: Set[str] = field(default_factory=set)    # the voices that link it only in roundups (0067)
+
+    @property
+    def weight(self) -> float:
+        """Its voices as Discover orders them (issue 0067): one linking it only in roundups counts half."""
+        return len(self.voices) - len(self.roundups) / 2
+
+
+def is_roundup(post: StoryPost) -> bool:
+    """A post whose links have 3+ anchors: it lists news, so it joins only the story of its first
+    (group) and weighs half in Discover's order (issue 0067)."""
+    return len(anchors(post)) >= ROUNDUP_ANCHORS
 
 
 def discover_address(url: str) -> Tuple[Optional[str], str, bool]:
@@ -580,32 +592,37 @@ def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hi
     return not (site in followed or key in hidden or site in hidden)
 
 
-def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden: Set[str],
-                followed_accounts: Set[str] = frozenset()) -> List[Suggestion]:
+def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], hidden: Set[str],
+                followed_accounts: Set[str] = frozenset(), mirrors: Set[str] = frozenset()) -> List[Suggestion]:
     """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
     links, that you don't follow and did not hide. On a platform the unit is the account: it is
     followed, or hidden, only as that account (`followed_accounts`, post_links.account_key), so
     following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
-    keys or sites). `links`: (voice, address) for every kept outside link. Most voices first."""
+    keys or sites); a tweet mirror's other pages (`mirrors`: hosts where tweets are found, issue
+    0067) are X's kinds of page, never a site. `links`: (voice, address, whether the linking post is
+    a roundup) for every kept outside link. Most voices first, a voice linking a key only in
+    roundups counting half (Suggestion.weight), then all voices."""
     links = list(links)
-    found: Dict[str, Tuple[Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set()))
-    for voice, url in links:
+    found: Dict[str, Tuple[Set[str], Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set(), set()))
+    for voice, url, roundup in links:
         key, site, platform = discover_address(url)
-        if key is None or not discover_open(key, site, platform, followed=followed, hidden=hidden,
-                                            followed_accounts=followed_accounts):
+        if key is None or (not platform and key in mirrors) or not discover_open(
+                key, site, platform, followed=followed, hidden=hidden, followed_accounts=followed_accounts):
             continue
-        voices, articles, every = found[key]
+        voices, articles, every, ordinary = found[key]
         voices.add(voice)
         every.add(url)
+        if not roundup:
+            ordinary.add(voice)
         if discover_article(url):
             articles.add(url)
     out = [
-        Suggestion(key, sorted(voices), sorted(articles), len(every), set(every))
-        for key, (voices, articles, every) in found.items()
+        Suggestion(key, sorted(voices), sorted(articles), len(every), set(every), voices - ordinary)
+        for key, (voices, articles, every, ordinary) in found.items()
         if len(voices) >= DISCOVER_MIN_VOICES and len(articles) >= DISCOVER_MIN_ARTICLES
         and len(articles) >= DISCOVER_ARTICLE_SHARE * len(every)
     ]
-    return sorted(out, key=lambda s: (-len(s.voices), -len(s.articles), -s.links, s.key))
+    return sorted(out, key=lambda s: (-s.weight, -len(s.voices), -len(s.articles), -s.links, s.key))
 
 
 # ---- Discover: where your stories start (issue 0065) --------------------------------------------
@@ -642,7 +659,8 @@ def discover_place(url: str) -> Optional[str]:
     return f"{key}/{section}" if key and section else key
 
 
-def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]) -> Origins:
+def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str],
+            mirrors: Set[str] = frozenset()) -> Origins:
     """Where your stories start, each story once:
     - at its own source's site (Origin.own), or at a place one of your sources holds (`held`:
       discover_place -> that source): nothing to suggest; a story the
@@ -650,7 +668,8 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
     - on a site you don't follow, or an account no source holds: that site or account;
     - on a site you follow, in a section none of your sources holds: that section when SECTION_SHARE
       of the site's such stories start there (0060's rule: anthropic.com/news), else the site;
-    - on a platform's page that names no account (youtube.com/watch?v=...): only listed."""
+    - on a platform's page that names no account (youtube.com/watch?v=...), or a tweet mirror's page
+      that is not a tweet (`mirrors`, issue 0067: nitter.net/i/article/...): only listed."""
     out = Origins()
     elsewhere: Dict[str, List[Origin]] = defaultdict(list)   # a followed site's host -> its unheld stories
     for root in roots:
@@ -658,7 +677,7 @@ def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str]
         place = discover_place(root.url)
         if root.own:
             continue
-        if key is None:
+        if key is None or (not platform and key in mirrors):
             if not root.stored:   # a stored one is its source's
                 _, _, rest = bare(root.url).partition("/")
                 out.unnamed[f"{site}/{re.split(r'[/?#]', rest)[0]}"].append(root)
@@ -688,4 +707,4 @@ def source_site(hosts: Iterable[Tuple[str, int]]) -> str:
 
 __all__ = ["StoryPost", "Story", "Suggestion", "Tree", "group", "tree", "threads", "address_origins", "roles", "count_voices", "suggestions",
            "discover_address", "discover_article", "discover_open", "discover_place", "Origin", "Origins", "origins",
-           "source_site", "title_key", "anchors"]
+           "source_site", "title_key", "anchors", "is_roundup"]

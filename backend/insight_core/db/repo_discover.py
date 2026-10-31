@@ -28,20 +28,29 @@ which is Python's full case mapping.
 Measured on a copy of the lab (41.7k posts, 138.6k kept links, 2026-10-31): the first open after
 a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.56 s and 9 MB,
 with the same list in the same order.
+
+Issue 0067: each voice also says whether it links a key only in roundups (posts of 3+ anchors,
+story_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
+are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
+(system_settings `discover_counts`): the story job counts them after it fills the addresses, and
+an open reads them while their stamp (the rules, the last story run, the sources with posts) holds.
+Hidden and followed keys are left out when read, so hiding or following needs no recount.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from psycopg import Cursor
 
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR
 from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
-                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST, TWEET,
-                                            Origin, discover_address, discover_article)
+                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST,
+                                            ROUNDUP_ANCHORS, TWEET, Origin, discover_address, discover_article)
 
 # Which rules wrote a discover_addresses row. Bump ADDRESS_RULES_VERSION when discover_address,
 # site_of, account_key or discover_article change in a way the constants below don't show.
@@ -50,6 +59,8 @@ ADDRESS_RULES = hashlib.sha1(repr((ADDRESS_RULES_VERSION, sorted(DISCOVER_PLATFO
                                    sorted(ACCOUNT_NAMESPACES), ARTICLE.pattern, TWEET.pattern,
                                    PLATFORM_POST.pattern)).encode()).hexdigest()[:12]
 LOCK_KEY = "insight.discover_addresses"
+KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
+COUNTS_VERSION = 1             # bump when the counting query changes what it returns
 WORK_MEM = "48MB"
 
 _COUNTS = """
@@ -72,15 +83,13 @@ kept_url AS MATERIALIZED (        -- each address a kept link points to, and wha
     LEFT JOIN discover_addresses d ON d.url = u.url AND d.rules = %(rules)s
 ),
 unknown AS (SELECT (SELECT count(*) FROM kept_url WHERE unknown) + (SELECT count(*) FROM reposted WHERE unknown) AS n),
-unfollowed AS MATERIALIZED (      -- those whose key you neither follow nor hid (discover_open)
-    SELECT url, key, article FROM kept_url
-    WHERE key IS NOT NULL AND CASE
-        WHEN platform THEN NOT (key = ANY(%(followed_accounts)s) OR key = ANY(%(hidden)s))
-        ELSE NOT (site = ANY(%(followed)s) OR key = ANY(%(hidden)s) OR site = ANY(%(hidden)s)) END
+unfollowed AS MATERIALIZED (      -- those with a key, not a tweet mirror's other pages (issue 0067; one you
+    SELECT url, key, article FROM kept_url   -- follow or hid is left out when read: discover_open)
+    WHERE key IS NOT NULL AND (platform OR NOT key = ANY(%(mirrors)s))
 ),
 candidate AS MATERIALIZED (       -- keys with 2+ article-like addresses, 40%%+ of their addresses
     SELECT key, count(*) FILTER (WHERE article) AS articles, count(*) AS links,
-           count(*) FILTER (WHERE url = ANY(%(classics)s)) AS classics
+           COALESCE(array_agg(url) FILTER (WHERE url IN (SELECT target_url FROM classics)), '{}') AS classics
     FROM unfollowed GROUP BY key
     HAVING count(*) FILTER (WHERE article) >= %(min_articles)s
        AND count(*) FILTER (WHERE article) >= %(share)s::float8 * count(*)
@@ -96,25 +105,37 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
+roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (story_rules.is_roundup): each
+    SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
+    WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster)
+      AND (pl.target_url !~ %(home)s                                        -- a home page no post is at
+           OR EXISTS (SELECT 1 FROM posts tp WHERE tp.normalized_url = pl.target_url))
+      AND (pl.target_url IS DISTINCT FROM p.normalized_url                  -- and the post itself (the
+           OR p.id <> (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url   -- first stored
+                       ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1))           -- at its address)
+    GROUP BY pl.post_id HAVING count(*) >= %(roundup_anchors)s
+),
 author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it, lowercase as Python's
     SELECT p.id, lower(substring(p.content_html FROM %(author_re)s) COLLATE "und-x-icu") AS author
     FROM posts p WHERE p.id IN (SELECT post_id FROM linked WHERE kind = 'reddit')
       AND strpos(p.content_html, %(author_mark)s) > 0
 ),
-link AS MATERIALIZED (            -- with their voices (StoryPost.voice)
+link AS MATERIALIZED (            -- with their voices (StoryPost.voice), and whether a roundup linked it
     SELECT l.key, l.url, l.article, l.post_id, l.position, l.text,
            (CASE WHEN l.kind = 'site' THEN 'site:' || l.own_site
                  WHEN l.kind = 'reddit' AND a.author IS NOT NULL THEN 'reddit:' || a.author
-                 ELSE 'source:' || l.source_id::text END) COLLATE "C" AS voice
+                 ELSE 'source:' || l.source_id::text END) COLLATE "C" AS voice,
+           l.post_id IN (SELECT post_id FROM roundup) AS roundup
     FROM linked l LEFT JOIN author a ON a.id = l.post_id
 ),
 heard AS MATERIALIZED (           -- who linked what: each address and voice once
     SELECT DISTINCT key, url, voice, article FROM link
 ),
-counted AS MATERIALIZED (         -- and 3+ voices
-    SELECT c.key, v.voices, c.articles, c.links, c.classics
+counted AS MATERIALIZED (         -- and 3+ voices, with those that link the key only in roundups
+    SELECT c.key, v.voices, v.roundups, c.articles, c.links, c.classics
     FROM candidate c
-    JOIN (SELECT key, array_agg(voice) AS voices FROM (SELECT DISTINCT key, voice FROM heard) kv
+    JOIN (SELECT key, array_agg(voice) AS voices, COALESCE(array_agg(voice) FILTER (WHERE only_roundups), '{}') AS roundups
+          FROM (SELECT key, voice, bool_and(roundup) AS only_roundups FROM link GROUP BY key, voice) kv
           GROUP BY key HAVING count(*) >= %(min_voices)s) v USING (key)
 ),
 shown AS MATERIALIZED (           -- each kept key's top articles: most voices first, then by address
@@ -134,11 +155,24 @@ listed AS (
     SELECT s.key, json_agg(json_build_array(s.url, s.voices, t.text) ORDER BY s.r) AS articles
     FROM shown s LEFT JOIN title t USING (url) GROUP BY s.key
 )
-SELECT c.key, c.articles, c.links, c.classics, c.voices, COALESCE(l.articles, '[]'::json), (SELECT n FROM unknown)
+SELECT c.key, c.articles, c.links, c.classics, c.voices, c.roundups, COALESCE(l.articles, '[]'::json),
+       (SELECT n FROM unknown)
 FROM counted c LEFT JOIN listed l USING (key)
 UNION ALL   -- the unknown count also when nothing is kept
-SELECT NULL, NULL, NULL, NULL, NULL, NULL, (SELECT n FROM unknown)
+SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, (SELECT n FROM unknown)
 """
+
+# The hosts where tweets are found by shape (0066's TWEET_PATH in a link of a post's HTML): X and its
+# mirrors (nitter.net, xcancel.com, ...), found, never listed. Read once per post, after its links are
+# read (links_scanned_at): the kept hosts and the newest post read are kept with Discover's counts.
+TWEET_HREF = r"https?://([A-Za-z0-9.-]+)/[A-Za-z0-9_]+/status/[0-9]{15}"
+_MIRRORS = """
+SELECT COALESCE(array_agg(DISTINCT lower(m[1])), '{}'), (SELECT max(links_scanned_at) FROM posts)
+FROM posts p, regexp_matches(p.content_html, %(tweet)s, 'g') m
+WHERE strpos(p.content_html, '/status/') > 0 AND (%(since)s::timestamptz IS NULL OR p.links_scanned_at > %(since)s)
+"""
+# A home page, as post_links.is_home reads one: a host and at most one segment, no query or fragment.
+HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
 # A website voice is named after the source of its first kept link in post order; asked only for
 # the sites more than one website source shares (the others have one source).
@@ -195,15 +229,17 @@ class DiscoverRepository:
 
     @staticmethod
     def counts(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str], accounts: Dict[str, str],
-               followed: Iterable[str], followed_accounts: Iterable[str], hidden: Iterable[str],
-               classic_urls: Iterable[str], shown: int) -> Tuple[List[Dict[str, Any]], int]:
-        """The kept suggestions, unordered, and how many linked addresses discover_addresses lacks
-        (when any, fill_addresses and ask again: those links were not counted). A suggestion: key,
-        voices [(voice, the source naming it; None for a Reddit author)], article_count,
-        link_count, classics and its `shown` top articles [(url, voices, title)].
+               mirrors: Iterable[str], shown: int) -> Tuple[List[Dict[str, Any]], int]:
+        """The kept suggestions, unordered, those you follow or hid too, and how many linked addresses
+        discover_addresses lacks (when any, fill_addresses and ask again: those links were not
+        counted). A suggestion: key, voices [(voice, the source naming it; None for a Reddit author)],
+        roundups (the voices linking it only in roundups, issue 0067), article_count, link_count,
+        classics (its addresses that are classics, hidden or not) and its `shown` top articles
+        [(url, voices, title)].
         `kinds` and `own_sites`: each source's kind (source_kind) and own site (SourceFacts.own_site);
         `accounts`: the platform account of each source that follows one (SourceFacts.platform_accounts),
-        whose posts at another account's address are reposts, counted as links to that address."""
+        whose posts at another account's address are reposts, counted as links to that address;
+        `mirrors`: the hosts where tweets are found (DiscoverRepository.mirrors)."""
         ids = sorted(kinds)
         # Its hash tables and sorts (~100k addresses) fit in memory with this; the default 4 MB
         # spilled them to disk. For this transaction only.
@@ -212,23 +248,51 @@ class DiscoverRepository:
             "ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
             "accounts": [accounts.get(i, "") for i in ids],
             "author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by",
-            "rules": ADDRESS_RULES, "followed": sorted(followed), "followed_accounts": sorted(followed_accounts),
-            "hidden": sorted(hidden), "classics": sorted(classic_urls),
+            "rules": ADDRESS_RULES, "mirrors": sorted(mirrors), "home": HOME, "roundup_anchors": ROUNDUP_ANCHORS,
             "min_voices": DISCOVER_MIN_VOICES, "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE,
             "shown": shown,
         })
         rows = cur.fetchall()
         unknown = int(rows[0][-1])   # on every row, and on the one row with no key
         found = [{
-            "key": key, "article_count": int(articles), "link_count": int(links), "classics": int(classics),
-            "voices": list(voices),
+            "key": key, "article_count": int(articles), "link_count": int(links), "classics": list(classics),
+            "voices": list(voices), "roundups": list(roundups),
             "articles": [(url, list(url_voices), text) for url, url_voices, text in shown_articles],
-        } for key, articles, links, classics, voices, shown_articles, _ in rows if key is not None]
+        } for key, articles, links, classics, voices, roundups, shown_articles, _ in rows if key is not None]
         site_voices = {v for s in found for v in s["voices"] if v.startswith("site:")}
         namers = DiscoverRepository._site_namers(cur, kinds, own_sites, site_voices)
         for s in found:
             s["voices"] = [(voice, voice_source(voice, namers)) for voice in s["voices"]]
         return found, unknown
+
+    @staticmethod
+    def mirrors(cur: Cursor, kept: Optional[Dict[str, Any]]) -> Tuple[List[str], Optional[str]]:
+        """The hosts where tweets are found by shape (TWEET_HREF), and the newest post read: those
+        `kept` with the last counts, plus the ones found in the posts read since (all, the first time)."""
+        hosts = set(kept["mirrors"]) if kept else set()
+        cur.execute(_MIRRORS, {"tweet": TWEET_HREF, "since": kept["scanned_to"] if kept else None})
+        found, scanned_to = cur.fetchone()
+        return sorted(hosts | set(found)), scanned_to.isoformat() if scanned_to else None
+
+    @staticmethod
+    def kept(cur: Cursor) -> Optional[Dict[str, Any]]:
+        """Discover's last counts (issue 0067): {stamp, found, mirrors, scanned_to}, or None."""
+        row = SystemSettingsRepository.get(cur, KEPT_KEY)
+        return row[0] if row else None
+
+    @staticmethod
+    def keep(cur: Cursor, kept: Dict[str, Any]) -> None:
+        SystemSettingsRepository.upsert(cur, KEPT_KEY, kept)
+
+    @staticmethod
+    def stamp(cur: Cursor, facts: Any) -> str:
+        """What the counts are counted from: the rules, the last story run (links are read and
+        classics refreshed before it) and `facts`, the facts of the sources with posts (a source
+        with none links nothing). Same stamp, same counts."""
+        cur.execute("SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories'")
+        row = cur.fetchone()
+        what = json.dumps([COUNTS_VERSION, ADDRESS_RULES, row[0] if row else None, facts])
+        return hashlib.sha1(what.encode()).hexdigest()[:16]
 
     @staticmethod
     def story_origins(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str]) -> List[Origin]:

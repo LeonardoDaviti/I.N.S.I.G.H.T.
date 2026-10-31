@@ -157,7 +157,7 @@ class DiscoverOriginsTests(unittest.TestCase):
         m = self.mark
         voices = self._voices(4)
         for source, host in voices:                                        # linked by 4: today's first
-            self._post(source, f"https://{host}/p/x", [f"https://busy-{m}.example/2026/10/story-{n}" for n in range(3)])
+            self._post(source, f"https://{host}/p/x", [f"https://busy-{m}.example/2026/10/story-{n}" for n in range(2)])
         for n in range(2):                                                  # linked by 3, and 2 stories start there
             self._cite(voices[:3], f"https://origin-{m}.example/2026/10/launch-{n}")
         for source, host in voices[:3]:                                     # linked by 3, no story

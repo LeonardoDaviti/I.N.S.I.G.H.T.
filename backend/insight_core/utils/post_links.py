@@ -57,6 +57,10 @@ ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
 SECTION_SHARE = 0.6
 SECTION_MIN = 2
 NUMBERISH = re.compile(r"^\d[\d_.-]*$")
+# A language tag's shape (issue 0067): en, ru-RU, zh-hans, en_US, es-419. Many sections share it (/ai/, /us/,
+# huggingface.co/ai-sage), so a first segment of this shape is read as a language only when a section and a
+# page follow it, never a date or a number: openai.com/ru-RU/index/x, not arstechnica.com/ai/2026/10/x.
+LANGUAGE = re.compile(r"^[a-z]{2}(?:[-_](?:[a-z]{2}|[a-z]{4}|\d{3}))?$", re.I)
 
 
 @dataclass(frozen=True)
@@ -134,9 +138,12 @@ def titled_link_text(text: Optional[str]) -> bool:
 
 def section_of(url: str) -> str:
     """The section an address is in: its first path segment when a page sits under it, "" for a
-    page at the site's root or under a date or a number (/2026/10/x)."""
+    page at the site's root or under a date or a number (/2026/10/x). A language before it is skipped
+    (LANGUAGE): openai.com/ru-RU/index/x is in /index."""
     _, _, rest = bare(url).partition("/")
     segments = [segment for segment in rest.split("?", 1)[0].split("#", 1)[0].split("/") if segment]
+    if len(segments) >= 3 and LANGUAGE.match(segments[0]) and not NUMBERISH.match(segments[1]):
+        segments = segments[1:]
     return segments[0] if len(segments) >= 2 and not NUMBERISH.match(segments[0]) else ""
 
 
