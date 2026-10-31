@@ -72,6 +72,12 @@ def recompute_stories() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     services()  # build the services at boot, so a bad configuration fails here
+    try:   # the API's jobs a restart ended (issue 0070): no request has started one yet
+        closed = services().operations.close_interrupted_jobs("manual")
+        if closed:
+            logger.info("Jobs: %s left running by a restart marked interrupted", closed)
+    except Exception:
+        logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
     threading.Thread(target=recompute_stories, name="stories", daemon=True).start()
     yield

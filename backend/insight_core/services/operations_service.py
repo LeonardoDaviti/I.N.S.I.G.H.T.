@@ -464,6 +464,27 @@ class OperationsService:
                 )
             conn.commit()
 
+    def close_interrupted_jobs(self, trigger: str) -> int:
+        """At a process's start (issue 0070): the jobs it runs (`trigger`: "manual" the API's,
+        "scheduler" the scheduler's) still `running` were ended by its restart, so they become
+        `interrupted`, with an event saying so, and the top bar stops saying "fetching". Returns how many."""
+        event = {"level": "error", "message": "Interrupted by a restart", "status": "interrupted"}
+        with db.connection(self.db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE job_runs
+                    SET status = 'interrupted', finished_at = now(),
+                        payload = jsonb_set(payload, '{events}', COALESCE(payload->'events', '[]'::jsonb)
+                                            || jsonb_build_array(%s::jsonb || jsonb_build_object('at', now())))
+                    WHERE status = 'running' AND trigger = %s
+                    """,
+                    (json.dumps(event), trigger),
+                )
+                closed = cur.rowcount or 0
+            conn.commit()
+        return closed
+
     def discard_job(self, job_id: str) -> None:
         """Delete a job that turned out not worth listing (a scheduler tick with nothing due)."""
         with db.connection(self.db_url) as conn:
