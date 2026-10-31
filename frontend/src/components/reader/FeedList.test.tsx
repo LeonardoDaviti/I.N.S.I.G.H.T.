@@ -406,4 +406,38 @@ describe('FeedList', () => {
     await user.click(within(list).getByRole('link', { name: 'My notes on the model' }));
     expect(screen.getByTestId('location')).toHaveTextContent(`/posts/${ID(7)}`);
   });
+  it('a story is a tree: what came from the lead indented, an outside origin first (issue 0064)', async () => {
+    const user = userEvent.setup();
+    const post = (n: number, name: string, title: string, hour: number, parent: string | null, reason: 'citation' | 'address' | 'copy') => ({
+      id: ID(n), title, url: `https://x.test/${n}`, source_id: `s${n}`, source_display_name: name, platform: 'rss',
+      sort_at: `2026-10-26T${hour}:00:00Z`, published_at: null, read_at: null, role: 'report' as const, parent_id: parent, parent_reason: reason,
+    });
+    // GPT-6.1 Terra: OpenAI's own post leads; HN's row of its address and two citers under it; LessWrong under Simon.
+    const terra = {
+      id: ID(1), voices: 4, first: ID(1), parent_id: null, parent_reason: null, origin: null,
+      sources: [{ id: 's1', name: 'OpenAI News' }, { id: 's2', name: 'Hacker News' }, { id: 's3', name: 'data_secrets' }, { id: 's4', name: 'Simon Willison' }],
+      posts: [post(2, 'Hacker News', 'GPT-6.1 Terra', 18, ID(1), 'address'), post(3, 'data_secrets', 'Вышла GPT-6.1 Terra', 19, ID(1), 'citation'),
+        post(4, 'Simon Willison', 'GPT-6.1 Terra notes', 23, ID(1), 'citation'), post(5, 'Lesswrong', 'AI #192', 23, ID(4), 'citation')],
+    };
+    // Claude Fable 5: the origin is Anthropic's page, linked by 3; this row is one of its citers.
+    const fable = {
+      id: ID(9), voices: 3, first: null, parent_id: null, parent_reason: 'citation' as const,
+      origin: { url: 'https://www.anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', linked_by: 3 },
+      sources: [{ id: 's9', name: 'ai_newz' }, { id: 's10', name: 'denissexy' }],
+      posts: [post(10, 'denissexy', 'Вышла новая модель', 17, null, 'citation')],
+    };
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Introducing GPT-6.1 Terra', story: terra }),
+      feedItem({ id: ID(9), title: 'Вышел Claude 5 Fable', source_display_name: 'ai_newz', sort_at: '2026-10-26T16:00:00Z', story: fable }),
+    ])) });
+    await user.click(await screen.findByRole('button', { name: /^covered by 4/ }));
+    await user.click(screen.getByRole('button', { name: /^covered by 2/ }));
+    const [terraList, fableList] = Array.from(document.querySelectorAll('[data-story-posts]')) as HTMLElement[];
+    const lines = (list: HTMLElement) => within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[0]}`);
+    expect(lines(terraList)).toEqual(['0 Hacker News', '0 data_secrets', '0 Simon Willison', '1 Lesswrong']);
+    expect(lines(fableList)).toEqual(['0 anthropic.com', '1 ai_newz', '1 denissexy']);
+    expect(within(fableList).getAllByRole('listitem')[1]).toHaveTextContent(/· this post$/);
+    expect(within(fableList).getByRole('link', { name: 'Claude Fable 5' })).toHaveAttribute('href',
+      '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5-mythos-5&title=Claude+Fable+5');
+  });
 });

@@ -83,7 +83,7 @@ class PostPageTests(unittest.TestCase):
 
     def _launch(self):
         """A report, a copy of it on another site, and someone's own take, all linking one page."""
-        page = f"https://launch-{self.mark}.test/2026/10/the-launch"
+        self.page = page = f"https://launch-{self.mark}.test/2026/10/the-launch"
         link = f'<p><a href="{page}">read</a></p>'
         self.anthropic = self._source("Anthropic")
         self.channel = self._source("Канал")
@@ -103,7 +103,9 @@ class PostPageTests(unittest.TestCase):
     def test_the_lead_carries_the_feed_rows_story(self):
         self._launch()
         story = self._story(self.lab)
-        self.assertEqual((story["id"], story["voices"], story["first"]), (self.lab, 2, self.lab))
+        # All three link one page outside INSIGHT: it is the origin (issue 0064), no post was first.
+        self.assertEqual((story["id"], story["voices"], story["first"]), (self.lab, 2, None))
+        self.assertEqual(story["origin"], {"url": self.page, "title": None, "linked_by": 3})
         self.assertEqual([s["name"] for s in story["sources"]], ["Anthropic", "Канал", "Simon Willison"])
         self.assertEqual([(p["id"], p["role"]) for p in story["posts"]], [(self.copy, "share"), (self.take, "report")])
         items, _ = ReaderRepository(unread_window_days=None).list_posts(self.cur, FeedQuery(limit=100), now=self.now)
@@ -114,13 +116,13 @@ class PostPageTests(unittest.TestCase):
         self._launch()
         story = self._story(self.take)
         self.assertEqual([(p["id"], p["role"]) for p in story["posts"]], [(self.lab, "report"), (self.copy, "share")])
-        self.assertEqual(story["first"], self.lab)
+        self.assertEqual((story["first"], story["origin"]["url"]), (None, self.page))
 
     def test_a_share_sees_the_reports(self):
         self._launch()
         story = self._story(self.copy)
         self.assertEqual([(p["id"], p["role"]) for p in story["posts"]], [(self.lab, "report"), (self.take, "report")])
-        self.assertEqual(story["first"], self.lab)
+        self.assertEqual((story["first"], story["origin"]["url"]), (None, self.page))
 
     def test_read_posts_say_so(self):
         self._launch()

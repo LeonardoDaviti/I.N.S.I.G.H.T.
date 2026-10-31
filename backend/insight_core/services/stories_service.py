@@ -104,6 +104,8 @@ class StoriesService:
             words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
             author=reddit_author(html) if kind == "reddit" else None,
             url=row["url"], links=row["links"],
+            # The tree's evidence (issue 0064): link words, a page updated since its date, its own site.
+            link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
         )
 
     def recompute_safely(self) -> Optional[Dict[str, Any]]:

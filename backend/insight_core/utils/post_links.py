@@ -112,6 +112,17 @@ def account_key(url: str) -> str:
     return f"{host.lower()}/{first}"
 
 
+def titled_link_text(text: Optional[str]) -> bool:
+    """Link words that name a page: 3+ words starting with a capital or a digit, not an address and
+    not cut mid-sentence. Measured on the server's data (2026-10-30, issue 0051): link words in the
+    middle of a sentence ("over 100,000 commits", "full paper on arXiv") named the top classics
+    badly; with this rule 20 of the top 30 titles were right, against 16, and the rest show the
+    page's address."""
+    if not text or re.match(r"https?://", text) or len(text.split()) < 3:
+        return False
+    return (text[0].isupper() or text[0].isdigit()) and not text.rstrip().endswith((",", ";", ":"))
+
+
 def is_article(url: str) -> bool:
     _, _, rest = bare(url).partition("/")
     return bool(ARTICLE.search("/" + rest.lower()))

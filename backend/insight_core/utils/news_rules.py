@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import bare, is_home, site_of
+from insight_core.utils.post_links import bare, is_home, site_of, titled_link_text
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, roles
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -237,9 +237,14 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     return sorted(out, key=lambda s: (s.first_at, s.id))
 
 
-def lead(posts: Sequence[Tuple[str, str]]) -> Optional[str]:
-    """A story's lead, as 0050's: its first report, else its first share. `posts`: (id, role),
-    first posted first."""
+def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = ()) -> Optional[str]:
+    """A story's lead, as 0050's: its origin (issue 0064: the first of `origins`, the posts no
+    other post of their 0050 story came from), else its first report, else its first share.
+    `posts`: (id, role), first posted first."""
+    origins = set(origins)
+    for pid, _ in posts:
+        if pid in origins:
+            return pid
     for want in ("report", "share"):
         for pid, role in posts:
             if role == want:
@@ -286,14 +291,7 @@ def is_reference(url: str) -> bool:
     return bool(REFERENCE.search("/" + rest))
 
 
-def _titled(text: Optional[str]) -> bool:
-    """Link words that name a page: 3+ words starting with a capital or a digit, not an address and
-    not cut mid-sentence. Measured on the server's data (2026-10-30): link words in the middle of a
-    sentence ("over 100,000 commits", "full paper on arXiv") named the top classics badly; with this
-    rule 20 of the top 30 titles were right, against 16, and the rest show the page's address."""
-    if not text or re.match(r"https?://", text) or len(text.split()) < 3:
-        return False
-    return (text[0].isupper() or text[0].isdigit()) and not text.rstrip().endswith((",", ";", ":"))
+_titled = titled_link_text   # moved to post_links (issue 0064: a story's outside origin is titled so too)
 
 
 def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetime, Optional[str]]]) -> List[Classic]:

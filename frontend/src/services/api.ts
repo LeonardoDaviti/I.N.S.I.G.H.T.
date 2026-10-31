@@ -152,16 +152,31 @@ export interface ClassicsResponse { success: true; classics: Classic[]; }
 export interface FeedStory {
   id: string;
   voices: number;
-  /** Its first report, else its first share. */
+  /** Its origin post (issue 0064; before the tree is drawn, its first report, else its first share); null when the origin is a page outside INSIGHT. */
   first?: string | null;
   sources: { id: string; name: string }[];
   posts: StoryPost[];
+  /** The origin when it is a page outside INSIGHT 2+ of the story's posts link (issue 0064). */
+  origin?: StoryOrigin | null;
+  /** This row's (or this post page's) own place in the tree, as each post's (issue 0064). */
+  parent_id?: string | null;
+  parent_reason?: StoryParentReason | null;
 }
+/** Why a post hangs from its parent, the most certain first (issue 0064). */
+export type StoryParentReason = 'address' | 'citation' | 'copy' | 'time' | 'none';
+/** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
+export interface StoryOrigin { url: string; title: string | null; linked_by: number; }
 export interface StoryPost {
   id: string; title: string; url: string; source_id: string; source_display_name: string; platform: string;
   sort_at: string; published_at: string | null; read_at: string | null;
   /** report: its own writing; share: a copy, a forward or a link post. */
   role: 'report' | 'share';
+  /**
+   * Its parent in the story's tree (issue 0064): a post of the story, else (with a reason) the
+   * story's outside `origin`; neither (no reason): it is the origin. Absent: no tree (News).
+   */
+  parent_id?: string | null;
+  parent_reason?: StoryParentReason | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */
