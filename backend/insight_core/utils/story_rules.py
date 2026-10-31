@@ -46,6 +46,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from urllib.parse import unquote
 
 from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, host_of,
                                           is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
@@ -194,7 +195,7 @@ class Story:
     # (None, None, None); a post under the outside page origin has (None, origin_url, reason).
     parents: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = field(default_factory=dict)
     origin_url: Optional[str] = None       # the origin, when it is a page outside INSIGHT
-    origin_title: Optional[str] = None     # its most common titled link words (0051's rule)
+    origin_title: Optional[str] = None     # its title by evidence (origin_title, issue 0068)
     origin_linked_by: int = 0              # how many of the story's posts are about it
 
 
@@ -493,10 +494,54 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
     if first is not None:
         return Tree(out)
     url = origin[len(_PAGE):]
-    texts = Counter(text for text in (by_id[pid].link_texts.get(url) for pid in page_posts[url])
-                    if titled_link_text(text))
-    title = min(texts.items(), key=lambda kv: (-kv[1], kv[0]))[0] if texts else None
-    return Tree(out, url, title, len(set(page_posts[url])))
+    return Tree(out, url, origin_title(url, [by_id[pid] for pid in dict.fromkeys(page_posts[url])]),
+                len(set(page_posts[url])))
+
+
+# An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
+# letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
+SLUG_MIN_WORDS = 3
+_SLUG = re.compile(r"[-_+]+")
+_TOKENS = re.compile(r"\w+", re.U)
+
+
+def _slug_words(url: str) -> List[str]:
+    """The words of an address's last path segment (its slug), its extension aside."""
+    _, _, rest = bare(url).partition("/")
+    slug = unquote(re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1])
+    return [w for w in _SLUG.split(re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I)) if w]
+
+
+def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
+    """An outside origin's title (issue 0068), from evidence, never one signal, nothing fetched.
+    `posts`: those linking it. A page that is stored is no outside origin: it is the root, with its
+    own title. Measured on the lab (30 roots checked by hand): link words that 2+ voices agree on
+    are often a bare word ("Блогпост", "Веса", "Video"), and a slug loses a title's case and dots
+    ("Introducing chatgpt images 2 5"), so each signal needs another's support:
+    1. link words 2+ voices agree on (copies of one text are one voice) that read as a title
+       (0051's rule, titled_link_text);
+    2. else link words the address's slug confirms (the same words): the words, as written;
+    3. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
+    4. else one voice's link words that read as a title;
+    5. else None: the reader shows the address."""
+    said: Dict[str, List[StoryPost]] = defaultdict(list)
+    for p in posts:
+        text = " ".join((p.link_texts.get(url) or "").split())
+        if text and not re.match(r"https?://", text):
+            said[text.casefold()].append(p)
+    form = {key: Counter(" ".join(p.link_texts[url].split()) for p in ps).most_common(1)[0][0] for key, ps in said.items()}
+    by_use = sorted(said, key=lambda key: (-count_voices(said[key]), -len(said[key]), key))
+    agreed = [key for key in by_use if count_voices(said[key]) >= 2 and titled_link_text(form[key])]
+    words = _slug_words(url)
+    slug = _TOKENS.findall(" ".join(words).casefold())
+    confirmed = [key for key in by_use if len(slug) >= 2 and _TOKENS.findall(key) == slug]
+    if agreed or confirmed:
+        return form[(agreed or confirmed)[0]]
+    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
+        text = " ".join(words)
+        return text[0].upper() + text[1:]
+    titled = [key for key in by_use if titled_link_text(form[key])]
+    return form[titled[0]] if titled else None
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
