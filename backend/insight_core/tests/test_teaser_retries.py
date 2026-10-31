@@ -158,12 +158,12 @@ class TeaserReadAgainDbTests(unittest.IsolatedAsyncioTestCase):
 
     def test_only_failed_reads_under_three_tries_a_day_apart_are_due(self):
         base = "https://news.example.com/due"
-        self._upsert({"url": f"{base}/failed-2-days-ago", "content": "Short.", "metadata": _tried(1)})
-        self._upsert({"url": f"{base}/failed-twice", "content": "Short.", "metadata": _tried(2, days_ago=1)})
-        self._upsert({"url": f"{base}/failed-an-hour-ago", "content": "Short.", "metadata": _tried(1, days_ago=1 / 24)})
-        self._upsert({"url": f"{base}/third-failure", "content": "Short.", "metadata": _tried(3, days_ago=5)})
-        self._upsert({"url": f"{base}/nothing-longer", "content": "Short.", "metadata": _tried(2, failed=False)})
-        self._upsert({"url": f"{base}/never-counted", "content": "Short."})
+        self._upsert({"url": f"{base}/failed-2-days-ago", "content": "Short, failed-2-days-ago.", "metadata": _tried(1)})
+        self._upsert({"url": f"{base}/failed-twice", "content": "Short, failed-twice.", "metadata": _tried(2, days_ago=1)})
+        self._upsert({"url": f"{base}/failed-an-hour-ago", "content": "Short, failed-an-hour-ago.", "metadata": _tried(1, days_ago=1 / 24)})
+        self._upsert({"url": f"{base}/third-failure", "content": "Short, third-failure.", "metadata": _tried(3, days_ago=5)})
+        self._upsert({"url": f"{base}/nothing-longer", "content": "Short, nothing-longer.", "metadata": _tried(2, failed=False)})
+        self._upsert({"url": f"{base}/never-counted", "content": "Short, never-counted."})
         self._upsert({"url": f"{base}/read", "content": ARTICLE_TEXT, "metadata": {FULL_TEXT_FLAG: True, **_tried(1)}})
         self.assertEqual(self._due(), [f"{base}/failed-2-days-ago", f"{base}/failed-twice"])
 

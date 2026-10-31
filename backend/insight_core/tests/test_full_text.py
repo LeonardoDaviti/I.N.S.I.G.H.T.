@@ -572,7 +572,9 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
 
     def _upsert(self, post: dict, source_id: str | None = None) -> str:
         with psycopg.connect(self.url) as conn, conn.cursor() as cur:
-            post_id, _ = self.repo.upsert_post(cur, {"title": "T", "date": None, **post}, source_id or self.source_id)
+            # One title per post: one source's same title and body is one post (issue 0070).
+            post_id, _ = self.repo.upsert_post(cur, {"title": f"T {post['url']}", "date": None, **post},
+                                               source_id or self.source_id)
             conn.commit()
         return post_id
 

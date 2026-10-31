@@ -3,8 +3,9 @@ story rules read: its site, whether it is a home page, whether it reads like an 
 
 A post's links are read from its HTML (`content_html`; a YouTube description counts when it is
 stored as HTML), made absolute against the post's own address and normalized as posts are
-(0049, `url_normalization`). Not kept: links to the post's own site, media files, and links
-back into the platform the post came from (Reddit's `[comments]` and user pages, t.me, x.com),
+(0049, `url_normalization`). Not kept: links to the post's own publication (its host, issue 0070:
+another publication on its site is cited), media files, and links back into the platform the post
+came from (Reddit's `[comments]` and user pages, t.me, x.com),
 except a link to a tweet (issue 0066): on X, another post is a connection (a quote, a reply's link).
 A source's signature (a link in 25% of its posts, 4 or more) can only be told over all of its
 posts: the story job marks those (`post_links.boilerplate`).
@@ -148,6 +149,19 @@ def is_home(url: str) -> bool:
     return "/" not in rest and "?" not in rest and "#" not in rest
 
 
+# A reference page's path segment (issue 0051): a vocabulary of page kinds, not a list of sites.
+REFERENCE = re.compile(r"/(docs?|documentation|products?|pricing|support|help|api|reference|release-notes"
+                       r"|changelog|wiki|articles|collections|download|login|signup)(/|$)")
+
+
+def is_reference(url: str) -> bool:
+    """A docs, product, pricing, help ... page, or a home page: a page you look things up in."""
+    if is_home(url):
+        return True
+    _, _, rest = bare(url).partition("/")
+    return bool(REFERENCE.search("/" + rest))
+
+
 # A first path segment that names a kind of account, the account's name following it:
 # reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
 ACCOUNT_NAMESPACES = frozenset({"r", "u", "user", "c", "channel"})
@@ -261,8 +275,11 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
     if not content_html:
         return []
     own = normalize_url(post_url) or ""
-    # The site it was read from too: a tweet's address is x.com, but your Nitter's profiles are its own.
-    blocked = {site_of(host_of(own)), site_of(host_of(post_url))} | PLATFORM_SITES.get(kind, frozenset())
+    # Its own publication (issue 0070: another publication on its site, a Substack writer another, is
+    # cited), and where it was read from too: a tweet's address is x.com, but your Nitter's profiles
+    # are its own.
+    mine = {publication_of(host_of(own)), publication_of(host_of(post_url))}
+    platform = PLATFORM_SITES.get(kind, frozenset())
     seen = set()
     out: List[PostLink] = []
     for match in HREF.finditer(content_html):
@@ -279,7 +296,7 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
             continue
         seen.add(url)
         site = site_of(host_of(url))
-        if (site in blocked and not is_tweet(url)) or MEDIA.search(urlparse(url).path):
+        if ((site in platform or publication_of(host_of(url)) in mine) and not is_tweet(url)) or MEDIA.search(urlparse(url).path):
             continue
         out.append(PostLink(url, site, len(out), _link_text(content_html, match.end())))
     return out

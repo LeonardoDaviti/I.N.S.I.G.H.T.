@@ -180,6 +180,25 @@ class PostsRepository:
         )
     """
 
+    # Issue 0070: one source's post found under another address altogether (a host move, a renamed
+    # slug, ?src=feed): the same title (post_title_key), posted within a day, the same body
+    # (same_post_body, migration 0052: the same hash, or one's opening is the other), not at a
+    # platform's own post address. The newer address wins: that row is updated with this url.
+    # Locked on the source and title, as _other_form locks the address.
+    _TITLE_LOCK_SQL = ("SELECT pg_advisory_xact_lock(hashtextextended("
+                       "'insight.post-title:' || %(source_id)s::text || post_title_key(%(title)s::text), 0))")
+    _ELSEWHERE_SQL = """
+        SELECT id, length(content) FROM posts
+         WHERE source_id = %(source_id)s::uuid AND album_of IS NULL
+           AND COALESCE(published_at, fetched_at) BETWEEN COALESCE(%(published_at)s::timestamptz, now()) - interval '1 day'
+                                                      AND COALESCE(%(published_at)s::timestamptz, now()) + interval '1 day'
+           AND post_title_key(title) = post_title_key(%(title)s::text)
+           AND normalized_url IS DISTINCT FROM %(normalized_url)s::text AND NOT platform_post_address(normalized_url)
+           AND same_post_body(content_hash, content, %(content_hash)s::text, %(content)s::text)
+         ORDER BY fetched_at DESC, id
+         LIMIT 1
+    """
+
     # Bounded because each retry only happens when another writer moved the rows under us.
     # Every resolver branch converges (see _resolve_external_id_collision), so exhausting
     # this means something is genuinely wrong rather than merely contended.
@@ -342,7 +361,8 @@ class PostsRepository:
                 # never reached and every post gathered that cycle is rolled back.
                 with self._savepoint(cur, "insight_upsert_post"):
                     other_form = self._other_form(cur, params)
-                    if not other_form:
+                    row = None if other_form else self._same_post_elsewhere(cur, params)
+                    if not other_form and row is None:
                         cur.execute(query, params)
                         row = cur.fetchone()
             except psycopg.errors.UniqueViolation as exc:
@@ -392,6 +412,28 @@ class PostsRepository:
         cur.execute(self._ADDRESS_LOCK_SQL, params)
         cur.execute(self._OTHER_FORM_SQL, params)
         return bool(cur.fetchone()[0])
+
+    def _same_post_elsewhere(self, cur: Cursor, params: Dict[str, Any]) -> Optional[Tuple[Any, bool]]:
+        """This post stored by its source under another address (_ELSEWHERE_SQL): that row, moved to
+        this url and updated, as (id, False); None when there is none. A body shorter than the
+        stored one (a teaser of it) leaves the stored text."""
+        if params.get("normalized_url") is None or not params.get("title"):
+            return None
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE url = %(url)s)"
+                    " OR platform_post_address(%(normalized_url)s::text)", params)
+        if cur.fetchone()[0]:
+            return None   # stored as it is (a re-fetch), or a platform's post: its id is the post
+        cur.execute(self._TITLE_LOCK_SQL, params)
+        cur.execute(self._ELSEWHERE_SQL, params)
+        found = cur.fetchone()
+        if found is None:
+            return None
+        update = dict(params, target_id=found[0])
+        if len(params.get("content") or "") < (found[1] or 0):
+            update.update(content=None, content_html=None, content_hash=None)
+        cur.execute("UPDATE posts SET {assignments} WHERE id = %(target_id)s::uuid RETURNING id".format(
+            assignments=self._post_update_assignments(set_url=True, set_external_id=False)), update)
+        return (cur.fetchone()[0], False)
 
     def _resolve_external_id_collision(
         self, cur: Cursor, params: Dict[str, Any], *, attempt: int = 0
