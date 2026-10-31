@@ -51,6 +51,19 @@ Status: **spec** (2026-10-31) for v9.10 (owner, 2026-10-31: "you are right about
 ## 7. Two cases that may be stale
 - `protein-design-surfaced` and `internal-link` in `plan/research/lab/cases.json` read "fail", with a 9.8 fix named. Check both on the lab copy, and record the result.
 
+## 8. Writers on a shared blog host are separate voices
+- **The case** (found while building 0067): a site source's voice is its registrable site (`site_of`: the last two labels). Different writers on one blog host collapse into one voice:
+  - 12 Substack sources (garymarcus, gwern, epochai, aella, addyo, …) count as `site:substack.com`;
+  - 7 on github.io (karpathy, lilianweng, geohot, matklad, …);
+  - 3 on bearblog.dev.
+
+  That's 22 sources counted as 3 voices. Two of them covering one story don't make a story, and News counts them once. A separate case: `blog.ncase.me` and `ncase.me` are one writer.
+- **Decided:**
+  - Hosting platforms are told by a general rule, never a hand list of sites. The candidate is the Public Suffix List's private section, where hosting platforms register so that each subdomain is its own site. Measure first whether it covers these three. If it doesn't, record what does and propose it.
+  - The same rule applies wherever `site_of` names a voice or a place: stories, News, Discover's voices and 0060's sections. Discover keeps one place per platform site for suggestions unless the measurement says otherwise.
+- **Expected on the lab:** record the stories and News gained, or changed, and 10 of them read by hand. Record that `ncase.me`'s two sources stay one voice, or why not.
+- **Done when:** tests for a platform subdomain being its own voice and an ordinary subdomain (`blog.x.com`) not; the lab numbers recorded.
+
 ## Done when (all)
 - Backend and frontend suites green; the bundle within budget. The feed route has about 0.23% left of its 1%, so say what each part costs.
 - Every passing case in `cases.json` still passes; `now` updated for the cases above.
