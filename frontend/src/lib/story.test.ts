@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree, suggestionReason } from './story.ts';
+import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, suggestionReason } from './story.ts';
 import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
@@ -98,6 +98,10 @@ test('a thread is one item: "Thread · 6 posts", its replies a list in their ord
 test('repostLine names who reposted a tweet, and its author', () => {
   assert.equal(repostLine({ by: ['steipete'], author: 'badlogicgames' }), '↻ @steipete, from @badlogicgames');
   assert.equal(repostLine({ by: ['_akhaliq', 'ggerganov'], author: 'ClementDelangue' }), '↻ @_akhaliq, @ggerganov, from @ClementDelangue');
+  // Issue 0070: beside the source that reposted it, never its name again; a tree line names the author.
+  assert.equal(repostLine({ by: [], author: 'thsottiaux' }), '↻ from @thsottiaux');
+  assert.equal(storyPostName({ source_display_name: 'sama', repost: { by: [], author: 'danintheory' } }), '@danintheory');
+  assert.equal(storyPostName({ source_display_name: 'sama' }), 'sama');
 });
 
 test('storyTree: no tree (before the job drew it, News) lists the posts flat, as before', () => {

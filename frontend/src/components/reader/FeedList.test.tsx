@@ -455,14 +455,14 @@ describe('FeedList', () => {
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
       feedItem({ id: ID(1), title: 'software is dead. sad.', source_display_name: 'badlogicgames', story: thread }),
       feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
-        repost: { by: ['steipete'], author: 'badlogicgames' } }),
+        repost: { by: [], author: 'badlogicgames' } }),
     ])) });
     await user.click(await screen.findByRole('button', { name: 'Thread · 3 posts' }));
     const list = document.querySelector('[data-story-posts]') as HTMLElement;
     expect(within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[1]}`))
       .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
     const [, repost] = screen.getAllByRole('article');
-    expect(repost).toHaveTextContent('steipete·↻ @steipete, from @badlogicgames');
+    expect(repost).toHaveTextContent('steipete↻ from @badlogicgames·');   // the source once (issue 0070)
   });
   it('a story names the roundups that mention it, who reposted a tweet, and on a phone a deep line its parent (issue 0068)', async () => {
     const user = userEvent.setup();

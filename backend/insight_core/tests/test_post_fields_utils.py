@@ -5,7 +5,9 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.utils.post_fields import build_post_fields, display_title
+from insight_core.utils.post_fields import (
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, reading_text,
+)
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
 
@@ -171,6 +173,102 @@ class DisplayTitleTests(unittest.TestCase):
 
     def test_a_long_cjk_line_is_cut_hard_at_117(self):
         self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")
+
+
+class TitlesLeftOpenTests(unittest.TestCase):
+    # Issue 0070, B6: the titles 0069 B left open, each a class.
+    def test_a_link_then_a_list_is_titled_by_the_link_and_a_list_mark_is_no_word(self):
+        title = "RT by @badlogicgames: http://agentville.world\n\n> accessible for AI newcomers\n> voice chat for everything"
+        self.assertEqual(display_title(title, "agentville.world > accessible for AI newcomers > voice chat"), "agentville.world")
+        self.assertEqual(display_title("R to @predict_addict: • It penalizes underconfidence\n• and more", ""),
+                         "It penalizes underconfidence")
+        self.assertEqual(display_title("— модель станет доступна сегодня всем, кроме бесплатников.", ""),
+                         "модель станет доступна сегодня всем, кроме бесплатников.")
+
+    def test_a_title_ending_in_a_custom_emoji_keeps_it(self):
+        title = "Релизы зарелижены, поэтому время показать папищекам, что я жива💀."
+        body = "Релизы зарелижены, поэтому время показать папищекам, что я жива 💀 . Все подводят какие-то итоги года"
+        self.assertEqual(display_title(title, body), title)
+        # A glued line that starts with an emoji and has words is still a line of its own.
+        self.assertEqual(display_title("🤖 OpenAI удвоила лимиты за $500🔥Изменения уже действуют.",
+                                       "🤖 OpenAI удвоила лимиты за $500\n🔥Изменения уже действуют."),
+                         "🤖 OpenAI удвоила лимиты за $500")
+
+    def test_a_telegram_link_preview_is_titled_by_the_pages_title(self):
+        html = ('<br/><a href="https://lnkd.in/p/x">https://lnkd.in/p/x</a><br/><br/><blockquote cite="https://lnkd.in/p/x">'
+                '<cite><b>LinkedIn</b></cite></br><b>New Open-Source Glyph for Refusing Consent</b></br>I just learned that.</blockquote>')
+        content = "https://lnkd.in/p/x LinkedIn New Open-Source Glyph for Refusing Consent I just learned that."
+        self.assertEqual(display_title("[Media]", content), "LinkedIn New Open-Source Glyph for Refusing Consent I just learned that.")
+        self.assertEqual(display_title("[Media]", content, html), "New Open-Source Glyph for Refusing Consent")
+        tweet = html.replace("<b>New Open-Source Glyph for Refusing Consent</b>", "<b>Percy Liang (@percyliang)</b>")
+        self.assertEqual(display_title("[Media]", content, tweet), "I just learned that.", "a tweet's preview: its words, not its author")
+
+    def test_a_letters_abbreviation_is_no_sentence_end(self):
+        title = ("SITUATION DETECTED: Major U.S. banks are detecting unauthorized AI agents operating inside customer accounts. "
+                 "And more besides that goes on.")
+        self.assertEqual(display_title(title, ""), "SITUATION DETECTED: Major U.S. banks are detecting unauthorized AI agents "
+                                                   "operating inside customer accounts.")
+        self.assertEqual(display_title("Hidden deep inside the catalogue of A. P. Kiselev. " + "x " * 80, ""),
+                         "Hidden deep inside the catalogue of A. P. Kiselev.")
+        self.assertEqual(display_title("A treasure of notes like this fills Kiselev's Algebra, Part I. " + "y " * 80, ""),
+                         "A treasure of notes like this fills Kiselev's Algebra, Part I.", "\"I\" ends a sentence")
+
+
+class TitleNotReadTwiceTests(unittest.TestCase):
+    # Issue 0070: a title taken from the body isn't read twice; the body starts after it.
+    def test_a_telegram_posts_first_line_leaves_its_body(self):
+        content = "Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.\nТеренс Тао и другие."
+        html = "<p><b>Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.</b><br/>Теренс Тао и другие.</p>"
+        title, text, body = reading_text("Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику. Теренс…", content, html)
+        self.assertEqual(title, "Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.")
+        self.assertEqual((text, body), ("Теренс Тао и другие.", "<p>Теренс Тао и другие.</p>"), "no empty bold, no break")
+
+    def test_a_tweets_first_line_is_found_by_its_html_when_the_text_lost_its_breaks(self):
+        html = '<p>Canada being &quot;at the forefront of AI&quot;</p>\n<a href="https://x.test/v"><br>Video<br></a>'
+        title, text, body = reading_text('RT by @predict_addict: Canada being "at the forefront of AI"',
+                                         'Canada being "at the forefront of AI" Video', html)
+        self.assertEqual((title, text), ('Canada being "at the forefront of AI"', "Video"))
+        self.assertEqual(body, '<a href="https://x.test/v"><br>Video<br></a>')
+
+    def test_a_title_that_is_only_the_bodys_first_words_stays_in_it(self):
+        self.assertEqual(reading_text("Notes", "Notes on X and Y", "<p>Notes on X and Y</p>")[1:],
+                         ("Notes on X and Y", "<p>Notes on X and Y</p>"))
+        self.assertEqual(body_after_title("Introducing Gemini 4", "Introducing Gemini 4, our model"), "Introducing Gemini 4, our model")
+
+    def test_a_cut_title_a_whole_body_or_another_start_leave_the_body_alone(self):
+        self.assertEqual(body_after_title("A long first line that goes on…", "A long first line that goes on and on.\nMore."),
+                         "A long first line that goes on and on.\nMore.")
+        self.assertEqual(body_after_title("All of it.", "All of it."), "All of it.")
+        self.assertEqual(body_after_title("Other words.", "Different text.\nMore."), "Different text.\nMore.")
+
+    def test_a_heading_that_repeats_the_title_goes(self):
+        html = '<h1>Soft-deprecating re.match()</h1>\n<p>Python has a concept of soft deprecation.</p>'
+        self.assertEqual(body_after_title("Soft-deprecating re.match()", html, html=True),
+                         "<p>Python has a concept of soft deprecation.</p>")
+
+
+class FeedLinesTests(unittest.TestCase):
+    # Issue 0070: hnrss's four lines are a Hacker News row's counts, never its text.
+    TEXT = ("Article URL: https://www.sec.gov/Archives/edgar/s1.htm Comments URL: https://news.ycombinator.com/item?id=50242939 "
+            "Points: 1675 # Comments: 1628")
+    HTML = ('<p>Article URL: <a href="https://www.sec.gov/s1.htm">https://www.sec.gov/s1.htm</a></p>\n'
+            '<p>Comments URL: <a href="https://news.ycombinator.com/item?id=1">https://news.ycombinator.com/item?id=1</a></p>\n'
+            '<p>Points: 1675</p>\n<p># Comments: 1628</p>\n')
+
+    def test_hnrss_lines_are_counts_not_text(self):
+        self.assertEqual(hnrss_counts(self.TEXT), {"points": 1675, "comments": 1628})
+        self.assertEqual(hnrss_counts(self.HTML), {"points": 1675, "comments": 1628})
+        self.assertEqual((body_without_feed_lines(self.TEXT), body_without_feed_lines(self.HTML)), ("", ""))
+
+    def test_a_show_hn_keeps_its_own_words(self):
+        html = "<p>Hey HN, I'm Christian.</p>\n<hr>\n" + self.HTML
+        self.assertEqual(body_without_feed_lines(html), "<p>Hey HN, I'm Christian.</p>")
+        self.assertEqual(body_without_feed_lines("Hey HN, I'm Christian. " + self.TEXT), "Hey HN, I'm Christian.")
+
+    def test_another_body_is_left_alone(self):
+        for body in ("Points: 3 of the plan", "<p>Article URL: none here</p>", None, ""):
+            self.assertEqual(body_without_feed_lines(body), body)
+            self.assertIsNone(hnrss_counts(body))
 
 
 if __name__ == "__main__":

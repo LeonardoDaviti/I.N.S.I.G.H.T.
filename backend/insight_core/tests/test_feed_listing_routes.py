@@ -255,7 +255,8 @@ class FeedListingRouteTests(unittest.TestCase):
         status, _, body = call(main.app, "GET", f"/api/posts/item/{post_id}")
         self.assertEqual(status, 200, body)
         self.assertEqual((feed_title, body["post"]["title"]), (short, short))
-        self.assertEqual(body["post"]["content"], tweet, "the body is served in full")
+        # Issue 0070: the title is the text's first sentence, so the body under it starts after it.
+        self.assertEqual(body["post"]["content"], tweet[len(short):].strip(), "the rest of the body is served in full")
 
     def test_read_state_rejects_a_mixed_or_empty_body(self):
         source = self._source()

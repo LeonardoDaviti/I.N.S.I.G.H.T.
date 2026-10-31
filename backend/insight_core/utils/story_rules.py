@@ -64,7 +64,9 @@ from insight_core.utils.url_normalization import TWEET_PATH
 # another publication on a site of publications, a platform's post about one story, one page under two
 # paths, a Saved page no voice.
 # 4: issue 0070, a name's separators are one, and a post joins the News of the name it says first.
-RULES_VERSION = 4
+# 5: issue 0070 B, a quoted text titled as the reader titles it (a list's mark, a letter's abbreviation:
+# 16 of the lab's 4,528 quoted texts read otherwise).
+RULES_VERSION = 5
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
 SAME_TITLE_WITHIN = timedelta(days=7)

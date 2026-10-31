@@ -29,11 +29,13 @@ import {
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
-import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree } from '../lib/story';
+import {
+  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree,
+} from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
-import { middleTruncate, plural } from '../lib/format';
+import { countsLabel, middleTruncate, plural } from '../lib/format';
 import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
 import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
@@ -81,7 +83,7 @@ function postFixtureApi(name: string): Partial<Api> | null {
 /** A story line on the post page, and its indent in the tree (issue 0064): two levels at most, one on a
  *  phone, where a line at the deepest indent names its parent instead, "↳ Mat Duggan" (issue 0068).
  *  As the feed row's, kept here so the reader's initial JS does not grow. */
-const STORY_LINE = 'flex min-w-0 items-baseline gap-1.5';
+const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap';   // a phone: the title on its own line (issue 0070)
 const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
 const Under = ({ name }: { name?: string }) =>
   name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
@@ -92,11 +94,14 @@ const Under = ({ name }: { name?: string }) =>
  * report marked "first". Its own block, so the reader's initial JS does not grow. The posts are the
  * story's tree (issue 0064): the origin first (a page outside INSIGHT opens in Save any page), its
  * children indented, then theirs; this post in its place as "this post", or, when it is the
- * origin, what came from it.
+ * origin, what came from it. A thread lists only what wasn't read above it (issue 0070): not the
+ * replies after this post.
  */
 function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; postId: string }) {
   const now = new Date();
-  const lines = storyTree(story, postId, post.published_at ?? post.fetched_at, postSourceName(post));
+  const readAbove = new Set(story.thread ? threadAfter(story, postId).map((reply) => reply.id) : []);
+  const lines = storyTree({ ...story, posts: story.posts.filter((p) => !readAbove.has(p.id)) }, postId,
+    post.published_at ?? post.fetched_at, postSourceName(post));
   if (!lines.length && !story.roundups?.length) return null;
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
@@ -112,13 +117,13 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             const { site, title, linkedBy } = originLabel(line.origin);
             return (
               <li key="origin" data-depth={line.depth} className={indent}>
-                <span className="max-w-[40%] shrink-0 truncate" title={site}>{middleTruncate(site, 32)}</span>
-                <span aria-hidden="true" className="shrink-0">·</span>
+                <span className={LINE_NAME} title={site}>{middleTruncate(site, 32)}</span>
+                <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
                 <Link
                   to={originHref(line.origin)}
                   dir="auto"
                   title={line.origin.url}
-                  className={`min-w-0 truncate rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
+                  className={`${LINE_TITLE} rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
                 >
                   {title}
                 </Link>
@@ -130,9 +135,9 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             return (
               <li key="self" data-depth={line.depth} aria-current="true" className={indent}>
                 <Under name={line.under} />
-                <span className="max-w-[40%] shrink-0 truncate">{middleTruncate(postSourceName(post), 32)}</span>
-                <span aria-hidden="true" className="shrink-0">·</span>
-                <span dir="auto" className="min-w-0 truncate text-fg-2">{post.title?.trim() || 'Untitled post'}</span>
+                <span className={LINE_NAME}>{middleTruncate(postSourceName(post), 32)}</span>
+                <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
+                <span dir="auto" className={`${LINE_TITLE} text-fg-2`}>{post.title?.trim() || 'Untitled post'}</span>
                 <span className="shrink-0">· this post</span>
               </li>
             );
@@ -142,18 +147,18 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             <li key={other.id} data-depth={line.depth} className={indent}>
               <Under name={line.under} />
               {!other.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-              <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(other.source_display_name)}>
-                {middleTruncate(sourceLabel(other.source_display_name), 32)}
+              <span className={LINE_NAME} title={sourceLabel(other.source_display_name)}>
+                {middleTruncate(storyPostName(other), 32)}
               </span>
-              <span aria-hidden="true" className="shrink-0">·</span>
+              <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
               <Link
                 to={postHref(other.id, null)}
                 dir="auto"
-                className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${other.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+                className={`${LINE_TITLE} rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${other.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
               >
                 {other.title?.trim() || 'Untitled post'}
               </Link>
-              {other.role === 'share' ? <span className="shrink-0">· share</span> : null}
+              {other.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(other.source_display_name)}</span> : other.role === 'share' ? <span className="shrink-0">· share</span> : null}
               {other.id === story.first ? <span className="shrink-0">· first</span> : null}
               <time dateTime={other.sort_at} title={feedFullTime(other.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
                 {feedDateLabel(other.sort_at, now)}
@@ -181,25 +186,32 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   );
 }
 
-/**
- * A thread read in order (issue 0066): the replies that follow this post, each its date opening it.
- * Each reply reads as the post's body does (issue 0068): the same reader, its links as links (a stored
- * post's opening here), its pictures through the image cache.
- */
-function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
+/** The thread's replies that follow this post, in order (issue 0066). */
+function threadAfter(story: FeedStory, postId: string): StoryPost[] {
   const next: StoryPost[] = [];
   for (let at = postId, reply; (reply = story.posts.find((p) => p.parent_id === at && p.parent_reason === 'thread')); at = reply.id) {
     next.push(reply);
   }
+  return next;
+}
+
+/**
+ * A thread read in order (issue 0066): the replies that follow this post, each its date opening it.
+ * Each reply reads as the post's body does (issue 0068): the same reader, its links as links (a stored
+ * post's opening here), its pictures through the image cache. A reply's quote of a tweet its story
+ * holds is no card (issue 0070): "↩ quotes the post above".
+ */
+function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
   return (
     <section data-thread aria-label="Thread" className="mt-6">
-      {next.map((reply) => (
+      {threadAfter(story, postId).map((reply) => (
         <div key={reply.id} className="border-t border-line py-4">
           {reply.html ? (
             <MarkdownRenderer content={reply.html} imageSrc={(src) => proxiedImage(reply.id, src)} internalLinks={reply.internal_links} />
-          ) : (
+          ) : reply.quotes_above ? null : (
             <p dir="auto" className="whitespace-pre-line [overflow-wrap:anywhere]">{reply.text}</p>
           )}
+          {reply.quotes_above ? <span className="text-[0.8125rem] text-fg-3">↩ quotes the post above · </span> : null}
           <Link to={postHref(reply.id, null)} className={`text-[0.8125rem] text-fg-3 ${FOCUS_RING}`}>
             {feedDateLabel(reply.sort_at)}
           </Link>
@@ -1089,6 +1101,13 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
                 <time dateTime={publishedIso} title={publishedFull} className="tabular-nums">{publishedLabel}</time>
+              </span>
+            ) : null}
+            {post.counts ? (
+              // A Hacker News item's counts (issue 0070), no longer its text.
+              <span className="whitespace-nowrap">
+                <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+                <span className="tabular-nums">{countsLabel(post.counts)}</span>
               </span>
             ) : null}
             {page.modified ? (

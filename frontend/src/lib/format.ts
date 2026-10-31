@@ -21,6 +21,11 @@ export function plural(count: number, singular: string, pluralForm: string = `${
   return `${formatCount(count)} ${word}`;
 }
 
+/** "1,675 points · 1,628 comments": a Hacker News item's counts (issue 0070). */
+export function countsLabel(counts: { points: number; comments: number }): string {
+  return `${plural(counts.points, 'point')} · ${plural(counts.comments, 'comment')}`;
+}
+
 /** Keep the start and the end: "https://news.example…/feed.xml". Counts code points, not UTF-16 units. */
 export function middleTruncate(text: string, max: number): string {
   const chars = Array.from(text);

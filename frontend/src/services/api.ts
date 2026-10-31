@@ -68,9 +68,12 @@ export interface Post {
   internal_links?: Record<string, string>;
   /** A repost (issue 0066): who reposted it, and its author; null when none. */
   repost?: Repost | null;
+  /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
+  counts?: Counts | null;
 }
-/** A tweet your sources reposted (issue 0066): their accounts, and the tweet's author. */
+/** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
+export interface Counts { points: number; comments: number; }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface BackgroundClassic {
@@ -129,6 +132,8 @@ export interface FeedItem {
   news?: NewsScore | null;
   /** A repost (issue 0066); null or absent when none. */
   repost?: Repost | null;
+  /** A Hacker News item's points and comments (issue 0070): "1,675 points · 1,628 comments". */
+  counts?: Counts | null;
 }
 /** A News story's numbers (issue 0051): each voice once, in its strongest role. */
 export interface NewsScore {
@@ -196,8 +201,12 @@ export interface StoryPost {
   /** On the post page, a thread's reply as stored (issue 0068): read as the post's body is, with its links to stored posts. */
   html?: string | null;
   internal_links?: Record<string, string>;
+  /** A thread's reply that quotes a tweet of its story (issue 0070): no card, "↩ quotes the post above". */
+  quotes_above?: boolean;
   /** The accounts that reposted it (issue 0068): "↻ reposted by @steipete, @badlogicgames". */
   reposted_by?: string[] | null;
+  /** A tweet its source reposted (issue 0070): the line names its author, "@danintheory · … · ↻ sama". */
+  repost?: Repost | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */

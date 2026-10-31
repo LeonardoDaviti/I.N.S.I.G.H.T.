@@ -108,10 +108,12 @@ export function ReaderToolbar({ title, titleHref, subtitle, onOpenNav, onOpenHel
   children: ReactNode;
 }) {
   const heading = 'truncate text-xl font-semibold leading-tight tracking-[-0.02em] text-fg';
+  // Below sm only the title row sticks (issue 0070): the frame's boxes give way (`contents`), so the
+  // rows under the title scroll away with the feed and leave the screen to reading.
   return (
-    <div className="reader-material reader-edge sticky top-topbar z-30">
-      <div className="w-full max-w-5xl px-4 pb-2 pt-4 sm:px-6 lg:px-8">
-        <div className="flex min-w-0 items-center gap-2">
+    <div className="reader-material reader-edge sticky top-topbar z-30 max-sm:contents">
+      <div className="w-full max-w-5xl px-4 pb-2 pt-4 max-sm:contents sm:px-6 lg:px-8">
+        <div className="flex min-w-0 items-center gap-2 max-sm:reader-material max-sm:reader-edge max-sm:sticky max-sm:top-topbar max-sm:z-30 max-sm:px-4 max-sm:pb-1 max-sm:pt-3">
           <h1 className="flex min-w-0 flex-1 items-baseline gap-2" title={title}>
             <button
               type="button"
@@ -139,8 +141,8 @@ export function ReaderToolbar({ title, titleHref, subtitle, onOpenNav, onOpenHel
             </button>
           </div>
         </div>
-        {subtitle ? <p className="-mt-1 text-[0.8125rem] tabular-nums text-fg-3 sm:hidden">{subtitle}</p> : null}
-        {children}
+        {subtitle ? <p className="mt-1 px-4 text-[0.8125rem] tabular-nums text-fg-3 sm:hidden">{subtitle}</p> : null}
+        <div className="max-sm:px-4 max-sm:pb-2">{children}</div>
       </div>
     </div>
   );

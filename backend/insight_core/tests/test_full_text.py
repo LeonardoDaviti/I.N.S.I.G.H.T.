@@ -544,6 +544,20 @@ class GenericRssFullPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(post["metadata"][FULL_TEXT_FLAG])
         self.assertEqual(post["content"], _text(_article()))
 
+    async def test_an_undated_post_takes_the_date_its_page_states(self):
+        # Issue 0070: a feed without dates (Google Developers Blog's) is dated by its pages.
+        dated = '<html><head><meta property="article:published_time" content="2026-10-29T16:00:00Z"></head>'
+        undated_feed = ('<rss version="2.0"><channel><item><title>A</title><link>https://news.example.com/a</link>'
+                        '<description>Short summary.</description></item></channel></rss>')
+        http = FakeHttp({FEED_URL: undated_feed, "https://news.example.com/a": dated + _article()[6:]})
+        [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(post["date"], datetime(2026, 10, 29, 16, tzinfo=timezone.utc))
+        # The feed's own date stands.
+        http = FakeHttp({FEED_URL: _feed(("https://news.example.com/a", "Short summary.")),
+                         "https://news.example.com/a": dated + _article()[6:]})
+        [post] = await GenericRssKind(http).fetch_latest(_src(), 10)
+        self.assertEqual(post["date"], datetime(2026, 3, 11, 18, 1, 1, tzinfo=timezone.utc))
+
     async def test_a_failed_lookup_reads_no_page(self):
         def broken(urls):
             raise RuntimeError("database down")
@@ -628,6 +642,19 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
 
         again = await self._repair(FakeHttp())
         self.assertEqual(again["candidates"], 0)
+
+    async def test_repair_dates_an_undated_teaser_by_its_page(self):
+        # Issue 0070: it then sorts at its date, no longer where its first fetch placed it.
+        url = "https://news.example.com/undated"
+        post_id = self._upsert({"url": url, "content": "Short summary."})
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("UPDATE posts SET surfaced_at = '2026-10-30' WHERE id = %s", (post_id,))
+            conn.commit()
+        page = '<html><head><meta property="article:published_time" content="2026-10-29T16:00:00Z"></head>' + _article()[6:]
+        await self._repair(FakeHttp({url: page}))
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT published_at, surfaced_at FROM posts WHERE id = %s", (post_id,))
+            self.assertEqual(cur.fetchone(), (datetime(2026, 10, 29, 16, tzinfo=timezone.utc), None))
 
     async def test_repair_marks_a_post_with_nothing_longer_and_skips_it_next_time(self):
         url = "https://news.example.com/short"

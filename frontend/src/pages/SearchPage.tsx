@@ -23,7 +23,7 @@ const ClassicsList = lazy(() => import('../components/reader/ClassicsList'));
 const LISTS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
   { value: 'later', label: 'Later' },
   { value: 'starred', label: 'Kept' },
-  { value: 'news', label: 'News' },
+  { value: 'news', label: 'News, last 30 days' },   // the stories job's window, not any date (issue 0070)
   { value: 'classics', label: 'Classics' },
 ];
 
@@ -39,7 +39,7 @@ const ORDERS: ReadonlyArray<{ value: SearchOrder; label: string }> = [
  * date), and a rail link narrows the search to that track or source. The results are the
  * reader's rows with their matching line, so read, Later and Keep work on them as anywhere
  * else; a story shows once, at its best-matching post, with its "covered by" line, as the Main
- * feed folds it (issue 0056). News searches News stories of any date; Classics, the classics'
+ * feed folds it (issue 0056). News searches the News stories of the last 30 days (issue 0070); Classics, the classics'
  * titles and addresses, as their list shows them.
  */
 export default function SearchPage() {

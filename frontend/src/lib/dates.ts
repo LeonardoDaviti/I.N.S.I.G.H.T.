@@ -97,12 +97,24 @@ function parts(date: Date, timeZone?: string) {
   return { year: out.year, month: out.month, day: out.day, weekday: out.weekday };
 }
 
-/** "Sep 29" (or "Sep 29 ’25" in another year); "5h ago" within the last 24h. */
+/**
+ * A date alone (issue 0070, 0064's `trusted_time`): a feed that gives only the day stores it at
+ * 00:00:00 UTC, and an undated backlog is placed at the start of its day. It has no time of day:
+ * it shows as its day, in UTC, never "04:00" or a day early west of UTC.
+ */
+export function dateAlone(value: DateInput): boolean {
+  const date = toDate(value);
+  return Boolean(date) && date!.getUTCHours() === 0 && date!.getUTCMinutes() === 0 && date!.getUTCSeconds() === 0;
+}
+
+/** "Sep 29" (or "Sep 29 ’25" in another year); "5h ago" within the last 24h; a date alone, its day. */
 export function feedDateLabel(value: string | Date | null | undefined, now: Date = new Date(), timeZone?: string): string {
   const date = toDate(value);
   if (!date) return '—';
   const diff = now.getTime() - date.getTime();
-  if (diff >= 0 && diff < DAY) return formatRelativeTime(date, now);
+  const alone = dateAlone(date);
+  if (alone) timeZone = 'UTC';
+  else if (diff >= 0 && diff < DAY) return formatRelativeTime(date, now);
   const d = parts(date, timeZone);
   const n = parts(now, timeZone);
   // Another year stays short enough for the date column: "Sep 5 ’25".
@@ -128,10 +140,11 @@ export function feedDayKey(value: string | Date | null | undefined, timeZone?: s
 }
 
 const clockFormatters = new Map<string, Intl.DateTimeFormat>();
-/** "14:05": the row's time of day, for rows that already sit under a day header. */
+/** "14:05": the row's time of day, for rows that already sit under a day header; a date alone, its day ("Oct 30"). */
 export function feedTimeLabel(value: string | Date | null | undefined, timeZone?: string): string {
   const date = toDate(value);
   if (!date) return '';
+  if (dateAlone(date)) return feedDateLabel(date, date);
   const key = timeZone ?? '';
   let fmt = clockFormatters.get(key);
   if (!fmt) {
@@ -142,16 +155,19 @@ export function feedTimeLabel(value: string | Date | null | undefined, timeZone?
 }
 
 const bylineFormatters = new Map<string, Intl.DateTimeFormat>();
-/** The post byline's date and time: "Oct 9, 11:30 PM", with the year only when it is not this year ("Oct 9, 2025, 11:30 PM"). */
+/** The post byline's date and time: "Oct 9, 11:30 PM", with the year only when it is not this year ("Oct 9, 2025, 11:30 PM"); a date alone, its day ("Sep 29, 2025"). */
 export function postBylineTime(value: string | Date | null | undefined, now: Date = new Date(), timeZone?: string): string {
   const date = toDate(value);
   if (!date) return '';
+  const alone = dateAlone(date);
+  if (alone) timeZone = 'UTC';
   const withYear = parts(date, timeZone).year !== parts(now, timeZone).year;
-  const key = `${timeZone ?? ''}|${withYear}`;
+  const key = `${timeZone ?? ''}|${withYear}|${alone}`;
   let fmt = bylineFormatters.get(key);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat(undefined, {
-      timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(withYear ? { year: 'numeric' } : {}),
+      timeZone, month: 'short', day: 'numeric', ...(alone ? {} : { hour: 'numeric', minute: '2-digit' }),
+      ...(withYear ? { year: 'numeric' } : {}),
     });
     bylineFormatters.set(key, fmt);
   }
@@ -159,14 +175,15 @@ export function postBylineTime(value: string | Date | null | undefined, now: Dat
 }
 
 const fullFormatters = new Map<string, Intl.DateTimeFormat>();
-/** The full local date and time ("Oct 9, 2026, 11:30 PM"): a row's tooltip, the post page's date. */
+/** The full local date and time ("Oct 9, 2026, 11:30 PM"): a row's tooltip, the post page's date; a date alone, its day. */
 export function feedFullTime(value: string | Date | null | undefined, timeZone?: string): string {
   const date = toDate(value);
   if (!date) return '';
-  const key = timeZone ?? '';
+  const alone = dateAlone(date);
+  const key = alone ? '|alone' : timeZone ?? '';
   let fmt = fullFormatters.get(key);
   if (!fmt) {
-    fmt = new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium', timeStyle: 'short' });
+    fmt = new Intl.DateTimeFormat(undefined, alone ? { timeZone: 'UTC', dateStyle: 'medium' } : { timeZone, dateStyle: 'medium', timeStyle: 'short' });
     fullFormatters.set(key, fmt);
   }
   return fmt.format(date);

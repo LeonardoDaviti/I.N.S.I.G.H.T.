@@ -3,7 +3,8 @@
 Two callers. GenericRssKind expands a new post as it is fetched, and
 scripts/repair_full_text re-reads the teasers stored before that. A body taken from the
 page is marked metadata.full_content_fetched, and a later feed fetch never puts the
-summary back over it (repo_posts._post_update_assignments).
+summary back over it (repo_posts._post_update_assignments). A post its feed gave no date takes
+the date its page states (page_watch.page_date, issue 0070), so it sorts at it.
 
 On for every generic RSS source; `settings.fetch_full_content: false` turns it off for one.
 
@@ -15,7 +16,7 @@ reads in all, RETRY_APART between two. Each read is counted in metadata.page_tri
 from __future__ import annotations
 
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY
@@ -69,27 +70,33 @@ def _same_article(current_text: str, page_text: str) -> bool:
     return current[:OPENING_CHARS] in page[:len(page) // 4]
 
 
-async def read_article(http: KindHttp, url: str, current_text: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
-    """(html, text, how well the page was read) of the article at url, or None when the page
-    holds nothing longer, or is not clearly the same article (the feed body is the better
-    version then).
+async def read_article(http: KindHttp, url: str, current_text: str
+                       ) -> Optional[Tuple[str, str, Dict[str, Any], Optional[datetime]]]:
+    """(html, text, how well the page was read, the date the page states) of the article at url,
+    or None when the page holds nothing longer, or is not clearly the same article (the feed body
+    is the better version then). A date after now (a clock off) is no date.
 
     Raises what the request raises (ValueError for an HTTP or network error).
     """
+    from insight_core.ingestion.kinds.page_watch import page_date   # page_watch imports generic_rss, this module's caller
+
     page, _ = await http.get_text(url)
     html, fidelity = parsing.read_article_page(page, base_url=url)
     text = parsing.strip_html(html)
     if len(text) <= max(len(current_text) + 250, 700) or not _same_article(current_text, text):
         return None
-    return html, text, fidelity
+    date = page_date(page)
+    return html, text, fidelity, date if date and date <= datetime.now(timezone.utc) else None
 
 
 def with_full_text(post: Dict[str, Any], html: str, text: str,
-                   fidelity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   fidelity: Optional[Dict[str, Any]] = None, date: Optional[datetime] = None) -> Dict[str, Any]:
+    """The post with its page's body, and the page's date when the feed gave it none (issue 0070)."""
     return {
         **post,
         "content_html": html,
         "content": text,
+        "date": post.get("date") or date,
         "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
                      **({PAGE_READ_KEY: fidelity} if fidelity else {})},
     }

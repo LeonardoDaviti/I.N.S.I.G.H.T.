@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  compactAge, feedDateLabel, feedDayHeading, feedDayKey, feedFullTime, feedTimeLabel, formatLocalDateTime, formatRelativeTime, localDateISO,
+  compactAge, dateAlone, feedDateLabel, feedDayHeading, feedDayKey, feedFullTime, feedTimeLabel, formatLocalDateTime, formatRelativeTime, localDateISO,
   postBylineTime,
 } from './dates.ts';
 
@@ -113,6 +113,22 @@ test('postBylineTime: the year only when it is not this year (issue 0033)', () =
   assert.match(thisYear, /11:30|23:30/);
   assert.match(postBylineTime('2025-10-09T23:30:00Z', now, 'UTC'), /2025/);
   assert.equal(postBylineTime(null, now, 'UTC'), '');
+});
+
+test('a date alone (00:00:00 UTC) shows its day in UTC, never a time (issue 0070)', () => {
+  const now = new Date('2026-10-28T12:00:00Z');
+  assert.equal(dateAlone('2025-09-29T00:00:00+00:00'), true);
+  assert.equal(dateAlone('2026-10-30T00:00:00.000003+00:00'), true);   // an undated backlog's place
+  assert.equal(dateAlone('2025-09-29T00:00:01Z'), false);
+  // West of UTC the day stays the 29th; east, no "4:00 AM".
+  assert.equal(feedDateLabel('2025-09-29T00:00:00Z', now, 'America/New_York'), 'Sep 29 ’25');
+  assert.equal(feedDateLabel('2026-10-28T00:00:00Z', now, 'Asia/Dubai'), 'Oct 28');   // not "12h ago"
+  assert.equal(feedTimeLabel('2026-10-28T00:00:00Z', 'Asia/Dubai'), 'Oct 28');
+  const byline = postBylineTime('2025-09-29T00:00:00Z', now, 'Asia/Dubai');
+  assert.match(byline, /Sep 29/);
+  assert.match(byline, /2025/);
+  assert.doesNotMatch(byline, /4:00|AM|PM/);
+  assert.doesNotMatch(feedFullTime('2025-09-29T00:00:00Z', 'America/New_York'), /28|AM|PM|:/);
 });
 
 test('compactAge stays short for a narrow numeric column', () => {
