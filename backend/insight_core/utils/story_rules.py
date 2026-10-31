@@ -43,6 +43,7 @@ the reference the real code reproduces. The thresholds are here, in one place.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -177,7 +178,8 @@ class StoryPost:
 
 
 def title_key(title: Optional[str]) -> Optional[str]:
-    words = WORD.findall((title or "").lower())
+    """A title as two posts share it: its words, lower case, styled letters as plain (NFKC, issue 0070)."""
+    words = WORD.findall(unicodedata.normalize("NFKC", title or "").lower())
     return " ".join(words) if len(words) >= SAME_TITLE_MIN_WORDS else None
 
 

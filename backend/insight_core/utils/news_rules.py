@@ -13,10 +13,13 @@ place**: tuning on the server is a one-line change.
   not starting or ending on a small word ("the", "of"); one word only when it mixes letters and
   digits ("GPT-6"). Pure numbers and lowercase words are not names.
 - **A name surges** when, within 48 hours, 3+ posts of 2+ voices use it, it was said at most once
-  in the 30 days before, and every source involved was followed for those whole 30 days. As the prototype: a name's first burst is the one judged; if a
-  source in it is new, the name does not surge. A shorter name whose posts a longer one covers is
-  dropped.
-  arXiv titles are left out.
+  in the 30 days before, and 2+ of the burst's voices didn't say it then. Only the sources followed
+  for those whole 30 days are evidence (issue 0070): a newer source's posts (its archive, a history
+  that starts late) join a burst but never start it, make it or age the name. After a surge the
+  name is judged again: a later burst of 3+ voices new to it surges too, when it holds more voices
+  than the 30 days before (a series a few voices keep saying doesn't). A shorter name whose posts
+  a longer one covers is dropped. Titles are compared as plain letters (NFKC) and with a word glued
+  to the next line's capital in another script split. arXiv titles are left out.
 - **A classic** is a page linked by 2+ of your voices (not the page's own), with links 180+ days
   apart: a stored post or an outside page. Reference pages (a path segment like `docs`,
   `pricing`, `help`) and home pages are not classics.
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -45,7 +49,9 @@ NAME_MIN_POSTS = 3                  # ... in 3+ posts ...
 NAME_MIN_VOICES = 2                 # ... of 2+ voices ...
 NAME_MAX_USUAL = 1                  # ... said at most once in the 30 days before (measured on the server's data,
 NAME_BASELINE = timedelta(days=30)  # 2026-10-30: never before ~88% real, once ~75%, twice or more ~27%) ...
-                                    # ... every source followed for all of those 30 days
+NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (issue 0070) ...
+                                    # ... only sources followed for all of those 30 days counting
+NAME_WAVE_VOICES = 3                # a later burst of 3+ voices new to the name is judged as a first (issue 0070)
 NAME_TITLE_DAYS = 32                # the job reads the titles of the last 32 days (a full run: every one)
 NAME_MAX_WORDS = 3
 NAME_SKIP_KINDS = frozenset({"arxiv"})
@@ -65,8 +71,20 @@ SMALL_WORDS = frozenset("the a an and or of to in on for with is are was be by a
 _TRIM = ".’'"
 
 
+# A word glued to the next line's capital in another script ("Gemini 4 CarbonМодель", a Telegram
+# title the bridge glued from two lines) is two words; within one script a capital is a name's own
+# ("OpenAI"). Measured on the lab (issue 0070): 871 titles, none a word of two scripts.
+GLUED = re.compile(r"(?<=[A-Za-z0-9])(?=[А-ЯЁ])|(?<=[а-яёА-ЯЁ])(?=[A-Z])")
+
+
+def comparable(text: Optional[str]) -> str:
+    """Text as it is compared, never as it is shown (issue 0070): styled letters as plain ones
+    (NFKC: "𝙻𝙵𝙼𝟹" is "LFM3", a no-break space a space)."""
+    return unicodedata.normalize("NFKC", text or "")
+
+
 def _words(title: Optional[str]) -> List[str]:
-    return TOKEN.findall(title or "")
+    return TOKEN.findall(GLUED.sub(" ", comparable(title)))
 
 
 def _lower(words: Sequence[str]) -> List[str]:
@@ -127,20 +145,31 @@ def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> L
             continue
         every = said[name]           # in time order, as `rows`
         times = [p.t for p in every]
+        after = None                 # the last post of its last surge: a later burst is judged after it
         for start in uses:
-            near = every[bisect.bisect_left(times, start.t):bisect.bisect_right(times, start.t + NAME_WINDOW)]
-            if len(near) < NAME_MIN_POSTS or len({p.place for p in near}) < NAME_MIN_VOICES:
-                continue
-            usual = bisect.bisect_left(times, start.t) - bisect.bisect_left(times, start.t - NAME_BASELINE)
-            if usual > NAME_MAX_USUAL:
-                continue
-            # Its first burst. A source added within the 30 days before it makes the burst its
-            # archive, not news: the name does not surge (as the prototype; a later burst of the
-            # same name is not looked for, so an archive never turns into a surge days later).
             since = start.t - NAME_BASELINE
-            if all(followed_since.get(p.source_id) is not None and followed_since[p.source_id] <= since for p in near):
-                found.append(Surge(name, start.t, [p.id for p in near], usual))
-            break
+
+            def heard(p: StoryPost) -> bool:
+                """Evidence: a post of a source followed for the whole 30 days before the burst. A newer
+                source's posts are its archive or a history that starts late (issue 0051, 0070)."""
+                return followed_since.get(p.source_id) is not None and followed_since[p.source_id] <= since
+
+            if (after is not None and start.t <= after) or not heard(start):
+                continue
+            near = every[bisect.bisect_left(times, start.t):bisect.bisect_right(times, start.t + NAME_WINDOW)]
+            burst = [p for p in near if heard(p)]
+            voices = {p.place for p in burst}
+            if len(burst) < NAME_MIN_POSTS or len(voices) < NAME_MIN_VOICES:
+                continue
+            before = [p for p in every[bisect.bisect_left(times, since):bisect.bisect_left(times, start.t)] if heard(p)]
+            usual = {p.place for p in before}
+            new = len(voices - usual)
+            if not (len(before) <= NAME_MAX_USUAL and new >= NAME_MIN_NEW_VOICES or new >= NAME_WAVE_VOICES):
+                continue
+            if len(voices) <= len(usual):
+                continue   # a series a few voices keep saying ("May 2026"), not a wave
+            found.append(Surge(name, start.t, [p.id for p in near], len(before)))
+            after = near[-1].t
     return sorted(longest(found), key=lambda s: (s.at, s.name))
 
 
