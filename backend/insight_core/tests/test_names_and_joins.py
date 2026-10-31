@@ -11,15 +11,23 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.tests.test_news import LONG_AGO, T0, followed, post
+import psycopg
+
+from insight_core.db.repo_stories import SourceFacts, StoriesRepository
+from insight_core.services.stories_service import StoriesService
+from insight_core.tests._db import db_url, insert_scratch_source, requires_db
+from insight_core.tests.test_news import T0, followed, post
 from insight_core.utils.news_rules import names, surges
+from insight_core.utils.post_links import extract_links
 from insight_core.utils.story_rules import title_key
+from insight_core.utils.url_normalization import normalize_url
 
 
 def said(source, hours, title="Gemini 4 Carbon is coming", n=1):
@@ -83,6 +91,98 @@ class ComparedAsPlainLettersTests(unittest.TestCase):
         self.assertIn("gemini 4 carbon", names("Google анонсировали Gemini 4 CarbonМодель заняла первое место"))
         self.assertIn("gpt-6.1 terra", names("OpenAI выпустили GPT-6.1 TerraНемного"))
         self.assertIn("openai codex 2", names("OpenAI Codex 2 is out"), "a capital inside one script stays in its word")
+
+
+@requires_db
+class SearchPlainLettersTests(unittest.TestCase):
+    def test_the_index_and_the_query_read_plain_letters(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            def finds(title, q):
+                cur.execute("SELECT post_search_vector(%s, '', '') @@ search_query(%s)", (title, q))
+                return cur.fetchone()[0]
+            self.assertTrue(finds("Introducing 𝙻𝙵𝙼𝟹: our new generation", "LFM3"))
+            self.assertTrue(finds("Introducing LFM3", "𝙻𝙵𝙼𝟹"))
+            self.assertTrue(finds("Kimi\u00a0K3.1 Pro", "kimi 3.1"), "a no-break space is a space")
+            cur.execute("SELECT search_vector_version()")
+            self.assertEqual(cur.fetchone()[0], 3, "every vector is made again")
+
+
+class PublicationLinksTests(unittest.TestCase):
+    def test_a_link_to_another_host_of_its_site_is_kept_its_own_host_is_not(self):
+        html = ('<a href="https://gwern.writers.test/p/scaling">Gwern</a> <a href="https://gary.writers.test/p/older">mine</a>'
+                ' <a href="https://writers.test/about">the platform</a>')
+        self.assertEqual([link.url for link in extract_links(html, "https://gary.writers.test/p/new", "site")],
+                         ["https://gwern.writers.test/p/scaling", "https://writers.test/about"])
+
+
+@requires_db
+class JobCase(unittest.TestCase):
+    """The story job on the caller's transaction, rolled back."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(db_url())
+        self.cur = self.conn.cursor()
+        self.now = datetime.now(timezone.utc)
+        self.mark = uuid.uuid4().hex[:8]
+        self.service = StoriesService(db_url(), clock=lambda: self.now)
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.cur.close()
+        self.conn.close()
+
+    def source(self, name, handle, platform="rss"):
+        source = insert_scratch_source(self.cur, platform=platform, in_main_digest=True)
+        self.cur.execute("UPDATE sources SET handle_or_url = %s, settings = jsonb_build_object('display_name', %s::text)"
+                         " WHERE id = %s", (handle, name, source))
+        return source
+
+    def post(self, source, url, *, hours_ago, html="", title="A post", text=None, author=None):
+        self.cur.execute(
+            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
+                                  published_at, author)
+               VALUES (%s, %s, %s, split_part(split_part(%s, '://', 2), '/', 1), %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (source, url, normalize_url(url), url, title, text or f"Body {uuid.uuid4().hex}", html,
+             uuid.uuid4().hex if text is None else f"hash-{text}", self.now - timedelta(hours=hours_ago), author))
+        return str(self.cur.fetchone()[0])
+
+    def job(self):
+        while StoriesRepository().fill_missing_links(self.cur):
+            pass
+        self.service.regroup(self.cur, cutoff=None)
+
+    def stories(self, *posts):
+        self.cur.execute("SELECT post_id::text, story_id::text, role, parent_id::text, parent_reason, parent_url"
+                         " FROM story_posts WHERE post_id = ANY(%s::uuid[])", (list(posts),))
+        return {r[0]: r[1:] for r in self.cur.fetchall()}
+
+
+class PublicationCitesJobTests(JobCase):
+    def test_a_writer_linking_another_on_their_platform_cites_them(self):
+        platform = f"writers-{self.mark}.test"
+        gary = self.source("Gary", f"https://gary.{platform}/feed")
+        gwern = self.source("Gwern", f"https://gwern.{platform}/feed")
+        essay = self.post(gwern, f"https://gwern.{platform}/p/scaling", hours_ago=10)
+        reply = self.post(gary, f"https://gary.{platform}/p/reply", hours_ago=5,
+                          html=f'<p>As <a href="https://gwern.{platform}/p/scaling">Gwern says</a></p>')
+        self.assertIn(platform, SourceFacts(self.cur).shared_sites, "two of your sources publish at its hosts")
+        self.job()
+        found = self.stories(essay, reply)
+        self.assertEqual(found[reply][0], found[essay][0])
+        self.assertEqual(found[reply][2:4], (essay, "citation"))
+
+    def test_a_publishers_other_hosts_are_its_own(self):
+        site = f"lab-{self.mark}.test"
+        blog = self.source("The lab's blog", f"https://blog.{site}/feed")
+        other = self.source("Someone", f"https://someone-{self.mark}.test/feed")
+        tools = f"https://tools.{site}/2026/01/a-new-tool-for-you"
+        a = self.post(blog, f"https://blog.{site}/2026/01/news", hours_ago=10, html=f'<a href="{tools}">our tool</a>')
+        b = self.post(other, f"https://someone-{self.mark}.test/2026/01/x", hours_ago=9, html=f'<a href="{tools}">their tool</a>')
+        self.assertNotIn(site, SourceFacts(self.cur).shared_sites)
+        self.job()
+        self.cur.execute("SELECT boilerplate FROM post_links WHERE post_id = %s", (a,))
+        self.assertEqual(self.cur.fetchall(), [(True,)], "stored, and marked its own site's")
+        self.assertEqual(self.stories(a, b), {}, "so it joins nothing")
 
 
 if __name__ == "__main__":
