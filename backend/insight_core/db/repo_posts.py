@@ -72,6 +72,17 @@ NEW_TO_YOU_AFTER = "2 days"
 LINKED_BEFORE_SQL = """EXISTS (SELECT 1 FROM post_links l JOIN posts q ON q.id = l.post_id
                          WHERE l.target_url = p.normalized_url AND q.source_id <> p.source_id
                            AND q.fetched_at < p.fetched_at)"""
+# Issue 0070: a source's first fetch is its backlog. Its undated posts (ids in the feed's order,
+# %(ids)s) sort below the source's dated posts: at the start of the UTC day of the second before its
+# oldest dated post, or before the fetch, which reads as a date alone (no time of day); a microsecond
+# apart keeps the feed's order. A later fetch's undated post is new: it sorts at its fetch, as before.
+# Migration 0053 places the stored ones the same way.
+UNDATED_BACKLOG_SQL = """
+    UPDATE posts p SET surfaced_at = date_trunc('day', LEAST(p.fetched_at, (SELECT min(d.published_at)
+               FROM posts d WHERE d.source_id = p.source_id)) - interval '1 second', 'UTC')
+           + (cardinality(%(ids)s::uuid[]) - u.n + 1) * interval '1 microsecond'
+      FROM unnest(%(ids)s::uuid[]) WITH ORDINALITY AS u(id, n)
+     WHERE p.id = u.id AND p.published_at IS NULL AND p.surfaced_at IS NULL"""
 
 
 @dataclass(frozen=True)
@@ -624,12 +635,16 @@ class PostsRepository:
         # Everything saved since the last commit: (draft, post_id, was_inserted).
         window: List[Tuple[PostDraft, str, bool]] = []
         channels: Set[str] = set()   # Telegram sources with a new post: their albums are folded at the end
+        backlog_undated: Dict[str, List[str]] = {}   # a first fetch's undated posts, in its order (issue 0070)
 
         def commit() -> None:
             conn.commit()
             window.clear()
 
         with conn.cursor() as cur:
+            cur.execute("SELECT s FROM unnest(%s::uuid[]) s WHERE EXISTS (SELECT 1 FROM posts WHERE source_id = s)",
+                        (list({str(draft.source_id) for draft in drafts}),))
+            fetched_before = {str(row[0]) for row in cur.fetchall()}
             for index, draft in enumerate(drafts, start=1):
                 post = dict(draft.post)
                 post.pop("_source_id", None)
@@ -660,6 +675,8 @@ class PostsRepository:
                         result._count(draft.source_id, "inserted")
                         if str(post.get("url") or "").startswith(TELEGRAM_POST_PREFIX):
                             channels.add(draft.source_id)
+                        if not post.get("date") and str(draft.source_id) not in fetched_before:
+                            backlog_undated.setdefault(str(draft.source_id), []).append(post_id)
                     else:
                         result.updated_ids.append(post_id)
                         result._count(draft.source_id, "updated")
@@ -667,6 +684,8 @@ class PostsRepository:
                 if index % commit_every == 0:
                     commit()
             self._fold_albums(cur, channels)
+            for ids in backlog_undated.values():
+                cur.execute(UNDATED_BACKLOG_SQL, {"ids": ids})
         commit()
         return result
 
@@ -831,11 +850,15 @@ class PostsRepository:
 
     def save_full_text(self, cur: Cursor, post_id: str, post: Dict[str, Any]) -> None:
         """Store the full body of a stored post; its metadata is merged, never replaced. Its links
-        are read again by the next story job (issue 0050)."""
+        are read again by the next story job (issue 0050). An undated post takes the page's date
+        (issue 0070) and sorts at it, no longer where its first fetch placed it."""
         fields = build_post_fields(post)
         cur.execute(
             """
             UPDATE posts SET
+                surfaced_at = CASE WHEN published_at IS NULL AND %(date)s::timestamptz IS NOT NULL
+                                   THEN NULL ELSE surfaced_at END,
+                published_at = COALESCE(published_at, %(date)s::timestamptz),
                 content = %(content)s,
                 content_html = %(content_html)s,
                 content_hash = %(content_hash)s,
@@ -848,6 +871,7 @@ class PostsRepository:
             """,
             {
                 "id": post_id,
+                "date": post.get("date"),
                 "content": post.get("content") or "",
                 "content_html": post.get("content_html"),
                 "content_hash": fields["content_hash"],

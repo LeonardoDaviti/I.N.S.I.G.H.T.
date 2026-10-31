@@ -146,6 +146,34 @@ class SaveBatchTests(unittest.TestCase):
         self.assertEqual(result.by_source[self.source_a], {"inserted": 2, "updated": 1, "failed": 0})
         self.assertEqual(result.by_source[self.source_b], {"inserted": 2, "updated": 0, "failed": 0})
 
+    def _feed_order(self, source_id: str) -> list[tuple[str, str]]:
+        """(url, sort key) as the feed shows the source: COALESCE(surfaced_at, published_at, fetched_at)."""
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT url, COALESCE(surfaced_at, published_at, fetched_at) AT TIME ZONE 'UTC' FROM posts"
+                        " WHERE source_id = %s ORDER BY COALESCE(surfaced_at, published_at, fetched_at) DESC, id DESC",
+                        (source_id,))
+            return [(url.rsplit("/", 1)[1], at.isoformat()) for url, at in cur.fetchall()]
+
+    def test_a_first_fetchs_undated_posts_sort_below_its_dated_ones_in_its_order(self):
+        # Issue 0070: a new source's undated backlog doesn't take the top of the feed.
+        from datetime import datetime, timezone
+        dated = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
+        url = f"https://test.invalid/mark-ix-post/{self.tag}/"
+        drafts = [PostDraft(self.source_a, {"url": url + name, "title": name, "content": name, "date": date})
+                  for name, date in (("u1", None), ("d", dated), ("u2", None), ("u3", None))]
+        self._save(drafts)
+        self.assertEqual(self._feed_order(self.source_a), [
+            ("d", "2026-10-05T14:00:00"), ("u1", "2026-10-05T00:00:00.000003"),
+            ("u2", "2026-10-05T00:00:00.000002"), ("u3", "2026-10-05T00:00:00.000001")])
+        # A source with no date at all: the start of the day it was fetched.
+        self._save([PostDraft(self.source_b, {"url": url + "b1", "title": "b", "content": "b", "date": None})])
+        [(_, at)] = self._feed_order(self.source_b)
+        self.assertTrue(at.endswith("T00:00:00.000001"))
+        # A later fetch's undated post is new: it sorts at its fetch.
+        self._save([PostDraft(self.source_a, {"url": url + "new", "title": "n", "content": "n", "date": None})])
+        self.assertEqual(self._feed_order(self.source_a)[0][0], "new")
+        self.assertGreater(self._feed_order(self.source_a)[0][1], "2026-10-06")
+
 
 if __name__ == "__main__":
     unittest.main()
