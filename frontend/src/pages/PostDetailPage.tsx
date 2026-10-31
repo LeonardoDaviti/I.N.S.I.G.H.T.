@@ -37,6 +37,7 @@ import { middleTruncate, plural } from '../lib/format';
 import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
 import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
+import { siteOf } from '../lib/savePage';
 import type {
   Api,
   FeedItem,
@@ -100,7 +101,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
       <p>
-        {story.thread ? coveredBy(story) : `Covered by ${story.sources.length}`}
+        {story.thread ? coveredBy(story) : `Covered by ${story.voices}`}
         {story.first === postId ? ' · this post was first' : null}
       </p>
       <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">
@@ -932,7 +933,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
   };
 
   // A post with no HTML body renders its stored plain text, never read as HTML.
-  const bodyHtml = typeof post?.content_html === 'string' ? post.content_html : null;
+  const bodyHtml = typeof post?.content_html === 'string' && post.content_html.trim() ? post.content_html : null;
   const renderContent = bodyHtml ?? (typeof post?.content === 'string' ? post.content : '');
   // Images the body already shows stay inline; the rest: the first under the
   // title, the others after the text. A video post shows its player instead.
@@ -1289,9 +1290,14 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 <p className="text-[0.9375rem] text-fg-3">No transcript was stored for this video yet.</p>
               )}
             </div>
-          ) : bodyIsTitle ? null : (
+          ) : bodyIsTitle ? null : renderContent.trim() ? (
             markdownBody
-          )}
+          ) : post.url ? (
+            // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself.
+            <p data-read-on>
+              <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Read on {siteOf(post.url)} ↗</a>
+            </p>
+          ) : null}
         </div>
       </article>
 

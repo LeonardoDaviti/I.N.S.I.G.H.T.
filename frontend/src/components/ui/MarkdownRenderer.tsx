@@ -55,6 +55,9 @@ export function normalizeRendererContent(content: string): string {
   return dedentHtml(decodeHtmlEntities(content).replace(/<!--\s*SC_(?:OFF|ON)\s*-->/g, '').trim());
 }
 
+/** A body holds HTML when it has a tag; some feeds store plain text in the HTML field. */
+const HTML_TAG_RE = /<\/?[a-z][a-z0-9]*[\s/>]|<!--/i;
+
 const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugins']> = [
   rehypeRaw,
   [
@@ -86,11 +89,12 @@ const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugi
 ];
 
 export default function MarkdownRenderer({ content, className = "", imageSrc, html = true, internalLinks }: MarkdownRendererProps) {
-  if (!content) {
-    return <p className="text-fg-3">No content available</p>;
-  }
+  if (!content) return null;
 
   const normalizedContent = html ? normalizeRendererContent(content) : content;
+  // Plain text keeps its line breaks; HTML's own breaks are its tags, and a source's newlines
+  // inside a <p> (hard-wrapped feeds, X's "<br>\n<br>") are only spaces (issue 0069).
+  const plainText = !html || !HTML_TAG_RE.test(normalizedContent);
 
   return (
     <div className={`markdown-content min-w-0 break-words ${className}`}>
@@ -104,9 +108,9 @@ export default function MarkdownRenderer({ content, className = "", imageSrc, ht
         // the same renderer reads well in the 1.125rem post column and in a small
         // chat bubble. Hierarchy is weight and size, never hue.
         components={{
-          // Custom paragraph to preserve single line breaks from plain text sources
+          // A paragraph of plain text keeps its single line breaks; one of HTML wraps normally.
           p: ({ children }) => (
-            <p dir="auto" className="mb-[1em] whitespace-pre-wrap text-fg last:mb-0">
+            <p dir="auto" className={`mb-[1em] text-fg last:mb-0 ${plainText ? 'whitespace-pre-wrap' : ''}`}>
               {children}
             </p>
           ),

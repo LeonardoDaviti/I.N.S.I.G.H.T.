@@ -431,7 +431,7 @@ describe('FeedList', () => {
       feedItem({ id: ID(9), title: 'Вышел Claude 5 Fable', source_display_name: 'ai_newz', sort_at: '2026-10-26T16:00:00Z', story: fable }),
     ])) });
     await user.click(await screen.findByRole('button', { name: /^covered by 4/ }));
-    await user.click(screen.getByRole('button', { name: /^covered by 2/ }));
+    await user.click(screen.getByRole('button', { name: /^covered by 3/ }));
     const [terraList, fableList] = Array.from(document.querySelectorAll('[data-story-posts]')) as HTMLElement[];
     const lines = (list: HTMLElement) => within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[0]}`);
     expect(lines(terraList)).toEqual(['0 Hacker News', '0 data_secrets', '0 Simon Willison', '1 Lesswrong']);

@@ -10,6 +10,8 @@ test('coveredBy names two sources, then counts the rest', () => {
   assert.equal(coveredBy(story(['Anthropic', 'Simon Willison'])), 'covered by 2 · Anthropic, Simon Willison');
   assert.equal(coveredBy(story(['Anthropic', 'Simon Willison', 'https://tg.i-c-a.su/rss/denissexy?limit=50', 'B'])),
     'covered by 4 · Anthropic, Simon Willison, +2');
+  // A source that reposted a tweet another source holds is a voice the names may not reach.
+  assert.equal(coveredBy({ ...story(['steipete']), voices: 2 }), 'covered by 2 · steipete, +1');
 });
 
 test('suggestionReason says how many of your sources link it, who, and how many articles', () => {

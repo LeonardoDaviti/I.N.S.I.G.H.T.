@@ -61,6 +61,8 @@ SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
 UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
+# A Telegram album's picture (issue 0069) is no row and no unread count: its post shows it.
+NOT_ALBUM_PIECE = "p.album_of IS NULL"
 # A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
     "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
@@ -91,6 +93,7 @@ _TREE_RANK = ("(CASE WHEN {sp}.parent_reason IS NULL THEN 0"
               " ELSE 2 END)")
 # The story posts that a lead's read marks read: the shares of a story whose report (or, when
 # it has none, whose share) was read, and the rest of a thread read at one of its posts (0066).
+# A Telegram album's pictures are read with its post (issue 0069).
 _SHARES_OF_READ = """
     WITH RECURSIVE thread AS (
         SELECT post_id FROM story_posts WHERE post_id = ANY(%(read)s::uuid[])
@@ -102,6 +105,7 @@ _SHARES_OF_READ = """
       AND (sp.role = 'report'
            OR NOT EXISTS (SELECT 1 FROM story_posts r WHERE r.story_id = sp.story_id AND r.role = 'report'))
     UNION SELECT post_id FROM thread WHERE NOT post_id = ANY(%(read)s::uuid[])
+    UNION SELECT id FROM posts WHERE album_of = ANY(%(read)s::uuid[])
 """
 
 
@@ -310,11 +314,13 @@ class ReaderRepository:
 
     @staticmethod
     def _scope_sql(scope: FeedScope, filter: str = "all") -> Tuple[str, List[Any]]:
+        """The posts a scope lists; never a Telegram album's picture, which its post shows (issue 0069)."""
         if scope.kind == "all":
-            return ("TRUE" if filter in _EVERY_SOURCE_FILTERS else "s.in_main_digest"), []
+            return f"{NOT_ALBUM_PIECE} AND {'TRUE' if filter in _EVERY_SOURCE_FILTERS else 's.in_main_digest'}", []
         if scope.kind == "folder":
-            return "p.source_id IN (SELECT sf.source_id FROM source_folders sf WHERE sf.folder_id = %s)", [scope.id]
-        return "p.source_id = %s", [scope.id]
+            return (f"{NOT_ALBUM_PIECE} AND p.source_id IN (SELECT sf.source_id FROM source_folders sf"
+                    " WHERE sf.folder_id = %s)"), [scope.id]
+        return f"{NOT_ALBUM_PIECE} AND p.source_id = %s", [scope.id]
 
     def _filter_sql(self, filter: str) -> Tuple[str, List[Any]]:
         if filter == "unread":
@@ -453,9 +459,7 @@ class ReaderRepository:
                 story["first"] = None
             del story["_first_rank"]
         if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
-            cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url)"
-                        " FROM sources ORDER BY id DESC")
-            followed = {source_account(r[1], r[2]): {"id": str(r[0]), "name": r[3]} for r in cur.fetchall()}
+            followed = ReaderRepository.followed_accounts(cur)
             for lead, found in reposts.items():
                 sources = stories[lead]["sources"]
                 for author, by in found:
@@ -494,6 +498,13 @@ class ReaderRepository:
             story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]
         for item in items:
             item["story"] = stories.get(item["id"])
+
+    @staticmethod
+    def followed_accounts(cur: Cursor) -> Dict[str, Dict[str, str]]:
+        """Your sources by the account they follow ("x.com/<user>"): {id, name}."""
+        cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url)"
+                    " FROM sources ORDER BY id DESC")
+        return {source_account(r[1], r[2]): {"id": str(r[0]), "name": r[3]} for r in cur.fetchall()}
 
     @staticmethod
     def _with_shares(cur: Cursor, read: List[str], marked: List[str], *, at: datetime | None = None) -> List[str]:
@@ -854,7 +865,7 @@ class ReaderRepository:
             f"""
             SELECT p.source_id, COUNT(*)
             FROM posts p
-            WHERE {UNREAD_SQL} AND {window_sql}
+            WHERE {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
             GROUP BY p.source_id
             """,
             window_params,
@@ -866,14 +877,14 @@ class ReaderRepository:
             FROM posts p
             JOIN source_folders sf ON sf.source_id = p.source_id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
-            WHERE {UNREAD_SQL} AND {window_sql}
+            WHERE {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
             GROUP BY sf.folder_id
             UNION ALL
             SELECT NULL, COUNT(DISTINCT COALESCE(sp.story_id, p.id))
             FROM posts p
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
-            WHERE s.in_main_digest AND {UNREAD_SQL} AND {window_sql}
+            WHERE s.in_main_digest AND {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
             """,
             [*window_params, *window_params],
         )

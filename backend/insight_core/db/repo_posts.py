@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, Any, Iterator, List, Literal, Sequence, Tuple, Optional
+from typing import Dict, Any, Iterable, Iterator, List, Literal, Sequence, Set, Tuple, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -29,6 +29,8 @@ PAGE_READ_KEY = "page_read"
 # metadata key of a teaser's page reads (issue 0062): {"count", "last_at", "failed"}. A re-fetch
 # of the feed keeps it (_post_update_assignments); ingestion/full_text.py reads and writes it.
 PAGE_TRIES_KEY = "page_tries"
+# A Telegram post's address (the bridge links each item to t.me): its channel's albums are folded.
+TELEGRAM_POST_PREFIX = "https://t.me/"
 
 
 def _env_commit_batch() -> int:
@@ -621,6 +623,7 @@ class PostsRepository:
         result = SaveBatchResult()
         # Everything saved since the last commit: (draft, post_id, was_inserted).
         window: List[Tuple[PostDraft, str, bool]] = []
+        channels: Set[str] = set()   # Telegram sources with a new post: their albums are folded at the end
 
         def commit() -> None:
             conn.commit()
@@ -655,14 +658,28 @@ class PostsRepository:
                     if was_inserted:
                         result.inserted_ids.append(post_id)
                         result._count(draft.source_id, "inserted")
+                        if str(post.get("url") or "").startswith(TELEGRAM_POST_PREFIX):
+                            channels.add(draft.source_id)
                     else:
                         result.updated_ids.append(post_id)
                         result._count(draft.source_id, "updated")
 
                 if index % commit_every == 0:
                     commit()
+            self._fold_albums(cur, channels)
         commit()
         return result
+
+    def _fold_albums(self, cur: Cursor, source_ids: Iterable[str]) -> None:
+        """A Telegram album is one post (issue 0069): the pictures the bridge sent as items of their
+        own join the post they follow (migration 0051's fold_telegram_albums). A failure costs
+        only the folding, which the channel's next batch does again."""
+        for source_id in sorted(source_ids):
+            try:
+                with self._savepoint(cur, "insight_fold_albums"):
+                    cur.execute("SELECT fold_telegram_albums(%s::uuid)", (source_id,))
+            except Exception as exc:  # noqa: BLE001 - the posts are saved
+                self.logger.error("Could not fold the albums of source %s: %s", source_id, exc)
 
     def _stored_text(self, cur: Cursor, url: str) -> Optional[Dict[str, Any]]:
         """A stored post's text before a watched draft overwrites it, or None (a new post)."""
@@ -840,12 +857,10 @@ class PostsRepository:
             },
         )
 
-    def mark_full_text_checked(self, cur: Cursor, post_id: str, at: str) -> None:
-        """A repair read this post and found nothing longer: the next run skips it."""
-        cur.execute(
-            "UPDATE posts SET metadata = metadata || jsonb_build_object(%s::text, %s::text) WHERE id = %s::uuid",
-            (FULL_TEXT_CHECKED, at, post_id),
-        )
+    def merge_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> None:
+        """Merge keys into a stored post's metadata (a repair's read: checked, its page tries)."""
+        cur.execute("UPDATE posts SET metadata = metadata || %s::jsonb WHERE id = %s::uuid",
+                    (self._json_dumps(metadata), post_id))
 
     def contents_with_entities(self, cur: Cursor, *, source_id: Optional[str] = None) -> List[Tuple[str, str]]:
         """(id, content) of the stored posts whose plain text holds an HTML code (&#39;)."""

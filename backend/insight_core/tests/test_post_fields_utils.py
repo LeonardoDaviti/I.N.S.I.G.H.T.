@@ -125,6 +125,44 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("A short note [...]", "A short note that goes on"), "A short note that goes on",
                          "a cut title with every space kept is the body's first line, as before")
 
+    def test_a_placeholder_title_is_empty_so_the_text_says_what_the_post_is(self):
+        """Issue 0069 (R5): placeholders told by shape, never by a list of phrases per site."""
+        self.assertEqual(display_title("[Photo]", "А теперь наша любимая рубрика..."), "А теперь наша любимая рубрика...")
+        self.assertEqual(display_title("[Video]", ""), "[Video]", "a post with no words keeps its placeholder")
+        self.assertEqual(display_title("RT by @steipete: Image", "jason (@jxnlco) Post your best codex billboard"),
+                         "jason (@jxnlco) Post your best codex billboard")
+        self.assertEqual(display_title("R to @badlogicgames: Gif", ""), "Gif")
+        self.assertEqual(display_title("R to @pankajkumar_dev: x.com/pankajkumar_dev/status…",
+                                       "nitter.net/pankajkumar_dev/status… Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out."),
+                         "Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out.", "a self-quote reads as the quoted words")
+        self.assertEqual(display_title("https://lean-lang.org/eval/", "https://lean-lang.org/eval/ Lean Evaluating provers"),
+                         "Lean Evaluating provers", "a shared link reads as its preview's words")
+        self.assertEqual(display_title("https://github.com/sqlc-dev/sqlc is pretty sweet", ""),
+                         "https://github.com/sqlc-dev/sqlc is pretty sweet", "an address inside a sentence stays")
+        self.assertEqual(display_title("Video games I loved", "Body."), "Video games I loved")
+
+    def test_a_reply_loses_nitters_prefix(self):
+        self.assertEqual(display_title("R to @pankajkumar_dev: Gemini 4 Carbon*", "Gemini 4 Carbon*"), "Gemini 4 Carbon*")
+
+    def test_a_short_unfinished_first_line_runs_on_to_the_sentence_end(self):
+        tibo = ("RT by @badlogicgames: Day 25/\n\nWe are doubling all usage limits for all Pro 100/200/500 tiers and "
+                "Business Premium, effective today.\n\nWe heard your kind feedback and won’t be reducing usage limits.")
+        self.assertEqual(display_title(tibo, "Day 25/ We are doubling"),
+                         "Day 25/ We are doubling all usage limits for all Pro 100/200/500 tiers and Business Premium, effective today.")
+        self.assertEqual(display_title("Привет!\nКак дела у всех сегодня?", ""), "Привет!", "a finished line stands")
+        self.assertEqual(display_title("Ghostty 1.4", "The release notes."), "Ghostty 1.4", "a one-line title stands")
+
+    def test_a_whole_title_glued_from_two_lines_ends_where_the_first_line_did(self):
+        """seeallochnaya/4011: the bridge glued two lines into a title it did not cut."""
+        body = ("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500 Изменения уже действуют. "
+                "Заодно отменили сокращение лимитов")
+        self.assertEqual(display_title("🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500Изменения уже действуют.", body),
+                         "🤖 OpenAI удвоила лимиты во всех тарифах Pro – за $100, $200 и $500")
+        # A space a tag left in the body is no line break.
+        self.assertEqual(display_title("Huge thanks @_akhaliq! 🙌", "Huge thanks @_akhaliq ! 🙌"), "Huge thanks @_akhaliq! 🙌")
+        self.assertEqual(display_title("Те, кто знают тест «Смит ест спагетти».", "Те , кто знают тест « Смит ест спагетти »."),
+                         "Те, кто знают тест «Смит ест спагетти».")
+
     def test_plain_text_is_never_read_as_html(self):
         # Stored titles and bodies are plain text, already decoded: "<T>" is text, not a tag.
         self.assertEqual(display_title("Option<T> in Rust", ""), "Option<T> in Rust")

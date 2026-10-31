@@ -98,18 +98,20 @@ export function originHref(origin: StoryOrigin): string {
 /** The names a folded story's row shows before "+N" (issue 0050), and a News row (issue 0051). */
 const NAMES_SHOWN = 2;
 
-/** "Anthropic, Simon Willison, +1": a story's sources in the order they covered it, two named. */
-export function coveredNames(story: FeedStory): string {
-  const all = story.sources.map((source) => sourceLabel(source.name));
-  const more = all.length - NAMES_SHOWN;
-  return `${all.slice(0, NAMES_SHOWN).join(', ')}${more > 0 ? `, +${more}` : ''}`;
+/** "Anthropic, Simon Willison, +1": a story's sources in the order they covered it, two named; "+N" makes
+ *  them the story's voices (issue 0069: copies of one text are one voice). */
+export function coveredNames(story: Pick<FeedStory, 'sources' | 'voices'>): string {
+  const named = story.sources.slice(0, NAMES_SHOWN).map((source) => sourceLabel(source.name));
+  const more = Math.max(story.voices, named.length) - named.length;
+  return `${named.join(', ')}${more > 0 ? `, +${more}` : ''}`;
 }
 
-/** "covered by 3 · Anthropic, Simon Willison, +1": every source of the story, in the order they covered it;
- *  "Thread · 6 posts" for one account's thread (issue 0066). */
+/** "covered by 3 · Anthropic, Simon Willison, +1": the story's voices, its sources named in the order they
+ *  covered it; one number in News, the feed row and the post page (issue 0069). "Thread · 6 posts" for one
+ *  account's thread (issue 0066). */
 export function coveredBy(story: FeedStory): string {
   if (story.thread) return `Thread · ${story.posts.length + 1} posts`;
-  return `covered by ${story.sources.length} · ${coveredNames(story)}`;
+  return `covered by ${story.voices} · ${coveredNames(story)}`;
 }
 
 /** "↻ reposted by @steipete, @badlogicgames": under a tweet in "covered by" (issue 0068). */
