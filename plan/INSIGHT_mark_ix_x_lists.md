@@ -140,6 +140,11 @@ Rule: **better reading in the current INSIGHT, not features for their own sake.*
   - joined to entities, so links to the same claim or product count together even at different addresses;
   - with the **stance** of each link: quotes, supports, disputes.
   - Implicit citations, retellings without a link ("Tibo wrote…"), become edges through attribution.
+- **Links that point through a redirect** (saved for the future, owner 2026-10-31):
+  - 4,626 `substack.com` app and redirect links, 424 `t.co`, and ~170 more (lnkd.in, bit.ly, trib.al…) are stored as written, never followed to the page they open;
+  - two posts linking the same article through different redirects don't meet;
+  - resolving needs one request per link. Measure the gain on a sample first.
+- **Telegram forwards:** the bridge strips them (0 of 14,280 posts carry one). Copies are still found by same text (0050). Not pursued (owner).
 - Test cases for all of these: `plan/research/lab/cases.json`.
 
 ### From the 0050/0051 work (owner, 2026-10-30)

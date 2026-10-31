@@ -31,6 +31,11 @@ Status: **first version built** 2026-10-27 (reading through hnrss.org), not depl
   - the article's text can stay its body when you don't follow the site.
   - Then 0050's rules do the rest with no HN-specific code. If the site's post is stored, HN cites it, a citation within 72 hours, and the story reads "covered by 2 · Cloudflare Blog, Hacker News", HN as a share. Points and comments ride on the HN post.
 
+## Points over time (owner, 2026-10-31: "we need to somehow track points for the posts")
+- **Today:** 19 of the 62 hnrss posts on the server carry points in their text, as a snapshot at the first fetch. They aren't used.
+- **Tracking points over time** needs this kind: Algolia's `points` and `num_comments`, updated on re-fetch, become an outside popularity signal for News.
+- **For the future,** with this kind. The owner chose not to do a snapshot-only version.
+
 ## Out of Scope (now)
 - Analysis of the discussion (the future analysis version).
 - HN users, favourites, job posts.
