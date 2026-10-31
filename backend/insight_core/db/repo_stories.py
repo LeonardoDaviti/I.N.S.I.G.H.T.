@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, is_article, reddit_author,
+from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, is_article,
                                           site_of, source_kind)
 from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
@@ -295,28 +295,7 @@ class StoriesRepository:
         )
         return changed + cur.rowcount
 
-    # ---- Discover ---------------------------------------------------------------------
-
-    @staticmethod
-    def kept_links(cur: Cursor, sources: SourceFacts) -> List[Dict[str, Any]]:
-        """Every kept outside link: its post's source, author (Reddit) and the link."""
-        cur.execute(
-            """
-            SELECT p.id, p.source_id, pl.target_url, pl.link_text,
-                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END
-            FROM post_links pl JOIN posts p ON p.id = pl.post_id
-            WHERE NOT pl.boilerplate
-            ORDER BY p.id, pl.position
-            """,
-            (sources.html_sources(),),
-        )
-        authors: Dict[str, Optional[str]] = {}
-        out = []
-        for post_id, source_id, url, text, content_html in cur.fetchall():
-            if post_id not in authors:
-                authors[post_id] = reddit_author(content_html) if content_html else None
-            out.append({"source_id": str(source_id), "url": url, "text": text, "author": authors[post_id]})
-        return out
+    # ---- Discover (its counts: repo_discover.py) -----------------------------------------
 
     @staticmethod
     def linked_articles(cur: Cursor, host: str) -> List[str]:

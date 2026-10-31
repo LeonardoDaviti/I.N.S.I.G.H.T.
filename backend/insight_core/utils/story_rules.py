@@ -264,6 +264,26 @@ class Suggestion:
     addresses: Set[str] = field(default_factory=set)   # those addresses (0051 counts its classics)
 
 
+def discover_address(url: str) -> Tuple[Optional[str], str, bool]:
+    """What Discover reads of one address: (its key, its site, whether the site is a platform).
+    On a platform the key is the account (account_key), none when the first path segment names a
+    kind of page (NOT_ACCOUNT); elsewhere it is the host. A function of the address alone, so the
+    database keeps it once per address (repo_discover, issue 0062)."""
+    host, _, rest = bare(url).partition("/")
+    site = site_of(host)
+    if site in DISCOVER_PLATFORMS:
+        return (None if rest.split("/")[0].lower() in NOT_ACCOUNT else account_key(url)), site, True
+    return host, site, False
+
+
+def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hidden: Set[str],
+                  followed_accounts: Set[str]) -> bool:
+    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site."""
+    if platform:
+        return not (key in followed_accounts or key in hidden)
+    return not (site in followed or key in hidden or site in hidden)
+
+
 def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden: Set[str],
                 followed_accounts: Set[str] = frozenset()) -> List[Suggestion]:
     """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
@@ -274,17 +294,10 @@ def suggestions(links: Iterable[Tuple[str, str]], *, followed: Set[str], hidden:
     links = list(links)
     found: Dict[str, Tuple[Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set()))
     for voice, url in links:
-        host, _, rest = bare(url).partition("/")
-        if site_of(host) in DISCOVER_PLATFORMS:
-            if rest.split("/")[0].lower() in NOT_ACCOUNT:
-                continue
-            key = account_key(url)
-            if key in followed_accounts or key in hidden:
-                continue
-        else:
-            key = host
-            if site_of(host) in followed or key in hidden or site_of(host) in hidden:
-                continue
+        key, site, platform = discover_address(url)
+        if key is None or not discover_open(key, site, platform, followed=followed, hidden=hidden,
+                                            followed_accounts=followed_accounts):
+            continue
         voices, articles, every = found[key]
         voices.add(voice)
         every.add(url)
@@ -307,5 +320,5 @@ def source_site(hosts: Iterable[Tuple[str, int]]) -> str:
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "Suggestion", "group", "roles", "count_voices", "suggestions",
-           "source_site", "title_key", "anchors"]
+__all__ = ["StoryPost", "Story", "Suggestion", "group", "roles", "count_voices", "suggestions", "discover_address",
+           "discover_open", "source_site", "title_key", "anchors"]
