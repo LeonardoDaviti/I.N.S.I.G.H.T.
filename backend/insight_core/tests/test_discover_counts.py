@@ -10,6 +10,7 @@ more than 20 articles, a classic, a followed site and a hidden key).
 """
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 import uuid
@@ -22,13 +23,13 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_discover import ADDRESS_RULES, DiscoverRepository
+from insight_core.db.repo_discover import ADDRESS_RULES, TWEET_HREF, DiscoverRepository
 from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import DISCOVER_ARTICLES_SHOWN, StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.utils.post_links import reddit_author
-from insight_core.utils.story_rules import StoryPost, discover_address, suggestions
+from insight_core.utils.story_rules import StoryPost, discover_address, is_roundup, suggestions
 
 
 LINK_FIELDS = ("key", "url", "voices", "voice_names", "article_count", "link_count", "classics", "articles")
@@ -45,42 +46,54 @@ def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
 
 
 def reference_discover(url: str):
-    """Discover as 0050/0051 computed it: every kept link read into Python and walked."""
+    """Discover as 0050/0051 computed it: every kept link read into Python and walked; with 0067's
+    roundups (story_rules.is_roundup over each post's links and the stored post each is) and tweet
+    mirrors (TWEET_HREF in every post's HTML)."""
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         sources = SourceFacts(cur)
         cur.execute(
             """
             SELECT p.id, p.source_id, pl.target_url, pl.link_text,
-                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END
+                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END, t.id
             FROM post_links pl JOIN posts p ON p.id = pl.post_id
+            LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
+                               ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE NOT pl.boilerplate ORDER BY p.id, pl.position
             """,
             (sources.html_sources(),),
         )
-        authors = {}
+        authors, post_links = {}, defaultdict(list)
         links = []
-        for post_id, source_id, target, text, content_html in cur.fetchall():
+        for post_id, source_id, target, text, content_html, stored in cur.fetchall():
             if post_id not in authors:
                 authors[post_id] = reddit_author(content_html) if content_html else None
-            links.append({"source_id": str(source_id), "url": target, "text": text, "author": authors[post_id]})
+            post_links[str(post_id)].append((target, str(stored) if stored else None))
+            links.append({"post_id": str(post_id), "source_id": str(source_id), "url": target, "text": text,
+                          "author": authors[post_id]})
         hidden = StoriesRepository.hidden(cur)
         classic_urls = set(NewsRepository.classic_urls(cur))
-    pairs, names = [], {}
+        cur.execute("SELECT content_html FROM posts WHERE content_html IS NOT NULL")
+        mirrors = {host.lower() for (html,) in cur.fetchall() for host in re.findall(TWEET_HREF, html)}
+    roundups = {post_id for post_id, its in post_links.items()
+                if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
+    triples, names = [], {}
     linked_by, texts = defaultdict(set), defaultdict(Counter)
     for link in links:
         p = StoryPost(id="", source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
                       own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"])
         names.setdefault(p.voice, sources.voice_name(p.voice, link["source_id"]))
-        pairs.append((p.voice, link["url"]))
+        triples.append((p.voice, link["url"], link["post_id"] in roundups))
         linked_by[link["url"]].add(p.voice)
         if link["text"]:
             texts[link["url"]][link["text"]] += 1
-    found = suggestions(pairs, followed=sources.followed(), hidden=hidden, followed_accounts=sources.followed_accounts())
+    found = suggestions(triples, followed=sources.followed(), hidden=hidden,
+                        followed_accounts=sources.followed_accounts(), mirrors=mirrors)
     held = {s.key: len(s.addresses & classic_urls) for s in found}
     found = sorted(found, key=lambda s: held[s.key] == 0)
     return [{
         "key": s.key, "url": "https://" + s.key, "voices": len(s.voices),
-        "voice_names": sorted(names[v] for v in s.voices), "article_count": len(s.articles),
+        "voice_names": [names[v] for v in sorted(s.voices, key=lambda v: (v in s.roundups, names[v]))],
+        "article_count": len(s.articles),
         "link_count": s.links, "classics": held[s.key],
         "articles": [{"url": u, "title": texts[u].most_common(1)[0][0] if texts[u] else None,
                       "linked_by": sorted(names[v] for v in linked_by[u])}
