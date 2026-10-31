@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { coveredBy, originHref, originLabel, storyTree, suggestionReason } from './story.ts';
+import { coveredBy, originHref, originLabel, repostLine, storyTree, suggestionReason } from './story.ts';
 import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
@@ -36,7 +36,7 @@ test('a story, a suggestion and a classic name a source without a display name b
 
 // ---- stories as trees (issue 0064) -------------------------------------------------------------
 
-type Reason = 'address' | 'citation' | 'copy' | 'time' | 'none';
+type Reason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 const at = (h: number) => new Date(Date.UTC(2026, 9, 26, h)).toISOString();
 const sp = (id: string, h: number, parent_id: string | null, parent_reason: Reason | null) => ({
   id, title: id, url: `https://x.test/${id}`, source_id: id, source_display_name: id, platform: 'rss',
@@ -72,6 +72,30 @@ test('storyTree: an outside page origin heads the list, its citers under it', ()
   assert.deepEqual(originLabel(story.origin), { site: 'anthropic.com', title: 'Claude Fable 5', linkedBy: 'linked by 3' });
   assert.equal(originHref(story.origin), '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5&title=Claude+Fable+5');
   assert.equal(originLabel({ url: 'https://openai.com/index/gpt-6-astra', title: null, linked_by: 10 }).title, 'openai.com/index/gpt-6-astra');
+});
+
+// ---- X: reposts, quotes and threads (issue 0066) ------------------------------------------------
+
+test('a thread is one item: "Thread · 6 posts", its replies a list in their order, a quote of it under its root', () => {
+  // badlogicgames, 27 Oct: "software is dead. sad." and five replies to itself, two of them in one hour's tie.
+  const thread = {
+    id: 't0', voices: 1, first: 't0', sources: [{ id: 'bg', name: 'badlogicgames' }], parent_id: null, parent_reason: null, thread: true,
+    posts: [sp('t1', 8, 't0', 'thread'), sp('t2', 9, 't1', 'thread'), sp('t3', 9, 't2', 'thread'), sp('t4', 9, 't3', 'thread'),
+      sp('t5', 10, 't4', 'thread'), sp('giraffe', 11, 't0', 'quote')],
+  };
+  assert.equal(coveredBy({ ...thread, posts: thread.posts.slice(0, 5) }), 'Thread · 6 posts');
+  assert.deepEqual(lines(storyTree(thread, 't0', at(7))), ['t1', 't2', 't3', 't4', 't5', 'giraffe']);
+  const atReply = {
+    ...thread, parent_id: 't2', parent_reason: 'thread' as const,
+    posts: [sp('t0', 7, null, null), ...thread.posts.filter((p) => p.id !== 't3')],
+  };
+  assert.deepEqual(lines(storyTree(atReply, 't3', at(9))), ['t0', '  t1', '  t2', '  SELF', '  t4', '  t5', '  giraffe'],
+    'opened at a reply: the root first, the thread in its order under it');
+});
+
+test('repostLine names who reposted a tweet, and its author', () => {
+  assert.equal(repostLine({ by: ['steipete'], author: 'badlogicgames' }), '↻ @steipete, from @badlogicgames');
+  assert.equal(repostLine({ by: ['_akhaliq', 'ggerganov'], author: 'ClementDelangue' }), '↻ @_akhaliq, @ggerganov, from @ClementDelangue');
 });
 
 test('storyTree: no tree (before the job drew it, News) lists the posts flat, as before', () => {

@@ -29,7 +29,7 @@ import {
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
-import { originHref, originLabel, storyTree } from '../lib/story';
+import { coveredBy, originHref, originLabel, repostLine, storyTree } from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
@@ -45,6 +45,7 @@ import type {
   PostDetailResponse,
   ReaderState,
   RedditComment,
+  StoryPost,
   YouTubeWatchProgress,
 } from '../services/api';
 import { proxiedImage } from '../lib/mediaProxy';
@@ -93,7 +94,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
       <p>
-        Covered by {story.sources.length}
+        {story.thread ? coveredBy(story) : `Covered by ${story.sources.length}`}
         {story.first === postId ? ' · this post was first' : null}
       </p>
       <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">
@@ -152,6 +153,26 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+/** A thread read in order (issue 0066): the replies that follow this post, each its own words and date. */
+function ThreadPosts({ story, postId }: { story: FeedStory; postId: string }) {
+  const next: StoryPost[] = [];
+  for (let at = postId, reply; (reply = story.posts.find((p) => p.parent_id === at && p.parent_reason === 'thread')); at = reply.id) {
+    next.push(reply);
+  }
+  return (
+    <section data-thread aria-label="Thread" className="mt-6">
+      {next.map((reply) => (
+        <div key={reply.id} className="border-t border-line py-4">
+          <p dir="auto" className="whitespace-pre-line [overflow-wrap:anywhere]">{reply.text}</p>
+          <Link to={postHref(reply.id, null)} className={`text-[0.8125rem] text-fg-3 ${FOCUS_RING}`}>
+            {feedDateLabel(reply.sort_at)}
+          </Link>
+        </div>
+      ))}
     </section>
   );
 }
@@ -1030,6 +1051,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
                 {middleTruncate(sourceName, 40)}
               </span>
             )}
+            {post.repost ? <span>{repostLine(post.repost)}</span> : null}
             {/* Each "/ part" wraps as one, so a line never starts with a bare slash. */}
             {publishedLabel ? (
               <span className="whitespace-nowrap">
@@ -1260,6 +1282,8 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ))}
         </div>
       ) : null}
+
+      {post.story?.thread ? <ThreadPosts story={post.story} postId={postId} /> : null}
 
       {/* ---- Covered by (issue 0055): the post's story, its other posts, open ---- */}
       {post.story?.posts.length ? <CoveredBy story={post.story} post={post} postId={postId} /> : null}

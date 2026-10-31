@@ -15,7 +15,7 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
-import { coveredBy, originHref, originLabel, storyTree, type StoryLine } from '../../lib/story';
+import { coveredBy, originHref, originLabel, repostLine, storyTree, type StoryLine } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -257,9 +257,16 @@ function FeedItem({
               {middleTruncate(source, 56)}
             </TextLink>
           ) : null}
-          {length ? (
+          {/* A repost (issue 0066): who reposted it, and its author. */}
+          {item.repost ? (
             <>
               {showSource ? <span aria-hidden="true" className="shrink-0">·</span> : null}
+              <span className="min-w-0 truncate">{repostLine(item.repost)}</span>
+            </>
+          ) : null}
+          {length ? (
+            <>
+              {showSource || item.repost ? <span aria-hidden="true" className="shrink-0">·</span> : null}
               <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
                 {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
                 {length}

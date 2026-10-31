@@ -1,4 +1,4 @@
-import type { FeedStory, StoryOrigin, StoryPost, SuggestedSource } from '../services/api';
+import type { FeedStory, Repost, StoryOrigin, StoryPost, SuggestedSource } from '../services/api';
 import { plural } from './format.ts';
 import { sourceLabel } from './sourceLabel.ts';
 import { SAVE_PATH } from './savePage.ts';
@@ -18,7 +18,8 @@ const PAGE = '\u0000origin';
  * level in time order. `selfId` is the row or the post page the list belongs to: when it is the
  * origin it is not repeated (the list holds what came from it, one level less indented);
  * otherwise it is a `self` line in its place. A story without a tree (before the job drew it,
- * News) lists its posts as before, flat.
+ * News) lists its posts as before, flat. A thread's replies (issue 0066) keep their parent's indent,
+ * so a thread reads as a list, in its order.
  */
 export function storyTree(story: FeedStory, selfId: string, selfAt?: string | null): StoryLine[] {
   const hasTree = Boolean(story.origin) || Boolean(story.parent_reason)
@@ -51,7 +52,7 @@ export function storyTree(story: FeedStory, selfId: string, selfAt?: string | nu
       seen.add(kid.id);
       const shown = Math.min(depth + 1, MAX_DEPTH) - offset;
       lines.push(kid.post ? { kind: 'post', post: kid.post, depth: shown } : { kind: 'self', depth: shown });
-      walk(kid.id, depth + 1);
+      walk(kid.id, (kid.post ?? story).parent_reason === 'thread' ? depth : depth + 1);
     }
   };
   if (root === PAGE && story.origin) lines.push({ kind: 'page', origin: story.origin, depth: 0 });
@@ -89,9 +90,16 @@ export function coveredNames(story: FeedStory): string {
   return `${all.slice(0, NAMES_SHOWN).join(', ')}${more > 0 ? `, +${more}` : ''}`;
 }
 
-/** "covered by 3 · Anthropic, Simon Willison, +1": every source of the story, in the order they covered it. */
+/** "covered by 3 · Anthropic, Simon Willison, +1": every source of the story, in the order they covered it;
+ *  "Thread · 6 posts" for one account's thread (issue 0066). */
 export function coveredBy(story: FeedStory): string {
+  if (story.thread) return `Thread · ${story.posts.length + 1} posts`;
   return `covered by ${story.sources.length} · ${coveredNames(story)}`;
+}
+
+/** "↻ @steipete, from @badlogicgames": who reposted a tweet, and its author (issue 0066). */
+export function repostLine(repost: Repost): string {
+  return `↻ @${repost.by.join(', @')}, from @${repost.author}`;
 }
 
 /** The names a suggestion's reason shows before "+N". */

@@ -440,4 +440,28 @@ describe('FeedList', () => {
     expect(within(fableList).getByRole('link', { name: 'Claude Fable 5' })).toHaveAttribute('href',
       '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5-mythos-5&title=Claude+Fable+5');
   });
+  it('a thread is one row, "Thread · 3 posts", its replies in order; a repost says who reposted it, from whom (issue 0066)', async () => {
+    const user = userEvent.setup();
+    const reply = (n: number, title: string, parent: string) => ({
+      id: ID(n), title, url: `https://nitter.local/badlogicgames/status/${n}`, source_id: 'bg', source_display_name: 'badlogicgames',
+      platform: 'rss', sort_at: '2026-10-27T08:52:39Z', published_at: null, read_at: null, role: 'report' as const,
+      parent_id: parent, parent_reason: 'thread' as const, text: title,
+    });
+    const thread = {
+      id: ID(1), voices: 1, first: ID(1), parent_id: null, parent_reason: null, origin: null, thread: true,
+      sources: [{ id: 'bg', name: 'badlogicgames' }],
+      posts: [reply(2, 'pretty joyless now. guess i switch to gardening.', ID(1)), reply(3, 'there will remain some niche holdouts', ID(2))],
+    };
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'software is dead. sad.', source_display_name: 'badlogicgames', story: thread }),
+      feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
+        repost: { by: ['steipete'], author: 'badlogicgames' } }),
+    ])) });
+    await user.click(await screen.findByRole('button', { name: 'Thread · 3 posts' }));
+    const list = document.querySelector('[data-story-posts]') as HTMLElement;
+    expect(within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[1]}`))
+      .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
+    const [, repost] = screen.getAllByRole('article');
+    expect(repost).toHaveTextContent('steipete·↻ @steipete, from @badlogicgames');
+  });
 });

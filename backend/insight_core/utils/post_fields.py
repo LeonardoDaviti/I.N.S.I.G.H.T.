@@ -4,11 +4,12 @@ title the reader shows."""
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
-from .url_normalization import canonicalize_url, extract_url_host, normalize_url
+from .url_normalization import TWEET_PATH, canonicalize_url, extract_url_host, normalize_url
 
 TITLE_MAX_CHARS = 120
 TITLE_MIN_SENTENCE_CHARS = 20
@@ -17,6 +18,10 @@ SENTENCE_END_RE = re.compile(r"[.!?…](?=\s|$)")
 TRAILING_ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.|\[(?:…|\.\.\.)\])\s*$")
 
 
+# Nitter's titles say what a tweet is (issue 0066): "RT by @user: …" a repost by user, "R to @user: …"
+# a reply to user. The text after them is the tweet's.
+REPOST_BY_RE = re.compile(r"^RT by @(\w+): ")
+REPLY_TO_RE = re.compile(r"^R to @(\w+): ")
 _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.U)   # a word: two letters or more
 
 
@@ -47,7 +52,7 @@ def display_title(title: str | None, content: str | None) -> str:
     else at the last space within 117 characters, with "…". Title and body are stored plain
     text, so nothing in them is read as a tag.
     """
-    stored = (title or "").strip()
+    stored = REPOST_BY_RE.sub("", (title or "").strip())   # who reposted it is said beside it (issue 0066)
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
     glued = _glued_first_line(cut, content) if cut != stored and cut else None
     from_body = not stored or (
@@ -65,6 +70,18 @@ def display_title(title: str | None, content: str | None) -> str:
     return (head[:space] if space > 0 else head).rstrip() + "…"
 
 
+def tweet_author(url: str | None) -> str | None:
+    """A tweet's account, as its address writes it (issue 0066): `user` of /<user>/status/<id>."""
+    match = TWEET_PATH.match(urlparse(url or "").path)
+    return match.group(1) if match else None
+
+
+def reposted_by(title: str | None, author: str | None) -> List[str]:
+    """Who reposted a tweet, by its title: "RT by @user: …", the author reposting itself aside."""
+    match = REPOST_BY_RE.match(title or "")
+    return [match.group(1)] if match and author and match.group(1).lower() != author.lower() else []
+
+
 def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
     """Build the normalised fields reading and deduplication rely on, for one post."""
     title = post.get("title") if isinstance(post, dict) else None
@@ -74,6 +91,7 @@ def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
     raw_lang = post.get("lang") if isinstance(post, dict) else None
 
     normalized_url = normalize_url(url)
+    author = tweet_author(url)
     canonical_url = canonicalize_url(url)
     url_host = extract_url_host(url)
     language_input = "\n".join(
@@ -91,4 +109,7 @@ def build_post_fields(post: Dict[str, Any]) -> Dict[str, Any]:
         "canonical_url": canonical_url or normalized_url,
         "url_host": url_host,
         "content_hash": hash_post_content(title, content, content_html),
+        # Attribution (issue 0066): a tweet's account, and the accounts that reposted it.
+        "author": author,
+        "reposted_by": reposted_by(title, author),
     }

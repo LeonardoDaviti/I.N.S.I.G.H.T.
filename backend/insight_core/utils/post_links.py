@@ -4,7 +4,8 @@ story rules read: its site, whether it is a home page, whether it reads like an 
 A post's links are read from its HTML (`content_html`; a YouTube description counts when it is
 stored as HTML), made absolute against the post's own address and normalized as posts are
 (0049, `url_normalization`). Not kept: links to the post's own site, media files, and links
-back into the platform the post came from (Reddit's `[comments]` and user pages, t.me, x.com).
+back into the platform the post came from (Reddit's `[comments]` and user pages, t.me, x.com),
+except a link to a tweet (issue 0066): on X, another post is a connection (a quote, a reply's link).
 A source's signature (a link in 25% of its posts, 4 or more) can only be told over all of its
 posts: the story job marks those (`post_links.boilerplate`).
 
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
-from insight_core.utils.url_normalization import normalize_url
+from insight_core.utils.url_normalization import TWEET_PATH, normalize_url
 
 HREF = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\']', re.I)
 # The rest of the opening tag, then the link's own text up to its closing tag.
@@ -46,6 +47,8 @@ _KIND_PATTERNS = (
 )
 # A Reddit post's author, as its feed writes it: "submitted by <a href=".../user/name">".
 REDDIT_AUTHOR = re.compile(r'submitted by\s*(?:&#32;)?\s*<a href="https://www\.reddit\.com/user/([^"/]+)')
+# A quoted tweet, as Nitter writes it (issue 0066): the quote's address in the <cite> of its <blockquote>.
+QUOTED = re.compile(r'<blockquote>.*?<cite>\s*<a\b[^>]*?href=["\']([^"\']+)["\']', re.I | re.S)
 # An article-like address: a date in the path, or a slug of 4+ words.
 ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
 
@@ -128,6 +131,18 @@ def is_article(url: str) -> bool:
     return bool(ARTICLE.search("/" + rest.lower()))
 
 
+def is_tweet(url: Optional[str]) -> bool:
+    """A normalized address that is a tweet (issue 0066: every form of one is x.com/<user>/status/<id>)."""
+    return host_of(url) == "x.com" and bool(TWEET_PATH.match("/" + bare(url or "").partition("/")[2]))
+
+
+def quoted_tweet(content_html: Optional[str]) -> Optional[str]:
+    """The tweet a tweet quotes, normalized: the address Nitter cites in the quote's <blockquote>."""
+    match = QUOTED.search(content_html or "")
+    url = normalize_url(html.unescape(match.group(1))) if match else None
+    return url if is_tweet(url) else None
+
+
 def reddit_author(content_html: Optional[str]) -> Optional[str]:
     match = REDDIT_AUTHOR.search(content_html or "")
     return match.group(1).lower() if match else None
@@ -169,7 +184,9 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
     """The outside links of one post, first seen first, each address once."""
     if not content_html:
         return []
-    blocked = {site_of(host_of(normalize_url(post_url) or ""))} | PLATFORM_SITES.get(kind, frozenset())
+    own = normalize_url(post_url) or ""
+    # The site it was read from too: a tweet's address is x.com, but your Nitter's profiles are its own.
+    blocked = {site_of(host_of(own)), site_of(host_of(post_url))} | PLATFORM_SITES.get(kind, frozenset())
     seen = set()
     out: List[PostLink] = []
     for match in HREF.finditer(content_html):
@@ -182,11 +199,11 @@ def extract_links(content_html: Optional[str], post_url: Optional[str], kind: st
         except ValueError:
             continue
         url = normalize_url(absolute)
-        if not url or url in seen:
+        if not url or url in seen or url == own:
             continue
         seen.add(url)
         site = site_of(host_of(url))
-        if site in blocked or MEDIA.search(urlparse(url).path):
+        if (site in blocked and not is_tweet(url)) or MEDIA.search(urlparse(url).path):
             continue
         out.append(PostLink(url, site, len(out), _link_text(content_html, match.end())))
     return out

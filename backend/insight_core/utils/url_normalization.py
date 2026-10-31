@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -40,6 +41,12 @@ HOST_ALIASES = {
 }
 
 DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# A tweet has one address, whatever the host serving it (issue 0066): x.com, twitter.com, a Nitter
+# and the mirrors (xcancel.com, fxtwitter.com, ...) all write /<user>/status/<id>, the id 15+
+# digits. A rule on the address's shape, not a list of hosts; the account is lower case (X's
+# accounts are), and a tail (/photo/1, /history) or a query is the same tweet.
+TWEET_PATH = re.compile(r"^/([A-Za-z0-9_]+)/status/(\d{15,})(?:/|$)")
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,11 @@ def _normalize_url(value: str | None) -> NormalizedURL:
     host = (parsed.hostname or "").lower().strip(".")
     if not host:
         return NormalizedURL(None, None, None)
+
+    tweet = TWEET_PATH.match(parsed.path or "")
+    if tweet:
+        address = f"https://x.com/{tweet.group(1).lower()}/status/{tweet.group(2)}"
+        return NormalizedURL(address, address, "x.com")
 
     host = HOST_ALIASES.get(host, host)
     if host.startswith("www."):

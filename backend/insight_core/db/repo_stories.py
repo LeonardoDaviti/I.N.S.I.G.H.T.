@@ -13,15 +13,16 @@ from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, is_article,
+from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
                                           site_of, source_kind)
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
                                            Story, source_site)
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
-# The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words.
-HTML_KINDS = ("reddit", "hn")
+# The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words,
+# the tweet a tweet quotes (issue 0066).
+HTML_KINDS = ("reddit", "hn", "x")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
@@ -169,8 +170,11 @@ class StoriesRepository:
     @staticmethod
     def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:
         """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
-        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed."""
-        own = list(sources.site.items())
+        SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. A
+        platform is no source's own site: what is kept of its links there (another tweet, issue
+        0066) is told by `extract_links`."""
+        own = [(source_id, site) for source_id, site in sources.site.items()
+               if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
         cur.execute(
             """
             WITH n AS (SELECT source_id, count(*) AS posts FROM posts GROUP BY source_id),
@@ -207,7 +211,7 @@ class StoriesRepository:
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
                    length(p.content), p.normalized_url,
                    CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END,
-                   COALESCE(p.metadata ? 'page_update', false)
+                   COALESCE(p.metadata ? 'page_update', false), p.author
             FROM posts p
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
               AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
@@ -218,7 +222,8 @@ class StoriesRepository:
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
-             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "links": [], "link_texts": {}}
+             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "author": r[9],
+             "links": [], "link_texts": {}}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
@@ -327,11 +332,13 @@ class StoriesRepository:
             cur.executemany("INSERT INTO story_mentions (story_id, post_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", new)
             changed += len(new)
 
-        # A frozen story whose posts went with a removed source is no story any more.
+        # A frozen story whose posts went with a removed source is no story any more (one source's
+        # thread, or its quote of itself, is one while it holds two posts: issue 0066).
         cur.execute(
             """
-            DELETE FROM stories st WHERE (SELECT count(DISTINCT p.source_id) FROM story_posts sp
-                                          JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id) < 2
+            DELETE FROM stories st WHERE (SELECT count(DISTINCT p.source_id) < 2
+                                                 AND NOT (count(*) >= 2 AND bool_or(sp.reasons && '{thread,quote}'))
+                                          FROM story_posts sp JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id)
             """
         )
         return changed + cur.rowcount

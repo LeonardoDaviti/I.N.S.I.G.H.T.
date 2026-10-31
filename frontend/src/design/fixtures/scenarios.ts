@@ -14,7 +14,7 @@ import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
 import { HOUR, MINUTE, TRACKS, at, backgroundWork, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
 import { postStateDetail } from './posts';
-import { storyTreeItems } from './storyTrees';
+import { storyTreeItems, xItems } from './storyTrees';
 
 export interface FrameScenario {
   page: string;
@@ -89,6 +89,13 @@ const SCENARIOS: FrameScenario[] = [
       await frame.click('button[aria-controls$="-story"]', /covered by 4/);
     },
   },
+  {
+    page: 'reader', state: 'thread', label: 'An X thread as one row, open; a repost says who reposted it, from whom', url: '/', documented: true,
+    routes: (now) => withSite(now, (s) => ({ ...s, items: [...xItems(now), ...s.items] })),
+    setup: async (frame) => {
+      await frame.click('button[aria-controls$="-story"]', /Thread · 7 posts/);
+    },
+  },
   { page: 'reader', state: 'track', label: 'Scoped to one track', url: `/read/folder/${TRACKS.ai.id}`, routes: site(normalSite), documented: false },
   { page: 'reader', state: 'source', label: 'Scoped to one source', url: `/read/source/${sourceId('s-simon')}`, routes: site(normalSite), documented: false },
 
@@ -99,6 +106,7 @@ const SCENARIOS: FrameScenario[] = [
   { page: 'post', state: 'headings', label: 'h1–h6, lists, quote, table and code', url: '/posts/p-headings', routes: postRoutes('headings'), documented: true },
   { page: 'post', state: 'missing-title', label: 'A Telegram post with no title', url: '/posts/p-missing-title', routes: postRoutes('missing-title'), documented: true },
   { page: 'post', state: 'story', label: 'Covered by 4 at the end; a link to a stored post opens it here', url: '/posts/p-story', routes: postRoutes('story'), documented: true },
+  { page: 'post', state: 'thread', label: 'An X thread read in order after its first post', url: '/posts/p-bg', routes: postRoutes('thread'), documented: true },
   { page: 'post', state: 'loading', label: 'The skeleton in the post column', url: '/posts/p-article', routes: loading, documented: true },
   { page: 'post', state: 'error', label: 'The post failed to load', url: '/posts/p-article', routes: failing, documented: true },
 

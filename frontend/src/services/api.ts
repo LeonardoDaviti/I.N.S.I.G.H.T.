@@ -66,7 +66,11 @@ export interface Post {
   story?: FeedStory | null;
   /** Each link of its text that is a stored post: href as written -> that post's id (issue 0057). */
   internal_links?: Record<string, string>;
+  /** A repost (issue 0066): who reposted it, and its author; null when none. */
+  repost?: Repost | null;
 }
+/** A tweet your sources reposted (issue 0066): their accounts, and the tweet's author. */
+export interface Repost { by: string[]; author: string; }
 
 /** A classic a post builds on (issue 0051): a stored post (`post_id`) or an outside page. */
 export interface BackgroundClassic {
@@ -123,6 +127,8 @@ export interface FeedItem {
   story?: FeedStory | null;
   /** News only (issue 0051): the story's part of the week and what its score is made of. */
   news?: NewsScore | null;
+  /** A repost (issue 0066); null or absent when none. */
+  repost?: Repost | null;
 }
 /** A News story's numbers (issue 0051): each voice once, in its strongest role. */
 export interface NewsScore {
@@ -161,9 +167,11 @@ export interface FeedStory {
   /** This row's (or this post page's) own place in the tree, as each post's (issue 0064). */
   parent_id?: string | null;
   parent_reason?: StoryParentReason | null;
+  /** One account's replies to itself, or its quotes of itself (issue 0066): read as a thread. */
+  thread?: boolean;
 }
-/** Why a post hangs from its parent, the most certain first (issue 0064). */
-export type StoryParentReason = 'address' | 'citation' | 'copy' | 'time' | 'none';
+/** Why a post hangs from its parent, the most certain first (issues 0064, 0066). */
+export type StoryParentReason = 'address' | 'repost' | 'thread' | 'quote' | 'citation' | 'copy' | 'time' | 'none';
 /** A story's origin outside INSIGHT: its address, its best link words (null: show the address), how many posts link it. */
 export interface StoryOrigin { url: string; title: string | null; linked_by: number; }
 export interface StoryPost {
@@ -177,6 +185,8 @@ export interface StoryPost {
    */
   parent_id?: string | null;
   parent_reason?: StoryParentReason | null;
+  /** A thread's reply (issue 0066): its own words, read in order on the post page. */
+  text?: string | null;
 }
 export interface SnippetPart { text: string; mark: boolean; }
 /** What changed when a watched page was last re-read (posts.metadata.page_update). */

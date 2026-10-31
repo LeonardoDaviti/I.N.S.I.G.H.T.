@@ -6,6 +6,7 @@
 import type { Post, PostDetailResponse } from '../../services/api';
 import { postFixtureDetail } from '../../pages/PostDetailPage.fixtures';
 import { sourceId } from './sites';
+import { THREAD_REPLIES } from './storyTrees';
 
 const HOUR = 3_600_000;
 
@@ -141,6 +142,22 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
             { ...storyPost('p-story-ds', 'data_secrets', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false), parent_id: null, parent_reason: 'citation' as const },
             { ...storyPost('p-story-denis', 'denissexy', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false), parent_id: 'p-story-ds', parent_reason: 'copy' as const },
           ],
+        },
+      }, now);
+    case 'thread':
+      // An X thread (issue 0066): badlogicgames' first post, then its five replies to itself, in order.
+      return detail('p-bg', {
+        title: 'software is dead. sad.', content: 'software is dead. sad.', content_html: '<p>software is dead. sad.</p>',
+        source_id: sourceId('s-bg'), source: 'https://nitter.local/badlogicgames/rss', source_display_name: 'badlogicgames',
+        url: 'https://nitter.local/badlogicgames/status/2115002476311241104#m',
+        published_at: new Date(now.getTime() - 5 * HOUR).toISOString(),
+        story: {
+          id: 'p-bg', voices: 1, first: 'p-bg', parent_id: null, parent_reason: null, origin: null, thread: true,
+          sources: [{ id: sourceId('s-bg'), name: 'badlogicgames' }],
+          posts: THREAD_REPLIES.map(([id, text, hoursAgo], i) => ({
+            ...storyPost(id, 'badlogicgames', text.split('\n')[0], 'report', now, hoursAgo, false), text,
+            parent_id: i ? THREAD_REPLIES[i - 1][0] : 'p-bg', parent_reason: 'thread' as const,
+          })),
         },
       }, now);
     default:

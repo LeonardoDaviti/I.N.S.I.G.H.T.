@@ -39,7 +39,7 @@ from psycopg import Cursor
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
-from insight_core.utils.post_fields import display_title
+from insight_core.utils.post_fields import REPLY_TO_RE, display_title
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -89,13 +89,18 @@ _TREE_RANK = ("(CASE WHEN {sp}.parent_reason IS NULL THEN 0"
               " WHEN {sp}.parent_id IS NULL AND {sp}.parent_url IS NOT NULL AND {sp}.parent_reason = 'citation' THEN 1"
               " ELSE 2 END)")
 # The story posts that a lead's read marks read: the shares of a story whose report (or, when
-# it has none, whose share) was read.
+# it has none, whose share) was read, and the rest of a thread read at one of its posts (0066).
 _SHARES_OF_READ = """
+    WITH RECURSIVE thread AS (
+        SELECT post_id FROM story_posts WHERE post_id = ANY(%(read)s::uuid[])
+        UNION SELECT sp.post_id FROM story_posts sp JOIN thread t ON sp.parent_id = t.post_id AND sp.parent_reason = 'thread'
+    )
     SELECT DISTINCT o.post_id FROM story_posts sp
     JOIN story_posts o ON o.story_id = sp.story_id AND o.post_id <> sp.post_id AND o.role = 'share'
-    WHERE sp.post_id = ANY(%s::uuid[])
+    WHERE sp.post_id = ANY(%(read)s::uuid[])
       AND (sp.role = 'report'
            OR NOT EXISTS (SELECT 1 FROM story_posts r WHERE r.story_id = sp.story_id AND r.role = 'report'))
+    UNION SELECT post_id FROM thread WHERE NOT post_id = ANY(%(read)s::uuid[])
 """
 
 
@@ -244,7 +249,7 @@ _ITEM_COLUMNS = f"""
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
-    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update'
+    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by
 """
 
 
@@ -278,6 +283,8 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         "resume_blocks": row[15],
         # A watched page's last meaningful change (issue 0039): {at, words, words_added, ...}.
         "update": row[17],
+        # A repost (issue 0066): "↻ @by, from @author".
+        "repost": {"by": row[19], "author": row[18]} if row[19] else None,
     }
 
 
@@ -376,7 +383,9 @@ class ReaderRepository:
         The tree (issue 0064): each post has `parent_id` (a post of the story) and `parent_reason`
         (address, citation, copy, time, none); the origin has neither. A post with a reason and no
         `parent_id` hangs from the story's `origin` {url, title, linked_by}, a page outside INSIGHT
-        (else `origin` is None). The item's own place: `parent_id` and `parent_reason` of the story."""
+        (else `origin` is None). The item's own place: `parent_id` and `parent_reason` of the story.
+        On X (issue 0066): `thread` when the story is one account's replies to itself or quotes of
+        itself; a reply in it carries its `text`, and its title loses Nitter's "R to @…: "."""
         if not items:
             return
         cur.execute(
@@ -401,10 +410,11 @@ class ReaderRepository:
              origin_linked_by) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
-                "posts": [], "parent_id": None, "parent_reason": None,
+                "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
                 "origin": {"url": origin_url, "title": origin_title, "linked_by": int(origin_linked_by or 0)}
                           if origin_url else None,
             })
+            story["thread"] |= parent_reason in ("thread", "quote")
             # The origin post first (issue 0064); before the tree is drawn, the first report.
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
             if story["first"] is None or rank < story["_first_rank"]:
@@ -413,8 +423,10 @@ class ReaderRepository:
                 story["sources"].append({"id": str(source_id), "name": name})
             parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason}
             if str(post_id) != str(lead):
+                thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
-                    "id": str(post_id), "title": display_title(title, content), "url": url,
+                    "id": str(post_id), "title": display_title(REPLY_TO_RE.sub("", title or "") if thread else title, content),
+                    "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
                     **parent,
@@ -422,6 +434,8 @@ class ReaderRepository:
             else:
                 story.update(parent)
         for story in stories.values():
+            # One account's replies to itself, or its quotes of itself, read as a thread (issue 0066).
+            story["thread"] = story["thread"] and len(story["sources"]) == 1
             # A story whose origin is a page outside INSIGHT has no first post.
             if story["origin"] is not None and story["_first_rank"][0] != 0:
                 story["first"] = None
@@ -435,7 +449,7 @@ class ReaderRepository:
         shares read too. Returns every id marked."""
         if not read:
             return marked
-        cur.execute(_SHARES_OF_READ, (read,))
+        cur.execute(_SHARES_OF_READ, {"read": read})
         shares = [str(r[0]) for r in cur.fetchall()]
         if not shares:
             return marked
