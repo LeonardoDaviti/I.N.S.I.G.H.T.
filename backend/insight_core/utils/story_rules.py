@@ -51,8 +51,9 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 from urllib.parse import unquote
 
 from insight_core.utils.post_fields import display_title
-from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, host_of,
-                                          is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
+from insight_core.utils.post_links import (NUMBERISH, PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare,
+                                          host_of, is_article, is_home, is_reference, is_tweet, section_of, site_of,
+                                          titled_link_text)
 from insight_core.utils.url_normalization import TWEET_PATH
 
 # The version of the rules stories are grouped by (issue 0069). Bump it with a change to these rules,
@@ -257,6 +258,37 @@ def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
     return {url: p.id for url, p in out.items()}
 
 
+def _page_key(url: str) -> Optional[Tuple[str, str, Tuple[str, ...]]]:
+    """What names a page on its host whatever its section (issue 0070): (host, its last segment, its
+    path's numbers and dates), when the last segment is a slug of SLUG_MIN_WORDS+ words of letters
+    (not an id), and the page is no reference page (a /docs/ or /collections/ page is another one)."""
+    words = _slug_words(url)
+    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) < SLUG_MIN_WORDS or is_reference(url):
+        return None
+    _, _, rest = bare(url).partition("/")
+    segments = [s for s in re.split(r"[?#]", rest, maxsplit=1)[0].split("/") if s]
+    return host_of(url), segments[-1].lower(), tuple(s for s in segments[:-1] if NUMBERISH.match(s))
+
+
+def page_aliases(posts: Sequence[StoryPost]) -> Dict[str, str]:
+    """Another path of a website's own page (issue 0070): address -> the stored page's address, for
+    the posts' and their links' addresses on one host with its last segment, a slug (_page_key):
+    anthropic.com/engineering/redesigning-source-control is anthropic.com/research/redesigning-source-control,
+    darioamodei.com/machines-of-loving-grace is darioamodei.com/essay/machines-of-loving-grace, and a
+    language before it (openai.com/ru-RU/index/...) is skipped with the section. A slug two stored
+    pages share (a weekly series' "this-week-in-..." under its dates) names neither."""
+    own: Dict[Tuple[str, str, Tuple[str, ...]], Set[str]] = defaultdict(set)
+    for p in posts:
+        if p.kind == "site" and p.on_own_site and _page_key(p.url):
+            own[_page_key(p.url)].add(p.url)
+    out: Dict[str, str] = {}
+    for url in {u for p in posts for u in ((p.url,) if p.url else ()) + tuple(t for t, _ in p.links)}:
+        pages = own.get(_page_key(url)) or set()
+        if len(pages) == 1 and url not in pages:
+            out[url] = next(iter(pages))
+    return out
+
+
 def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
     """Each reply of an author to itself -> its parent (issue 0066): the post right before it in
     its source's timeline (reposts included), when that is the author's own tweet within 24 hours.
@@ -278,11 +310,16 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     posts = sorted(posts, key=_order)
     by_id = {p.id: p for p in posts}
     # A link to an address is a link to its own page when one is stored: the row a link resolves
-    # to (the first seen at the address) may be another source's post of that page (HN's).
+    # to (the first seen at the address) may be another source's post of that page (HN's). Another
+    # path of a website's page is that page too (issue 0070, page_aliases).
+    aliases = page_aliases(posts)
     origin_of = address_origins(posts)
+    origin_of.update({alias: origin_of[url] for alias, url in aliases.items() if url in origin_of})
 
     def resolve(what: str, target: str) -> Tuple[str, str]:
-        cited = by_id.get(target) if what == "post" else None
+        if what == "url":
+            return ("post", origin_of[target]) if target in origin_of else (what, target)
+        cited = by_id.get(target)
         return what, origin_of.get(cited.url, target) if cited is not None and cited.url else target
 
     def resolved(post: StoryPost) -> List[Tuple[str, str]]:
@@ -326,7 +363,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     by_url: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in posts:
         if p.url:
-            by_url[p.url].append(p)
+            by_url[aliases.get(p.url, p.url)].append(p)
     chain(by_url.values(), SAME_ADDRESS_WITHIN, "address")
 
     linkers: Dict[Tuple[str, str], List[StoryPost]] = defaultdict(list)

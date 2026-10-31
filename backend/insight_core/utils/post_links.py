@@ -149,6 +149,19 @@ def is_home(url: str) -> bool:
     return "/" not in rest and "?" not in rest and "#" not in rest
 
 
+# A reference page's path segment (issue 0051): a vocabulary of page kinds, not a list of sites.
+REFERENCE = re.compile(r"/(docs?|documentation|products?|pricing|support|help|api|reference|release-notes"
+                       r"|changelog|wiki|articles|collections|download|login|signup)(/|$)")
+
+
+def is_reference(url: str) -> bool:
+    """A docs, product, pricing, help ... page, or a home page: a page you look things up in."""
+    if is_home(url):
+        return True
+    _, _, rest = bare(url).partition("/")
+    return bool(REFERENCE.search("/" + rest))
+
+
 # A first path segment that names a kind of account, the account's name following it:
 # reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
 ACCOUNT_NAMESPACES = frozenset({"r", "u", "user", "c", "channel"})

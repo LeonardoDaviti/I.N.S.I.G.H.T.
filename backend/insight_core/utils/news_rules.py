@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import bare, is_home, publication_of, site_of, titled_link_text
+from insight_core.utils.post_links import bare, is_reference, publication_of, site_of, titled_link_text
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -59,9 +59,6 @@ CLASSIC_MIN_VOICES = 2
 CLASSIC_MIN_SPREAD = timedelta(days=180)   # measured on the server's data, 2026-10-30: at 30 days most were news with legs
 CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first
 BACKGROUND_SHOWN = 2
-# A reference page's path segment: a vocabulary of page kinds, not a list of sites.
-REFERENCE = re.compile(r"/(docs?|documentation|products?|pricing|support|help|api|reference|release-notes"
-                       r"|changelog|wiki|articles|collections|download|login|signup)(/|$)")
 
 # ---- names in titles ------------------------------------------------------------------------
 
@@ -315,14 +312,6 @@ class Classic:
     @property
     def days(self) -> int:
         return (self.last_at - self.first_at).days
-
-
-def is_reference(url: str) -> bool:
-    """A docs, product, pricing, help ... page, or a home page: a page you look things up in."""
-    if is_home(url):
-        return True
-    _, _, rest = bare(url).partition("/")
-    return bool(REFERENCE.search("/" + rest))
 
 
 _titled = titled_link_text   # moved to post_links (issue 0064: a story's outside origin is titled so too)

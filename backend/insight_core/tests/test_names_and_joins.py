@@ -28,7 +28,7 @@ from insight_core.tests.test_news import T0, followed, post
 from insight_core.utils.news_rules import names, surges
 from insight_core.utils.post_links import extract_links
 from insight_core.tests import test_story_trees as trees
-from insight_core.utils.story_rules import group, title_key
+from insight_core.utils.story_rules import group, page_aliases, title_key
 from insight_core.utils.url_normalization import normalize_url
 
 
@@ -145,6 +145,34 @@ class PostAboutOneStoryTests(unittest.TestCase):
         stories = group([*other, *[p for s in self.story(extra=[("https://other.test/2026/news", None)]) for p in s.posts]])
         self.assertEqual(sorted(sorted(p.id for p in s.posts) for s in stories), [["a", "b"], ["d", "e"]],
                          "it links two stories: a roundup of both")
+
+
+class OnePageTwoPathsTests(unittest.TestCase):
+    """One page under two paths of its own site joins by address (A7)."""
+
+    OWN = "https://anthropic.com/research/redesigning-source-control"
+    OTHER = "https://anthropic.com/engineering/redesigning-source-control"
+
+    def posts(self, link):
+        return [trees.post("own", "anthropic", url=self.OWN, home="anthropic.com", site="anthropic.com"),
+                trees.post("a", "adel", kind="telegram", hours=1, links=[(link, None)]),
+                trees.post("b", "simon", hours=2, links=[(link, None)])]
+
+    def test_another_section_and_a_language_are_the_page(self):
+        story = trees.only(self.posts(self.OTHER))
+        self.assertEqual((story.origin_url, trees.parents(story)),
+                         (None, {"own": (None, None), "a": ("own", "citation"), "b": ("own", "citation")}))
+        self.assertEqual(page_aliases(self.posts("https://anthropic.com/ru-RU/news/redesigning-source-control?ref=x")),
+                         {"https://anthropic.com/ru-RU/news/redesigning-source-control?ref=x": self.OWN})
+
+    def test_a_reference_page_an_id_or_a_series_are_other_pages(self):
+        for link in ("https://anthropic.com/docs/redesigning-source-control", "https://anthropic.com/engineering/2026-10",
+                     "https://anthropic.com/research/source-control"):
+            self.assertEqual(page_aliases(self.posts(link)), {}, link)
+        weekly = [trees.post(f"w{n}", "nesbitt", url=f"https://nesbitt.test/2026/10/{n}/this-week-in-source-control",
+                             home="nesbitt.test", site="nesbitt.test") for n in (21, 28)]
+        link = trees.post("l", "other", links=[("https://nesbitt.test/2026/10/14/this-week-in-source-control", None)])
+        self.assertEqual(page_aliases([*weekly, link]), {}, "another week of a series, under its date")
 
 
 @requires_db
