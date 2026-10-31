@@ -57,14 +57,9 @@ class StoriesService:
     # ---- the job ------------------------------------------------------------------------
 
     def fill_links(self) -> int:
-        """Read the links of every post never read, a batch a transaction. Returns how many."""
-        filled = 0
-        while True:
-            with db.transaction(self.db_url) as cur:
-                batch = self.repo.fill_missing_links(cur)
-            filled += batch
-            if not batch:
-                return filled
+        """Read the links of every post never read, a batch a transaction, until none is left
+        (issue 0069: the search refill may hold some for a moment). Returns how many."""
+        return db.fill_until_done(self.db_url, self.repo.fill_missing_links, self.repo.missing_links)
 
     def recompute(self, *, full: bool = False) -> Dict[str, Any]:
         """The story job. `full` regroups every post (the first run always does). Returns a summary."""

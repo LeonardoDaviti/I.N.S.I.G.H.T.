@@ -175,6 +175,12 @@ class StoriesRepository:
         return len(rows)
 
     @staticmethod
+    def missing_links(cur: Cursor) -> bool:
+        """Whether a post's links still wait to be read (fill_missing_links), locked rows too."""
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE links_scanned_at IS NULL)")
+        return cur.fetchone()[0]
+
+    @staticmethod
     def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:
         """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
         SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. A
