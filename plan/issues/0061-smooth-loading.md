@@ -56,6 +56,10 @@ A production build was served by `nginx:alpine` with the repo's `nginx.conf` (gz
   | Post | 307,727 | 308,512 |
 
   Raw bytes for comparison: feed 533,112 to 534,990, post 972,024 to 973,902. The old check counted JS only: 479,685.
+
+### Fixed after (2026-10-31): the budget is not a deploy gate
+- **Found** while building the lab's images after 0064: the image build failed with the post route "1.25% over". The same code measures 309,840 gzip bytes on the dev machine and 312,382 in `node:22-alpine` (also in `node:26-alpine`): the files are the same to within 70 bytes, but the two zlibs compress them differently, about 0.8% apart. The baseline comes from the dev machine, so `./update` on the server would have failed v9.8's deploy.
+- **Fixed:** the image runs `npm run build:image` (typecheck and `vite build`, no budget). `npm run build` on the dev machine still gates, against a baseline measured there. A deploy never fails on the budget.
 - **Tests:** `bundleBudget.test.ts` covers CSS, both routes, the 1% on each, and a ceiling that fails even when the baseline passes. `staleTab.test.ts` covers one reload and never two, the same build, a later deploy, a broken record and the error kinds. `loadAhead.test.ts` covers nothing before the feed, in order when idle, nothing with `saveData`, and a failure not stopping the rest. `npm run typecheck`, `npm test` (192 node and 646 vitest), `npm run lint` and `npm run build` with the new budget are green.
 
 ## Left open

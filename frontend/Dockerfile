@@ -19,7 +19,9 @@ COPY package*.json ./
 RUN npm ci || npm install
 
 COPY . .
-RUN npm run build
+# No budget gate here (0061): gzip bytes depend on the machine's zlib (this image measures
+# ~0.8% more than the dev machine the baseline comes from), and a deploy must never fail on it.
+RUN npm run build:image
 
 # Stage 2: Production (unchanged)
 FROM nginx:alpine

@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit -p . && vite build && node scripts/bundle-check.mjs",
+    "build:image": "tsc --noEmit -p . && vite build",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test src/lib/*.test.ts && vitest run",
     "lint": "eslint .",
