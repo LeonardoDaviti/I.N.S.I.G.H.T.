@@ -65,8 +65,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
 | [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | built, not deployed (v9.8) |
 | [0061](0061-smooth-loading.md) | Smooth loading: no broken tab after a deploy, no wait on the first post, a budget that measures what you wait for | built, not deployed (v9.8) |
-| [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | spec (v9.9) |
-| [0063](0063-saved-pages-keep-their-date.md) | Saved pages keep their own date, and link labels stay out of the text | spec (v9.9) |
+| [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | spec (v9.9); 2 built, not deployed |
+| [0063](0063-saved-pages-keep-their-date.md) | Saved pages keep their own date, and link labels stay out of the text | built, not deployed (v9.9) |
 | [0064](0064-stories-as-trees.md) | Stories as trees: each post knows where it came from | spec (v9.9) |
 | [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 

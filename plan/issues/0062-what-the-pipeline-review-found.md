@@ -24,6 +24,21 @@ Found by running the whole update and the recurring work on a fresh copy of the 
   - The same rule (0016's pace) and host gate apply. Record the try count with the post.
   - No new setting.
 - **Done when:** tests cover a failed read retried, success ending it, the third failure being the last, and a page that holds nothing longer never retried.
+- **Built** (2026-10-31, branch `issue-0062-0063-reading-fixes`, not deployed):
+  - **What counts as a failed read:** an `HttpError` from the article page: an HTTP status, a timeout, a dropped connection. "The page holds nothing longer" or "not the same article" (`read_article` returning None) is no failure and is never counted. Neither is a page the reader cannot parse.
+  - **The count** is `metadata.page_tries` = `{count, last_at, failed}` (`repo_posts.PAGE_TRIES_KEY`). A new teaser's failed read writes count 1. The saver keeps the key when the feed sends the post again without it (`_post_update_assignments`, like the page-watch update key); without that, every re-fetch wiped the count.
+  - **The retry** (`GenericRssKind._read_again`, `PostsRepository.teasers_to_read_again`):
+    - every fetch of a generic RSS source asks for its stored teasers with `failed` true, `count < 3`, `last_at` at least a day ago, oldest try first, up to 20 (`full_text.MAX_PAGE_TRIES`, `RETRY_APART`, `RETRY_SLICE`);
+    - an unchanged feed (304) asks too, so a quiet feed's teasers are still retried, and so does a post that has left the feed;
+    - they're read after the feed's own pages, inside the same host slot and `PAGE_DELAY_S` apart, so the runner's pace and host gate apply as to the first read;
+    - each comes back as a post the saver writes in place (the stored url, title, media, categories and metadata; `date` None, so the stored date stays). Full text sets `full_content_fetched` and ends it; nothing longer sets `failed` false and ends it; another failure counts again;
+    - a limiting answer (429 or a timeout) counts that try and ends the slice: the rest wait for the next fetch, a day apart still holding;
+    - a source with `fetch_full_content: false` is never retried. No new setting.
+  - **Tests:** `tests/test_teaser_retries.py` (11): a failed read counted (403 and timeout), a page with nothing longer never counted, a retry that works (count 2, done), the third failure counted and then never due, nothing longer ending it, a 304 feed still retrying, a limiting host ending the slice, the delay between pages, full text off, and on the database: only failed reads under 3 tries a day old are due, and a feed re-fetch keeps the count while the retry writes the full text in place. Backend suite: 1060 tests green.
+- **Left open:**
+  - **The 5 OpenAI teasers already stored** (`openai-teasers-retried`) carry no count: they were stored before 0062, and nothing recorded whether their read failed or found nothing. No rule can tell them from a teaser whose page really is short, so they're not retried by this. `python -m insight_core.scripts.repair_full_text --source <OpenAI News id>` reads them once (it reads every teaser never read from its page). From now on, a failed read is retried by itself.
+  - A 404 or 410 is retried like any HTTP error, as decided: at most two wasted reads, a day apart.
+  - The fetch's `fetched` count includes the retried posts, so a 304 fetch with retries says "unchanged" with posts.
 
 ## 3. An update takes INSIGHT down for seconds, not minutes
 - **The case:** `./update` runs `docker compose down` **before** `docker compose build`, so INSIGHT is offline for the whole build (about 1–3 minutes on the server).
