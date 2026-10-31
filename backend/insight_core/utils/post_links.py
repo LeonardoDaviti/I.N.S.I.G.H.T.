@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import FrozenSet, List, Optional
+from typing import Dict, FrozenSet, List, Optional
 from urllib.parse import urljoin, urlparse
 
 from insight_core.utils.url_normalization import TWEET_PATH, normalize_url
@@ -51,6 +51,16 @@ _KIND_PATTERNS = (
 REDDIT_AUTHOR = re.compile(r'submitted by\s*(?:&#32;)?\s*<a href="https://www\.reddit\.com/user/([^"/]+)')
 # A quoted tweet, as Nitter writes it (issue 0066): the quote's address in the <cite> of its <blockquote>.
 QUOTED = re.compile(r'<blockquote>.*?<cite>\s*<a\b[^>]*?href=["\']([^"\']+)["\']', re.I | re.S)
+# A page's own words in a post (issue 0070): Nitter's quote of a tweet (its author in bold, its text,
+# then a <footer> citing it), and a link preview, as the Telegram bridge writes one (a <blockquote>
+# citing the page: its site in <cite>, then its title in bold and its description).
+QUOTE_TEXT = re.compile(r'<blockquote>\s*<b>[^<]*</b>(.*?)<footer>\W*<cite>\s*<a\b[^>]*?href=["\']([^"\']+)["\']', re.I | re.S)
+PREVIEW = re.compile(r'<blockquote cite=["\']([^"\']+)["\']>\s*<cite>\s*<b>([^<]*)</b>\s*</cite>\s*</br>'
+                     r'(?:\s*<b>([^<]*)</b>\s*</br>)?([^<]*)', re.I)
+LINE_END = re.compile(r'<br\s*/?>|</br>|</p\s*>', re.I)
+# A preview titled by an account ("Claude (@claudeai) on X", "name (@name@mastodon.social)") is a post's:
+# its description is the post's text.
+BY_ACCOUNT = re.compile(r'\(@[^)\s]+\)')
 # An article-like address: a date in the path, or a slug of 4+ words.
 ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
 # A site's section (issue 0060): the first path segment SECTION_SHARE of its articles share, at least
@@ -191,6 +201,22 @@ def quoted_tweet(content_html: Optional[str]) -> Optional[str]:
     match = QUOTED.search(content_html or "")
     url = normalize_url(html.unescape(match.group(1))) if match else None
     return url if is_tweet(url) else None
+
+
+def quoted_words(content_html: Optional[str]) -> Dict[str, str]:
+    """The pages a post quotes, normalized, each with its own words as quoted (issue 0070), plain
+    text a line a line: a quoted tweet's text; a link preview's title, not one that only repeats the
+    site's name, or for a post's preview (titled by its account, BY_ACCOUNT) its description."""
+    found: Dict[str, str] = {}
+    for text, url in QUOTE_TEXT.findall(content_html or ""):
+        found.setdefault(normalize_url(html.unescape(url)) or "", text)
+    for url, site, title, description in PREVIEW.findall(content_html or ""):
+        url = normalize_url(html.unescape(url)) or ""
+        words = description if BY_ACCOUNT.search(title) else title if title.strip().casefold() != site.strip().casefold() else ""
+        if words.strip():
+            found.setdefault(url, words)
+    plain = {url: html.unescape(TAG.sub("", LINE_END.sub("\n", text))).strip() for url, text in found.items()}
+    return {url: text for url, text in plain.items() if url and text}
 
 
 def reddit_author(content_html: Optional[str]) -> Optional[str]:

@@ -214,6 +214,12 @@ async def main() -> None:
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     logger.info("Starting scheduler")
+    try:   # the scheduler's runs a restart ended mid-run (issue 0070)
+        closed = operations_service.close_interrupted_jobs("scheduler")
+        if closed:
+            logger.info("Marked %s scheduler jobs left running by a restart interrupted", closed)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not close the scheduler jobs a restart interrupted")
     try:
         state = SchedulerState.from_dict(operations_service.get_scheduler_state())
     except Exception:  # noqa: BLE001

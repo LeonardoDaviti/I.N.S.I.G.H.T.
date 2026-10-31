@@ -14,7 +14,8 @@ It is story_rules.suggestions (the reference, kept as a pure function) in SQL, o
   for a website, `reddit:<author>` for a Reddit post whose feed names its author, else
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
-each and the words they are most often linked by. Python orders them and names the voices.
+each. Python orders them, names the voices and titles the articles (issue 0070: as a story's
+outside origin is titled, story_rules.origin_title; a stored post by its own title).
 
 Issue 0065: a post on a platform is an article of its account (story_rules.discover_article: a
 tweet in any form, a Telegram post), and a post of a platform account's source at another
@@ -42,11 +43,12 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
+from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR
 from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
                                             DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST,
@@ -60,7 +62,7 @@ ADDRESS_RULES = hashlib.sha1(repr((ADDRESS_RULES_VERSION, sorted(DISCOVER_PLATFO
                                    PLATFORM_POST.pattern)).encode()).hexdigest()[:12]
 LOCK_KEY = "insight.discover_addresses"
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
-COUNTS_VERSION = 1             # bump when the counting query changes what it returns
+COUNTS_VERSION = 2             # bump when the counting query changes what it returns (2: titles, 0070)
 WORK_MEM = "48MB"
 
 _COUNTS = """
@@ -95,13 +97,13 @@ candidate AS MATERIALIZED (       -- keys with 2+ article-like addresses, 40%%+ 
        AND count(*) FILTER (WHERE article) >= %(share)s::float8 * count(*)
 ),
 linked AS MATERIALIZED (          -- the kept links to those keys' addresses
-    SELECT u.key, u.url, u.article, pl.post_id, pl.position, pl.link_text AS text, p.source_id,
+    SELECT u.key, u.url, u.article, pl.post_id, p.source_id,
            COALESCE(s.kind, 'site') AS kind, COALESCE(s.own_site, '') AS own_site
     FROM unfollowed u JOIN post_links pl ON pl.target_url = u.url AND NOT pl.boilerplate
     JOIN posts p ON p.id = pl.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE u.key IN (SELECT key FROM candidate)
     UNION ALL                     -- and the reposts of them
-    SELECT r.key, r.url, r.article, r.post_id, 0, NULL, p.source_id, COALESCE(s.kind, 'site'), COALESCE(s.own_site, '')
+    SELECT r.key, r.url, r.article, r.post_id, p.source_id, COALESCE(s.kind, 'site'), COALESCE(s.own_site, '')
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
@@ -121,7 +123,7 @@ author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes 
       AND strpos(p.content_html, %(author_mark)s) > 0
 ),
 link AS MATERIALIZED (            -- with their voices (StoryPost.voice), and whether a roundup linked it
-    SELECT l.key, l.url, l.article, l.post_id, l.position, l.text,
+    SELECT l.key, l.url, l.article, l.post_id,
            (CASE WHEN l.kind = 'site' THEN 'site:' || l.own_site
                  WHEN l.kind = 'reddit' AND a.author IS NOT NULL THEN 'reddit:' || a.author
                  ELSE 'source:' || l.source_id::text END) COLLATE "C" AS voice,
@@ -145,15 +147,8 @@ shown AS MATERIALIZED (           -- each kept key's top articles: most voices f
               WHERE article AND key IN (SELECT key FROM counted) GROUP BY key, url) per_url
     ) ranked WHERE r <= %(shown)s
 ),
-title AS MATERIALIZED (           -- an article's words most often linked by; on a tie, the first read
-    SELECT DISTINCT ON (url) url, text
-    FROM (SELECT url, text, post_id, position, count(*) OVER (PARTITION BY url, text) AS n FROM link
-          WHERE text <> '' AND url IN (SELECT url FROM shown)) t
-    ORDER BY url, n DESC, post_id, position
-),
 listed AS (
-    SELECT s.key, json_agg(json_build_array(s.url, s.voices, t.text) ORDER BY s.r) AS articles
-    FROM shown s LEFT JOIN title t USING (url) GROUP BY s.key
+    SELECT key, json_agg(json_build_array(url, voices) ORDER BY r) AS articles FROM shown GROUP BY key
 )
 SELECT c.key, c.articles, c.links, c.classics, c.voices, c.roundups, COALESCE(l.articles, '[]'::json),
        (SELECT n FROM unknown)
@@ -187,7 +182,7 @@ SELECT DISTINCT ON (voice) voice, source_id FROM (
 
 # Each story's root (0064): its outside page, else its one post with no parent and no reason.
 _ORIGINS = """
-SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), COALESCE(s.origin_title, p.title), p.source_id,
+SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, p.title, p.content, p.source_id,
        s.first_at,
        (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id)
 FROM stories s
@@ -235,7 +230,7 @@ class DiscoverRepository:
         counted). A suggestion: key, voices [(voice, the source naming it; None for a Reddit author)],
         roundups (the voices linking it only in roundups, issue 0067), article_count, link_count,
         classics (its addresses that are classics, hidden or not) and its `shown` top articles
-        [(url, voices, title)].
+        [(url, voices)].
         `kinds` and `own_sites`: each source's kind (source_kind) and publication, its website voice
         (SourceFacts.publication, issue 0069);
         `accounts`: the platform account of each source that follows one (SourceFacts.platform_accounts),
@@ -258,7 +253,7 @@ class DiscoverRepository:
         found = [{
             "key": key, "article_count": int(articles), "link_count": int(links), "classics": list(classics),
             "voices": list(voices), "roundups": list(roundups),
-            "articles": [(url, list(url_voices), text) for url, url_voices, text in shown_articles],
+            "articles": [(url, list(url_voices)) for url, url_voices in shown_articles],
         } for key, articles, links, classics, voices, roundups, shown_articles, _ in rows if key is not None]
         site_voices = {v for s in found for v in s["voices"] if v.startswith("site:")}
         namers = DiscoverRepository._site_namers(cur, kinds, own_sites, site_voices)
@@ -299,14 +294,22 @@ class DiscoverRepository:
     def story_origins(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str]) -> List[Origin]:
         """Where each story of ORIGIN_MIN_VOICES+ voices starts (issue 0065): its outside page, else
         its origin post's address (a story whose tree is not drawn yet has none), with its voices,
-        each named as Discover names it."""
+        each named as Discover names it, and its title: the outside page's (origin_title), else the
+        post's as the reader shows it (display_title, issue 0070)."""
         cur.execute(_ORIGINS, {"min_voices": ORIGIN_MIN_VOICES})
         rows = cur.fetchall()
         namers = DiscoverRepository._site_namers(
             cur, kinds, own_sites, {v for *_, voices in rows for v in voices if v.startswith("site:")})
-        return [Origin(str(story_id), url, title, str(source_id) if source_id else None, first_at,
-                       {v: voice_source(v, namers) or "" for v in voices})
-                for story_id, url, title, source_id, first_at, voices in rows]
+        return [Origin(str(story_id), url, display_title(title, content) if source_id else origin_title,
+                       str(source_id) if source_id else None, first_at, {v: voice_source(v, namers) or "" for v in voices})
+                for story_id, url, origin_title, title, content, source_id, first_at, voices in rows]
+
+    @staticmethod
+    def stored_titles(cur: Cursor, urls: Sequence[str]) -> Dict[str, str]:
+        """The title the reader shows (display_title) of the first post stored at each address."""
+        cur.execute("SELECT DISTINCT ON (normalized_url) normalized_url, title, content FROM posts "
+                    "WHERE normalized_url = ANY(%s) ORDER BY normalized_url, fetched_at, created_at, id", (list(urls),))
+        return {url: display_title(title, content) for url, title, content in cur.fetchall()}
 
     @staticmethod
     def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:

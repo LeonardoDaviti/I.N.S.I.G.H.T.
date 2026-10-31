@@ -5,8 +5,9 @@ when an address is missing, and again when the rules change.
 The oracle is the old walk itself (`reference_discover`, kept here as it was): every test compares
 the service's whole list with it, on the whole test database, after adding rows that hit the edges
 (platform accounts and pages that name none, lowercasing beyond ASCII, a host with a port, the
-40% share exactly and just under, Reddit authors as voices, a site two sources share, titles on a tie,
-more than 20 articles, a classic, a followed site and a hidden key).
+40% share exactly and just under, Reddit authors as voices, a site two sources share, titles by the
+evidence an origin is titled by (issue 0070), more than 20 articles, a classic, a followed site and a
+hidden key).
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import re
 import sys
 import unittest
 import uuid
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import DISCOVER_ARTICLES_SHOWN, StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
 from insight_core.utils.post_links import reddit_author
-from insight_core.utils.story_rules import StoryPost, discover_address, is_roundup, suggestions
+from insight_core.utils.story_rules import StoryPost, discover_address, is_roundup, origin_title, suggestions
 
 
 LINK_FIELDS = ("key", "url", "voices", "voice_names", "article_count", "link_count", "classics", "articles")
@@ -77,15 +78,17 @@ def reference_discover(url: str):
     roundups = {post_id for post_id, its in post_links.items()
                 if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
     triples, names = [], {}
-    linked_by, texts = defaultdict(set), defaultdict(Counter)
+    linked_by, linking = defaultdict(set), defaultdict(dict)
     for link in links:
-        p = StoryPost(id="", source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
-                      own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"])
+        p = linking[link["url"]].setdefault(link["post_id"], StoryPost(
+            id=link["post_id"], source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
+            own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"],
+            links=post_links[link["post_id"]]))
         names.setdefault(p.voice, sources.voice_name(p.voice, link["source_id"]))
         triples.append((p.voice, link["url"], link["post_id"] in roundups))
         linked_by[link["url"]].add(p.voice)
         if link["text"]:
-            texts[link["url"]][link["text"]] += 1
+            p.link_texts[link["url"]] = link["text"]
     found = suggestions(triples, followed=sources.followed(), hidden=hidden,
                         followed_accounts=sources.followed_accounts(), mirrors=mirrors)
     held = {s.key: len(s.addresses & classic_urls) for s in found}
@@ -95,7 +98,7 @@ def reference_discover(url: str):
         "voice_names": [names[v] for v in sorted(s.voices, key=lambda v: (v in s.roundups, names[v]))],
         "article_count": len(s.articles),
         "link_count": s.links, "classics": held[s.key],
-        "articles": [{"url": u, "title": texts[u].most_common(1)[0][0] if texts[u] else None,
+        "articles": [{"url": u, "title": origin_title(u, list(linking[u].values())),
                       "linked_by": sorted(names[v] for v in linked_by[u])}
                      for u in sorted(s.articles, key=lambda u: (-len(linked_by[u]), u))[:DISCOVER_ARTICLES_SHOWN]],
     } for s in found]
