@@ -15,7 +15,7 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
-import { coveredBy, originHref, originLabel, repostLine, storyTree, type StoryLine } from '../../lib/story';
+import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree, type StoryLine } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -24,9 +24,13 @@ function lengthLabel(item: FeedItemData): string | null {
   return null;
 }
 
-/** A story line, and its indent in the tree (issue 0064): two levels at most. */
+/** A story line, and its indent in the tree (issue 0064): two levels at most, one on a phone (issue 0068). */
 const STORY_LINE = 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3';
-const INDENT = ['', 'pl-2 sm:pl-4', 'pl-4 sm:pl-8'];
+const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
+
+/** On a phone, a line at the deepest indent names its parent instead (issue 0068): "↳ Mat Duggan". */
+const Under = ({ name }: { name?: string }) =>
+  name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
 
 /**
  * A folded story's line under its lead (issue 0050): "covered by 3 · Anthropic, Simon Willison, +1"
@@ -52,10 +56,24 @@ function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: stri
       </button>
       {open ? (
         <ul id={listId} data-story-posts className="mt-1 mb-1 flex flex-col gap-1 border-l border-line pl-3">
-          {storyTree(story, lead.id, lead.sort_at ?? lead.published_at).map((line) => (
-            <StoryLineItem key={line.kind === 'post' ? line.post.id : line.kind} line={line} lead={lead} now={now} />
+          {storyTree(story, lead.id, lead.sort_at ?? lead.published_at, lead.source_display_name).map((line, i) => (
+            <StoryLineItem key={i} line={line} lead={lead} now={now} />
           ))}
         </ul>
+      ) : null}
+      {open && story.roundups?.length ? (
+        // The roundups that mention the story and are not in it, each source once (issue 0068).
+        <p className="mb-1 pl-3 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
+          Also in roundups:{' '}
+          {story.roundups.map((roundup, i) => (
+            <Fragment key={roundup.id}>
+              {i ? ', ' : null}
+              <TextLink to={postHref(roundup.id, null)} title={roundup.title} onClick={() => rememberSelection(lead.id)} muted>
+                {sourceLabel(roundup.source_display_name)}
+              </TextLink>
+            </Fragment>
+          ))}
+        </p>
       ) : null}
     </div>
   );
@@ -82,9 +100,11 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
       </li>
     );
   }
+  if (line.kind === 'reposts') return <li data-depth={line.depth} className={indent}>{repostedBy(line.by)}</li>;
   if (line.kind === 'self') {
     return (
       <li data-depth={line.depth} aria-current="true" className={indent}>
+        <Under name={line.under} />
         <span className="max-w-[40%] shrink-0 truncate">{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
         <span aria-hidden="true" className="shrink-0">·</span>
         <span dir="auto" className="min-w-0 truncate text-fg-2">{lead.title?.trim() || 'Untitled post'}</span>
@@ -95,6 +115,7 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
   const { post } = line;
   return (
     <li data-depth={line.depth} className={indent}>
+      <Under name={line.under} />
       {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
       <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
       <span aria-hidden="true" className="shrink-0">·</span>

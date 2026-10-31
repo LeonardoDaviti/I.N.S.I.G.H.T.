@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { coveredBy, originHref, originLabel, repostLine, storyTree, suggestionReason } from './story.ts';
+import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyTree, suggestionReason } from './story.ts';
 import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
@@ -43,7 +43,7 @@ const sp = (id: string, h: number, parent_id: string | null, parent_reason: Reas
   sort_at: at(h), published_at: null, read_at: null, role: 'report' as const, parent_id, parent_reason,
 });
 const lines = (tree: ReturnType<typeof storyTree>) =>
-  tree.map((l) => `${'  '.repeat(l.depth)}${l.kind === 'post' ? l.post.id : l.kind === 'page' ? 'PAGE' : 'SELF'}`);
+  tree.map((l) => `${'  '.repeat(l.depth)}${l.kind === 'post' ? l.post.id : l.kind === 'page' ? 'PAGE' : l.kind === 'reposts' ? `↻ ${l.by}` : 'SELF'}`);
 
 test('storyTree: the origin row lists what came from it, two levels of indent at most (GPT-6.1 Terra)', () => {
   const terra = {
@@ -101,4 +101,33 @@ test('repostLine names who reposted a tweet, and its author', () => {
 test('storyTree: no tree (before the job drew it, News) lists the posts flat, as before', () => {
   const story = { id: 'a', voices: 2, sources: [], posts: [sp('b', 2, null, null), sp('c', 3, null, null)] };
   assert.deepEqual(lines(storyTree(story, 'a')), ['b', 'c']);
+});
+
+// ---- what reading v9.9 would show (issue 0068) -------------------------------------------------------
+
+test('storyTree: a line at the deepest indent names its parent, which a phone shows instead of more indent (Ghostty)', () => {
+  // mitchellh.com's post, @steipete and Mat Duggan under it, Andrew Nesbitt's "A GitHub for maintainers" under Duggan.
+  const ghostty = {
+    id: 'mitchell', voices: 4, first: 'mitchell', sources: [], parent_id: null, parent_reason: null,
+    posts: [sp('steipete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation'), sp('nesbitt', 5, 'duggan', 'citation')],
+  };
+  const unders = (tree: ReturnType<typeof storyTree>) => tree.map((l) => (l.kind === 'post' || l.kind === 'self' ? l.under : null));
+  assert.deepEqual(unders(storyTree({ ...ghostty, posts: [sp('mitchell', 0, null, null), ...ghostty.posts], parent_id: 'mitchell',
+    parent_reason: 'citation' }, 'steipete', at(2))), [undefined, undefined, undefined, 'duggan'],
+  'opened on @steipete: only Nesbitt, at the second level, names Duggan');
+  assert.deepEqual(unders(storyTree({ ...ghostty, parent_id: 'duggan', parent_reason: 'citation',
+    posts: [sp('mitchell', 0, null, null), sp('steipete', 2, 'mitchell', 'citation'), sp('duggan', 3, 'mitchell', 'citation')] },
+  'nesbitt', at(5), 'Andrew Nesbitt')), [undefined, undefined, undefined, 'duggan'], 'this post at the second level names its parent too');
+  assert.deepEqual(unders(storyTree(ghostty, 'mitchell', at(0))), [undefined, undefined, undefined],
+    'on the origin row the list is one level less deep: nothing to name');
+});
+
+test('storyTree: who reposted a tweet is a line under it, the row’s own at the top (issue 0068)', () => {
+  const tweet = { ...sp('tweet', 2, 'origin', 'citation'), reposted_by: ['steipete', 'badlogicgames'] };
+  const story = { id: 'origin', voices: 4, first: 'origin', sources: [], parent_id: null, parent_reason: null, reposted_by: ['akhaliq'],
+    posts: [tweet, sp('simon', 3, 'origin', 'citation')] };
+  assert.deepEqual(lines(storyTree(story, 'origin', at(0))), ['↻ akhaliq', 'tweet', '↻ steipete,badlogicgames', 'simon']);
+  assert.deepEqual(lines(storyTree({ id: 'a', voices: 2, sources: [], posts: [{ ...sp('b', 2, null, null), reposted_by: ['x'] }] }, 'a')),
+    ['b', '↻ x'], 'flat (News) too');
+  assert.equal(repostedBy(['steipete', 'badlogicgames']), '↻ reposted by @steipete, @badlogicgames');
 });

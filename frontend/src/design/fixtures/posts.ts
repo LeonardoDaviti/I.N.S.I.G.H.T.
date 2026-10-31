@@ -154,8 +154,10 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         story: {
           id: 'p-bg', voices: 1, first: 'p-bg', parent_id: null, parent_reason: null, origin: null, thread: true,
           sources: [{ id: sourceId('s-bg'), name: 'badlogicgames' }],
+          // Each reply as stored (issue 0068): read as the post's body is.
           posts: THREAD_REPLIES.map(([id, text, hoursAgo], i) => ({
             ...storyPost(id, 'badlogicgames', text.split('\n')[0], 'report', now, hoursAgo, false), text,
+            html: `<p>${text.replace(/\n/g, '<br>\n')}</p>`,
             parent_id: i ? THREAD_REPLIES[i - 1][0] : 'p-bg', parent_reason: 'thread' as const,
           })),
         },
