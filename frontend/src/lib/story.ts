@@ -14,6 +14,14 @@ export type StoryLine =
   | { kind: 'self'; depth: number; under?: string }
   | { kind: 'reposts'; by: string[]; depth: number };
 
+/**
+ * A story line's name and title (issue 0070). From sm up one row: name · title, its role, its date. On a
+ * phone (the line wraps) the title is a row of its own under the name, role and date; the name takes the
+ * room they leave (no width of its own, so they never wrap) and keeps its words in the order read.
+ */
+export const LINE_NAME = 'min-w-0 shrink-0 truncate max-w-[40%] max-sm:max-w-none max-sm:shrink max-sm:basis-0 max-sm:grow';
+export const LINE_TITLE = 'min-w-0 truncate max-sm:order-1 max-sm:basis-full';
+
 /** Two levels of indent at most: deeper posts are listed under the second level. */
 const MAX_DEPTH = 2;
 const PAGE = '\u0000origin';

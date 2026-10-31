@@ -29,7 +29,9 @@ import {
 import TextLink, { ExternalLink } from '../components/ui/TextLink';
 import { rememberSelection } from '../lib/readerSelection';
 import { classicTitle } from '../lib/classics';
-import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree } from '../lib/story';
+import {
+  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree,
+} from '../lib/story';
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
@@ -115,13 +117,13 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             const { site, title, linkedBy } = originLabel(line.origin);
             return (
               <li key="origin" data-depth={line.depth} className={indent}>
-                <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={site}>{middleTruncate(site, 32)}</span>
+                <span className={LINE_NAME} title={site}>{middleTruncate(site, 32)}</span>
                 <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
                 <Link
                   to={originHref(line.origin)}
                   dir="auto"
                   title={line.origin.url}
-                  className={`min-w-0 truncate rounded-sm text-fg-2 max-sm:order-1 max-sm:basis-full underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
+                  className={`${LINE_TITLE} rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
                 >
                   {title}
                 </Link>
@@ -133,9 +135,9 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             return (
               <li key="self" data-depth={line.depth} aria-current="true" className={indent}>
                 <Under name={line.under} />
-                <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate">{middleTruncate(postSourceName(post), 32)}</span>
+                <span className={LINE_NAME}>{middleTruncate(postSourceName(post), 32)}</span>
                 <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
-                <span dir="auto" className="min-w-0 truncate text-fg-2 max-sm:order-1 max-sm:basis-full">{post.title?.trim() || 'Untitled post'}</span>
+                <span dir="auto" className={`${LINE_TITLE} text-fg-2`}>{post.title?.trim() || 'Untitled post'}</span>
                 <span className="shrink-0">· this post</span>
               </li>
             );
@@ -145,14 +147,14 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
             <li key={other.id} data-depth={line.depth} className={indent}>
               <Under name={line.under} />
               {!other.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-              <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={sourceLabel(other.source_display_name)}>
+              <span className={LINE_NAME} title={sourceLabel(other.source_display_name)}>
                 {middleTruncate(storyPostName(other), 32)}
               </span>
               <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
               <Link
                 to={postHref(other.id, null)}
                 dir="auto"
-                className={`min-w-0 truncate rounded-sm underline-offset-4 max-sm:order-1 max-sm:basis-full hover:underline hover:decoration-fg-3 ${other.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+                className={`${LINE_TITLE} rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${other.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
               >
                 {other.title?.trim() || 'Untitled post'}
               </Link>

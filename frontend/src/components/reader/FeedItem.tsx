@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState, type MouseEvent } from 'react';
+import { Fragment, memo, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
@@ -15,7 +15,9 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
-import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, type StoryLine } from '../../lib/story';
+import {
+  coveredBy, LINE_NAME, LINE_TITLE, originHref, originLabel, repostedBy, repostLine, storyPostName, storyTree, type StoryLine,
+} from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -86,14 +88,14 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     const { site, title, linkedBy } = originLabel(line.origin);
     return (
       <li data-depth={line.depth} className={indent}>
-        <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={site}>{middleTruncate(site, 32)}</span>
+        <span className={LINE_NAME} title={site}>{middleTruncate(site, 32)}</span>
         <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
         <Link
           to={originHref(line.origin)}
           onClick={() => rememberSelection(lead.id)}
           dir="auto"
           title={line.origin.url}
-          className={`min-w-0 truncate rounded-sm text-fg-2 max-sm:order-1 max-sm:basis-full underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
+          className={`${LINE_TITLE} rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
         >
           {title}
         </Link>
@@ -106,9 +108,9 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     return (
       <li data-depth={line.depth} aria-current="true" className={indent}>
         <Under name={line.under} />
-        <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate">{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
+        <span className={LINE_NAME}>{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
         <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
-        <span dir="auto" className="min-w-0 truncate text-fg-2 max-sm:order-1 max-sm:basis-full">{lead.title?.trim() || 'Untitled post'}</span>
+        <span dir="auto" className={`${LINE_TITLE} text-fg-2`}>{lead.title?.trim() || 'Untitled post'}</span>
         <span className="shrink-0">· this post</span>
       </li>
     );
@@ -118,17 +120,18 @@ function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemDat
     <li data-depth={line.depth} className={indent}>
       <Under name={line.under} />
       {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-      <span className="max-w-[60%] shrink-0 sm:max-w-[40%] truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
+      <span className={LINE_NAME} title={sourceLabel(post.source_display_name)}>{middleTruncate(storyPostName(post), 32)}</span>
       <span aria-hidden="true" className="shrink-0 max-sm:hidden">·</span>
       <Link
         to={postHref(post.id, null)}
         onClick={() => rememberSelection(lead.id)}
         dir="auto"
-        className={`min-w-0 truncate rounded-sm underline-offset-4 max-sm:order-1 max-sm:basis-full hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+        className={`${LINE_TITLE} rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
       >
         {post.title?.trim() || 'Untitled post'}
       </Link>
-      {post.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(post.source_display_name)}</span> : post.role === 'share' ? <span className="shrink-0">· share</span> : null}
+      {post.repost ? <span className="max-w-[30%] shrink-0 truncate">· ↻ {sourceLabel(post.source_display_name)}</span>
+        : post.role === 'share' ? <span className="shrink-0">· share</span> : null}
       <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
         {feedDateLabel(post.sort_at, now ?? new Date())}
       </time>
@@ -224,6 +227,9 @@ function FeedItem({
   const pageNote = item.update
     ? `updated ${updateChanges(item.update)}`.trim()
     : lateFind(item) ? `published ${feedDateLabel(item.published_at, now ?? new Date())}` : null;
+  // On a phone a repost's line and a page's note go under the source, which keeps its name (issue 0070).
+  const phoneBreak = showSource && Boolean(item.repost || pageNote);
+  const lineStart = phoneBreak ? 'max-sm:hidden' : '';
   // On a real pointer the actions wait for hover or focus; on touch (phones
   // included), and on the selected row, they stay visible (lead review #1). The
   // reveal is instant: hovering rows happens hundreds of times a day.
@@ -266,7 +272,7 @@ function FeedItem({
             {title}
           </Link>
         </h3>
-        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums sm:flex-nowrap">
+        <p className={`flex min-w-0 items-center gap-x-1.5 text-[0.8125rem] leading-5 text-fg-3 tabular-nums ${phoneBreak ? 'max-sm:flex-wrap' : ''}`}>
           {!isRead ? <StatusIcon status="unread" className="text-fg" /> : null}
           {isLater ? <Clock aria-hidden="true" className="h-3 w-3 shrink-0 text-fg" /> : null}
           {isStarred ? <span aria-hidden="true" className="shrink-0 text-fg">★</span> : null}
@@ -274,49 +280,54 @@ function FeedItem({
             <TextLink
               to={sourceReadPath(item.source_id)}
               title={item.source_display_name}
-              className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3"
+              // A phone keeps 12 characters of the name at least (issue 0070).
+              className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3 max-sm:min-w-[var(--name-ch)]"
+              style={{ '--name-ch': `${Math.min(source.length, 12)}ch` } as CSSProperties}
             >
               {middleTruncate(source, 56)}
             </TextLink>
           ) : null}
-          {/* A repost (issue 0066): its author, beside the source that reposted it. On a phone it and a page's
-              note take a second line, so the source keeps its name (issue 0070). */}
-          {item.repost || pageNote ? <span aria-hidden="true" className="h-0 basis-full max-sm:order-1 sm:hidden" /> : null}
-          {item.repost ? <span className="min-w-0 truncate max-sm:order-1">{repostLine(item.repost)}</span> : null}
-          {/* A Hacker News item's counts (issue 0070), no longer its text. */}
-          {item.counts ? (
-            <>
-              {showSource || item.repost ? <span aria-hidden="true" className="shrink-0">·</span> : null}
-              <span className="shrink-0 whitespace-nowrap">{countsLabel(item.counts)}</span>
-            </>
-          ) : null}
-          {length ? (
-            <>
-              {showSource || item.repost || item.counts ? <span aria-hidden="true" className="shrink-0">·</span> : null}
-              <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
-                {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
-                {length}
-              </span>
-            </>
-          ) : null}
-          {progress !== null ? (
-            <>
-              <span aria-hidden="true" className="shrink-0">·</span>
-              {/* Started, not finished (issue 0030): a hairline track, filled as far as read. */}
-              <span aria-hidden="true" data-reading-progress className="h-px w-10 shrink-0 bg-line">
-                <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
-              </span>
-              <span className="sr-only">{progress}% read</span>
-            </>
-          ) : null}
-          {pageNote ? (
-            <>
-              {showSource || length || item.repost
-                ? <span aria-hidden="true" className={`shrink-0 max-sm:order-1 ${item.repost ? '' : 'max-sm:hidden'}`}>·</span> : null}
-              {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
-              <span data-page-note className="min-w-0 truncate max-sm:order-1" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
-            </>
-          ) : null}
+          {/* On a phone a repost's line and a page's note start a second line, so the source keeps its name
+              (issue 0070); a dot never starts that line. Elsewhere the group is no box. */}
+          <span className={`contents ${phoneBreak ? 'max-sm:flex max-sm:min-w-0 max-sm:basis-full max-sm:items-center max-sm:gap-x-1.5' : ''}`}>
+            {/* A repost (issue 0066): its author, beside the source that reposted it (issue 0070). */}
+            {item.repost ? <span className="min-w-0 truncate">{repostLine(item.repost)}</span> : null}
+            {/* A Hacker News item's counts (issue 0070), no longer its text. */}
+            {item.counts ? (
+              <>
+                {showSource || item.repost ? <span aria-hidden="true" className={`shrink-0 ${item.repost ? '' : lineStart}`}>·</span> : null}
+                <span className="shrink-0 truncate max-sm:min-w-0 max-sm:shrink">{countsLabel(item.counts)}</span>
+              </>
+            ) : null}
+            {length ? (
+              <>
+                {showSource || item.repost || item.counts
+                  ? <span aria-hidden="true" className={`shrink-0 ${item.repost || item.counts ? '' : lineStart}`}>·</span> : null}
+                <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+                  {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
+                  {length}
+                </span>
+              </>
+            ) : null}
+            {progress !== null ? (
+              <>
+                <span aria-hidden="true" className="shrink-0">·</span>
+                {/* Started, not finished (issue 0030): a hairline track, filled as far as read. */}
+                <span aria-hidden="true" data-reading-progress className="h-px w-10 shrink-0 bg-line">
+                  <span className="block h-px bg-fg-3" style={{ width: `${progress}%` }} />
+                </span>
+                <span className="sr-only">{progress}% read</span>
+              </>
+            ) : null}
+            {pageNote ? (
+              <>
+                {showSource || length || item.repost || item.counts
+                  ? <span aria-hidden="true" className={`shrink-0 ${item.repost || item.counts || length ? '' : lineStart}`}>·</span> : null}
+                {/* A watched page that changed, or a page new to you long after its date (issue 0039). */}
+                <span data-page-note className="min-w-0 truncate" title={item.update ? updateLine(item.update, now) : undefined}>{pageNote}</span>
+              </>
+            ) : null}
+          </span>
           {!isRead ? <span className="sr-only">Unread</span> : null}
           {isLater ? <span className="sr-only">In Later</span> : null}
           {isStarred ? <span className="sr-only">Kept</span> : null}
