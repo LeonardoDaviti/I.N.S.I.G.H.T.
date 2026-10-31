@@ -25,7 +25,7 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests.test_news import T0, followed, post
-from insight_core.utils.news_rules import names, surges
+from insight_core.utils.news_rules import names, surges, tally
 from insight_core.utils.post_links import extract_links
 from insight_core.tests import test_story_trees as trees
 from insight_core.utils.story_rules import group, page_aliases, title_key
@@ -173,6 +173,29 @@ class OnePageTwoPathsTests(unittest.TestCase):
                              home="nesbitt.test", site="nesbitt.test") for n in (21, 28)]
         link = trees.post("l", "other", links=[("https://nesbitt.test/2026/10/14/this-week-in-source-control", None)])
         self.assertEqual(page_aliases([*weekly, link]), {}, "another week of a series, under its date")
+
+
+class SavedIsNoVoiceTests(unittest.TestCase):
+    """A Saved page is never a voice; it can be the origin, shown as the page (A8)."""
+
+    PAGE = "https://github.com/unslothai/unsloth"
+
+    def saved(self):
+        return trees.post("saved", "saved-source", kind="saved", url=self.PAGE, hours=40, title="GitHub - unslothai/unsloth")
+
+    def test_a_saved_page_and_one_voice_are_no_story(self):
+        self.assertEqual(group([self.saved(), trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")])]), [])
+
+    def test_a_saved_origin_is_the_page_never_the_first_post(self):
+        posts = [self.saved(), trees.post("dh", "danielhanchen", kind="x", links=[(self.PAGE, "saved")]),
+                 trees.post("tg", "toshoseti", kind="telegram", hours=1, links=[(self.PAGE, "saved")])]
+        story = trees.only(posts)
+        self.assertEqual(story.voices, 2)
+        self.assertEqual((story.origin_url, story.origin_title, story.origin_linked_by),
+                         (self.PAGE, "GitHub - unslothai/unsloth", 2))
+        self.assertEqual(story.parents["saved"], (None, self.PAGE, "address"))
+        self.assertEqual({story.parents["dh"][:2], story.parents["tg"][:2]}, {(None, self.PAGE)})
+        self.assertEqual(tally(story.posts, story.roles, []), (2, 0, 0), "News counts the two voices")
 
 
 @requires_db

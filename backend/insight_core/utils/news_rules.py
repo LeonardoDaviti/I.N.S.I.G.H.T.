@@ -213,6 +213,7 @@ def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: 
     """(reports, shares, mentions): each voice once, in its strongest role (report, share, then a
     roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
     best: Dict[str, str] = {}
+    posts = [p for p in posts if p.kind != "saved"]   # a page you saved is no voice (issue 0070)
     for p in posts:
         role = post_roles[p.id]
         if best.get(p.voice) != "report":

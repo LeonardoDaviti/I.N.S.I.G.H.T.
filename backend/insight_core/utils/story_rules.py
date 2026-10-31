@@ -419,8 +419,9 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
         return out
 
     def is_story(group_posts: Sequence[StoryPost]) -> bool:
-        """2+ sources (a reposter is one, issue 0068), or one account's thread or quote of itself (0066)."""
-        return len({s for p in group_posts for s in (p.source_id, *p.other_sources)}) >= 2 \
+        """2+ sources (a reposter is one, issue 0068; a Saved page none, 0070), or one account's thread
+        or quote of itself (0066)."""
+        return len({s for p in group_posts if p.kind != "saved" for s in (p.source_id, *p.other_sources)}) >= 2 \
             or any(why[p.id] & {"thread", "quote"} for p in group_posts)
 
     members = grouped()
@@ -595,6 +596,14 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
             out[p.id] = (None, node[len(_PAGE):], reason)
         else:
             out[p.id] = (node, None, reason)
+    if first is not None and first.kind == "saved":
+        # A Saved page is no voice (issue 0070): when it is the origin it is shown as the page everyone
+        # links, never as the first post; the Saved row is that page.
+        under = {pid for pid, (node, _, _) in out.items() if node == first.id}
+        for pid in under:
+            out[pid] = (None, first.url, out[pid][2])
+        out[first.id] = (None, first.url, "address")
+        return Tree(out, first.url, first.title, len(under))
     if first is not None:
         return Tree(out)
     url = origin[len(_PAGE):]
@@ -694,9 +703,10 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
 def count_voices(posts: Sequence[StoryPost]) -> int:
     """How many voices a story has: posts of one voice, and copies of one text, are one. A source
     that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
-    with its posts in the story, if it has some."""
+    with its posts in the story, if it has some. A page you saved is no voice (issue 0070)."""
     uf = _UnionFind()
     keys: Dict[str, str] = {}
+    posts = [p for p in posts if p.kind != "saved"]
     nodes = [(p.id, (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice)) for p in posts]
     nodes += [(f"{p.id}>{s}", (None, "voice:" + reposter_voice(s))) for p in posts for s in p.other_sources]
     for node, node_keys in nodes:
