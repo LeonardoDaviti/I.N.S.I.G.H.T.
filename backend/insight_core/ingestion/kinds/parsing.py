@@ -144,6 +144,12 @@ def extract_html_image_urls(html_text: str) -> List[str]:
 #    with double <br>s become paragraphs (paulgraham.com's table cell, incompleteideas.net's
 #    <body>), and a <code> standing alone (several lines, or in a <figure>) a code block
 #    (fasterthanli.me).
+#    A link's label for screen readers goes (_without_hidden_link_labels, issue 0063): an
+#    element a link hides from the eye ("(opens in a new window)" after its words), read from
+#    how it is hidden (_visually_hidden: a screen-reader class, an inline clip to nothing),
+#    when the link shows words of its own. Hidden text anywhere else stays: it stands for
+#    something the reader drops (a chart's "66 %", a comparison table's "No TrueDepth camera
+#    system" under an icon), and an icon-only link keeps its hidden name.
 # 2. Chrome goes, with everything inside it (_ChromeStripper): the CHROME_TAGS, and any
 #    element (but <html> and <body>) with a class or id token that starts with one of the
 #    prefixes, is one of the tokens, holds one of the parts (a table of contents, a badge),
@@ -204,6 +210,104 @@ MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the
 FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
 CANDIDATE_TEXT_SHARE = 0.2 # nor one around a candidate article holding this much of it
 ARTICLE_MIN_CHARS = 500
+
+
+# How a page hides text from the eye but not from a screen reader (issue 0063), never a
+# responsive or script toggle ("hidden", "md:sr-only", "not-sr-only": that text shows). A class token,
+# lower-cased, its "-" and "_" removed, that holds one of SCREEN_READER_PARTS (Bootstrap's and
+# Drupal's visually-hidden, WordPress's screen-reader-text, h5bp's visuallyhidden, GOV.UK's
+# govuk-visually-hidden), or ends in "sronly" (Tailwind's and Bootstrap 4's sr-only, a plugin's
+# "wt-cli-sr-only"). A token with a ":" is a breakpoint or state variant, shown somewhere.
+SCREEN_READER_PARTS = ("visuallyhidden", "hiddenvisually", "screenreader")
+SCREEN_READER_ENDING = "sronly"
+# An inline clip to nothing: clip: rect(0 0 0 0) or rect(1px, 1px, 1px, 1px), clip-path: inset(50%).
+CLIPPED_RE = re.compile(r"(?i)(?<![-\w])clip\s*:\s*rect\(\s*(?:[01](?:px)?[\s,]*){4}\)"
+                        r"|clip-path\s*:\s*inset\(\s*(?:50|100)%\s*\)")
+
+
+def _visually_hidden(attrs: List[Tuple[str, Optional[str]]]) -> bool:
+    """Whether the element hides its text from the eye for screen readers: a screen-reader
+    class (none undone by a "not-sr-only" at some breakpoint) or an inline clip to nothing."""
+    for name, value in attrs:
+        if name == "class":
+            tokens = [token.replace("-", "").replace("_", "") for token in (value or "").lower().split()]
+            if any("notsronly" in token for token in tokens):
+                return False
+            if any(":" not in token and (token.endswith(SCREEN_READER_ENDING)
+                                         or any(part in token for part in SCREEN_READER_PARTS))
+                   for token in tokens):
+                return True
+        elif name == "style" and value and CLIPPED_RE.search(value):
+            return True
+    return False
+
+
+HIDDEN_HINT_RE = re.compile(r"(?i)sr[-_]?only|hidden|screen[-_]?reader|clip")
+
+
+class _HiddenParts(HTMLParser):
+    """A link's inner html re-emitted without its visually hidden elements (kept), the text
+    left showing (shown) and how many went (dropped)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.kept: List[str] = []
+        self.shown: List[str] = []
+        self.dropping: List[str] = []
+        self.dropped = 0
+
+    def _keep(self, text: str, shown: str = "") -> None:
+        if not self.dropping:
+            self.kept.append(text)
+            self.shown.append(shown)
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        text = self.get_starttag_text() or ""
+        if tag in VOID_TAGS:
+            self._keep(text)
+        elif self.dropping:
+            self.dropping.append(tag)
+        elif _visually_hidden(attrs):
+            self.dropping.append(tag)
+            self.dropped += 1
+        else:
+            self.kept.append(text)
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        self._keep(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.dropping:
+            self.kept.append(f"</{tag}>")
+        elif tag in self.dropping:  # closes it and whatever was left open inside it
+            del self.dropping[len(self.dropping) - 1 - self.dropping[::-1].index(tag):]
+
+    def handle_data(self, data: str) -> None:
+        self._keep(data, data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._keep(f"&{name};", "&")
+
+    def handle_charref(self, name: str) -> None:
+        self._keep(f"&#{name};", "#")
+
+
+def _without_hidden_link_labels(html_text: str) -> str:
+    """The page with the visually hidden elements of each link that shows words of its own
+    taken out (see step 1)."""
+    def mend(match: "re.Match[str]") -> str:
+        inner = match.group("text")
+        if not HIDDEN_HINT_RE.search(inner):
+            return match.group(0)
+        parts = _HiddenParts()
+        parts.feed(inner)
+        parts.close()
+        if not parts.dropped or not "".join(parts.shown).strip():
+            return match.group(0)
+        start, end = match.start("text") - match.start(), match.end("text") - match.start()
+        whole = match.group(0)
+        return whole[:start] + "".join(parts.kept) + whole[end:]
+    return LINK_RE.sub(mend, html_text)
 
 
 def _is_chrome(tag: str, attrs: List[Tuple[str, Optional[str]]]) -> bool:
@@ -1004,6 +1108,7 @@ def read_article_page(html_text: str, base_url: str = "") -> Tuple[str, Dict[str
     fidelity (read_fidelity) is {} when no article was found."""
     cleaned = re.sub(r"(?is)<(script|style|noscript|iframe|svg|audio|video)\b.*?</\1>", "", html_text or "")
     titles = _page_titles(cleaned)
+    cleaned = _without_hidden_link_labels(cleaned)
     cleaned = _without_chrome(_with_loose_text(cleaned))
     # The first candidate long enough to be the article: a page's first <article> can be a
     # 4-word "related" card while the post is in <main> (deepmind.google, 2026-10-27). The

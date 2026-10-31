@@ -446,6 +446,38 @@ class ReaderGapsTests(unittest.TestCase):
         self.assertNotIn("another article", html)
 
 
+class HiddenLinkLabelTests(unittest.TestCase):
+    """Issue 0063: a link's label for screen readers stays out of the text; other hidden text stays."""
+
+    def _text(self, inner: str) -> str:
+        page = f"<article>{PARAGRAPHS}<p>{inner}</p></article>"
+        return parsing.strip_html(parsing.extract_article_html(page, base_url="https://blog.example/post"))
+
+    def test_a_links_hidden_label_goes_by_any_screen_reader_class_or_a_clip(self):
+        for hidden in ('class="sr-only"', 'class="visually-hidden"', 'class="screen-reader-text"',
+                       'class="visuallyhidden"', 'class="govuk-visually-hidden"', 'class="u-hidden-visually"',
+                       'class="tw-sr-only"', 'style="position:absolute;clip:rect(0 0 0 0);width:1px"',
+                       'style="clip: rect(1px, 1px, 1px, 1px)"', 'style="clip-path: inset(50%)"'):
+            text = self._text(f'See <a href="https://other.example/x">the report<span {hidden}> (a label)</span></a> here.')
+            self.assertIn("See the report here.", text, hidden)
+            self.assertNotIn("a label", text, hidden)
+
+    def test_hidden_text_outside_a_link_stays(self):
+        text = self._text('<span class="sr-only">66 % </span>of makers say so, and <span class="visually-hidden">No</span> camera.')
+        self.assertIn("66 % of makers say so", text)
+        self.assertIn("No camera", text)
+
+    def test_an_icon_only_link_keeps_its_hidden_name(self):
+        text = self._text('Follow <a href="https://other.example/x"><img src="/i.png" alt=""><span class="sr-only">the feed</span></a>.')
+        self.assertIn("the feed", text)
+
+    def test_a_toggle_or_breakpoint_class_is_no_hiding(self):
+        for shown in ('class="hidden"', 'class="md:sr-only"', 'class="sr-only lg:not-sr-only"', 'class="not-sr-only"',
+                      'class="overflow-hidden"', 'style="clip-path: circle(40%)"'):
+            text = self._text(f'See <a href="https://other.example/x">the report<span {shown}> in full</span></a>.')
+            self.assertIn("the report in full", text, shown)
+
+
 class _StubYouTube:
     pass
 

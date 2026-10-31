@@ -536,5 +536,24 @@
     "first": "I have several times failed to write up a well-organized list of reasons why AGI will kill you.",
     "last": "on a system which successfully generalizes capabilities that far at all.",
     "images": 0
+  },
+  "openai_model_spec": {
+    "url": "https://openai.com/index/updated-model-spec",
+    "fetched": "2026-10-30",
+    "first": "As our models get smarter and take more consequential actions in the world",
+    "last": "and share your perspective",
+    "images": 0,
+    "must_not": ["(opens in a new window)"]
+  },
+  "technologyreview": {
+    "url": "https://www.technologyreview.com/2026/10/28/1147637/pairing-industrial-ai-autonomy-and-human-control/",
+    "fetched": "2026-10-28",
+    "title": "Pairing industrial AI autonomy and human control",
+    "first": "Living digital twins are helping industrial plants run more like living systems",
+    "last": "it will be very hard to run an effective business.",
+    "images": 0,
+    "figures": [4, 4],
+    "must_not": ["(opens in new tab)"],
+    "contains": ["66 % of manufacturers say", "40 % of manufacturers expect"]
   }
 }
