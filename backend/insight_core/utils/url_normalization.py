@@ -167,7 +167,8 @@ def _normalize_query(host: str, query: str, path: str) -> str:
             continue
         if any(lowered.startswith(prefix) for prefix in TRACKING_QUERY_PREFIXES):
             continue
-        items.append((key, value))
+        # A trailing slash in a value is the same value (issue 0070: ?p=112711/ and ?p=112711).
+        items.append((key, value.rstrip("/") if value.strip("/") else value))
 
     if host == "youtube.com":
         preferred = []

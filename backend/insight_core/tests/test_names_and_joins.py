@@ -20,9 +20,10 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, insert_scratch_source, requires_db
+from insight_core.tests._db import db_url, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests.test_news import T0, followed, post
 from insight_core.utils.news_rules import names, surges
 from insight_core.utils.post_links import extract_links
@@ -183,6 +184,81 @@ class PublicationCitesJobTests(JobCase):
         self.cur.execute("SELECT boilerplate FROM post_links WHERE post_id = %s", (a,))
         self.assertEqual(self.cur.fetchall(), [(True,)], "stored, and marked its own site's")
         self.assertEqual(self.stories(a, b), {}, "so it joins nothing")
+
+
+MIGRATION_0052 = BACKEND_DIR / "insight_core" / "db" / "migrations" / "0052_names_and_joins.sql"
+BODY = "If the future is to hinge on AI, it stands to reason that AI company CEOs are in a good position. " * 4
+
+
+class OnePostTwoAddressesTests(JobCase):
+    """One source, one title, one body, two addresses is one post (migration 0052 and the saver)."""
+
+    def test_a_trailing_slash_in_a_query_value_is_the_same_address(self):
+        self.assertEqual(normalize_url("https://devblogs.test/oldnewthing/20260921-00/?p=112711/"),
+                         normalize_url("https://devblogs.test/oldnewthing/20260921-00/?p=112711"))
+        self.assertEqual(normalize_url("https://a.test/x?next=/"), "https://a.test/x?next=%2F", "a lone / stays")
+
+    def _row(self, source, url, *, days_ago, title="How an AI company CEO could take over", text=BODY, hash_=None):
+        self.cur.execute(
+            "INSERT INTO posts (source_id, url, normalized_url, title, content, content_hash, published_at, fetched_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, now() - make_interval(days => 30), now() - make_interval(hours => %s))"
+            " RETURNING id", (source, url, normalize_url(url), title, text, hash_ or uuid.uuid4().hex, days_ago * 24))
+        return self.cur.fetchone()[0]
+
+    @requires_test_db
+    def test_the_migration_keeps_the_newer_address_with_the_reading_state(self):
+        blog = self.source("ai futures", f"https://blog.{self.mark}.test/feed")
+        tweets = self.source("tweets", f"https://nitter.test/{self.mark}/rss")
+        old = self._row(blog, f"https://blog.ai-{self.mark}.test/p/ceo", days_ago=200, hash_="h1")
+        new = self._row(blog, f"https://blog.ai{self.mark}.test/p/ceo", days_ago=100, hash_="h1")
+        full = self._row(blog, f"https://blog.{self.mark}.test/p/full", days_ago=50, title="Severance")
+        teaser = self._row(blog, f"https://blog.{self.mark}.test/p/severance", days_ago=10, title="Severance",
+                           text=BODY[:80] + "…")
+        slash = self._row(blog, f"https://blog.{self.mark}.test/x?p=1", days_ago=20, title="Filetime", hash_="h2")
+        slash2 = self._row(blog, f"https://blog.{self.mark}.test/x?p=1/", days_ago=5, title="Filetime", hash_="h2")
+        self.cur.execute("UPDATE posts SET normalized_url = normalized_url || '%%2F' WHERE id = %s", (slash2,))
+        series = [self._row(blog, f"https://blog.{self.mark}.test/issues/{n}", days_ago=n, title="not much happened today",
+                            text=f"Issue {n}. {BODY}") for n in (1, 2)]
+        replies = [self._row(tweets, f"https://x.com/{self.mark}/status/21150008012908014{n}", days_ago=n,
+                             title="R to @someone: x.com/someone/status…", hash_="h3") for n in (1, 2)]
+        self.cur.execute("INSERT INTO post_reader_state (post_id, read_at, later_at) VALUES (%s, now(), now())", (old,))
+        self.cur.execute("INSERT INTO post_notes (post_id, notes_markdown) VALUES (%s, 'mine')", (old,))
+        self.cur.execute(MIGRATION_0052.read_text(encoding="utf-8"))
+        self.cur.execute("SELECT id, url, length(content) FROM posts WHERE source_id = ANY(%s::uuid[])", ([blog, tweets],))
+        left = {r[0]: r[1:] for r in self.cur.fetchall()}
+        self.assertEqual(set(left), {new, teaser, slash2, *series, *replies})
+        self.assertEqual(left[teaser], (f"https://blog.{self.mark}.test/p/severance", len(BODY)),
+                         "the newer address, with the longer text")
+        self.cur.execute("SELECT read_at IS NOT NULL, later_at IS NOT NULL FROM post_reader_state WHERE post_id = %s", (new,))
+        self.assertEqual(self.cur.fetchone(), (True, True), "read and Later carried over")
+        self.cur.execute("SELECT notes_markdown FROM post_notes WHERE post_id = %s", (new,))
+        self.assertEqual(self.cur.fetchone(), ("mine",))
+        self.cur.execute("SELECT normalized_url FROM posts WHERE id = %s", (slash2,))
+        self.assertEqual(self.cur.fetchone(), (f"https://blog.{self.mark}.test/x?p=1",))
+        self.cur.execute(MIGRATION_0052.read_text(encoding="utf-8"))
+        self.cur.execute("SELECT count(*) FROM posts WHERE source_id = ANY(%s::uuid[])", ([blog, tweets],))
+        self.assertEqual(self.cur.fetchone(), (len(left),), "a second run merges nothing")
+
+    def test_the_saver_moves_the_post_to_its_newer_address(self):
+        repo = PostsRepository(db_url())
+        blog = self.source("lcamtuf", f"https://lcamtuf.{self.mark}.test/feed")
+        first, _ = repo.upsert_post(self.cur, {"url": f"https://lcamtuf.{self.mark}.test/p/meta", "title": "Meta: 7,000",
+                                               "content": BODY, "date": self.now}, blog)
+        again, inserted = repo.upsert_post(self.cur, {"url": f"https://blog.{self.mark}.test/p/meta", "title": "Meta: 7,000",
+                                                      "content": BODY[:60], "date": self.now}, blog)
+        self.assertEqual((again, inserted), (first, False))
+        self.cur.execute("SELECT url, content FROM posts WHERE id = %s", (first,))
+        self.assertEqual(self.cur.fetchone(), (f"https://blog.{self.mark}.test/p/meta", BODY),
+                         "the newer address; a teaser of the text leaves the text")
+        other, inserted = repo.upsert_post(self.cur, {"url": f"https://blog.{self.mark}.test/p/meta-2", "title": "Meta: 7,000",
+                                                      "content": "Another text altogether.", "date": self.now}, blog)
+        self.assertTrue(inserted, "another body is another post")
+        tweets = self.source("tweets", f"https://nitter.test/{self.mark}/rss")
+        a, _ = repo.upsert_post(self.cur, {"url": f"https://x.com/{self.mark}/status/211500080129080141", "title": "R to @a: ok",
+                                           "content": "x.com/a/status…", "date": self.now}, tweets)
+        b, inserted = repo.upsert_post(self.cur, {"url": f"https://x.com/{self.mark}/status/211500080129080142",
+                                                  "title": "R to @a: ok", "content": "x.com/a/status…", "date": self.now}, tweets)
+        self.assertTrue(inserted and a != b, "two tweets with the same words are two posts")
 
 
 if __name__ == "__main__":

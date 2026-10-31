@@ -82,7 +82,7 @@ class UpsertPostCollisionTests(unittest.TestCase):
             "url": url,
             "external_id": external_id,
             "title": "Title",
-            "content": "Body",
+            "content": f"Body of {url}",   # one body per post: the same title and body is one post (0070)
             "date": None,
         }
         post.update(overrides)
@@ -195,7 +195,7 @@ class UpsertPostCollisionTests(unittest.TestCase):
             self.cur.execute("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()")
             return self.cur.fetchone()[0]
 
-        self.assertEqual(address_locks(), 1, "a new post locks its address until the commit")
+        self.assertEqual(address_locks(), 2, "a new post locks its address and its title until the commit")
         self.conn.commit()
         try:
             self.repo.upsert_post(self.cur, self._post("https://x.test/locked"), self.source_a)
