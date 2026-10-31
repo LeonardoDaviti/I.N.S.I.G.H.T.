@@ -6,6 +6,7 @@ import { formatJobDuration, jobEvents, jobGlyph, jobSummary, runningFetchJob, ru
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
+  assert.equal(jobGlyph('interrupted'), 'failing');
   assert.equal(jobGlyph('running'), 'running');
   assert.equal(jobGlyph('queued'), 'running');
   assert.equal(jobGlyph('pending'), 'running');

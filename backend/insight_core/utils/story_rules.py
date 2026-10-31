@@ -50,6 +50,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote
 
+from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, host_of,
                                           is_article, is_home, is_tweet, section_of, site_of, titled_link_text)
 from insight_core.utils.url_normalization import TWEET_PATH
@@ -57,7 +58,8 @@ from insight_core.utils.url_normalization import TWEET_PATH
 # The version of the rules stories are grouped by (issue 0069). Bump it with a change to these rules,
 # to post_links (site_of, a publication) or to how a source's voice is told (SourceFacts): the next
 # story run then regroups every story, the frozen ones too. 1: issue 0069, a voice is its publication.
-RULES_VERSION = 1
+# 2: issue 0070 C, an outside origin's title by the page's own words, a link post's title, a slug's id dropped.
+RULES_VERSION = 2
 SAME_TEXT_WITHIN = timedelta(days=30)
 SAME_TEXT_MIN_CHARS = 120
 SAME_TITLE_WITHIN = timedelta(days=7)
@@ -123,6 +125,7 @@ class StoryPost:
     reposted: bool = False          # a tweet of another account its source reposted (issue 0066)
     reply_to: Optional[str] = None  # the account a tweet replies to
     quoted: Optional[str] = None    # the tweet it quotes (normalized)
+    quoted_words: Dict[str, str] = field(default_factory=dict)   # page -> its own words as quoted (0070)
     # Who else of your sources put this tweet before you (issue 0068): the sources that reposted it
     # (from posts.reposted_by), each a share voice in its story, and its author's own source when
     # the row is another source's repost, a report voice. Never the row's own source.
@@ -517,30 +520,46 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
 
 # An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
 # letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
+# A leading id (5+ digits: help.openai.com's 20001626-api-credits-...) or date (2026-01-13-pocket-tts)
+# is no word of it (issue 0070); a short number is ("16-charts-that-explain", "2025-ai-index-report").
 SLUG_MIN_WORDS = 3
 _SLUG = re.compile(r"[-_+]+")
+_SLUG_ID = re.compile(r"^(?:\d{5,}|(?:19|20)\d\d[-_]\d\d(?:[-_]\d\d)?)(?:[-_+]|$)")
 _TOKENS = re.compile(r"\w+", re.U)
 
 
 def _slug_words(url: str) -> List[str]:
-    """The words of an address's last path segment (its slug), its extension aside."""
+    """The words of an address's last path segment (its slug), its extension and a leading id aside."""
     _, _, rest = bare(url).partition("/")
     slug = unquote(re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1])
-    return [w for w in _SLUG.split(re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I)) if w]
+    return [w for w in _SLUG.split(_SLUG_ID.sub("", re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I))) if w]
 
 
 def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
-    """An outside origin's title (issue 0068), from evidence, never one signal, nothing fetched.
-    `posts`: those linking it. A page that is stored is no outside origin: it is the root, with its
-    own title. Measured on the lab (30 roots checked by hand): link words that 2+ voices agree on
-    are often a bare word ("Блогпост", "Веса", "Video"), and a slug loses a title's case and dots
-    ("Introducing chatgpt images 2 5"), so each signal needs another's support:
-    1. link words 2+ voices agree on (copies of one text are one voice) that read as a title
+    """An outside page's title (issue 0068), from evidence, nothing fetched: a story's outside origin,
+    and Discover's articles (issue 0070). `posts`: those linking it. A page that is stored is no
+    outside origin: it is the root, with its own title. Measured on the lab (30 roots checked by
+    hand): link words that 2+ voices agree on are often a bare word ("Блогпост", "Веса", "Video"),
+    and a slug loses a title's case and dots ("Introducing chatgpt images 2 5"), so each signal of
+    other people's words needs another's support:
+    1. the page's own words, as a post quotes them (post_links.quoted_words: a quoted tweet's text,
+       a link preview's title), as the reader titles a post's text (display_title); those most
+       posts quote (issue 0070);
+    2. link words 2+ voices agree on (copies of one text are one voice) that read as a title
        (0051's rule, titled_link_text);
-    2. else link words the address's slug confirms (the same words): the words, as written;
-    3. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
-    4. else one voice's link words that read as a title;
-    5. else None: the reader shows the address."""
+    3. else link words the address's slug confirms (the same words): the words, as written;
+    4. else the title of a link post that is only this link: a Reddit or HN post with few words of
+       its own (LINK_POST_MAX_WORDS, a share) and no other kept link is titled for it (issue 0070);
+    5. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
+    6. else one voice's link words that read as a title;
+    7. else None: the reader shows the address."""
+    quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
+    shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.kind in ("reddit", "hn")
+                     and (p.words or 0) < LINK_POST_MAX_WORDS and {target for target, _ in p.links} == {url})
+    for found in (quoted, shared):
+        found.pop("", None)
+    if quoted:
+        return min(quoted, key=lambda text: (-quoted[text], text))
     said: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in posts:
         text = " ".join((p.link_texts.get(url) or "").split())
@@ -554,6 +573,8 @@ def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
     confirmed = [key for key in by_use if len(slug) >= 2 and _TOKENS.findall(key) == slug]
     if agreed or confirmed:
         return form[(agreed or confirmed)[0]]
+    if shared:
+        return min(shared, key=lambda text: (-shared[text], text))
     if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
         text = " ".join(words)
         return text[0].upper() + text[1:]

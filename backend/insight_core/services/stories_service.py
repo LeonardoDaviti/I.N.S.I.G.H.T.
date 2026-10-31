@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -28,10 +28,10 @@ from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils.post_fields import REPLY_TO_RE
-from insight_core.utils.post_links import host_of, quoted_tweet, reddit_author, site_of
+from insight_core.utils.post_links import host_of, quoted_tweet, quoted_words, reddit_author, site_of
 from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, RULES_VERSION,
                                            Origin, StoryPost, discover_address, discover_open, discover_place, group,
-                                           origins)
+                                           origin_title, origins)
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ class StoriesService:
             and sources.account.get(row["source_id"]) != "x.com/" + row["author"].lower(),
             reply_to=reply.group(1) if reply else None,
             quoted=quoted_tweet(html) if kind == "x" else None,
+            quoted_words=quoted_words(html),   # the words of the pages it quotes (issue 0070)
             # Who else of your sources put it before you (issue 0068): its author's own source, when
             # another source holds it, and the sources that reposted it. Voices of its story.
             reposters=tuple(sorted({sources.of_account.get("x.com/" + by.lower()) for by in row["reposted_by"]}
@@ -168,9 +169,25 @@ class StoriesService:
         if unknown:   # addresses no story run has worked out yet (the job does it after reading links)
             DiscoverRepository.fill_addresses(cur, accounts)
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, **ask)
+        StoriesService._title_articles(cur, sources, found)
         kept = {"stamp": stamp, "found": found, "mirrors": mirrors, "scanned_to": scanned_to}
         DiscoverRepository.keep(cur, kept)
         return kept
+
+    @staticmethod
+    def _title_articles(cur: Any, sources: SourceFacts, found: List[Dict[str, Any]]) -> None:
+        """Each shown article's title (issue 0070): a stored post's own, as the reader shows it, else
+        by the evidence a story's outside origin is titled by (origin_title), from every post linking it."""
+        urls = sorted({url for s in found for url, _ in s["articles"]})
+        linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
+        for row in StoriesRepository.load_posts(cur, sources, None, linking=urls):
+            post = StoriesService._story_post(row, sources)
+            for target, _ in post.links:
+                linking[target][post.id] = post
+        stored = DiscoverRepository.stored_titles(cur, urls)
+        for s in found:
+            s["articles"] = [(url, voices, stored.get(url) or origin_title(url, list(linking[url].values())))
+                             for url, voices in s["articles"]]
 
     def discover(self) -> Dict[str, Any]:
         """Sites and accounts your sources keep linking that you don't follow, each with why; the

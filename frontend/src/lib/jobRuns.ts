@@ -18,7 +18,7 @@ function isActive(status?: string | null): boolean {
 
 /** Job status -> monochrome glyph (design docs system/status.md). */
 export function jobGlyph(status?: string | null): Status {
-  if (status === 'failed') return 'failing';
+  if (status === 'failed' || status === 'interrupted') return 'failing';   // interrupted: a restart ended it (0070)
   if (isActive(status)) return 'running';
   return 'ok';
 }

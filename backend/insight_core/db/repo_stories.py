@@ -21,8 +21,8 @@ from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
 # The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words,
-# the tweet a tweet quotes (issue 0066).
-HTML_KINDS = ("reddit", "hn", "x")
+# the tweet a tweet quotes (issue 0066), the words of a page it quotes (a Telegram link preview, 0070).
+HTML_KINDS = ("reddit", "hn", "x", "telegram")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
@@ -235,10 +235,12 @@ class StoriesRepository:
     # ---- the story job ----------------------------------------------------------------
 
     @staticmethod
-    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime]) -> List[Dict[str, Any]]:
+    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime],
+                   linking: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         """The posts the job recomputes: posted since `cutoff` (every post when None), less those in
-        a story that began before it (frozen). Each with its kept links, in order, and the stored
-        post each link is, if any."""
+        a story that began before it (frozen); with `linking`, only those with a kept link to one of
+        these addresses (Discover's articles, issue 0070). Each with its kept links, in order, and
+        the stored post each link is, if any."""
         cur.execute(
             """
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
@@ -250,8 +252,10 @@ class StoriesRepository:
               AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
               AND NOT EXISTS (SELECT 1 FROM story_posts sp JOIN stories st ON st.id = sp.story_id
                               WHERE sp.post_id = p.id AND st.first_at < %(cutoff)s)
+              AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
+                                                         WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
             """,
-            {"html": sources.html_sources(), "cutoff": cutoff},
+            {"html": sources.html_sources(), "cutoff": cutoff, "linking": None if linking is None else list(linking)},
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
