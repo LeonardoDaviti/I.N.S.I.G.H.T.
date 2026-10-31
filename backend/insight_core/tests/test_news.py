@@ -70,7 +70,7 @@ class ScoreTests(unittest.TestCase):
 class NameTests(unittest.TestCase):
     def test_what_is_a_name(self):
         self.assertEqual(names("Valve shows the Steam Frame"), {"steam frame"})
-        self.assertIn("gpt-6", names("GPT-6 is out"), "one word mixing letters and digits")
+        self.assertIn("gpt 6", names("GPT-6 is out"), "one word mixing letters and digits (its hyphen a space, 0070)")
         self.assertIn("a01", names("the a01 board"))
         self.assertIn("opus 5.5", names("Claude Opus 5.5 today"))
         self.assertNotIn("valve", names("Valve Steam Frame"), "one word without a digit")

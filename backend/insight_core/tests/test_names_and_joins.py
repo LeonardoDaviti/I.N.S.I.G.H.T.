@@ -25,7 +25,7 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests.test_news import T0, followed, post
-from insight_core.utils.news_rules import names, surges, tally
+from insight_core.utils.news_rules import names, news, surges, tally
 from insight_core.utils.post_links import extract_links
 from insight_core.tests import test_story_trees as trees
 from insight_core.utils.story_rules import group, page_aliases, title_key
@@ -91,7 +91,7 @@ class ComparedAsPlainLettersTests(unittest.TestCase):
 
     def test_a_word_glued_to_another_scripts_capital_splits(self):
         self.assertIn("gemini 4 carbon", names("Google анонсировали Gemini 4 CarbonМодель заняла первое место"))
-        self.assertIn("gpt-6.1 terra", names("OpenAI выпустили GPT-6.1 TerraНемного"))
+        self.assertIn("gpt 6.1 terra", names("OpenAI выпустили GPT-6.1 TerraНемного"))
         self.assertIn("openai codex 2", names("OpenAI Codex 2 is out"), "a capital inside one script stays in its word")
 
 
@@ -107,6 +107,32 @@ class SearchPlainLettersTests(unittest.TestCase):
             self.assertTrue(finds("Kimi\u00a0K3.1 Pro", "kimi 3.1"), "a no-break space is a space")
             cur.execute("SELECT search_vector_version()")
             self.assertEqual(cur.fetchone()[0], 3, "every vector is made again")
+
+
+class NameSeparatorsTests(unittest.TestCase):
+    """A name's parts are one name whatever separates them; a post joins the News of its first name."""
+
+    def test_hyphen_space_underscore_and_a_dot_that_isnt_a_decimal_are_one(self):
+        self.assertTrue(names("GPT-6.1 Terra is here") & names("OpenAI выпустили GPT 6.1 Terra") & {"gpt 6.1 terra"})
+        self.assertIn("flux 3 image", names("Welcome FLUX.3 Image Klein") & names("FLUX 3 Image Klein weights"))
+        self.assertIn("qwen3.6 27b", names("Qwen3.6-27B is out now!") & names("Can I install Qwen3.6 27b?"))
+        self.assertIn("gpt 6.1 sol", names("GPT_6.1 Sol in the API"), "a version's decimal stays")
+
+    def test_terra_in_two_spellings_is_one_news_row(self):
+        everyone = followed(*[f"s{i}" for i in range(1, 7)])
+        posts = [post("a", "s1", title="Introducing GPT-6.1 Terra"), post("b", "s2", hours=1, title="GPT-6.1 Terra benchmarks"),
+                 post("c", "s3", hours=2, title="OpenAI выпустили GPT 6.1 Terra")]
+        [row] = news(posts, group(posts), surges(posts, everyone))
+        self.assertEqual([p.id for p in row.posts], ["a", "b", "c"], "the hyphen and the space are one name")
+
+    def test_a_post_naming_two_releases_joins_the_first_it_names(self):
+        everyone = followed(*[f"s{i}" for i in range(1, 8)])
+        posts = [post("g1", "s1", title="Grok 4.7 is out"), post("g2", "s2", hours=1, title="Grok 4.7 benchmarks"),
+                 post("g3", "s3", hours=2, title="Grok 4.7 is cheap"),
+                 post("o1", "s4", hours=3, title="Opus 5.5 is out"), post("o2", "s5", hours=4, title="Opus 5.5 benchmarks"),
+                 post("both", "s6", hours=5, title="Grok 4.7 is a bit better than Opus 5.5")]
+        rows = sorted(sorted(p.id for p in s.posts) for s in news(posts, group(posts), surges(posts, everyone)))
+        self.assertEqual(rows, [["both", "g1", "g2", "g3"], ["o1", "o2"]], "not one row of two releases")
 
 
 class PublicationLinksTests(unittest.TestCase):
