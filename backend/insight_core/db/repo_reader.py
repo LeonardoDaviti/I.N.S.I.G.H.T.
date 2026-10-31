@@ -458,9 +458,7 @@ class ReaderRepository:
                 story["first"] = None
             del story["_first_rank"]
         if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
-            cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url)"
-                        " FROM sources ORDER BY id DESC")
-            followed = {source_account(r[1], r[2]): {"id": str(r[0]), "name": r[3]} for r in cur.fetchall()}
+            followed = ReaderRepository.followed_accounts(cur)
             for lead, found in reposts.items():
                 sources = stories[lead]["sources"]
                 for author, by in found:
@@ -488,6 +486,13 @@ class ReaderRepository:
             story["roundups"] = roundups.get(story["id"], [])
         for item in items:
             item["story"] = stories.get(item["id"])
+
+    @staticmethod
+    def followed_accounts(cur: Cursor) -> Dict[str, Dict[str, str]]:
+        """Your sources by the account they follow ("x.com/<user>"): {id, name}."""
+        cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url)"
+                    " FROM sources ORDER BY id DESC")
+        return {source_account(r[1], r[2]): {"id": str(r[0]), "name": r[3]} for r in cur.fetchall()}
 
     @staticmethod
     def _with_shares(cur: Cursor, read: List[str], marked: List[str], *, at: datetime | None = None) -> List[str]:

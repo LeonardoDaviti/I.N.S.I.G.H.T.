@@ -318,6 +318,23 @@ class NewsJobTests(unittest.TestCase):
         facts = SourceFacts(self.cur)
         self.assertEqual((facts.name[empty], facts.name[missing]), (address[empty], address[missing]))
 
+    def test_news_names_every_voice_it_counts(self):
+        """Issue 0069 (R6): steipete reposting badlogicgames' tweet is 2 voices, so News names both."""
+        accounts = {}
+        for name in ("steipete", "badlogicgames"):
+            accounts[name] = self._source(name)
+            self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s",
+                             (f"https://nitter.local/{name}{self.mark}/rss", accounts[name]))
+        url = f"https://nitter.local/badlogicgames{self.mark}/status/2114444636303364349#m"
+        post = self._post(accounts["steipete"], site="x", title=f"RT by @steipete{self.mark}: how i work with agents",
+                          url=url)
+        self.cur.execute("UPDATE posts SET author = %s, reposted_by = %s WHERE id = %s",
+                         (f"badlogicgames{self.mark}", [f"steipete{self.mark}"], post))
+        self._job()
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["id"] == post]
+        self.assertEqual(item["story"]["voices"], 2)
+        self.assertEqual([s["name"] for s in item["story"]["sources"]], ["steipete", "badlogicgames"])
+
     def test_a_story_older_than_a_week_is_not_news(self):
         self._week()
         self.now += timedelta(days=8)

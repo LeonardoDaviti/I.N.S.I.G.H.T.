@@ -101,7 +101,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
       <p>
-        {story.thread ? coveredBy(story) : `Covered by ${story.sources.length}`}
+        {story.thread ? coveredBy(story) : `Covered by ${story.voices}`}
         {story.first === postId ? ' · this post was first' : null}
       </p>
       <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">

@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from insight_core.db import database as db
 from insight_core.db.repo_news import NewsRepository
-from insight_core.db.repo_reader import FeedScope
+from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.news_rules import (NAME_TITLE_DAYS, NEWS_DAYS, NEWS_RECENT, Citation, classic_order, classics,
                                           cited_again, lead, news, surges)
@@ -97,6 +97,7 @@ class NewsService:
         feed_scope = FeedScope.parse(scope)
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS))
+        followed = ReaderRepository.followed_accounts(cur) if any(row["repost"] for row in rows) else {}
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_story[row["_news"]].append(row)
@@ -110,9 +111,14 @@ class NewsService:
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             sources: List[Dict[str, str]] = []
+            # Every voice the count holds is named (issue 0069): your sources that wrote or reposted a
+            # tweet a post holds are voices too, as on the feed row (issue 0068).
             for p in covered:
-                if not any(s["id"] == p["source_id"] for s in sources):
-                    sources.append({"id": p["source_id"], "name": p["source_display_name"]})
+                accounts = [p["repost"]["author"] or "", *p["repost"]["by"]] if p["repost"] else []
+                held = [followed["x.com/" + a.lower()] for a in accounts if "x.com/" + a.lower() in followed]
+                for source in [{"id": p["source_id"], "name": p["source_display_name"]}, *held]:
+                    if not any(s["id"] == source["id"] for s in sources):
+                        sources.append(source)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
             item["story"] = {
                 "id": head["_news"], "voices": head["_voices"], "sources": sources,
