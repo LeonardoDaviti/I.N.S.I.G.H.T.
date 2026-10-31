@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
+import { Fragment, memo, useMemo, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star } from 'lucide-react';
 
@@ -280,9 +280,8 @@ function FeedItem({
             <TextLink
               to={sourceReadPath(item.source_id)}
               title={item.source_display_name}
-              // A phone keeps 12 characters of the name at least (issue 0070).
-              className="min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3 max-sm:min-w-[var(--name-ch)]"
-              style={{ '--name-ch': `${Math.min(source.length, 12)}ch` } as CSSProperties}
+              // A phone keeps the name whole up to 12 characters, a longer one 12 at least (issue 0070).
+              className={`min-w-0 truncate text-fg-3 decoration-transparent hover:decoration-fg-3 ${source.length > 12 ? 'max-sm:min-w-[12ch]' : 'shrink-0'}`}
             >
               {middleTruncate(source, 56)}
             </TextLink>
