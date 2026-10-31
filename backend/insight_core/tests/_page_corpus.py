@@ -8,7 +8,11 @@ lesswrong to the post's first 16 paragraphs and 2 lists, 20 comments with no rep
 of the comments' contents, 138 KB of 1.9 MB, its post still under half of the page's text;
 sivers to 30 of its 568 comments; tomsguide to 4 of its menu's items and 1 of its 3 "river"
 asides; vuzix to 5 of its 238 country choices; uploadvr without its mobile copy of the related
-grid; each reads the same cut as whole). fixtures/pages/expectations.json says, per page:
+grid; each reads the same cut as whole). Two were never fetched for the corpus (issue 0063):
+openai_model_spec and technologyreview are the bodies the lab's posts stored when the reader
+read those pages, class names and all, kept for their links' hidden labels ("(opens in a new
+window)") and technologyreview's hidden figures ("66 %"); "fetched" is when the post was.
+fixtures/pages/expectations.json says, per page:
 
   url, fetched     where and when it was fetched
   title            page_watch's page_title for the page

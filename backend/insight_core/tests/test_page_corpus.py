@@ -44,7 +44,7 @@ class PageCorpusTests(unittest.TestCase):
 
     def test_the_corpus_stays_small(self):
         size = sum(path.stat().st_size for path in corpus.PAGES_DIR.iterdir())
-        self.assertLess(size, 5_000_000)     # 54 pages, 4.4 MB (issue 0053)
+        self.assertLess(size, 5_000_000)     # 56 pages, 4.4 MB (issues 0053, 0063)
 
 
 if __name__ == "__main__":

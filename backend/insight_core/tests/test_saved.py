@@ -6,6 +6,7 @@ database; they own the Saved source and every post under SITE.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -90,6 +91,18 @@ class ReadPageTests(unittest.TestCase):
         self.assertEqual(post["date"], datetime(2026, 10, 20, 8, tzinfo=timezone.utc))
         self.assertEqual(post["media_urls"][0], f"{SITE}/cover.jpg")
         self.assertEqual((post["url"], post["external_id"]), (ARTICLE_URL, ARTICLE_URL))
+
+    def test_a_page_with_only_a_time_element_is_dated_by_it(self):
+        dated = ARTICLE.replace('<meta property="article:published_time" content="2026-10-20T08:00:00Z"/>', "").replace(
+            "<h1>An essay</h1>", '<h1>An essay</h1><time datetime="2019-03-13T09:30:00Z">13 March 2019</time>')
+        post, _ = self.read({ARTICLE_URL: dated})
+        self.assertEqual(post["date"], datetime(2019, 3, 13, 9, 30, tzinfo=timezone.utc))
+
+    def test_a_page_that_states_no_date_has_none(self):
+        undated = ARTICLE.replace('<meta property="article:published_time" content="2026-10-20T08:00:00Z"/>', "")
+        post, reason = self.read({ARTICLE_URL: undated})
+        self.assertIsNone(reason)
+        self.assertIsNone(post["date"], "the save gives it the save time")
 
     def test_a_redirect_saves_where_it_landed(self):
         post, _ = self.read({ARTICLE_URL: ARTICLE}, redirects={ARTICLE_URL: f"{SITE}/essay"})
@@ -191,15 +204,30 @@ class SaveRouteTests(unittest.TestCase):
             "LEFT JOIN post_reader_state rs ON rs.post_id = p.id WHERE p.id = %s", post_id)
         return published_at, later_at, metadata
 
-    def test_a_save_is_in_later_at_the_save_time_and_dated_by_it(self):
+    def test_a_save_is_in_later_at_the_save_time_and_dated_by_the_page(self):
         saved_at = datetime.now(timezone.utc).replace(microsecond=0)
         self._at(saved_at)
         _, body = self.save({ARTICLE_URL: ARTICLE})
         published_at, later_at, metadata = self._state(body["post_id"])
-        self.assertEqual((published_at, later_at), (saved_at, saved_at))
-        self.assertEqual(metadata["article_published_at"], "2026-10-20T08:00:00+00:00", "the page's own date is kept")
+        self.assertEqual((published_at, later_at), (datetime(2026, 10, 20, 8, tzinfo=timezone.utc), saved_at))
+        self.assertNotIn("article_published_at", metadata)
+        ((surfaced_at, fetched_at),) = self._rows("SELECT surfaced_at, fetched_at FROM posts WHERE id = %s", body["post_id"])
+        self.assertEqual(surfaced_at, saved_at, "it sorts at when it was saved")
+        self.assertGreaterEqual(fetched_at, saved_at, "when it was saved stays fetched_at")
         _, _, later = call(main.app, "GET", "/api/feed", query={"scope": "all", "filter": "later"})
         self.assertIn(body["post_id"], [item["id"] for item in later["items"]])
+
+    def test_a_page_that_states_no_date_is_dated_by_the_save(self):
+        saved_at = datetime.now(timezone.utc).replace(microsecond=0)
+        self._at(saved_at)
+        undated = ARTICLE.replace('<meta property="article:published_time" content="2026-10-20T08:00:00Z"/>', "")
+        _, body = self.save({ARTICLE_URL: undated})
+        ((published_at, surfaced_at),) = self._rows("SELECT published_at, surfaced_at FROM posts WHERE id = %s",
+                                                    body["post_id"])
+        self.assertEqual((published_at, surfaced_at), (saved_at, None))
+        _, unreadable = self.save({f"{SITE}/app": JS_SHELL}, url=f"{SITE}/app")
+        ((published_at,),) = self._rows("SELECT published_at FROM posts WHERE id = %s", unreadable["post_id"])
+        self.assertEqual(published_at, saved_at)
 
     def test_saved_pages_sort_by_when_they_were_saved_not_the_articles_date(self):
         newer_article = ARTICLE.replace("2026-10-20T08:00:00Z", "2026-10-27T08:00:00Z")
@@ -222,6 +250,31 @@ class SaveRouteTests(unittest.TestCase):
         _, _, main_feed = call(main.app, "GET", "/api/feed", query={"scope": "all", "filter": "unread", "limit": "100"})
         ids = [item["id"] for item in main_feed["items"]]
         self.assertLess(ids.index(second["post_id"]), ids.index(str(other)), "a save tops the Main feed")
+
+    def test_0045_dates_the_stored_saved_pages_by_the_date_their_page_stated(self):
+        saved_at = datetime(2026, 10, 30, 21, 14, tzinfo=timezone.utc)
+        source_id = registry.services().saved.saved_source_id()
+
+        def stored(slug, metadata):
+            ((post_id,),) = self._rows(
+                "INSERT INTO posts (source_id, url, title, content, published_at, fetched_at, metadata) "
+                "VALUES (%s, %s, %s, 'Body', %s, %s, %s::jsonb) RETURNING id",
+                source_id, f"{SITE}/{slug}", slug, saved_at, saved_at + timedelta(seconds=2), json.dumps(metadata))
+            return post_id
+
+        dated = stored("dated", {"adapter": "saved", "article_published_at": "2002-11-11T00:15:03+00:00"})
+        undated = stored("undated", {"adapter": "saved", "article_published_at": (saved_at + timedelta(seconds=1)).isoformat()})
+        unreadable = stored("unreadable", {"adapter": "saved", "unreadable": True})
+        sql = (BACKEND_DIR / "insight_core" / "db" / "migrations" / "0045_saved_pages_keep_their_date.sql").read_text()
+        for _ in range(2):   # idempotent
+            with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+                cur.execute(sql)
+        state = {str(row[0]): row[1:] for row in self._rows(
+            "SELECT id, published_at, surfaced_at, fetched_at FROM posts WHERE id = ANY(%s)", [dated, undated, unreadable])}
+        self.assertEqual(state[str(dated)], (datetime(2002, 11, 11, 0, 15, 3, tzinfo=timezone.utc), saved_at,
+                                             saved_at + timedelta(seconds=2)))
+        self.assertEqual(state[str(undated)][:2], (saved_at, None))
+        self.assertEqual(state[str(unreadable)][:2], (saved_at, None))
 
     def test_a_page_already_in_insight_goes_to_later_and_keeps_its_date(self):
         dated = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)

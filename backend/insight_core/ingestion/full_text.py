@@ -6,13 +6,19 @@ page is marked metadata.full_content_fetched, and a later feed fetch never puts 
 summary back over it (repo_posts._post_update_assignments).
 
 On for every generic RSS source; `settings.fetch_full_content: false` turns it off for one.
+
+A teaser whose page read failed (an HTTP error or a timeout, issue 0062) is read again on its
+source's later fetches, inside the same host slot and PAGE_DELAY_S apart: at most MAX_PAGE_TRIES
+reads in all, RETRY_APART between two. Each read is counted in metadata.page_tries
+({count, last_at, failed}); a read that worked, or found nothing longer on the page, ends it.
 """
 from __future__ import annotations
 
 import urllib.parse
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
-from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY
+from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
 from insight_core.utils.content_fingerprints import normalize_text
@@ -25,6 +31,11 @@ OPENING_CHARS = 80
 SAME_ARTICLE_MIN_CHARS = 200
 # Seconds between two article pages of one site.
 PAGE_DELAY_S = 2.0
+# A teaser whose page read failed: read at most MAX_PAGE_TRIES times in all, RETRY_APART apart,
+# up to RETRY_SLICE of a source's at one fetch (issue 0062).
+MAX_PAGE_TRIES = 3
+RETRY_APART = timedelta(days=1)
+RETRY_SLICE = 20
 # Links whose page is not an article: a repository, a paper's abstract page, a thread,
 # a video, a chat message, a tweet.
 NOT_ARTICLE_HOSTS = frozenset({
@@ -82,6 +93,17 @@ def with_full_text(post: Dict[str, Any], html: str, text: str,
         "metadata": {**(post.get("metadata") or {}), FULL_TEXT_FLAG: True,
                      **({PAGE_READ_KEY: fidelity} if fidelity else {})},
     }
+
+
+def tries(post: Mapping[str, Any]) -> int:
+    """How many times the post's page was read (issue 0062), 0 when never counted."""
+    return int(((post.get("metadata") or {}).get(PAGE_TRIES_KEY) or {}).get("count") or 0)
+
+
+def with_page_try(post: Dict[str, Any], at: datetime, *, failed: bool) -> Dict[str, Any]:
+    """The post with one more read of its page counted: when, and whether it failed."""
+    counted = {"count": tries(post) + 1, "last_at": at.isoformat(), "failed": failed}
+    return {**post, "metadata": {**(post.get("metadata") or {}), PAGE_TRIES_KEY: counted}}
 
 
 def pages_losing_images(posts: Iterable[Mapping[str, Any]]) -> Tuple[int, int]:

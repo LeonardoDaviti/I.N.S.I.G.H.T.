@@ -2,6 +2,7 @@ import os, sys, json, hashlib
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Dict, Any, Iterator, List, Literal, Sequence, Tuple, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -25,6 +26,9 @@ FULL_TEXT_CHECKED = "full_text_checked_at"
 # metadata key of how well a page was read (parsing.read_fidelity; issue 0032): page watch
 # and full text set it, source health sums the newest ones per source.
 PAGE_READ_KEY = "page_read"
+# metadata key of a teaser's page reads (issue 0062): {"count", "last_at", "failed"}. A re-fetch
+# of the feed keeps it (_post_update_assignments); ingestion/full_text.py reads and writes it.
+PAGE_TRIES_KEY = "page_tries"
 
 
 def _env_commit_batch() -> int:
@@ -525,7 +529,9 @@ class PostsRepository:
         keep = (f"({row}metadata ? '{FULL_TEXT_FLAG}' AND NOT "
                 f"COALESCE(%(metadata)s::jsonb, '{{}}'::jsonb) ? '{FULL_TEXT_FLAG}')")
         # The last meaningful change (issue 0039) is the saver's, not the kind's: a re-fetch keeps it.
-        metadata = (f"({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
+        # A teaser's page tries (issue 0062) are kept too, unless the kind brings newer ones.
+        metadata = (f"jsonb_strip_nulls(jsonb_build_object('{PAGE_TRIES_KEY}', {row}metadata -> '{PAGE_TRIES_KEY}'))"
+                    f" || ({metadata_expr or f'COALESCE(%(metadata)s::jsonb, {row}metadata)'})"
                     f" || jsonb_strip_nulls(jsonb_build_object('{UPDATE_KEY}', {row}metadata -> '{UPDATE_KEY}'))")
         assignments: List[str] = []
         if set_url:
@@ -741,6 +747,31 @@ class PostsRepository:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             cur.execute("SELECT url FROM posts WHERE url = ANY(%s)", (list(urls),))
             return {row[0] for row in cur.fetchall()}
+
+    def teasers_to_read_again(self, source_id: str, *, now: datetime, max_tries: int, apart: timedelta,
+                              limit: int) -> List[Dict[str, Any]]:
+        """The source's stored teasers whose last page read failed (issue 0062), tried fewer than
+        max_tries times, the last at least `apart` ago; oldest try first. Each as a post the saver
+        writes back in place (its date None, so the stored one stays): url, title, bodies, media,
+        categories and metadata as stored."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT url, title, content, content_html, media_urls, categories, metadata
+                  FROM posts
+                 WHERE source_id = %(source)s::uuid
+                   AND NOT metadata ? '{FULL_TEXT_FLAG}'
+                   AND metadata -> '{PAGE_TRIES_KEY}' @> '{{"failed": true}}'
+                   AND (metadata -> '{PAGE_TRIES_KEY}' ->> 'count')::int < %(max_tries)s
+                   AND (metadata -> '{PAGE_TRIES_KEY}' ->> 'last_at')::timestamptz <= %(before)s
+                 ORDER BY (metadata -> '{PAGE_TRIES_KEY}' ->> 'last_at')::timestamptz, id
+                 LIMIT %(limit)s
+                """,
+                {"source": source_id, "max_tries": max_tries, "before": now - apart, "limit": limit},
+            )
+            return [{"url": row[0], "title": row[1], "content": row[2] or "", "content_html": row[3],
+                     "date": None, "media_urls": row[4] or [], "categories": row[5] or [],
+                     "metadata": row[6] or {}} for row in cur.fetchall()]
 
     def full_text_candidates(self, cur: Cursor, *, short_chars: int, source_id: Optional[str] = None,
                              retry: bool = False, limit: Optional[int] = None) -> List[Dict[str, Any]]:
