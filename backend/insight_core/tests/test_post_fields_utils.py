@@ -5,7 +5,7 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.utils.post_fields import build_post_fields, display_title
+from insight_core.utils.post_fields import body_without_feed_lines, build_post_fields, display_title, hnrss_counts
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
 
@@ -171,6 +171,30 @@ class DisplayTitleTests(unittest.TestCase):
 
     def test_a_long_cjk_line_is_cut_hard_at_117(self):
         self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")
+
+
+class FeedLinesTests(unittest.TestCase):
+    # Issue 0070: hnrss's four lines are a Hacker News row's counts, never its text.
+    TEXT = ("Article URL: https://www.sec.gov/Archives/edgar/s1.htm Comments URL: https://news.ycombinator.com/item?id=50242939 "
+            "Points: 1675 # Comments: 1628")
+    HTML = ('<p>Article URL: <a href="https://www.sec.gov/s1.htm">https://www.sec.gov/s1.htm</a></p>\n'
+            '<p>Comments URL: <a href="https://news.ycombinator.com/item?id=1">https://news.ycombinator.com/item?id=1</a></p>\n'
+            '<p>Points: 1675</p>\n<p># Comments: 1628</p>\n')
+
+    def test_hnrss_lines_are_counts_not_text(self):
+        self.assertEqual(hnrss_counts(self.TEXT), {"points": 1675, "comments": 1628})
+        self.assertEqual(hnrss_counts(self.HTML), {"points": 1675, "comments": 1628})
+        self.assertEqual((body_without_feed_lines(self.TEXT), body_without_feed_lines(self.HTML)), ("", ""))
+
+    def test_a_show_hn_keeps_its_own_words(self):
+        html = "<p>Hey HN, I'm Christian.</p>\n<hr>\n" + self.HTML
+        self.assertEqual(body_without_feed_lines(html), "<p>Hey HN, I'm Christian.</p>")
+        self.assertEqual(body_without_feed_lines("Hey HN, I'm Christian. " + self.TEXT), "Hey HN, I'm Christian.")
+
+    def test_another_body_is_left_alone(self):
+        for body in ("Points: 3 of the plan", "<p>Article URL: none here</p>", None, ""):
+            self.assertEqual(body_without_feed_lines(body), body)
+            self.assertIsNone(hnrss_counts(body))
 
 
 if __name__ == "__main__":

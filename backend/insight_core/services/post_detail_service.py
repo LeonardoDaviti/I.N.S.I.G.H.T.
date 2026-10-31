@@ -19,7 +19,7 @@ from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
 from insight_core.utils.post_links import body_hrefs, quoted_tweet
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import display_title
+from insight_core.utils.post_fields import body_without_feed_lines, display_title, hnrss_counts
 
 
 # A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
@@ -99,6 +99,8 @@ class PostDetailService:
 
         source_settings = row[23] or {}
         media = post_media(row[9], row[2])
+        # A feed's own lines (hnrss's counts, issue 0070) are no text: the byline says the counts.
+        content, html = body_without_feed_lines(row[7]), body_without_feed_lines(row[8])
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -106,9 +108,10 @@ class PostDetailService:
             "external_id": row[3],
             "published_at": row[4].isoformat() if row[4] else None,
             "fetched_at": row[5].isoformat() if row[5] else None,
-            "title": display_title(row[6], row[7]),
-            "content": row[7],
-            "content_html": row[8] + row[26] if row[8] and row[26] else row[8],
+            "title": display_title(row[6], content),
+            "counts": hnrss_counts(row[7]),
+            "content": content,
+            "content_html": html + row[26] if html and row[26] else html,
             "media_urls": row[9] or [],
             "images": media["images"],
             "video": media["video"],

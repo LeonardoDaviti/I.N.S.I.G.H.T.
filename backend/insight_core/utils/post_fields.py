@@ -118,6 +118,25 @@ def _cut(line: str, run_on: bool) -> str:
     return (head[:space] if space > 0 else head).rstrip() + "…"
 
 
+# hnrss's item body (issue 0070): four labelled lines, the article's and the discussion's addresses,
+# then the points and the comments ("Points: 1675", "# Comments: 1628"). They are the row's counts,
+# never its text; a body with both counts is that shape.
+_HNRSS_COUNTS_RE = re.compile(r"Points: (\d+)\s*(?:</p>\s*<p>\s*)?# Comments: (\d+)")
+_HNRSS_LINE_RE = re.compile(r"(?:<hr\s*/?>\s*)?<p>\s*(?:Article URL|Comments URL|Points|# Comments):.*?</p>\s*"
+                            r"|(?:Article URL|Comments URL): \S+\s*|(?:Points|# Comments): \d+\s*", re.S)
+
+
+def hnrss_counts(content: str | None) -> Dict[str, int] | None:
+    """{points, comments} of a Hacker News item as hnrss writes it, else None."""
+    match = _HNRSS_COUNTS_RE.search(content or "")
+    return {"points": int(match.group(1)), "comments": int(match.group(2))} if match else None
+
+
+def body_without_feed_lines(body: str | None) -> str | None:
+    """A body (text or HTML) without hnrss's four lines; any other body as it is."""
+    return _HNRSS_LINE_RE.sub("", body).strip() if body and _HNRSS_COUNTS_RE.search(body) else body
+
+
 def tweet_author(url: str | None) -> str | None:
     """A tweet's account, as its address writes it (issue 0066): `user` of /<user>/status/<id>."""
     match = TWEET_PATH.match(urlparse(url or "").path)

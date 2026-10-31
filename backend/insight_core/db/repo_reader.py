@@ -41,7 +41,7 @@ from insight_core.db.repo_stories import source_account
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
-from insight_core.utils.post_fields import REPLY_TO_RE, display_title
+from insight_core.utils.post_fields import REPLY_TO_RE, body_without_feed_lines, display_title, hnrss_counts
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -278,18 +278,21 @@ _ITEM_COLUMNS = f"""
 
 
 def _item(row: Sequence[Any]) -> Dict[str, Any]:
-    excerpt = _excerpt(row[2])
+    # A feed's own lines (hnrss's counts, issue 0070) are no text: the row says the counts.
+    content = body_without_feed_lines(row[2])
+    excerpt = _excerpt(content)
     platform = row[6]
     duration = row[12]
     try:
         duration_seconds = int(float(duration)) if duration not in (None, "") else None
     except ValueError:
         duration_seconds = None
-    content_length = row[11] or 0
+    content_length = (row[11] or 0) if content == row[2] else len(content or "")
     is_video = platform == "youtube"
     return {
         "id": str(row[0]),
-        "title": display_title(row[1], row[2]),
+        "title": display_title(row[1], content),
+        "counts": hnrss_counts(row[2]),
         "excerpt": excerpt,
         "url": row[3],
         "source_id": str(row[4]),

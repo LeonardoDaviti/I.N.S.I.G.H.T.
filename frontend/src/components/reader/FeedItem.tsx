@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Circle, CircleCheck, Clock, PlayCircle, Star
 
 import type { FeedItem as FeedItemData, FeedStory, SnippetPart } from '../../services/api';
 import { feedDateLabel, feedFullTime, feedTimeLabel } from '../../lib/dates';
-import { formatCount, middleTruncate } from '../../lib/format';
+import { countsLabel, formatCount, middleTruncate } from '../../lib/format';
 import { sourceLabel } from '../../lib/sourceLabel';
 import { feedItemDomId } from '../../lib/feedItem';
 import { formatClock } from '../../lib/duration';
@@ -280,9 +280,16 @@ function FeedItem({
           ) : null}
           {/* A repost (issue 0066): its author, beside the source that reposted it (issue 0070). */}
           {item.repost ? <span className="min-w-0 truncate">{repostLine(item.repost)}</span> : null}
-          {length ? (
+          {/* A Hacker News item's counts (issue 0070), no longer its text. */}
+          {item.counts ? (
             <>
               {showSource || item.repost ? <span aria-hidden="true" className="shrink-0">·</span> : null}
+              <span className="shrink-0 whitespace-nowrap">{countsLabel(item.counts)}</span>
+            </>
+          ) : null}
+          {length ? (
+            <>
+              {showSource || item.repost || item.counts ? <span aria-hidden="true" className="shrink-0">·</span> : null}
               <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
                 {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3" /> : null}
                 {length}

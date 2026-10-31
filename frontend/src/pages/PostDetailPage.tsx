@@ -33,7 +33,7 @@ import { coveredBy, originHref, originLabel, repostedBy, repostLine, storyPostNa
 import { postSourceName, sourceLabel } from '../lib/sourceLabel';
 import { errorMessage } from '../lib/apiError';
 import { writeToClipboard } from '../lib/clipboard';
-import { middleTruncate, plural } from '../lib/format';
+import { countsLabel, middleTruncate, plural } from '../lib/format';
 import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
 import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
@@ -1099,6 +1099,13 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
               <span className="whitespace-nowrap">
                 <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
                 <time dateTime={publishedIso} title={publishedFull} className="tabular-nums">{publishedLabel}</time>
+              </span>
+            ) : null}
+            {post.counts ? (
+              // A Hacker News item's counts (issue 0070), no longer its text.
+              <span className="whitespace-nowrap">
+                <span aria-hidden="true" className="mr-2 text-fg-3">/</span>
+                <span className="tabular-nums">{countsLabel(post.counts)}</span>
               </span>
             ) : null}
             {page.modified ? (
