@@ -53,6 +53,22 @@ describe('PostDetailPage header', () => {
     expect(within(heading.closest('header')!).queryByRole('link', { name: 'simonwillison.net' })).toBeNull();
   });
 
+  it('a post with no body leads to its page, never to a dead end (issue 0069)', async () => {
+    render(baseApi(rssPost({ url: 'https://huggingface.co/blog/allenai/litpivot', content: '', content_html: '' })));
+    await screen.findByRole('heading', { level: 1, name: '2026 in LLMs (so far)' });
+    const article = screen.getByRole('article', { name: 'Post content' });
+    expect(within(article).getByRole('link', { name: 'Read on huggingface.co ↗' }))
+      .toHaveAttribute('href', 'https://huggingface.co/blog/allenai/litpivot');
+    expect(screen.queryByText(/No content available/)).toBeNull();
+  });
+
+  it('a post whose HTML field is blank reads its plain text', async () => {
+    render(baseApi(rssPost({ content: 'A short summary of the post.', content_html: ' ' })));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    expect(within(article).getByText('A short summary of the post.')).toBeInTheDocument();
+    expect(within(article).queryByText(/^Read on/)).toBeNull();
+  });
+
   it('shows the API title as given and names the tab after it (issue 0009)', async () => {
     const content = 'Our new model is out today and it is better at everything. And more besides.';
     render(baseApi(rssPost({ title: 'Our new model is out today and it is better at everything.', content, content_html: undefined })));

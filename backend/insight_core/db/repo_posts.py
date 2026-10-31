@@ -840,12 +840,10 @@ class PostsRepository:
             },
         )
 
-    def mark_full_text_checked(self, cur: Cursor, post_id: str, at: str) -> None:
-        """A repair read this post and found nothing longer: the next run skips it."""
-        cur.execute(
-            "UPDATE posts SET metadata = metadata || jsonb_build_object(%s::text, %s::text) WHERE id = %s::uuid",
-            (FULL_TEXT_CHECKED, at, post_id),
-        )
+    def merge_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> None:
+        """Merge keys into a stored post's metadata (a repair's read: checked, its page tries)."""
+        cur.execute("UPDATE posts SET metadata = metadata || %s::jsonb WHERE id = %s::uuid",
+                    (self._json_dumps(metadata), post_id))
 
     def contents_with_entities(self, cur: Cursor, *, source_id: Optional[str] = None) -> List[Tuple[str, str]]:
         """(id, content) of the stored posts whose plain text holds an HTML code (&#39;)."""

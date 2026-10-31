@@ -17,7 +17,9 @@ SITE_CONCURRENCY sites at once. A site that fails STOP_AFTER_FAILURES times in a
 blocking us; its remaining posts are left for the next run.
 
 Every post read is marked metadata.full_text_checked_at, so the next run does not read it
-again; --retry includes them (after adding a Substack session, say). --dry-run reads
+again; --retry includes them (after adding a Substack session, say). Each read is counted in
+metadata.page_tries as a fetch counts it (issue 0069): a failed request is not marked checked,
+and the source's later fetches read it again (0062's retry), at most 3 reads in all. --dry-run reads
 nothing: it prints what a run would read. The summary is printed as JSON.
 
 --entities reads no page: it decodes the HTML codes ("That&#39;s") left in the plain text
@@ -41,9 +43,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db import database as db  # noqa: E402
-from insight_core.db.repo_posts import FULL_TEXT_CHECKED, PostsRepository  # noqa: E402
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, PAGE_TRIES_KEY, PostsRepository  # noqa: E402
 from insight_core.ingestion import full_text  # noqa: E402
-from insight_core.ingestion.http import KindHttp  # noqa: E402
+from insight_core.ingestion.http import HttpError, KindHttp  # noqa: E402
 from insight_core.ingestion.kinds import KindRegistry  # noqa: E402
 from insight_core.ingestion.kinds.base import KindUnavailable  # noqa: E402
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY, SubstackKind  # noqa: E402
@@ -144,6 +146,8 @@ class Repair:
                 return
             except Exception as exc:  # noqa: BLE001 - one post must not stop the others
                 logger.warning("Could not read %s: %s", post["url"], str(exc)[:200])
+                if isinstance(exc, HttpError):   # a failed request, counted: 0062's retry reads it again
+                    await asyncio.to_thread(self._write, post, None, failed=True)
                 self.counts["failed"] += 1
                 failures += 1
                 if failures >= STOP_AFTER_FAILURES:
@@ -151,7 +155,7 @@ class Repair:
                     return
                 continue
             failures = 0
-            await asyncio.to_thread(self._write, post["id"], found)
+            await asyncio.to_thread(self._write, post, found)
             self.counts["repaired" if found else "nothing_longer"] += 1
 
     def _stop(self, host: str, reason: str, left: List[Item]) -> None:
@@ -172,13 +176,17 @@ class Repair:
             return None
         return full_text.with_full_text({}, *article)   # content, content_html and metadata
 
-    def _write(self, post_id: str, found: Optional[Dict[str, Any]]) -> None:
-        checked = {FULL_TEXT_CHECKED: self.clock().isoformat()}
+    def _write(self, post: Dict[str, Any], found: Optional[Dict[str, Any]], *, failed: bool = False) -> None:
+        """Store a read: its full text, or only that it was checked. Every read is counted in
+        page_tries (issue 0069), as a fetch counts its own; a failed one is not checked, so the
+        next run and 0062's retry read it again."""
+        tried = {PAGE_TRIES_KEY: full_text.with_page_try(post, self.clock(), failed=failed)["metadata"][PAGE_TRIES_KEY]}
+        checked = {} if failed else {FULL_TEXT_CHECKED: self.clock().isoformat()}
         with db.transaction(self.db_url) as cur:
             if found:
-                self.posts.save_full_text(cur, post_id, {**found, "metadata": {**found["metadata"], **checked}})
+                self.posts.save_full_text(cur, post["id"], {**found, "metadata": {**found["metadata"], **checked, **tried}})
             else:
-                self.posts.mark_full_text_checked(cur, post_id, checked[FULL_TEXT_CHECKED])
+                self.posts.merge_metadata(cur, post["id"], {**checked, **tried})
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

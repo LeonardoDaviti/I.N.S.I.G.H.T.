@@ -17,8 +17,9 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
-from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PAGE_READ_KEY, PostsRepository
+from insight_core.db.repo_posts import FULL_TEXT_CHECKED, FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY, PostsRepository
 from insight_core.ingestion import full_text
+from insight_core.ingestion.http import HttpError
 from insight_core.ingestion.kinds import KindRegistry, parsing
 from insight_core.ingestion.kinds.generic_rss import GenericRssKind
 from insight_core.scripts.repair_full_text import STOP_AFTER_FAILURES, Repair
@@ -636,6 +637,28 @@ class FullTextDbTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(FULL_TEXT_CHECKED, metadata)
         self.assertEqual((await self._repair(FakeHttp()))["candidates"], 0)
         self.assertEqual((await self._repair(FakeHttp(), retry=True, dry_run=True))["to_read"], 1)
+
+    async def test_repair_counts_each_read_so_a_failed_one_is_retried_by_the_fetches(self):
+        # Issue 0069: posts stored before 0062 carry no count; the repair's reads count as a fetch's.
+        read, short, failed = (f"https://news.example.com/{n}" for n in ("read", "short", "failed"))
+        ids = {url: self._upsert({"url": url, "content": "Short summary."}) for url in (read, short, failed)}
+        await self._repair(FakeHttp({read: _article(), short: _article("Tiny."),
+                                     failed: HttpError(f"HTTP 403 while fetching {failed}", status=403)}))
+        tries = {url: self._row(post_id)[1].get(PAGE_TRIES_KEY) for url, post_id in ids.items()}
+        at = "2026-10-12T00:00:00+00:00"
+        self.assertEqual(tries[read], {"count": 1, "last_at": at, "failed": False})
+        self.assertEqual(tries[short], {"count": 1, "last_at": at, "failed": False})
+        self.assertEqual(tries[failed], {"count": 1, "last_at": at, "failed": True})
+        self.assertNotIn(FULL_TEXT_CHECKED, self._row(ids[failed])[1])
+        due = self.repo.teasers_to_read_again(self.source_id, now=datetime(2026, 10, 14, tzinfo=timezone.utc),
+                                              max_tries=full_text.MAX_PAGE_TRIES, apart=full_text.RETRY_APART, limit=20)
+        self.assertEqual([post["url"] for post in due], [failed])
+
+    async def test_a_failure_that_is_no_request_is_not_counted(self):
+        url = "https://news.example.com/unparsable"
+        post_id = self._upsert({"url": url, "content": "Short summary."})
+        self.assertEqual((await self._repair(FakeHttp({url: RuntimeError("the reader could not parse it")})))["failed"], 1)
+        self.assertNotIn(PAGE_TRIES_KEY, self._row(post_id)[1])
 
     async def test_dry_run_reads_nothing(self):
         self._upsert({"url": "https://news.example.com/x", "content": "Short."})

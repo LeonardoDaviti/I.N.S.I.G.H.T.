@@ -89,9 +89,7 @@ const HTML_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]['rehypePlugi
 ];
 
 export default function MarkdownRenderer({ content, className = "", imageSrc, html = true, internalLinks }: MarkdownRendererProps) {
-  if (!content) {
-    return <p className="text-fg-3">No content available</p>;
-  }
+  if (!content) return null;
 
   const normalizedContent = html ? normalizeRendererContent(content) : content;
   // Plain text keeps its line breaks; HTML's own breaks are its tags, and a source's newlines
