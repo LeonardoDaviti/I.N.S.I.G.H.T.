@@ -15,7 +15,7 @@ import { FOCUS_RING, PRESS_FEEDBACK } from '../states';
 import { proxiedImage } from '../../lib/mediaProxy';
 import { postHref, sourceReadPath } from '../../lib/feedContext';
 import { rememberSelection } from '../../lib/readerSelection';
-import { coveredBy } from '../../lib/story';
+import { coveredBy, originHref, originLabel, storyTree, type StoryLine } from '../../lib/story';
 import { TextLink } from '../ui/TextLink';
 
 function lengthLabel(item: FeedItemData): string | null {
@@ -24,14 +24,20 @@ function lengthLabel(item: FeedItemData): string | null {
   return null;
 }
 
+/** A story line, and its indent in the tree (issue 0064): two levels at most. */
+const STORY_LINE = 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3';
+const INDENT = ['', 'pl-2 sm:pl-4', 'pl-4 sm:pl-8'];
+
 /**
  * A folded story's line under its lead (issue 0050): "covered by 3 · Anthropic, Simon Willison, +1"
  * opens the story's other posts, each a quiet link to the post (its source, title and date; a
- * share says so). Opening one comes back to the lead's row.
+ * share says so). Opening one comes back to the lead's row. The posts are the story's tree (issue
+ * 0064): what came from the lead indented under it, and when the lead is not the origin, the
+ * origin first (a page outside INSIGHT opens in Save any page) and the lead's place as "this post".
  */
-function StoryPosts({ story, label, leadId, now }: { story: FeedStory; label: string; leadId: string; now?: Date }) {
+function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: string; lead: FeedItemData; now?: Date }) {
   const [open, setOpen] = useState(false);
-  const listId = `${feedItemDomId(leadId)}-story`;
+  const listId = `${feedItemDomId(lead.id)}-story`;
   return (
     <div className="mt-0.5">
       <button
@@ -46,29 +52,66 @@ function StoryPosts({ story, label, leadId, now }: { story: FeedStory; label: st
       </button>
       {open ? (
         <ul id={listId} data-story-posts className="mt-1 mb-1 flex flex-col gap-1 border-l border-line pl-3">
-          {story.posts.map((post) => (
-            <li key={post.id} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
-              {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
-              <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
-              <span aria-hidden="true" className="shrink-0">·</span>
-              <Link
-                to={postHref(post.id, null)}
-                onClick={() => rememberSelection(leadId)}
-                dir="auto"
-                className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
-              >
-                {post.title?.trim() || 'Untitled post'}
-              </Link>
-              {post.role === 'share' ? <span className="shrink-0">· share</span> : null}
-              <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
-                {feedDateLabel(post.sort_at, now ?? new Date())}
-              </time>
-              {!post.read_at ? <span className="sr-only">Unread</span> : null}
-            </li>
+          {storyTree(story, lead.id, lead.sort_at ?? lead.published_at).map((line) => (
+            <StoryLineItem key={line.kind === 'post' ? line.post.id : line.kind} line={line} lead={lead} now={now} />
           ))}
         </ul>
       ) : null}
     </div>
+  );
+}
+
+function StoryLineItem({ line, lead, now }: { line: StoryLine; lead: FeedItemData; now?: Date }) {
+  const indent = `${STORY_LINE} ${INDENT[line.depth] ?? ''}`;
+  if (line.kind === 'page') {
+    const { site, title, linkedBy } = originLabel(line.origin);
+    return (
+      <li data-depth={line.depth} className={indent}>
+        <span className="max-w-[40%] shrink-0 truncate" title={site}>{middleTruncate(site, 32)}</span>
+        <span aria-hidden="true" className="shrink-0">·</span>
+        <Link
+          to={originHref(line.origin)}
+          onClick={() => rememberSelection(lead.id)}
+          dir="auto"
+          title={line.origin.url}
+          className={`min-w-0 truncate rounded-sm text-fg-2 underline-offset-4 hover:underline hover:decoration-fg-3 ${FOCUS_RING}`}
+        >
+          {title}
+        </Link>
+        <span className="ml-auto shrink-0 pl-2">{linkedBy}</span>
+      </li>
+    );
+  }
+  if (line.kind === 'self') {
+    return (
+      <li data-depth={line.depth} aria-current="true" className={indent}>
+        <span className="max-w-[40%] shrink-0 truncate">{middleTruncate(sourceLabel(lead.source_display_name), 32)}</span>
+        <span aria-hidden="true" className="shrink-0">·</span>
+        <span dir="auto" className="min-w-0 truncate text-fg-2">{lead.title?.trim() || 'Untitled post'}</span>
+        <span className="shrink-0">· this post</span>
+      </li>
+    );
+  }
+  const { post } = line;
+  return (
+    <li data-depth={line.depth} className={indent}>
+      {!post.read_at ? <StatusIcon status="unread" className="shrink-0 self-center text-fg" /> : null}
+      <span className="max-w-[40%] shrink-0 truncate" title={sourceLabel(post.source_display_name)}>{middleTruncate(sourceLabel(post.source_display_name), 32)}</span>
+      <span aria-hidden="true" className="shrink-0">·</span>
+      <Link
+        to={postHref(post.id, null)}
+        onClick={() => rememberSelection(lead.id)}
+        dir="auto"
+        className={`min-w-0 truncate rounded-sm underline-offset-4 hover:underline hover:decoration-fg-3 ${post.read_at ? 'text-fg-2' : 'font-medium text-fg'} ${FOCUS_RING}`}
+      >
+        {post.title?.trim() || 'Untitled post'}
+      </Link>
+      {post.role === 'share' ? <span className="shrink-0">· share</span> : null}
+      <time dateTime={post.sort_at} title={feedFullTime(post.sort_at)} className="ml-auto shrink-0 pl-2 tabular-nums">
+        {feedDateLabel(post.sort_at, now ?? new Date())}
+      </time>
+      {!post.read_at ? <span className="sr-only">Unread</span> : null}
+    </li>
   );
 }
 
@@ -256,7 +299,7 @@ function FeedItem({
             {excerpt}
           </p>
         ) : null}
-        {item.story ? <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story)} leadId={item.id} now={now} /> : null}
+        {item.story ? <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story)} lead={item} now={now} /> : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">

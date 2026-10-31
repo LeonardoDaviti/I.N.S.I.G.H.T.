@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { coveredBy, suggestionReason } from './story.ts';
+import { coveredBy, originHref, originLabel, storyTree, suggestionReason } from './story.ts';
 import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
@@ -32,4 +32,49 @@ test('a story, a suggestion and a classic name a source without a display name b
   }), 'linked by 2 of your sources (r/LocalLLaMA, antirez.com) · 1 article');
   assert.equal(citedBy({ citers: [{ name: 'https://www.theatlantic.com/feed/author/derek-thompson/', at: '2026-03-15T12:00:00Z' }] }),
     'theatlantic.com, Mar 2026');
+});
+
+// ---- stories as trees (issue 0064) -------------------------------------------------------------
+
+type Reason = 'address' | 'citation' | 'copy' | 'time' | 'none';
+const at = (h: number) => new Date(Date.UTC(2026, 9, 26, h)).toISOString();
+const sp = (id: string, h: number, parent_id: string | null, parent_reason: Reason | null) => ({
+  id, title: id, url: `https://x.test/${id}`, source_id: id, source_display_name: id, platform: 'rss',
+  sort_at: at(h), published_at: null, read_at: null, role: 'report' as const, parent_id, parent_reason,
+});
+const lines = (tree: ReturnType<typeof storyTree>) =>
+  tree.map((l) => `${'  '.repeat(l.depth)}${l.kind === 'post' ? l.post.id : l.kind === 'page' ? 'PAGE' : 'SELF'}`);
+
+test('storyTree: the origin row lists what came from it, two levels of indent at most (GPT-6.1 Terra)', () => {
+  const terra = {
+    id: 'openai', voices: 4, first: 'openai', sources: [], parent_id: null, parent_reason: null,
+    posts: [sp('hn', 18, 'openai', 'address'), sp('ds', 19, 'openai', 'citation'), sp('simon', 23, 'openai', 'citation'),
+      sp('lw', 30, 'simon', 'citation'), sp('deeper', 31, 'lw', 'citation')],
+  };
+  assert.deepEqual(lines(storyTree(terra, 'openai', at(0))), ['hn', 'ds', 'simon', '  lw', '  deeper']);
+});
+
+test('storyTree: on another post the origin comes first and this post sits in its place', () => {
+  const story = {
+    id: 'openai', voices: 4, first: 'openai', sources: [], parent_id: 'openai', parent_reason: 'citation' as const,
+    posts: [sp('openai', 0, null, null), sp('hn', 18, 'openai', 'address'), sp('lw', 30, 'simon', 'citation'), sp('x', 32, 'lw', 'copy')],
+  };
+  assert.deepEqual(lines(storyTree(story, 'simon', at(23))), ['openai', '  hn', '  SELF', '    lw', '    x']);
+});
+
+test('storyTree: an outside page origin heads the list, its citers under it', () => {
+  const story = {
+    id: 'a', voices: 3, first: null, sources: [], parent_id: null, parent_reason: 'citation' as const,
+    origin: { url: 'https://www.anthropic.com/news/claude-fable-5', title: 'Claude Fable 5', linked_by: 3 },
+    posts: [sp('b', 2, null, 'citation'), sp('c', 3, 'b', 'citation')],
+  };
+  assert.deepEqual(lines(storyTree(story, 'a', at(1))), ['PAGE', '  SELF', '  b', '    c']);
+  assert.deepEqual(originLabel(story.origin), { site: 'anthropic.com', title: 'Claude Fable 5', linkedBy: 'linked by 3' });
+  assert.equal(originHref(story.origin), '/save?url=https%3A%2F%2Fwww.anthropic.com%2Fnews%2Fclaude-fable-5&title=Claude+Fable+5');
+  assert.equal(originLabel({ url: 'https://openai.com/index/gpt-6-astra', title: null, linked_by: 10 }).title, 'openai.com/index/gpt-6-astra');
+});
+
+test('storyTree: no tree (before the job drew it, News) lists the posts flat, as before', () => {
+  const story = { id: 'a', voices: 2, sources: [], posts: [sp('b', 2, null, null), sp('c', 3, null, null)] };
+  assert.deepEqual(lines(storyTree(story, 'a')), ['b', 'c']);
 });

@@ -82,6 +82,12 @@ _EVERY_SOURCE_FILTERS = ("later", "history")
 
 # A story's posts, first posted first (its lead: the first report shown, else the first share).
 _STORY_RANK = "COALESCE({p}.published_at, {p}.fetched_at), {p}.id"
+# Where a story post sits in its tree (issue 0064), the lead's first test: 0 the origin (no parent
+# and no reason: also every post before the job has drawn the tree), 1 a post citing the story's
+# outside page origin, 2 the rest.
+_TREE_RANK = ("(CASE WHEN {sp}.parent_reason IS NULL THEN 0"
+              " WHEN {sp}.parent_id IS NULL AND {sp}.parent_url IS NOT NULL AND {sp}.parent_reason = 'citation' THEN 1"
+              " ELSE 2 END)")
 # The story posts that a lead's read marks read: the shares of a story whose report (or, when
 # it has none, whose share) was read.
 _SHARES_OF_READ = """
@@ -342,7 +348,8 @@ class ReaderRepository:
     def _lead_sql(self, scope: FeedScope, filter: str, since: datetime | None = None,
                   until: datetime | None = None) -> Tuple[str, List[Any]]:
         """`p` is its story's lead among the posts this view shows (or in no story): no other
-        shown post of its story ranks first (a report before a share, then the first posted)."""
+        shown post of its story ranks first (the origin, issue 0064; then a report before a share,
+        then the first posted)."""
         scope_sql, params = self._scope_sql(scope, filter)
         filter_sql, filter_params = self._filter_sql(filter)
         bounds_sql, bounds_params = self._bounds_sql(since, until)
@@ -353,22 +360,30 @@ class ReaderRepository:
             JOIN posts op ON op.id = o.post_id
             JOIN sources os ON os.id = op.source_id
             WHERE sp.post_id = p.id AND {shown}
-              AND ((o.role = 'report' AND sp.role = 'share')
-                   OR (o.role = sp.role AND ({_STORY_RANK.format(p='op')}) < ({_STORY_RANK.format(p='p')}))))"""
+              AND ({_TREE_RANK.format(sp='o')} < {_TREE_RANK.format(sp='sp')}
+                   OR ({_TREE_RANK.format(sp='o')} = {_TREE_RANK.format(sp='sp')}
+                       AND ((o.role = 'report' AND sp.role = 'share')
+                            OR (o.role = sp.role AND ({_STORY_RANK.format(p='op')}) < ({_STORY_RANK.format(p='p')}))))))"""
         return sql, [*params, *filter_params, *bounds_params]
 
     @staticmethod
     def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
-        """Give each item that leads a story its `story` (else None): {id, voices, first (its first
-        report, else its first share: issue 0055), sources: [{id, name}] in the order they covered
-        it, posts: the story's other posts, first posted first}. The post page (0055) asks it too."""
+        """Give each item that leads a story its `story` (else None): {id, voices, first (its origin
+        post, issue 0064; before the tree is drawn its first report, else its first share: issue
+        0055), sources: [{id, name}] in the order they covered it, posts: the story's other posts,
+        first posted first}. The post page (0055) asks it too.
+
+        The tree (issue 0064): each post has `parent_id` (a post of the story) and `parent_reason`
+        (address, citation, copy, time, none); the origin has neither. A post with a reason and no
+        `parent_id` hangs from the story's `origin` {url, title, linked_by}, a page outside INSIGHT
+        (else `origin` is None). The item's own place: `parent_id` and `parent_reason` of the story."""
         if not items:
             return
         cur.execute(
             f"""
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
-                   r.read_at, o.role
+                   r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -382,21 +397,35 @@ class ReaderRepository:
         )
         stories: Dict[str, Dict[str, Any]] = {}
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
-             published_at, read_at, role) in cur.fetchall():
-            story = stories.setdefault(str(lead), {"id": str(story_id), "voices": int(voices), "first": None,
-                                                   "sources": [], "posts": []})
-            if story["first"] is None or (role == "report" and story["_first_role"] != "report"):
-                story["first"], story["_first_role"] = str(post_id), role
+             published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
+             origin_linked_by) in cur.fetchall():
+            story = stories.setdefault(str(lead), {
+                "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
+                "posts": [], "parent_id": None, "parent_reason": None,
+                "origin": {"url": origin_url, "title": origin_title, "linked_by": int(origin_linked_by or 0)}
+                          if origin_url else None,
+            })
+            # The origin post first (issue 0064); before the tree is drawn, the first report.
+            rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
+            if story["first"] is None or rank < story["_first_rank"]:
+                story["first"], story["_first_rank"] = str(post_id), rank
             if not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
+            parent = {"parent_id": str(parent_id) if parent_id else None, "parent_reason": parent_reason}
             if str(post_id) != str(lead):
                 story["posts"].append({
                     "id": str(post_id), "title": display_title(title, content), "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
+                    **parent,
                 })
+            else:
+                story.update(parent)
         for story in stories.values():
-            del story["_first_role"]
+            # A story whose origin is a page outside INSIGHT has no first post.
+            if story["origin"] is not None and story["_first_rank"][0] != 0:
+                story["first"] = None
+            del story["_first_rank"]
         for item in items:
             item["story"] = stories.get(item["id"])
 

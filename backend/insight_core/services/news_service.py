@@ -103,8 +103,10 @@ class NewsService:
         items = []
         for posts in by_story.values():
             shown = [p for p in posts if p["_in_scope"]]
-            lead_id = lead([(p["id"], p["role"]) for p in shown]) or lead([(p["id"], p["role"]) for p in posts])
-            first_report = lead([(p["id"], p["role"]) for p in posts])
+            # The lead is the origin (issue 0064): a post its 0050 story's tree starts from.
+            origins = [p["id"] for p in posts if p["_origin"]]
+            lead_id = lead([(p["id"], p["role"]) for p in shown], origins) or lead([(p["id"], p["role"]) for p in posts], origins)
+            first_report = lead([(p["id"], p["role"]) for p in posts], origins)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             sources: List[Dict[str, str]] = []

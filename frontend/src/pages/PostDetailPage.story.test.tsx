@@ -120,6 +120,43 @@ describe('PostDetailPage covered by (issue 0055)', () => {
   });
 });
 
+describe('PostDetailPage covered by, as a tree (issue 0064)', () => {
+  const depths = (block: HTMLElement) => within(block).getAllByRole('listitem').map((li) => [li.dataset.depth, li.textContent]);
+
+  it('the origin first, this post in its place, what came from it indented under it', async () => {
+    const [lab, channel] = story().posts;
+    renderPage(baseApi(rssPost({ title: 'My notes on Kimi K3.1', story: story({
+      parent_id: LAB, parent_reason: 'citation',
+      posts: [{ ...lab, parent_id: null, parent_reason: null }, { ...channel, parent_id: POST_ID, parent_reason: 'citation' }],
+    }) })));
+    const block = await screen.findByRole('region', { name: 'Covered by' });
+    expect(depths(block)).toEqual([
+      ['0', expect.stringMatching(/^Anthropic News·Introducing Kimi K3\.1 Pro· first/)],
+      ['1', expect.stringMatching(/·My notes on Kimi K3\.1· this post$/)],
+      ['2', expect.stringMatching(/^@data_secrets·Вышла Kimi K3\.1· share/)],
+    ]);
+    expect(within(block).getAllByRole('listitem')[1]).toHaveAttribute('aria-current', 'true');
+    expect(within(within(block).getAllByRole('listitem')[1]).queryByRole('link')).toBeNull();
+  });
+
+  it('an outside page as the origin opens in Save any page', async () => {
+    const user = userEvent.setup();
+    const [lab, channel] = story().posts;
+    renderPage(baseApi(rssPost({ story: story({
+      first: null, parent_id: null, parent_reason: 'citation',
+      origin: { url: 'https://www.kimi.com/blog/kimi-k3-1', title: 'Kimi K3.1 Pro tech blog', linked_by: 8 },
+      posts: [{ ...lab, parent_id: null, parent_reason: 'citation' }, { ...channel, parent_id: LAB, parent_reason: 'copy' }],
+    }) })));
+    const block = await screen.findByRole('region', { name: 'Covered by' });
+    expect(depths(block).map(([depth, text]) => [depth, text?.split('·')[0]])).toEqual([
+      ['0', 'kimi.com'], ['1', 'simonwillison.net'], ['1', 'Anthropic News'], ['2', '@data_secrets'],
+    ]);
+    expect(within(block).getAllByRole('listitem')[0]).toHaveTextContent(/^kimi\.com·Kimi K3\.1 Pro tech bloglinked by 8$/);
+    await user.click(within(block).getByRole('link', { name: 'Kimi K3.1 Pro tech blog' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/save');
+  });
+});
+
 describe('PostDetailPage links to stored posts (issue 0057)', () => {
   const html = '<p>See <a href="https://t.me/data_secrets/9951">the earlier post</a> and '
     + '<a href="https://openai.com/index/securing">OpenAI\'s post</a>.</p>';

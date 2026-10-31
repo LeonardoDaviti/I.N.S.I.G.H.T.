@@ -14,6 +14,7 @@ import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
 import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
 import { postStateDetail } from './posts';
+import { storyTreeItems } from './storyTrees';
 
 export interface FrameScenario {
   page: string;
@@ -80,6 +81,14 @@ const SCENARIOS: FrameScenario[] = [
     return { ...s, items: s.items.map((item) => (item.read_at ? { ...item, read_at: at(now, -(0.4 + 9 * k++) * HOUR) } : item)) };
   }), documented: true },
   { page: 'reader', state: 'history-empty', label: 'Show history, nothing opened yet', url: '/?filter=history', routes: (now) => withSite(now, (s) => ({ ...s, items: s.items.map((item) => ({ ...item, read_at: null })) })), documented: true },
+  {
+    page: 'reader', state: 'story', label: 'Two stories open as trees: an origin post, and an outside page as the origin', url: '/', documented: true,
+    routes: (now) => withSite(now, (s) => ({ ...s, items: [...storyTreeItems(now), ...s.items] })),
+    setup: async (frame) => {
+      await frame.click('button[aria-controls$="-story"]', /covered by 5/);
+      await frame.click('button[aria-controls$="-story"]', /covered by 4/);
+    },
+  },
   { page: 'reader', state: 'track', label: 'Scoped to one track', url: `/read/folder/${TRACKS.ai.id}`, routes: site(normalSite), documented: false },
   { page: 'reader', state: 'source', label: 'Scoped to one source', url: `/read/source/${sourceId('s-simon')}`, routes: site(normalSite), documented: false },
 

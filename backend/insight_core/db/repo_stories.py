@@ -15,7 +15,8 @@ from psycopg import Cursor
 
 from insight_core.utils.post_links import (PostLink, account_key, extract_links, host_of, is_article, reddit_author,
                                           site_of, source_kind)
-from insight_core.utils.story_rules import SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
+from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
+                                           Story, source_site)
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
@@ -68,9 +69,25 @@ class SourceFacts:
             if self.kind.get(str(source_id)) != "saved":
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
+        # How much of a source is on its own site (issue 0064): an aggregator's most common site
+        # is only where it links most (Hacker News: 8% github.com on the server's data).
+        self._site_share = {
+            source_id: sum(n for host, n in pairs if site_of(host) == self.site[source_id]) / sum(n for _, n in pairs)
+            for source_id, pairs in hosts.items() if sum(n for _, n in pairs)
+        }
 
     def own_site(self, source_id: str) -> str:
         return self.site.get(source_id) or self.handle_site.get(source_id) or ""
+
+    def home_site(self, source_id: str) -> str:
+        """The site a source publishes on (issue 0064), "" when none can be told: its own site, if
+        its address is on it or half its posts are; never Hacker News' or Saved's."""
+        site = self.own_site(source_id)
+        if not site or self.kind.get(source_id) in NOT_PUBLISHERS:
+            return ""
+        if site == self.handle_site.get(source_id) or self._site_share.get(source_id, 0) >= HOME_SITE_SHARE:
+            return site
+        return ""
 
     def followed(self) -> Set[str]:
         """The sites you follow: each source's own site, and the site of its address."""
@@ -189,7 +206,8 @@ class StoriesRepository:
             """
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
                    length(p.content), p.normalized_url,
-                   CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END
+                   CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END,
+                   COALESCE(p.metadata ? 'page_update', false)
             FROM posts p
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
               AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
@@ -200,13 +218,13 @@ class StoriesRepository:
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
-             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "links": []}
+             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "links": [], "link_texts": {}}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
         cur.execute(
             """
-            SELECT pl.post_id, pl.target_url, t.id
+            SELECT pl.post_id, pl.target_url, t.id, pl.link_text
             FROM post_links pl LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE NOT pl.boilerplate AND pl.post_id = ANY(%s::uuid[])
@@ -214,8 +232,10 @@ class StoriesRepository:
             """,
             (list(by_id),),
         )
-        for post_id, target, stored in cur.fetchall():
+        for post_id, target, stored, text in cur.fetchall():
             by_id[str(post_id)]["links"].append((target, str(stored) if stored else None))
+            if text:
+                by_id[str(post_id)]["link_texts"][target] = text
         return posts
 
     @staticmethod
@@ -225,46 +245,67 @@ class StoriesRepository:
         since `cutoff`, less the frozen): stories begun since `cutoff`, those posts' story rows and
         the mentions they make. Writes only what differs; returns how many rows changed."""
         changed = 0
-        want_posts: Dict[str, Tuple[str, str, List[str], str]] = {}
+        want_posts: Dict[str, Tuple[Any, ...]] = {}
         want_mentions: Set[Tuple[str, str]] = set()
         for story in stories:
             for post in story.posts:
-                want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice)
+                # Its tree (issue 0064): the parent post, else the outside page origin, and why.
+                parent_id, parent_url, reason = story.parents.get(post.id, (None, None, None))
+                want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice,
+                                       parent_id, reason, parent_url)
             want_mentions |= {(story.id, pid) for pid in story.mentions}
-        want = {story.id: (story.first_at, story.voices) for story in stories}
+        want = {story.id: (story.first_at, story.voices, story.origin_url, story.origin_title,
+                           story.origin_linked_by if story.origin_url else None) for story in stories}
 
-        cur.execute("SELECT id, first_at, voices FROM stories WHERE %s::timestamptz IS NULL OR first_at >= %s",
-                    (cutoff, cutoff))
-        have = {str(r[0]): (r[1], r[2]) for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT id, first_at, voices, origin_url, origin_title, origin_linked_by FROM stories
+            WHERE %s::timestamptz IS NULL OR first_at >= %s
+            """,
+            (cutoff, cutoff),
+        )
+        have = {str(r[0]): tuple(r[1:]) for r in cur.fetchall()}
         gone = [sid for sid in have if sid not in want]
         if gone:
             cur.execute("DELETE FROM stories WHERE id = ANY(%s::uuid[])", (gone,))
             changed += cur.rowcount
-        rows = [(sid, first_at, voices) for sid, (first_at, voices) in want.items() if have.get(sid) != (first_at, voices)]
+        rows = [(sid, *row) for sid, row in want.items() if have.get(sid) != row]
         if rows:
             cur.executemany(
                 """
-                INSERT INTO stories (id, first_at, voices) VALUES (%s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET first_at = EXCLUDED.first_at, voices = EXCLUDED.voices, updated_at = now()
+                INSERT INTO stories (id, first_at, voices, origin_url, origin_title, origin_linked_by)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET first_at = EXCLUDED.first_at, voices = EXCLUDED.voices,
+                    origin_url = EXCLUDED.origin_url, origin_title = EXCLUDED.origin_title,
+                    origin_linked_by = EXCLUDED.origin_linked_by, updated_at = now()
                 """,
                 rows,
             )
             changed += len(rows)
 
-        cur.execute("SELECT post_id, story_id, role, reasons, voice FROM story_posts WHERE post_id = ANY(%s::uuid[])",
-                    (list(post_ids),))
-        have_posts = {str(r[0]): (str(r[1]), r[2], list(r[3]), r[4]) for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url
+            FROM story_posts WHERE post_id = ANY(%s::uuid[])
+            """,
+            (list(post_ids),),
+        )
+        have_posts = {str(r[0]): (str(r[1]), r[2], list(r[3]), r[4], str(r[5]) if r[5] else None, r[6], r[7])
+                      for r in cur.fetchall()}
         drop = [pid for pid in have_posts if pid not in want_posts]
         if drop:
             cur.execute("DELETE FROM story_posts WHERE post_id = ANY(%s::uuid[])", (drop,))
             changed += cur.rowcount
         rows = [(pid, *row) for pid, row in want_posts.items() if have_posts.get(pid) != row]
         if rows:
+            # parent_id references story_posts, checked at commit: a parent may be written after its child.
             cur.executemany(
                 """
-                INSERT INTO story_posts (post_id, story_id, role, reasons, voice) VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO story_posts (post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (post_id) DO UPDATE
-                    SET story_id = EXCLUDED.story_id, role = EXCLUDED.role, reasons = EXCLUDED.reasons, voice = EXCLUDED.voice
+                    SET story_id = EXCLUDED.story_id, role = EXCLUDED.role, reasons = EXCLUDED.reasons, voice = EXCLUDED.voice,
+                        parent_id = EXCLUDED.parent_id, parent_reason = EXCLUDED.parent_reason, parent_url = EXCLUDED.parent_url
                 """,
                 rows,
             )

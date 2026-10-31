@@ -129,14 +129,17 @@ export function postStateDetail(state: string, now: Date = new Date()): PostDeta
         content_html: STORY_HTML,
         content: STORY_HTML.replace(/<[^>]+>/g, ''),
         internal_links: { 'https://t.me/data_secrets/9951': 'p-article' },
+        // A tree (issue 0064): the origin is Kimi's own page, outside INSIGHT, that 8 posts link;
+        // this post is one of them; a forward hangs under the post it copies.
         story: {
-          id: 'p-story-ai-newz', voices: 4, first: 'p-story-ai-newz',
+          id: 'p-story-ai-newz', voices: 4, first: null, parent_id: null, parent_reason: 'citation',
+          origin: { url: 'https://kimi.ai/blog/kimi-k3-1-pro', title: 'Introducing Kimi K3.1 Pro', linked_by: 8 },
           sources: [{ id: 's-newz', name: 'ai_newz' }, { id: 's-ds', name: 'data_secrets' },
             { id: 's-simon', name: 'Simon Willison’s Weblog' }, { id: 's-denis', name: 'denissexy' }],
           posts: [
-            storyPost('p-story-ai-newz', 'ai_newz', 'Moonshot выпустили K3.1 Pro', 'report', now, 9, true),
-            storyPost('p-story-ds', 'data_secrets', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false),
-            storyPost('p-story-denis', 'denissexy', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false),
+            { ...storyPost('p-story-ai-newz', 'ai_newz', 'Moonshot выпустили K3.1 Pro', 'report', now, 9, true), parent_id: null, parent_reason: 'citation' as const },
+            { ...storyPost('p-story-ds', 'data_secrets', 'Вышла Kimi K3.1. Это огромная открытая модель с 2.8T параметров', 'report', now, 6, false), parent_id: null, parent_reason: 'citation' as const },
+            { ...storyPost('p-story-denis', 'denissexy', 'Вышла Kimi K3.1 Pro.', 'share', now, 5, false), parent_id: 'p-story-ds', parent_reason: 'copy' as const },
           ],
         },
       }, now);

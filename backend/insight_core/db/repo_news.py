@@ -161,12 +161,13 @@ class NewsRepository:
         cur.execute(
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
-                   np.role, ({scope_sql}) AS in_scope
+                   np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN story_posts sp ON sp.post_id = p.id
             WHERE ns.first_at >= %s
               AND EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
                           WHERE o.news_id = ns.id AND {scope_sql})
@@ -176,11 +177,11 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-9])
-            sid, first_at, voices, reports, shares, mentions, score, role, in_scope = row[-9:]
+            item = _item(row[:-10])
+            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope = row[-10:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
-                         "_in_scope": bool(in_scope)})
+                         "_in_scope": bool(in_scope), "_origin": bool(origin)})
             out.append(item)
         return out
 
