@@ -80,6 +80,17 @@ class TelegramAlbumTests(unittest.TestCase):
             cur.execute("SELECT fold_telegram_albums(%s::uuid)", (self.source,))
             self.assertEqual(cur.fetchone()[0], 0, "folding again changes nothing")
 
+    def test_pictures_before_their_caption_are_that_post(self):
+        # Issue 0070 (migration 0053): the album's caption came on its last item.
+        drafts = [self._draft(22, timedelta(seconds=40), "Собственно, это было известно еще в 1977 году."),
+                  self._draft(21, timedelta(0)), self._draft(20, timedelta(0)),
+                  self._draft(19, timedelta(minutes=-30), "An earlier post.")]
+        with psycopg.connect(self.url) as conn:
+            PostsRepository(self.url).save_batch(conn, drafts)
+        ids = self._ids()
+        caption = ids["22"][0]
+        self.assertEqual({n: album for n, (_, album) in ids.items()}, {"19": None, "20": caption, "21": caption, "22": None})
+
     def test_the_feed_its_counts_and_search_show_the_post_once(self):
         ids = self._save_album()
         reader = ReaderRepository(unread_window_days=None)

@@ -175,6 +175,45 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")
 
 
+class TitlesLeftOpenTests(unittest.TestCase):
+    # Issue 0070, B6: the titles 0069 B left open, each a class.
+    def test_a_link_then_a_list_is_titled_by_the_link_and_a_list_mark_is_no_word(self):
+        title = "RT by @badlogicgames: http://agentville.world\n\n> accessible for AI newcomers\n> voice chat for everything"
+        self.assertEqual(display_title(title, "agentville.world > accessible for AI newcomers > voice chat"), "agentville.world")
+        self.assertEqual(display_title("R to @predict_addict: • It penalizes underconfidence\n• and more", ""),
+                         "It penalizes underconfidence")
+        self.assertEqual(display_title("— модель станет доступна сегодня всем, кроме бесплатников.", ""),
+                         "модель станет доступна сегодня всем, кроме бесплатников.")
+
+    def test_a_title_ending_in_a_custom_emoji_keeps_it(self):
+        title = "Релизы зарелижены, поэтому время показать папищекам, что я жива💀."
+        body = "Релизы зарелижены, поэтому время показать папищекам, что я жива 💀 . Все подводят какие-то итоги года"
+        self.assertEqual(display_title(title, body), title)
+        # A glued line that starts with an emoji and has words is still a line of its own.
+        self.assertEqual(display_title("🤖 OpenAI удвоила лимиты за $500🔥Изменения уже действуют.",
+                                       "🤖 OpenAI удвоила лимиты за $500\n🔥Изменения уже действуют."),
+                         "🤖 OpenAI удвоила лимиты за $500")
+
+    def test_a_telegram_link_preview_is_titled_by_the_pages_title(self):
+        html = ('<br/><a href="https://lnkd.in/p/x">https://lnkd.in/p/x</a><br/><br/><blockquote cite="https://lnkd.in/p/x">'
+                '<cite><b>LinkedIn</b></cite></br><b>New Open-Source Glyph for Refusing Consent</b></br>I just learned that.</blockquote>')
+        content = "https://lnkd.in/p/x LinkedIn New Open-Source Glyph for Refusing Consent I just learned that."
+        self.assertEqual(display_title("[Media]", content), "LinkedIn New Open-Source Glyph for Refusing Consent I just learned that.")
+        self.assertEqual(display_title("[Media]", content, html), "New Open-Source Glyph for Refusing Consent")
+        tweet = html.replace("<b>New Open-Source Glyph for Refusing Consent</b>", "<b>Percy Liang (@percyliang)</b>")
+        self.assertEqual(display_title("[Media]", content, tweet), "I just learned that.", "a tweet's preview: its words, not its author")
+
+    def test_a_letters_abbreviation_is_no_sentence_end(self):
+        title = ("SITUATION DETECTED: Major U.S. banks are detecting unauthorized AI agents operating inside customer accounts. "
+                 "And more besides that goes on.")
+        self.assertEqual(display_title(title, ""), "SITUATION DETECTED: Major U.S. banks are detecting unauthorized AI agents "
+                                                   "operating inside customer accounts.")
+        self.assertEqual(display_title("Hidden deep inside the catalogue of A. P. Kiselev. " + "x " * 80, ""),
+                         "Hidden deep inside the catalogue of A. P. Kiselev.")
+        self.assertEqual(display_title("A treasure of notes like this fills Kiselev's Algebra, Part I. " + "y " * 80, ""),
+                         "A treasure of notes like this fills Kiselev's Algebra, Part I.", "\"I\" ends a sentence")
+
+
 class TitleNotReadTwiceTests(unittest.TestCase):
     # Issue 0070: a title taken from the body isn't read twice; the body starts after it.
     def test_a_telegram_posts_first_line_leaves_its_body(self):

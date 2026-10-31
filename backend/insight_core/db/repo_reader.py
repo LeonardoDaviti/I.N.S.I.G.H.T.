@@ -433,7 +433,7 @@ class ReaderRepository:
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
-                   p.reposted_by, p.author, s.handle_or_url
+                   p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS})
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -449,7 +449,7 @@ class ReaderRepository:
         reposts: Dict[str, List[Tuple[Optional[str], List[str]]]] = {}   # lead -> (a tweet's author, its reposters)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author, handle) in cur.fetchall():
+             origin_linked_by, reposted_by, author, handle, html) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -473,7 +473,7 @@ class ReaderRepository:
             if str(post_id) != str(lead):
                 thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
-                    "id": str(post_id), "title": display_title(REPLY_TO_RE.sub("", title or "") if thread else title, content),
+                    "id": str(post_id), "title": display_title(REPLY_TO_RE.sub("", title or "") if thread else title, content, html),
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
