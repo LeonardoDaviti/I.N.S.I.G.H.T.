@@ -5,7 +5,9 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from insight_core.utils.post_fields import body_without_feed_lines, build_post_fields, display_title, hnrss_counts
+from insight_core.utils.post_fields import (
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, reading_text,
+)
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
 
@@ -171,6 +173,39 @@ class DisplayTitleTests(unittest.TestCase):
 
     def test_a_long_cjk_line_is_cut_hard_at_117(self):
         self.assertEqual(display_title("字" * 300, ""), "字" * 117 + "…")
+
+
+class TitleNotReadTwiceTests(unittest.TestCase):
+    # Issue 0070: a title taken from the body isn't read twice; the body starts after it.
+    def test_a_telegram_posts_first_line_leaves_its_body(self):
+        content = "Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.\nТеренс Тао и другие."
+        html = "<p><b>Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.</b><br/>Теренс Тао и другие.</p>"
+        title, text, body = reading_text("Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику. Теренс…", content, html)
+        self.assertEqual(title, "Свежий emergency выпуск подкаста Лекса Фридмана про AI и математику.")
+        self.assertEqual((text, body), ("Теренс Тао и другие.", "<p>Теренс Тао и другие.</p>"), "no empty bold, no break")
+
+    def test_a_tweets_first_line_is_found_by_its_html_when_the_text_lost_its_breaks(self):
+        html = '<p>Canada being &quot;at the forefront of AI&quot;</p>\n<a href="https://x.test/v"><br>Video<br></a>'
+        title, text, body = reading_text('RT by @predict_addict: Canada being "at the forefront of AI"',
+                                         'Canada being "at the forefront of AI" Video', html)
+        self.assertEqual((title, text), ('Canada being "at the forefront of AI"', "Video"))
+        self.assertEqual(body, '<a href="https://x.test/v"><br>Video<br></a>')
+
+    def test_a_title_that_is_only_the_bodys_first_words_stays_in_it(self):
+        self.assertEqual(reading_text("Notes", "Notes on X and Y", "<p>Notes on X and Y</p>")[1:],
+                         ("Notes on X and Y", "<p>Notes on X and Y</p>"))
+        self.assertEqual(body_after_title("Introducing Gemini 4", "Introducing Gemini 4, our model"), "Introducing Gemini 4, our model")
+
+    def test_a_cut_title_a_whole_body_or_another_start_leave_the_body_alone(self):
+        self.assertEqual(body_after_title("A long first line that goes on…", "A long first line that goes on and on.\nMore."),
+                         "A long first line that goes on and on.\nMore.")
+        self.assertEqual(body_after_title("All of it.", "All of it."), "All of it.")
+        self.assertEqual(body_after_title("Other words.", "Different text.\nMore."), "Different text.\nMore.")
+
+    def test_a_heading_that_repeats_the_title_goes(self):
+        html = '<h1>Soft-deprecating re.match()</h1>\n<p>Python has a concept of soft deprecation.</p>'
+        self.assertEqual(body_after_title("Soft-deprecating re.match()", html, html=True),
+                         "<p>Python has a concept of soft deprecation.</p>")
 
 
 class FeedLinesTests(unittest.TestCase):

@@ -41,7 +41,7 @@ from insight_core.db.repo_stories import source_account
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
-from insight_core.utils.post_fields import REPLY_TO_RE, body_without_feed_lines, display_title, hnrss_counts
+from insight_core.utils.post_fields import REPLY_TO_RE, display_title, hnrss_counts, reading_text
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -53,6 +53,7 @@ MAX_FEED_LIMIT = 100
 MAX_FEED_GROUPS = 50
 DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-time
 EXCERPT_CHARS = 280
+TITLE_HTML_CHARS = 2000   # the HTML's start, where a title taken from the text ends (issue 0070)
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
 SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
@@ -273,13 +274,15 @@ _ITEM_COLUMNS = f"""
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
-    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url
+    rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
+    left(p.content_html, {TITLE_HTML_CHARS})
 """
 
 
 def _item(row: Sequence[Any]) -> Dict[str, Any]:
-    # A feed's own lines (hnrss's counts, issue 0070) are no text: the row says the counts.
-    content = body_without_feed_lines(row[2])
+    # The excerpt starts after a title taken from the text, without a feed's own lines (hnrss's
+    # counts: the row says them), issue 0070.
+    title, content, _ = reading_text(row[1], row[2], row[21])
     excerpt = _excerpt(content)
     platform = row[6]
     duration = row[12]
@@ -287,12 +290,13 @@ def _item(row: Sequence[Any]) -> Dict[str, Any]:
         duration_seconds = int(float(duration)) if duration not in (None, "") else None
     except ValueError:
         duration_seconds = None
-    content_length = (row[11] or 0) if content == row[2] else len(content or "")
+    counts = hnrss_counts(row[2])
+    content_length = len(content or "") if counts else (row[11] or 0)
     is_video = platform == "youtube"
     return {
         "id": str(row[0]),
-        "title": display_title(row[1], content),
-        "counts": hnrss_counts(row[2]),
+        "title": title,
+        "counts": counts,
         "excerpt": excerpt,
         "url": row[3],
         "source_id": str(row[4]),

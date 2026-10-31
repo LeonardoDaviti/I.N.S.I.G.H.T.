@@ -3,9 +3,10 @@ title the reader shows."""
 
 from __future__ import annotations
 
+import html as html_lib
 import re
 import unicodedata
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 from .content_fingerprints import clean_text, hash_post_content, strip_html
@@ -118,6 +119,58 @@ def _cut(line: str, run_on: bool) -> str:
     return (head[:space] if space > 0 else head).rstrip() + "…"
 
 
+_TAG_RE = re.compile(r"(<[^>]*>)")
+_BLOCK_TAG_RE = re.compile(r"</?(?:p|br|h[1-6]|div|li|ul|ol|blockquote|hr|figure|section|header|article|table|tr|pre)\b", re.I)
+# What a title taken out of a body leaves at its start: breaks, and elements left empty.
+_LEFT_AT_START_RE = re.compile(r"^((?:\s*<(?!br\b)[a-z][^>]*>)*)\s*(?:<br\s*/?>\s*|<([a-z][a-z0-9]*)\b[^>]*>\s*</\2>\s*)+", re.I)
+
+
+def _block_follows(parts: List[str]) -> bool:
+    """Whether a line or a block ends here: a break or a block's tag comes before any more words."""
+    for part in parts:
+        if part.startswith("<"):
+            if _BLOCK_TAG_RE.match(part):
+                return True
+        elif part.strip():
+            return False
+    return False
+
+
+def body_after_title(title: str, body: str | None, *, html: bool = False, line: bool = False) -> str | None:
+    """The body without the title it starts with (issue 0070: a title taken from the body isn't read
+    twice: the post page's heading, then its text). Whitespace and, in HTML, tags and entities don't
+    count (HTML codes are read as what they say). The title must be a whole line or sentence of the
+    body: it ends a sentence, a line or a block ends with it, or (`line`) it is known to be a line.
+    Unchanged when the title is cut ("…"), isn't the body's start, or is all of it."""
+    want = re.sub(r"\s+", "", title or "")
+    if not body or not want or TRAILING_ELLIPSIS_RE.search(title):
+        return body
+    parts = _TAG_RE.split(body) if html else [body]
+    out, matched = [], 0
+    for index, part in enumerate(parts):
+        if matched == len(want) or (html and part.startswith("<")):
+            out.append(part)
+            continue
+        text = html_lib.unescape(part)
+        at = 0
+        while at < len(text) and matched < len(want):
+            if not text[at].isspace():
+                if text[at] != want[matched]:
+                    return body
+                matched += 1
+            at += 1
+        tail = text[at:]
+        # "Notes" is not the title of "Notes on X".
+        if matched == len(want) and not (line or _FINISHED_RE.search(title) or "\n" in tail[:len(tail) - len(tail.lstrip())]
+                                          or (not tail.strip() and _block_follows(parts[index + 1:]))):
+            return body
+        out.append(html_lib.escape(tail, quote=False) if html else tail)
+    rest = "".join(out)
+    rest = _LEFT_AT_START_RE.sub(r"\1", rest).strip() if html else rest.strip()
+    words = strip_html(rest) if html else rest
+    return rest if matched == len(want) and _WORD_RE.search(words or "") else body
+
+
 # hnrss's item body (issue 0070): four labelled lines, the article's and the discussion's addresses,
 # then the points and the comments ("Points: 1675", "# Comments: 1628"). They are the row's counts,
 # never its text; a body with both counts is that shape.
@@ -135,6 +188,18 @@ def hnrss_counts(content: str | None) -> Dict[str, int] | None:
 def body_without_feed_lines(body: str | None) -> str | None:
     """A body (text or HTML) without hnrss's four lines; any other body as it is."""
     return _HNRSS_LINE_RE.sub("", body).strip() if body and _HNRSS_COUNTS_RE.search(body) else body
+
+
+def reading_text(title: str | None, content: str | None, html: str | None = None
+                 ) -> Tuple[str, str | None, str | None]:
+    """(the title the reader shows, the text and the HTML under it): a feed's own lines out (hnrss),
+    and the title out of the body's start when it was taken from it (issue 0070). Where the stored
+    text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
+    ended: `html` may be only the HTML's start."""
+    content, html = body_without_feed_lines(content), body_without_feed_lines(html)
+    shown = display_title(title, content)
+    html_after = body_after_title(shown, html, html=True)
+    return shown, body_after_title(shown, content, line=html_after != html), html_after
 
 
 def tweet_author(url: str | None) -> str | None:
