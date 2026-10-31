@@ -117,6 +117,15 @@ class StoryPost:
     reposted: bool = False          # a tweet of another account its source reposted (issue 0066)
     reply_to: Optional[str] = None  # the account a tweet replies to
     quoted: Optional[str] = None    # the tweet it quotes (normalized)
+    # Who else of your sources put this tweet before you (issue 0068): the sources that reposted it
+    # (from posts.reposted_by), each a share voice in its story, and its author's own source when
+    # the row is another source's repost, a report voice. Never the row's own source.
+    reposters: Tuple[str, ...] = ()
+    author_source: Optional[str] = None
+
+    @property
+    def other_sources(self) -> Tuple[str, ...]:
+        return ((self.author_source,) if self.author_source else ()) + self.reposters
 
     @property
     def voice(self) -> str:
@@ -361,8 +370,9 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
 
     stories = []
     for root, group_posts in members.items():
-        # 2+ sources, or one account's thread or quote of itself (issue 0066).
-        if len({p.source_id for p in group_posts}) < 2 and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
+        # 2+ sources (a reposter is one, issue 0068), or one account's thread or quote of itself (0066).
+        if len({s for p in group_posts for s in (p.source_id, *p.other_sources)}) < 2 \
+                and not any(why[p.id] & {"thread", "quote"} for p in group_posts):
             continue
         first = group_posts[0]
         shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
@@ -564,19 +574,28 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
 
 
 def count_voices(posts: Sequence[StoryPost]) -> int:
-    """How many voices a story has: posts of one voice, and copies of one text, are one."""
+    """How many voices a story has: posts of one voice, and copies of one text, are one. A source
+    that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
+    with its posts in the story, if it has some."""
     uf = _UnionFind()
     keys: Dict[str, str] = {}
-    for p in posts:
-        uf.find(p.id)
-        for key in (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice):
+    nodes = [(p.id, (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice)) for p in posts]
+    nodes += [(f"{p.id}>{s}", (None, "voice:" + reposter_voice(s))) for p in posts for s in p.other_sources]
+    for node, node_keys in nodes:
+        uf.find(node)
+        for key in node_keys:
             if key is None:
                 continue
             if key in keys:
-                uf.union(p.id, keys[key])
+                uf.union(node, keys[key])
             else:
-                keys[key] = p.id
-    return len({uf.find(p.id) for p in posts})
+                keys[key] = node
+    return len({uf.find(node) for node, _ in nodes})
+
+
+def reposter_voice(source_id: str) -> str:
+    """A reposting source's voice, as StoryPost.voice says an X account's (issue 0068)."""
+    return "source:" + source_id
 
 
 # ---- Discover --------------------------------------------------------------------------------

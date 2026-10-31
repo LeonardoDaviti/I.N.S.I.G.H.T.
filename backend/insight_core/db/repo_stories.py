@@ -61,6 +61,8 @@ class SourceFacts:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
         self.account = {str(r[0]): source_account(r[1], r[2]) for r in rows}
+        # The source following each account (issue 0068: who reposted a tweet), the first by id.
+        self.of_account = {a: i for i, a in sorted(self.account.items(), reverse=True) if a}
         # The Saved source's pages come from any site: it has no site of its own.
         self.handle_site = {str(r[0]): site_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
@@ -216,7 +218,7 @@ class StoriesRepository:
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
                    length(p.content), p.normalized_url,
                    CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END,
-                   COALESCE(p.metadata ? 'page_update', false), p.author
+                   COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by
             FROM posts p
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
               AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
@@ -228,7 +230,7 @@ class StoriesRepository:
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
              "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "author": r[9],
-             "links": [], "link_texts": {}}
+             "reposted_by": r[10] or [], "links": [], "link_texts": {}}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
@@ -338,13 +340,15 @@ class StoriesRepository:
             changed += len(new)
 
         # A frozen story whose posts went with a removed source is no story any more (one source's
-        # thread, or its quote of itself, is one while it holds two posts: issue 0066).
+        # thread, or its quote of itself, is one while it holds two posts: issue 0066). The stories
+        # just written are as the rules say (a tweet your sources reposted is one, issue 0068).
         cur.execute(
             """
-            DELETE FROM stories st WHERE (SELECT count(DISTINCT p.source_id) < 2
-                                                 AND NOT (count(*) >= 2 AND bool_or(sp.reasons && '{thread,quote}'))
-                                          FROM story_posts sp JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id)
-            """
+            DELETE FROM stories st WHERE NOT st.id = ANY(%s::uuid[])
+              AND (SELECT count(DISTINCT p.source_id) < 2 AND NOT (count(*) >= 2 AND bool_or(sp.reasons && '{thread,quote}'))
+                   FROM story_posts sp JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id)
+            """,
+            (list(want),),
         )
         return changed + cur.rowcount
 

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils.post_links import bare, is_home, site_of, titled_link_text
-from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, roles
+from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
 
@@ -185,12 +185,17 @@ def score(reports: int, shares: int, mentions: int) -> float:
 def tally(posts: Sequence[StoryPost], post_roles: Dict[str, str], mentioned_by: Iterable[StoryPost]
           ) -> Tuple[int, int, int]:
     """(reports, shares, mentions): each voice once, in its strongest role (report, share, then a
-    roundup's mention)."""
+    roundup's mention). A source that reposted a tweet is a share, the tweet's author a report (issue 0068)."""
     best: Dict[str, str] = {}
     for p in posts:
         role = post_roles[p.id]
         if best.get(p.voice) != "report":
             best[p.voice] = role
+    for p in posts:
+        if p.author_source:
+            best[reposter_voice(p.author_source)] = "report"
+        for source_id in p.reposters:
+            best.setdefault(reposter_voice(source_id), "share")
     reports = sum(1 for role in best.values() if role == "report")
     mentions = len({p.voice for p in mentioned_by} - set(best))
     return reports, len(best) - reports, mentions
@@ -219,7 +224,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         groups[uf.find(p.id)].append(p)
     out = []
     for group in groups.values():
-        if len(group) < 2:
+        if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
         voices = count_voices(group)
         if voices < NEWS_MIN_VOICES:
