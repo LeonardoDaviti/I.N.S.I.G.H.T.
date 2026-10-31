@@ -403,6 +403,22 @@ describe('MarkdownRenderer', () => {
     // Plain markdown with an indented code block is left alone.
     expect(normalizeRendererContent('Text\n\n    code')).toBe('Text\n\n    code');
   });
+
+  // Issue 0069 (R3): a source's newlines inside HTML are spaces; only plain text keeps its lines.
+  it('wraps an HTML paragraph normally, so X breaks and hard-wrapped feeds leave no holes', () => {
+    const { container } = rtlRender(
+      <MarkdownRenderer content={'<p>One paragraph.<br>\n<br>Another one.</p>\n<p>A line the feed\nwrapped mid-sentence.</p>'} />,
+    );
+    for (const p of container.querySelectorAll('p')) expect(p.className).not.toContain('whitespace-pre-wrap');
+  });
+
+  it('keeps the line breaks of a plain-text body, in either field', () => {
+    for (const html of [false, true]) {
+      const { container, unmount } = rtlRender(<MarkdownRenderer content={'I lied in the title.\nNobody asked for this.'} html={html} />);
+      expect(container.querySelector('p')!.className).toContain('whitespace-pre-wrap');
+      unmount();
+    }
+  });
 });
 
 // ---- Mark IX F3: the post page reads through usePost and follows the feed context ----
