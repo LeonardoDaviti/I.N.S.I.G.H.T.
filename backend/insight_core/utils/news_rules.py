@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import bare, is_home, site_of, titled_link_text
+from insight_core.utils.post_links import bare, is_home, publication_of, site_of, titled_link_text
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -309,7 +309,8 @@ def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetim
         by_target[c.target].append(c)
     out = []
     for target, cites in by_target.items():
-        own = {"site:" + site_of(bare(target).split("/", 1)[0])}
+        host = bare(target).split("/", 1)[0]
+        own = {"site:" + publication_of(host), "site:" + site_of(host)}   # its own publication, or site's
         post = stored.get(cites[0].stored) if cites[0].stored else None
         if post is not None:
             own.add(post[0])

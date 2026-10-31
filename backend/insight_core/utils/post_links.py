@@ -97,7 +97,8 @@ def _hosting_suffixes() -> FrozenSet[str]:
 def site_of(host: Optional[str]) -> str:
     """The registrable part of a host: one label under a hosting platform's suffix (issue 0068:
     karpathy.github.io and lilianweng.github.io are two sites), else its last two labels, three for
-    a co.uk-like ending."""
+    a co.uk-like ending. Where a post is (Discover's places, a site's sections, a link to its own
+    site); who said it is its publication (publication_of, issue 0069)."""
     host = (host or "").lower()
     if host.startswith("www."):
         host = host[4:]
@@ -112,6 +113,14 @@ def site_of(host: Optional[str]) -> str:
     if len(parts) >= 3 and len(parts[-2]) <= 3 and len(parts[-1]) == 2:
         return ".".join(parts[-3:])
     return ".".join(parts[-2:])
+
+
+def publication_of(host: Optional[str]) -> str:
+    """A publication (issue 0069): a host without `www.`. A website source's voice is the one it
+    publishes at, so writers on one platform (Substack, github.io) are voices of their own, and two
+    sources at one host (a feed and a page watch) are one."""
+    host = (host or "").lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def bare(url: str) -> str:

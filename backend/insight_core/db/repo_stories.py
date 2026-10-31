@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from psycopg import Cursor
 
 from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
-                                          site_of, source_kind)
+                                          publication_of, site_of, source_kind)
 from insight_core.utils.story_rules import (DISCOVER_PLATFORMS, HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS,
                                            SIGNATURE_SHARE, Story, source_site)
 from insight_core.utils.url_normalization import normalize_url
@@ -53,7 +53,7 @@ def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[s
 
 
 class SourceFacts:
-    """What the rules need of every source: its kind, its own site and its name."""
+    """What the rules need of every source: its kind, its own site, its publication and its name."""
 
     def __init__(self, cur: Cursor) -> None:
         cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
@@ -66,12 +66,15 @@ class SourceFacts:
         # The Saved source's pages come from any site: it has no site of its own.
         self.handle_site = {str(r[0]): site_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
+        self.handle_host = {str(r[0]): publication_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
+                            if self.kind[str(r[0])] != "saved"}
         cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         hosts: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
         for source_id, host, n in cur.fetchall():
             if self.kind.get(str(source_id)) != "saved":
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
+        self.host = {source_id: source_site(pairs, of=publication_of) for source_id, pairs in hosts.items()}
         # How much of a source is on its own site (issue 0064): an aggregator's most common site
         # is only where it links most (Hacker News: 8% github.com on the server's data).
         self._site_share = {
@@ -81,6 +84,11 @@ class SourceFacts:
 
     def own_site(self, source_id: str) -> str:
         return self.site.get(source_id) or self.handle_site.get(source_id) or ""
+
+    def publication(self, source_id: str) -> str:
+        """The host a source publishes at (issue 0069), as own_site finds its site: a website's voice.
+        Its site (own_site) still says where it is, for Discover's places and a site's sections."""
+        return self.host.get(source_id) or self.handle_host.get(source_id) or ""
 
     def home_site(self, source_id: str) -> str:
         """The site a source publishes on (issue 0064), "" when none can be told: its own site, if
@@ -173,6 +181,12 @@ class StoriesRepository:
         if rows:
             cur.execute("UPDATE posts SET links_scanned_at = now() WHERE id = ANY(%s::uuid[])", ([r[0] for r in rows],))
         return len(rows)
+
+    @staticmethod
+    def missing_links(cur: Cursor) -> bool:
+        """Whether a post's links still wait to be read (fill_missing_links), locked rows too."""
+        cur.execute("SELECT EXISTS (SELECT 1 FROM posts WHERE links_scanned_at IS NULL)")
+        return cur.fetchone()[0]
 
     @staticmethod
     def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:

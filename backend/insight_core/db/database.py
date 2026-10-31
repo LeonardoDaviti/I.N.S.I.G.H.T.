@@ -28,8 +28,9 @@ post it collected, and that one DELETE can run for minutes.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
-from typing import Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -38,6 +39,7 @@ from insight_core.utils.env import env_int
 
 CONNECT_TIMEOUT_SECONDS = 10
 STATEMENT_TIMEOUT_MS = 300_000   # 5 minutes: the cascading delete of a big source
+LOCKED_WAIT_SECONDS = 1.0        # fill_until_done: a batch found only rows another worker holds
 POOL_MAX = 10
 
 
@@ -134,6 +136,23 @@ def connection(url: str):
 
 def transaction(url: str):
     return database(url).transaction()
+
+
+def fill_until_done(url: str, fill: Callable[[Any], int], pending: Callable[[Any], bool]) -> int:
+    """Run `fill(cur)` a transaction a batch until `pending(cur)` finds nothing left; how many it
+    filled. Batches take their rows `FOR UPDATE SKIP LOCKED`, so an empty batch while rows are pending
+    means another worker holds them (the search refill and the link reading, issue 0069): wait a
+    moment and go on, never stop there."""
+    filled = 0
+    while True:
+        with transaction(url) as cur:
+            batch = fill(cur)
+            left = batch or pending(cur)
+        filled += batch
+        if not left:
+            return filled
+        if not batch:
+            time.sleep(LOCKED_WAIT_SECONDS)
 
 
 def session_connection(url: str, *, autocommit: bool = False) -> psycopg.Connection:
