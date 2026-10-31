@@ -15,8 +15,8 @@ from psycopg import Cursor
 
 from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
                                           site_of, source_kind)
-from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE,
-                                           Story, source_site)
+from insight_core.utils.story_rules import (DISCOVER_PLATFORMS, HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS,
+                                           SIGNATURE_SHARE, Story, source_site)
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
@@ -97,6 +97,11 @@ class SourceFacts:
     def followed_accounts(self) -> Set[str]:
         """The platform accounts you follow (source_account): on a platform, only these are followed."""
         return {a for a in self.account.values() if a}
+
+    def platform_accounts(self) -> Dict[str, str]:
+        """Each source that follows an account on a platform (Discover's), and that account."""
+        return {source_id: a for source_id, a in self.account.items()
+                if a and site_of(a.split("/", 1)[0]) in DISCOVER_PLATFORMS}
 
     def voice_name(self, voice: str, source_id: str) -> str:
         """A voice as you know it: u/<author> on Reddit, else its source's name."""

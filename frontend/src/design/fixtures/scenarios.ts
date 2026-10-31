@@ -221,7 +221,62 @@ const SCENARIOS: FrameScenario[] = [
       await frame.find('[role="dialog"] input[type="radio"]');
     },
   },
+  {
+    // Issue 0065, modeled on the lab copy (2026-10-31): the sources your stories start from first.
+    page: 'sources', state: 'discover-origins', label: 'Discover: where your stories start, and what a source you follow misses',
+    url: '/settings/sources?tab=discover', routes: (now) => [...discoverOrigins(), ...siteRoutes(normalSite(now))], documented: true,
+  },
 ];
+
+/** Discover on the lab copy (issue 0065): origins first, a section of a site you follow, an archive offer. */
+function discoverOrigins(): FixtureRoute[] {
+  const story = (url: string, title: string | null, voices: number) => ({ url, title, voices, stored: false });
+  const article = (url: string, title: string | null, linked_by: string[]) => ({ url, title, linked_by });
+  const voices = ['denissexy', 'Simon Willison', 'data_secrets', 'ai_newz', 'seeallochnaya', 'Lesswrong', 'Epoch AI'];
+  return [{
+    path: '/api/sources/suggested',
+    respond: () => ({
+      success: true,
+      archives: [{
+        source_id: 's-openai-news', name: 'OpenAI News', places: ['openai.com/index'], origins: 37,
+        since: '2026-10-23T17:00:00Z', older: 36,
+        origin_stories: [story('https://openai.com/index/gpt-6-astra', null, 9),
+          story('https://openai.com/index/hugging-face-incident-and-the-road-ahead', null, 8),
+          story('https://openai.com/index/introducing-gpt-5-5', 'GPT-5.5 is out', 7)],
+      }, {
+        source_id: 's-anthropic-research', name: 'Anthropic Research', places: ['anthropic.com/research'], origins: 6,
+        since: '2025-04-18T00:00:00Z', older: 0,
+        origin_stories: [story('https://anthropic.com/research/ecdsa-curve-origins', null, 2),
+          story('https://anthropic.com/research/self-replicating-ai', null, 2)],
+      }],
+      suggestions: [{
+        key: 'anthropic.com/news', url: 'https://anthropic.com/news', voices: 23, voice_names: voices, article_count: 16, link_count: 16,
+        classics: 0, origins: 16, follows: ['anthropic.com/research'],
+        origin_stories: [story('https://anthropic.com/news/claude-fable-5-mythos-5', 'Claude Fable 5', 13),
+          story('https://anthropic.com/news/fable-mythos-access', 'U.S. Government Directs Anthropic to Shut Down Fable 5 and Mythos 5 Models on National Security Grounds', 12),
+          story('https://anthropic.com/news/claude-sonnet-5', null, 5)],
+        articles: [article('https://anthropic.com/news/claude-fable-5-mythos-5', 'Claude Fable 5', voices)],
+      }, {
+        key: 'qwen.ai', url: 'https://qwen.ai', voices: 8, voice_names: voices.slice(0, 5), article_count: 7, link_count: 7, classics: 0,
+        origins: 7,
+        origin_stories: [story('https://qwen.ai/blog?id=qwen3.8-flash-next', null, 3), story('https://qwen.ai/blog?id=qwen-image-2.1', null, 2)],
+        articles: [article('https://qwen.ai/blog?id=qwen3.8-flash-next', null, voices.slice(0, 3))],
+      }, {
+        key: 'github.com/openai', url: 'https://github.com/openai', voices: 10, voice_names: voices, article_count: 5, link_count: 5,
+        classics: 0, origins: 5,
+        origin_stories: [story('https://github.com/openai/math', null, 5), story('https://github.com/openai/PrimeGaps186', null, 2)],
+        articles: [article('https://github.com/openai/math', null, voices.slice(0, 5))],
+      }, {
+        key: 'reuters.com', url: 'https://reuters.com', voices: 42, voice_names: voices, article_count: 356, link_count: 364, classics: 1,
+        origins: 0, articles: [article('https://reuters.com/world/europe/openai-agents-hijacked-german-website-2026-09-04', null, voices)],
+      }, {
+        key: 'x.com/elonmusk', url: 'https://x.com/elonmusk', voices: 21, voice_names: voices, article_count: 98, link_count: 99,
+        classics: 0, origins: 0, articles: [article('https://x.com/elonmusk/status/2111872584338018562', null, voices.slice(0, 4))],
+      }],
+      unnamed: [{ place: 'youtube.com/watch', origins: 9 }],
+    }),
+  }];
+}
 
 /** Discover suggesting claude.com, and what Follow… finds there (issue 0060). */
 function followWhereLinked(now: Date): FixtureRoute[] {

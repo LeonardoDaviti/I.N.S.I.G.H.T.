@@ -46,7 +46,7 @@ DEFAULT_PORTS = {"http": 80, "https": 443}
 # and the mirrors (xcancel.com, fxtwitter.com, ...) all write /<user>/status/<id>, the id 15+
 # digits. A rule on the address's shape, not a list of hosts; the account is lower case (X's
 # accounts are), and a tail (/photo/1, /history) or a query is the same tweet.
-TWEET_PATH = re.compile(r"^/([A-Za-z0-9_]+)/status/(\d{15,})(?:/|$)")
+TWEET_PATH = re.compile(r"^/([A-Za-z0-9_]+)/status/(\d{15,})(?:[/?#]|$)")
 
 
 @dataclass(frozen=True)
