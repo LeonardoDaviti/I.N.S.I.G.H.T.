@@ -15,8 +15,9 @@ It is story_rules.suggestions (the reference, kept as a pure function) in SQL, o
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
 each and the words they are most often linked by. Python orders them and names the voices.
-Addresses and keys compare byte for byte (COLLATE "C"), as Python's strings do; lowercasing is
-ICU's ("und-x-icu"), which is Python's full case mapping.
+Addresses and keys compare byte for byte (COLLATE "C"), as Python's strings do; the one thing
+lowercased in SQL, a Reddit author, is lowercased by ICU ("und-x-icu", in the postgres image),
+which is Python's full case mapping.
 
 Measured on a copy of the lab (41.7k posts, 138.6k kept links, 2026-10-31): the first open after
 a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.56 s and 9 MB,
