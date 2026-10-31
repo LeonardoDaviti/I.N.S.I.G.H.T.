@@ -1,19 +1,55 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 
 import { useApi } from '../../services/ApiContext';
-import type { SuggestedSource, SuggestedSourcesResponse } from '../../services/api';
+import type { MissingOrigins, OriginStory, SuggestedSource, SuggestedSourcesResponse } from '../../services/api';
 import { Button, ExternalLink } from '../ui';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING } from '../states';
 import { errorMessage } from '../../lib/apiError';
-import { formatCount } from '../../lib/format';
+import { formatCount, plural } from '../../lib/format';
+import { missingReason, originReason } from '../../lib/discover';
 import { shortAddress } from '../../lib/addresses';
 import { sourceLabel, sourceLabelList } from '../../lib/sourceLabel';
 import { suggestionReason } from '../../lib/story';
 
 export const SUGGESTED_SOURCES_KEY = ['suggested-sources'] as const;
+
+/** The stories a place started: each origin page with how many of your sources covered it. */
+function OriginStories({ stories }: { stories: OriginStory[] }) {
+  return (
+    <ul className="mt-1 flex flex-col gap-0.5">
+      {stories.map((story) => (
+        <li key={story.url} className="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5 text-fg-3">
+          <ExternalLink href={story.url} dir="auto" className="min-w-0 truncate text-fg" title={story.url}>
+            {story.title || shortAddress(story.url)}
+          </ExternalLink>
+          <span className="shrink-0">· {plural(story.voices, 'source')}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A source you follow whose own pages started stories it doesn't hold: its archive may (issue 0015). */
+function Missing({ missing }: { missing: MissingOrigins }) {
+  return (
+    <li className="border-b border-line py-3 last:border-b-0">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
+          <h3 className="text-[0.9375rem] font-semibold leading-6 text-fg [overflow-wrap:anywhere]">{sourceLabel(missing.name)}</h3>
+          <p className="text-[0.8125rem] leading-5 text-fg-2">{missingReason(missing)}</p>
+          <OriginStories stories={missing.origin_stories} />
+        </div>
+        <Button asChild size="sm" variant="secondary" className="shrink-0">
+          <Link to={`/settings/sources?tab=ingestion&sub=archive&source=${encodeURIComponent(missing.source_id)}`}>Archive…</Link>
+        </Button>
+      </div>
+    </li>
+  );
+}
 
 function Suggestion({ suggestion, onFollow, onHide }: {
   suggestion: SuggestedSource; onFollow: (url: string) => void; onHide: (s: SuggestedSource) => void;
@@ -23,8 +59,14 @@ function Suggestion({ suggestion, onFollow, onHide }: {
   return (
     <li className="border-b border-line py-3 last:border-b-0">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <h3 className="text-[0.9375rem] font-semibold leading-6 text-fg [overflow-wrap:anywhere]">{suggestion.key}</h3>
+          {suggestion.origins ? (
+            <>
+              <p className="text-[0.8125rem] leading-5 text-fg-2">{originReason(suggestion)}</p>
+              {suggestion.origin_stories?.length ? <OriginStories stories={suggestion.origin_stories} /> : null}
+            </>
+          ) : null}
           <button
             type="button"
             aria-expanded={open}
@@ -64,8 +106,9 @@ function Suggestion({ suggestion, onFollow, onHide }: {
 
 /**
  * Sources → discover (issue 0050; the tab was "suggested" until 2026-10-31): the sites and accounts your sources keep linking
- * that you don't follow, most of your sources first, each saying why with its articles one click
- * away. Follow… opens Add source on its address (the feed finder and page watching, as every add);
+ * that you don't follow, the ones your stories start from first (issue 0065), then most of your sources, each saying why with
+ * its articles one click away. Above them, the sources you follow whose own pages started stories they don't hold, with their
+ * archive one click away. Follow… opens Add source on its address (the feed finder and page watching, as every add);
  * Not interested hides it for good. Nothing is fetched until you follow.
  */
 export default function SuggestedSources({ onFollow }: { onFollow: (url: string) => void }) {
@@ -93,12 +136,15 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
   }
   const all = query.data.suggestions;
   const words = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  // One box searches the site or account, the sources that link it and its articles' titles.
-  const suggestions = words.length ? all.filter((s) => {
-    const text = [s.key, ...s.voice_names, ...s.articles.map((a) => `${a.title ?? ''} ${a.url}`)].join(' ').toLowerCase();
-    return words.every((word) => text.includes(word));
-  }) : all;
-  if (!all.length) {
+  // One box searches the site or account, the sources that link it, its articles' and its stories' titles.
+  const matches = (parts: string[]) => words.every((word) => parts.join(' ').toLowerCase().includes(word));
+  const stories = (list: OriginStory[] = []) => list.map((story) => `${story.title ?? ''} ${story.url}`);
+  const suggestions = words.length ? all.filter((s) => matches(
+    [s.key, ...s.voice_names, ...s.articles.map((a) => `${a.title ?? ''} ${a.url}`), ...stories(s.origin_stories)],
+  )) : all;
+  const archives = (query.data.archives ?? []).filter((a) => matches([a.name, ...a.places, ...stories(a.origin_stories)]));
+  const unnamed = query.data.unnamed ?? [];
+  if (!all.length && !query.data.archives?.length) {
     return (
       <EmptyState
         title="No suggestions yet"
@@ -123,15 +169,27 @@ export default function SuggestedSources({ onFollow }: { onFollow: (url: string)
           className="h-8 w-full min-w-0 rounded-md border border-line bg-transparent pl-8 pr-2 text-[0.8125rem] text-fg placeholder:text-fg-3 hover:border-line-strong focus:border-line-strong focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-fg coarse:h-11"
         />
       </label>
+      {archives.length ? (
+        <section aria-label="Sources you follow that miss where your stories start" className="mb-2">
+          <h2 className="pt-1 text-[0.75rem] font-medium text-fg-3">Sources you follow that miss where your stories start</h2>
+          <ul>{archives.map((missing) => <Missing key={missing.source_id} missing={missing} />)}</ul>
+        </section>
+      ) : null}
       {suggestions.length ? (
         <ul>
           {suggestions.map((suggestion) => (
             <Suggestion key={suggestion.key} suggestion={suggestion} onFollow={onFollow} onHide={hide} />
           ))}
         </ul>
-      ) : (
+      ) : archives.length ? null : (
         <p className="py-6 text-[0.8125rem] text-fg-3">Nothing in Discover matches “{filter.trim()}”.</p>
       )}
+      {unnamed.length && !words.length ? (
+        <p className="pt-3 text-[0.75rem] text-fg-3">
+          Stories also start at pages that name no account to follow:{' '}
+          {unnamed.map((u) => `${u.place} (${formatCount(u.origins)})`).join(', ')}.
+        </p>
+      ) : null}
     </section>
   );
 }

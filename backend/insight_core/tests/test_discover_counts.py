@@ -31,6 +31,19 @@ from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import StoryPost, discover_address, suggestions
 
 
+LINK_FIELDS = ("key", "url", "voices", "voice_names", "article_count", "link_count", "classics", "articles")
+
+
+def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
+    """The service's list holds the walk's, by links: the same suggestions with the same counts; the
+    ones no story starts from (issue 0065) in the walk's order, and only stories' origins add any."""
+    walked = {s["key"]: s for s in reference}
+    test.assertEqual({s["key"]: {k: s[k] for k in LINK_FIELDS} for s in got if s["key"] in walked}, walked)
+    test.assertEqual([s["key"] for s in got if s["key"] in walked and not s["origins"]],
+                     [s["key"] for s in reference if not next(g for g in got if g["key"] == s["key"])["origins"]])
+    test.assertFalse([s["key"] for s in got if s["key"] not in walked and not s["origins"]])
+
+
 def reference_discover(url: str):
     """Discover as 0050/0051 computed it: every kept link read into Python and walked."""
     with psycopg.connect(url) as conn, conn.cursor() as cur:
@@ -157,7 +170,7 @@ class DiscoverCountsTests(unittest.TestCase):
     def test_the_list_is_the_python_walks_in_content_and_order(self):
         self._edges()
         got = self._discover()
-        self.assertEqual(got, reference_discover(db_url()))
+        assert_links_as_walked(self, got, reference_discover(db_url()))
         m = self.mark
         keys = {s["key"]: s for s in got}
         cited = keys[f"cited-{m}.example"]
@@ -195,7 +208,7 @@ class DiscoverCountsTests(unittest.TestCase):
         target = f"https://cited-{self.mark}.example/2026/10/story-0"
         self.cur.execute("DELETE FROM discover_addresses WHERE url = %s", (target,))
         self.conn.commit()
-        self.assertEqual(self._discover(), reference_discover(db_url()))
+        assert_links_as_walked(self, self._discover(), reference_discover(db_url()))
         self.cur.execute("SELECT key, site, platform, article, rules FROM discover_addresses WHERE url = %s", (target,))
         self.assertEqual(self.cur.fetchone(), (f"cited-{self.mark}.example", f"cited-{self.mark}.example",
                                                False, True, ADDRESS_RULES))
@@ -217,7 +230,7 @@ class DiscoverCountsTests(unittest.TestCase):
         DiscoverRepository.fill_addresses(self.cur)
         self.cur.execute("UPDATE discover_addresses SET key = 'wrong', rules = 'old' WHERE url = %s", (target,))
         self.conn.commit()
-        self.assertEqual(self._discover(), reference_discover(db_url()))
+        assert_links_as_walked(self, self._discover(), reference_discover(db_url()))
         self.cur.execute("SELECT key, rules FROM discover_addresses WHERE url = %s", (target,))
         self.assertEqual(self.cur.fetchone(), (f"x.com/karp{self.mark}", ADDRESS_RULES))
 

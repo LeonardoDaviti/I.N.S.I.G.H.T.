@@ -728,8 +728,34 @@ export interface SuggestedSource {
   articles: { url: string; title: string | null; linked_by: string[] }[];
   /** How many of its pages are classics (issue 0051): a suggestion that holds some comes first. */
   classics?: number;
+  /** How many of your stories start there (issue 0065): Discover's first reason and its first order. */
+  origins?: number;
+  /** The most covered of those stories (up to 3). */
+  origin_stories?: OriginStory[];
+  /** A section of a site you follow: the places of it your sources hold (`anthropic.com/research`). */
+  follows?: string[];
 }
-export interface SuggestedSourcesResponse { success: true; suggestions: SuggestedSource[]; }
+/** A story's origin (issue 0064) as Discover shows it: its page, its title when known, its voices. */
+export interface OriginStory { url: string; title: string | null; voices: number; stored: boolean; }
+/** A source you follow whose own pages start stories it doesn't hold (issue 0065): its archive may. */
+export interface MissingOrigins {
+  source_id: string;
+  name: string;
+  /** Where those pages are (`openai.com/index`). */
+  places: string[];
+  origins: number;
+  /** Its first post, and how many of those stories are older. */
+  since: string | null;
+  older: number;
+  origin_stories: OriginStory[];
+}
+export interface SuggestedSourcesResponse {
+  success: true;
+  suggestions: SuggestedSource[];
+  archives?: MissingOrigins[];
+  /** Pages that start stories but name no account to follow (`youtube.com/watch`). */
+  unnamed?: { place: string; origins: number }[];
+}
 
 /** What a source gave (issue 0054): posts, how many you opened, the stories it is in, how many it
  *  reported first, the classics it cited and the outside links it gave. */

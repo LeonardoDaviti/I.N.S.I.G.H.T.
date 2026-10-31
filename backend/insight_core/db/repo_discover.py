@@ -15,6 +15,12 @@ It is story_rules.suggestions (the reference, kept as a pure function) in SQL, o
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
 each and the words they are most often linked by. Python orders them and names the voices.
+
+Issue 0065: a post on a platform is an article of its account (story_rules.discover_article: a
+tweet in any form, a Telegram post), and a post of a platform account's source at another
+account's address (a repost) counts as that source's link to it, so discover_addresses also keeps
+the addresses of those sources' posts. Where each story starts (story_origins) and the places
+your sources hold (posts_on) are read for StoriesService.discover to rank by.
 Addresses and keys compare byte for byte (COLLATE "C"), as Python's strings do; the one thing
 lowercased in SQL, a Reddit author, is lowercased by ICU ("und-x-icu", in the postgres image),
 which is Python's full case mapping.
@@ -27,29 +33,45 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR, is_article
+from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR
 from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
-                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, discover_address)
+                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST, TWEET,
+                                            Origin, discover_address, discover_article)
 
 # Which rules wrote a discover_addresses row. Bump ADDRESS_RULES_VERSION when discover_address,
-# site_of, account_key or is_article change in a way the constants below don't show.
-ADDRESS_RULES_VERSION = 1
+# site_of, account_key or discover_article change in a way the constants below don't show.
+ADDRESS_RULES_VERSION = 2
 ADDRESS_RULES = hashlib.sha1(repr((ADDRESS_RULES_VERSION, sorted(DISCOVER_PLATFORMS), sorted(NOT_ACCOUNT),
-                                   sorted(ACCOUNT_NAMESPACES), ARTICLE.pattern)).encode()).hexdigest()[:12]
+                                   sorted(ACCOUNT_NAMESPACES), ARTICLE.pattern, TWEET.pattern,
+                                   PLATFORM_POST.pattern)).encode()).hexdigest()[:12]
 LOCK_KEY = "insight.discover_addresses"
 WORK_MEM = "48MB"
 
 _COUNTS = """
-WITH kept_url AS MATERIALIZED (   -- each address a kept link points to, and what Discover reads of it
+WITH src AS (
+    SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[], %(accounts)s::text[])
+        AS s(id, kind, own_site, account)
+),
+reposted AS MATERIALIZED (        -- a post of a platform account at another account's address (a repost):
+    SELECT p.id AS post_id, p.url COLLATE "C" AS url, d.key COLLATE "C" AS key, d.article,   -- a link to it (0065)
+           d.url IS NULL AS unknown
+    FROM (SELECT id, source_id, COALESCE(normalized_url, url) AS url FROM posts) p
+    JOIN src s ON s.id = p.source_id AND s.account <> ''
+    LEFT JOIN discover_addresses d ON d.url = p.url AND d.rules = %(rules)s
+    WHERE d.url IS NULL OR (d.platform AND d.key <> s.account)
+),
+kept_url AS MATERIALIZED (        -- each address a kept link points to, and what Discover reads of it
     SELECT u.url, d.key COLLATE "C" AS key, d.site, d.platform, d.article, d.url IS NULL AS unknown
-    FROM (SELECT DISTINCT target_url COLLATE "C" AS url FROM post_links WHERE NOT boilerplate) u
+    FROM (SELECT target_url COLLATE "C" AS url FROM post_links WHERE NOT boilerplate
+          UNION SELECT url FROM reposted WHERE NOT unknown) u
     LEFT JOIN discover_addresses d ON d.url = u.url AND d.rules = %(rules)s
 ),
-unknown AS (SELECT count(*) AS n FROM kept_url WHERE unknown),
+unknown AS (SELECT (SELECT count(*) FROM kept_url WHERE unknown) + (SELECT count(*) FROM reposted WHERE unknown) AS n),
 unfollowed AS MATERIALIZED (      -- those whose key you neither follow nor hid (discover_open)
     SELECT url, key, article FROM kept_url
     WHERE key IS NOT NULL AND CASE
@@ -63,15 +85,16 @@ candidate AS MATERIALIZED (       -- keys with 2+ article-like addresses, 40%%+ 
     HAVING count(*) FILTER (WHERE article) >= %(min_articles)s
        AND count(*) FILTER (WHERE article) >= %(share)s::float8 * count(*)
 ),
-src AS (
-    SELECT * FROM unnest(%(ids)s::uuid[], %(kinds)s::text[], %(sites)s::text[]) AS s(id, kind, own_site)
-),
 linked AS MATERIALIZED (          -- the kept links to those keys' addresses
     SELECT u.key, u.url, u.article, pl.post_id, pl.position, pl.link_text AS text, p.source_id,
            COALESCE(s.kind, 'site') AS kind, COALESCE(s.own_site, '') AS own_site
     FROM unfollowed u JOIN post_links pl ON pl.target_url = u.url AND NOT pl.boilerplate
     JOIN posts p ON p.id = pl.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE u.key IN (SELECT key FROM candidate)
+    UNION ALL                     -- and the reposts of them
+    SELECT r.key, r.url, r.article, r.post_id, 0, NULL, p.source_id, COALESCE(s.kind, 'site'), COALESCE(s.own_site, '')
+    FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
+    WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
 author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it, lowercase as Python's
     SELECT p.id, lower(substring(p.content_html FROM %(author_re)s) COLLATE "und-x-icu") AS author
@@ -128,43 +151,66 @@ SELECT DISTINCT ON (voice) voice, source_id FROM (
 ) per_source ORDER BY voice, first
 """
 
+# Each story's root (0064): its outside page, else its one post with no parent and no reason.
+_ORIGINS = """
+SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), COALESCE(s.origin_title, p.title), p.source_id,
+       s.first_at,
+       (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id)
+FROM stories s
+LEFT JOIN LATERAL (
+    SELECT min(sp.post_id::text)::uuid AS post_id FROM story_posts sp
+    WHERE sp.story_id = s.id AND sp.parent_id IS NULL AND sp.parent_reason IS NULL AND sp.parent_url IS NULL
+    HAVING count(*) = 1
+) root ON s.origin_url IS NULL
+LEFT JOIN posts p ON p.id = root.post_id
+WHERE s.voices >= %(min_voices)s AND COALESCE(s.origin_url, p.normalized_url, p.url) IS NOT NULL
+"""
+
 
 class DiscoverRepository:
     @staticmethod
-    def fill_addresses(cur: Cursor) -> int:
-        """Work out the addresses kept links point to that discover_addresses lacks (or holds by
-        older rules), and drop the rows no kept link points to. Returns how many it added. One
-        writer at a time (a transaction lock): a second open waits, then finds nothing to add."""
+    def fill_addresses(cur: Cursor, post_sources: Iterable[str] = ()) -> int:
+        """Work out the addresses kept links point to, and the posts of `post_sources` are at (the
+        platform accounts' sources: a repost is at its original's address), that discover_addresses
+        lacks (or holds by older rules), and drop the rows no kept link and no post points to.
+        Returns how many it added. One writer at a time (a transaction lock): a second open waits,
+        then finds nothing to add."""
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (LOCK_KEY,))
         cur.execute("DELETE FROM discover_addresses WHERE rules <> %s", (ADDRESS_RULES,))
-        cur.execute("SELECT DISTINCT pl.target_url FROM post_links pl WHERE NOT pl.boilerplate AND NOT EXISTS "
-                    "(SELECT 1 FROM discover_addresses d WHERE d.url = pl.target_url)")
+        cur.execute("SELECT url FROM (SELECT target_url AS url FROM post_links WHERE NOT boilerplate "
+                    "UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%s::uuid[])) a "
+                    "WHERE url IS NOT NULL AND NOT EXISTS (SELECT 1 FROM discover_addresses d WHERE d.url = a.url)",
+                    (sorted(post_sources),))
         urls = [r[0] for r in cur.fetchall()]
         if not urls:
             return 0
         with cur.copy("COPY discover_addresses (url, key, site, platform, article, rules) FROM STDIN") as copy:
             for url in urls:
                 key, site, platform = discover_address(url)
-                copy.write_row((url, key, site, platform, is_article(url), ADDRESS_RULES))
+                copy.write_row((url, key, site, platform, discover_article(url), ADDRESS_RULES))
         cur.execute("DELETE FROM discover_addresses d WHERE NOT EXISTS "
-                    "(SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate)")
+                    "(SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE COALESCE(p.normalized_url, p.url) = d.url)")
         return len(urls)
 
     @staticmethod
-    def counts(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str], followed: Iterable[str],
-               followed_accounts: Iterable[str], hidden: Iterable[str], classic_urls: Iterable[str],
-               shown: int) -> Tuple[List[Dict[str, Any]], int]:
+    def counts(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str], accounts: Dict[str, str],
+               followed: Iterable[str], followed_accounts: Iterable[str], hidden: Iterable[str],
+               classic_urls: Iterable[str], shown: int) -> Tuple[List[Dict[str, Any]], int]:
         """The kept suggestions, unordered, and how many linked addresses discover_addresses lacks
         (when any, fill_addresses and ask again: those links were not counted). A suggestion: key,
         voices [(voice, the source naming it; None for a Reddit author)], article_count,
         link_count, classics and its `shown` top articles [(url, voices, title)].
-        `kinds` and `own_sites`: each source's kind (source_kind) and own site (SourceFacts.own_site)."""
+        `kinds` and `own_sites`: each source's kind (source_kind) and own site (SourceFacts.own_site);
+        `accounts`: the platform account of each source that follows one (SourceFacts.platform_accounts),
+        whose posts at another account's address are reposts, counted as links to that address."""
         ids = sorted(kinds)
         # Its hash tables and sorts (~100k addresses) fit in memory with this; the default 4 MB
         # spilled them to disk. For this transaction only.
         cur.execute("SET LOCAL work_mem = '%s'" % WORK_MEM)
         cur.execute(_COUNTS, {
             "ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
+            "accounts": [accounts.get(i, "") for i in ids],
             "author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by",
             "rules": ADDRESS_RULES, "followed": sorted(followed), "followed_accounts": sorted(followed_accounts),
             "hidden": sorted(hidden), "classics": sorted(classic_urls),
@@ -183,6 +229,32 @@ class DiscoverRepository:
         for s in found:
             s["voices"] = [(voice, voice_source(voice, namers)) for voice in s["voices"]]
         return found, unknown
+
+    @staticmethod
+    def story_origins(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str]) -> List[Origin]:
+        """Where each story of ORIGIN_MIN_VOICES+ voices starts (issue 0065): its outside page, else
+        its origin post's address (a story whose tree is not drawn yet has none), with its voices,
+        each named as Discover names it."""
+        cur.execute(_ORIGINS, {"min_voices": ORIGIN_MIN_VOICES})
+        rows = cur.fetchall()
+        namers = DiscoverRepository._site_namers(
+            cur, kinds, own_sites, {v for *_, voices in rows for v in voices if v.startswith("site:")})
+        return [Origin(str(story_id), url, title, str(source_id) if source_id else None, first_at,
+                       {v: voice_source(v, namers) or "" for v in voices})
+                for story_id, url, title, source_id, first_at, voices in rows]
+
+    @staticmethod
+    def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:
+        """Each source's first post (published, else fetched): how far back it holds."""
+        cur.execute("SELECT source_id, min(COALESCE(published_at, fetched_at)) FROM posts "
+                    "WHERE source_id = ANY(%s::uuid[]) GROUP BY 1", (sorted(source_ids),))
+        return {str(source_id): first for source_id, first in cur.fetchall() if first}
+
+    @staticmethod
+    def posts_on(cur: Cursor, hosts: Iterable[str]) -> List[Tuple[str, str]]:
+        """(source, address) of every post on these hosts: the places your sources hold there."""
+        cur.execute("SELECT source_id, COALESCE(normalized_url, url) FROM posts WHERE url_host = ANY(%s)", (sorted(hosts),))
+        return [(str(source_id), url) for source_id, url in cur.fetchall() if url]
 
     @staticmethod
     def _site_namers(cur: Cursor, kinds: Dict[str, str], own_sites: Dict[str, str],

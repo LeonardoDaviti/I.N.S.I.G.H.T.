@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import urllib.parse
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -44,16 +43,12 @@ from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.parsing import web_address
-from insight_core.utils.post_links import site_of
+from insight_core.utils.post_links import NUMBERISH, SECTION_MIN, SECTION_SHARE, site_of
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.where_linked")
 
-SECTION_SHARE = 0.6         # of the linked articles under one first segment: start there
-SECTION_MIN = 2             # and at least this many of them
 SAMPLE_BYTES = 16 * 1024    # an article fetched to see where it moved: only its final address is used
-# A first segment that orders by time or by number (/2026/, /10/, /2026-10-31/), not a section.
-NUMBERISH = re.compile(r"^\d[\d_.-]*$")
 
 Place = Tuple[str, str]     # (host without www., path prefix ending in "/")
 Move = Tuple[Place, Place]  # the linked articles under the first now live under the second

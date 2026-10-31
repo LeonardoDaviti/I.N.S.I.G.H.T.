@@ -48,6 +48,12 @@ _KIND_PATTERNS = (
 REDDIT_AUTHOR = re.compile(r'submitted by\s*(?:&#32;)?\s*<a href="https://www\.reddit\.com/user/([^"/]+)')
 # An article-like address: a date in the path, or a slug of 4+ words.
 ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
+# A site's section (issue 0060): the first path segment SECTION_SHARE of its articles share, at least
+# SECTION_MIN of them, never one that orders by time or by number (/2026/, /10/, /2026-10-31/).
+# Follow starts there (ingestion/where_linked.py); Discover suggests it (issue 0065).
+SECTION_SHARE = 0.6
+SECTION_MIN = 2
+NUMBERISH = re.compile(r"^\d[\d_.-]*$")
 
 
 @dataclass(frozen=True)
@@ -121,6 +127,14 @@ def titled_link_text(text: Optional[str]) -> bool:
     if not text or re.match(r"https?://", text) or len(text.split()) < 3:
         return False
     return (text[0].isupper() or text[0].isdigit()) and not text.rstrip().endswith((",", ";", ":"))
+
+
+def section_of(url: str) -> str:
+    """The section an address is in: its first path segment when a page sits under it, "" for a
+    page at the site's root or under a date or a number (/2026/10/x)."""
+    _, _, rest = bare(url).partition("/")
+    segments = [segment for segment in rest.split("?", 1)[0].split("#", 1)[0].split("/") if segment]
+    return segments[0] if len(segments) >= 2 and not NUMBERISH.match(segments[0]) else ""
 
 
 def is_article(url: str) -> bool:

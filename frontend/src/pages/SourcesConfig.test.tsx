@@ -1037,6 +1037,42 @@ describe('SourcesConfig deep links', () => {
     expect(screen.getByText('Nothing in Discover matches “nothing like this”.')).toBeInTheDocument();
   });
 
+  it('Discover says where your stories start, a section of a site you follow, and what a followed source misses (issue 0065)', async () => {
+    const news = {
+      key: 'anthropic.com/news', url: 'https://anthropic.com/news', voices: 23, article_count: 16, link_count: 16, classics: 0,
+      voice_names: ['denissexy', 'Simon Willison'], origins: 16, follows: ['anthropic.com/research'],
+      origin_stories: [{ url: 'https://anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', voices: 13, stored: false }],
+      articles: [{ url: 'https://anthropic.com/news/claude-fable-5-mythos-5', title: 'Claude Fable 5', linked_by: ['denissexy'] }],
+    };
+    const linked = { ...news, key: 'reuters.com', url: 'https://reuters.com', origins: 0, follows: undefined, origin_stories: [] };
+    const findFeed = vi.fn().mockResolvedValue({ success: true, status: 'found', feeds: [{ url: 'https://anthropic.com/news/rss.xml', title: 'News' }] });
+    setup('/settings/sources?tab=discover', {
+      getSuggestedSources: vi.fn().mockResolvedValue({
+        success: true, suggestions: [news, linked],
+        archives: [{
+          source_id: 's-openai', name: 'OpenAI News', places: ['openai.com/index'], origins: 37, since: '2026-10-23T17:00:00Z',
+          older: 36, origin_stories: [{ url: 'https://openai.com/index/gpt-6-astra', title: null, voices: 9, stored: false }],
+        }],
+        unnamed: [{ place: 'youtube.com/watch', origins: 9 }],
+      }),
+      findFeed,
+    });
+    expect(await screen.findByText('You follow anthropic.com/research; /news started 16 of your stories')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Claude Fable 5' })).toHaveAttribute('href', 'https://anthropic.com/news/claude-fable-5-mythos-5');
+    expect(screen.queryByText(/started 0 of your stories/)).toBeNull();
+
+    const missing = screen.getByRole('region', { name: 'Sources you follow that miss where your stories start' });
+    expect(within(missing).getByText('OpenAI News')).toBeInTheDocument();
+    expect(within(missing).getByText(/37 of your stories started at openai.com\/index pages it doesn't hold, 36 from before its first post/)).toBeInTheDocument();
+    expect(within(missing).getByRole('link', { name: 'openai.com/index/gpt-6-astra' })).toHaveAttribute('href', 'https://openai.com/index/gpt-6-astra');
+    expect(within(missing).getByRole('link', { name: 'Archive…' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=archive&source=s-openai');
+    expect(within(missing).queryByRole('button', { name: 'Follow…' })).toBeNull();
+    expect(screen.getByText('Stories also start at pages that name no account to follow: youtube.com/watch (9).')).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Follow…' })[0]);
+    await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://anthropic.com/news'));
+  });
+
   it('an unknown track shows the list with a quiet note', async () => {
     setup('/settings/sources?track=f-gone');
     await screen.findByText('Road to VR');

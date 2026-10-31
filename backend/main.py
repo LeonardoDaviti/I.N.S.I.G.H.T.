@@ -880,8 +880,11 @@ async def hide_classic(request: ClassicHideRequest):
 async def get_suggested_sources():
     """Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like
     pages, that you don't follow. Each {key, url, voices, voice_names, article_count,
-    link_count, articles [{url, title, linked_by}]}, most voices first. Nothing is fetched:
-    following one goes through the feed finder."""
+    link_count, articles [{url, title, linked_by}], origins, origin_stories [{url, title, voices,
+    stored}], follows?}, the most stories started there first (issue 0065), then most voices;
+    archives [{source_id, name, places, origins, since, older, origin_stories}]: followed sources
+    whose own pages started stories they don't hold; unnamed [{place, origins}]. Nothing is
+    fetched: following one goes through the feed finder."""
     return await asyncio.to_thread(services().stories.discover)
 
 
