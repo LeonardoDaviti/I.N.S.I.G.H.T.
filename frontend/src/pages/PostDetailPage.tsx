@@ -1292,12 +1292,12 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
             </div>
           ) : bodyIsTitle ? null : renderContent.trim() ? (
             markdownBody
-          ) : (
+          ) : post.url ? (
             // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself.
             <p data-read-on>
               <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Read on {siteOf(post.url)} ↗</a>
             </p>
-          )}
+          ) : null}
         </div>
       </article>
 

@@ -81,7 +81,7 @@ describe('News (issue 0051)', () => {
       .toEqual(['Meta Connect 2026 recap', 'Snap Specs launch']);
     expect(screen.getByText('Last 48 hours')).toBeInTheDocument();
     expect(screen.getByText('Earlier this week')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /4 sources · 1 share · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /4 sources \(1 share\) · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
     // News is not the unread feed: no Show, no Posts, no unread count.
     expect(screen.queryByRole('radiogroup', { name: 'Show' })).not.toBeInTheDocument();
     expect(screen.queryByRole('radiogroup', { name: 'Posts' })).not.toBeInTheDocument();
