@@ -59,7 +59,8 @@ class KindRegistry:
         from insight_core.ingestion.kinds.telegram_rss import TelegramRssKind
         from insight_core.ingestion.kinds.youtube import YouTubeKind
 
-        stored_urls = PostsRepository(db_url).stored_urls if db_url else None
+        posts = PostsRepository(db_url) if db_url else None
+        stored_urls = posts.stored_urls if posts else None
         return KindRegistry([
             SavedKind(),
             PageWatchKind(http, stored_urls=stored_urls),
@@ -70,7 +71,7 @@ class KindRegistry:
             TelegramRssKind(http),
             NitterRssKind(http),
             TelegramKind(http=http),
-            GenericRssKind(http, stored_urls=stored_urls),
+            GenericRssKind(http, stored_urls=stored_urls, teasers_due=posts.teasers_to_read_again if posts else None),
         ])
 
 
