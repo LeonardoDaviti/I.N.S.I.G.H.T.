@@ -24,9 +24,9 @@ Status: **spec** (2026-10-31) for v9.9; item 4 added 2026-10-31. Owner, 2026-10-
 3. **A tweet mirror is X, not a site.** A host where Discover finds tweets by shape (0066's `TWEET_PATH`) is an X form. Its other pages (`t.co`, `i/…`) belong to X's kinds of page (`NOT_ACCOUNT`), never a site suggestion. Decided by shape, with no host list.
 4. **Discover's first open under 0.5 s, by keeping its counts between runs** (0062's and 0065's Left open; owner, 2026-10-31, with 0068). Today each first open after a start or a story run counts 138k links again: about 0.6 s, against 0.4 s before 0065's X accounts.
    - The story job, which already fills `discover_addresses`, also keeps the per-place counts Discover needs, in the database, updated in the same pass. Discover's open then reads them.
-   - The result must be byte-identical to today's (0062's test style: compare against the current walk).
+   - The result must be identical to a fresh count with the same rules (0062's test style: compare against a walk over every link).
    - Measure the first open and memory before and after, back to back on one copy. Record the story job's extra time.
-5. **No new settings, no fetching, no new UI.
+5. **No new settings, no fetching, no new UI.**
 
 ## Expected on the lab (the build must reproduce these, or explain each difference)
 - **The bar:** the same 1,063 suggestions minus the misreadings of item 2 and 3 (`openai.com/ru-RU`, `help.openai.com/en`, `nitter.net`). `openai.com/ru-RU`'s stories move to the section they belong to.
