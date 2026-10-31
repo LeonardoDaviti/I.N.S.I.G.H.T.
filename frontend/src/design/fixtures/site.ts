@@ -7,10 +7,11 @@
  * (issue 0040) matches every word in a row's title, excerpt or source, by prefix.
  */
 import type {
-  ArchiveCatalogEntry, ArchiveStatusResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
+  ArchiveCatalogEntry, ArchiveStatusResponse, BackgroundWorkResponse, CredentialsResponse, FeedGroup, FeedItem, Folder, JobRun, PostDetailResponse,
   SchedulerConfig, SourceHealthRow, SourceWithSettings, UnreadCounts,
 } from '../../services/api';
 import { healthResponse } from '../../components/ops/fixtures';
+import { backgroundWork } from './sites';
 import type { FixtureRequest, FixtureRoute } from '../frame/transport';
 
 export interface Site {
@@ -23,6 +24,8 @@ export interface Site {
   /** Newest first; an ingestion run's payload is its run report. */
   jobs: JobRun[];
   scheduler: SchedulerConfig;
+  /** Background work (issue 0062); all done when left out. */
+  background?: BackgroundWorkResponse;
   /** Posts with a hand-written detail; any other feed item opens as a post made from its row. */
   posts?: Record<string, PostDetailResponse>;
 }
@@ -262,6 +265,7 @@ export function siteRoutes(site: Site): FixtureRoute[] {
     { path: '/api/credentials', respond: () => site.credentials },
     { path: '/api/operations/overview', respond: () => ({ success: true, jobs: site.jobs, alerts: [], scheduler: site.scheduler }) },
     { path: '/api/operations/scheduler', respond: () => ({ success: true, scheduler: site.scheduler }) },
+    { path: '/api/operations/background', respond: () => site.background ?? backgroundWork(new Date()) },
     { path: '/api/version', respond: () => ({ version: null, commit: null, commit_date: null }) },
     {
       path: '/api/operations/jobs/:jobId',

@@ -19,6 +19,7 @@ import SchedulerDialog from './SchedulerDialog';
 import IngestionJobs from './IngestionJobs';
 import IngestionArchive from './IngestionArchive';
 import IngestionLogs from './IngestionLogs';
+import BackgroundWork from './BackgroundWork';
 import { LoadingState, Notice } from '../states';
 
 // Source anatomy (issue 0054): its own chunk, loaded when the view opens.
@@ -130,6 +131,7 @@ export default function IngestionPanel({ onOpenSource }: { onOpenSource: (id: st
               </p>
             )}
           </section>
+          <BackgroundWork titleClass={sectionTitle} />
         </div>
       )}
       <p className="text-[0.75rem] tabular-nums text-fg-3">{versionLine(WEB_BUILD, apiVersion.data)}</p>

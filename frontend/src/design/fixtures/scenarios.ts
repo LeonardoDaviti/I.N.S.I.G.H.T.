@@ -12,7 +12,7 @@ import type { CredentialsResponse } from '../../services/api';
 import { credentials, substackView, telegramView } from '../../components/connections/fixtures';
 import { runReport } from '../../components/ops/fixtures';
 import { siteRoutes, type Site } from './site';
-import { HOUR, MINUTE, TRACKS, at, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
+import { HOUR, MINUTE, TRACKS, at, backgroundWork, sourceId, ingestionJob, manyTracks, normalSite, scheduler, worstSite } from './sites';
 import { postStateDetail } from './posts';
 
 export interface FrameScenario {
@@ -141,6 +141,21 @@ const SCENARIOS: FrameScenario[] = [
   },
   { page: 'sources', state: 'ingestion-logs', label: 'Logs: the application log tail', url: '/settings/sources?tab=ingestion&sub=logs', routes: site(normalSite), documented: true },
   { page: 'sources', state: 'ingestion', label: 'The ingestion tab: scheduler and the last run', url: '/settings/sources?tab=ingestion', routes: site(normalSite), documented: false },
+  {
+    page: 'sources', state: 'background-after-update', label: 'Background work right after an update: re-indexing, reading links, building stories',
+    url: '/settings/sources?tab=ingestion', documented: true,
+    routes: (now) => withSite(now, (s) => ({ ...s, background: backgroundWork(now, { afterUpdate: true }) })),
+  },
+  {
+    page: 'sources', state: 'background-done', label: 'Background work all done: the last story run and its counts',
+    url: '/settings/sources?tab=ingestion', documented: true,
+    routes: (now) => withSite(now, (s) => ({ ...s, background: backgroundWork(now) })),
+  },
+  {
+    page: 'sources', state: 'background-never', label: 'Background work on a new install: stories not run yet',
+    url: '/settings/sources?tab=ingestion', documented: true,
+    routes: (now) => withSite(now, (s) => ({ ...s, background: { ...backgroundWork(now), stories: { running: false, last_run: null } } })),
+  },
 
   // ---- shell ----
   {
