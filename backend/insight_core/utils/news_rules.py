@@ -84,12 +84,18 @@ def _words(title: Optional[str]) -> List[str]:
     return TOKEN.findall(GLUED.sub(" ", comparable(title)))
 
 
+# The separators between a name's parts are one (issue 0070, as search's version names, 0042): a
+# hyphen, an underscore or a dot that is no decimal point reads as a space, so "GPT-6.1 Terra",
+# "GPT 6.1 Terra" and "FLUX.3 Image" / "FLUX 3 Image" are one name each (an en dash already splits words).
+SEPARATOR = re.compile(r"[-_]+|\.(?!\d)|(?<!\d)\.")
+
+
 def _lower(words: Sequence[str]) -> List[str]:
-    return [w.lower().strip(_TRIM) for w in words]
+    return [" ".join(SEPARATOR.sub(" ", w.lower().strip(_TRIM)).split()) for w in words]
 
 
 def names(title: Optional[str]) -> Set[str]:
-    """The names in a title, lowercase ("steam frame", "gpt-6", "opus 5.5")."""
+    """The names in a title, lowercase, its parts' separators one ("steam frame", "gpt 6", "opus 5.5")."""
     words = _words(title)
     out = set()
     for n in range(1, NAME_MAX_WORDS + 1):
@@ -240,8 +246,27 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
             uf.union(p.id, story.id)
             story_of[p.id] = story
     joined_by: Dict[str, str] = {}
+    # A post two surging names say joins the one it says first, with the names inside that one or
+    # around it, never another (issue 0070): "Вышел Grok-4.7… как будто чуть лучше Sol" is Grok 4.7's,
+    # not GPT-6 Sol's too; a post naming two releases no longer makes them one News row.
+    surges_of: Dict[str, List[Surge]] = defaultdict(list)
     for surge in found:
-        members = [pid for pid in surge.posts if pid in by_id]
+        for pid in surge.posts:
+            surges_of[pid].append(surge)
+
+    def first_said(pid: str) -> Surge:
+        text = f" {' '.join(_lower(_words(by_id[pid].title)))} "
+
+        def at(s: Surge) -> Tuple[int, int]:
+            i = text.find(f" {s.name} ")
+            return (i if i >= 0 else len(text), -len(s.name))
+        return min(surges_of[pid], key=at)
+
+    def nested(a: str, b: str) -> bool:
+        return f" {a} " in f" {b} " or f" {b} " in f" {a} "
+
+    for surge in found:
+        members = [pid for pid in surge.posts if pid in by_id and nested(surge.name, first_said(pid).name)]
         for pid in members[1:]:
             uf.union(pid, members[0])
         for pid in members:
