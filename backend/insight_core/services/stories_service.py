@@ -180,10 +180,13 @@ class StoriesService:
     @staticmethod
     def _title_articles(cur: Any, sources: SourceFacts, found: List[Dict[str, Any]]) -> None:
         """Each shown article's title (issue 0070): a stored post's own, as the reader shows it, else
-        by the evidence a story's outside origin is titled by (origin_title), from every post linking it."""
+        by the evidence a story's outside origin is titled by (origin_title), from every post linking it,
+        in time order as a story's are (issue 0071: link words written two ways as often are a tie the
+        first one wins, and the database returns rows in any order)."""
         urls = sorted({url for s in found for url, _ in s["articles"]})
         linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
-        for row in StoriesRepository.load_posts(cur, sources, None, linking=urls):
+        rows = StoriesRepository.load_posts(cur, sources, None, linking=urls)
+        for row in sorted(rows, key=lambda row: (row["t"], row["id"])):
             post = StoriesService._story_post(row, sources)
             for target, _ in post.links:
                 linking[target][post.id] = post
