@@ -284,6 +284,29 @@ class BridgeTitleTests(unittest.TestCase):
         self.assertEqual(display_title("Модель вышла.", "Модель вышла. Дальше."), "Модель вышла.", "a real end stands")
 
 
+class TitleAddressTests(unittest.TestCase):
+    """Issue 0072: a title doesn't end in an address, and a label's line ends it."""
+
+    def test_a_trailing_address_leaves_the_title(self):
+        self.assertEqual(display_title("Вышла новая модель https://models.test/news/new-model/", ""), "Вышла новая модель")
+        self.assertEqual(display_title("Thank you for sharing @someone! More details can be found at https://a.test/x", ""),
+                         "Thank you for sharing @someone!", "the words that only led to it go too")
+        self.assertEqual(display_title("The tool now has an official website: https://tool.test", ""),
+                         "The tool now has an official website: tool.test", "words that point at it keep it, bare")
+
+    def test_a_label_and_its_address_are_the_address(self):
+        self.assertEqual(display_title("paper: https://papers.test/abs/2610.11765", ""), "papers.test/abs/2610.11765")
+        self.assertEqual(display_title("https://models.test/news/open/\n\nDownload: https://hub.test/org/Model-1T", ""),
+                         "hub.test/org/Model-1T")
+
+    def test_a_name_and_its_subtitle_run_on_up_to_the_label(self):
+        title = "Thinking Inertia\n\nModels Keep Thinking When Told Not To\n\npaper: https://papers.test/abs/1"
+        self.assertEqual(display_title(title, ""), "Thinking Inertia: Models Keep Thinking When Told Not To")
+        wrapped = "Most Current Model\nOrganisms Leak: \nPerplexity Differencing Often Reveals Objectives"
+        self.assertEqual(display_title(wrapped, ""), "Most Current Model Organisms Leak: Perplexity Differencing Often Reveals Objectives",
+                         "a title wrapped in lines reads as one")
+
+
 class QuoteCardTests(unittest.TestCase):
     """Issue 0072: Nitter's quote card says who is quoted and where, never the post's words."""
     ADDRESS = '<p><a href="https://nitter.net/ann/status/2115097309847630047?s=20">nitter.net/ann/status…</a></p>\n'

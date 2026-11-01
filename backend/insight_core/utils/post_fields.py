@@ -191,16 +191,70 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
         lines_html = None   # the HTML opens on something else: the text says it
     glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder and not lines_html else None
     text = (lines_html or (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content)) if from_body else stored
-    raws = [clean_text(raw) for raw in (text or "").splitlines() if clean_text(raw)]
+    raws, after_blank, blank = [], set(), False   # a line that opens a paragraph (issue 0072)
+    for raw in (text or "").splitlines():
+        if clean_text(raw):
+            after_blank |= {len(raws)} if blank else set()
+            raws.append(clean_text(raw))
+        blank = not clean_text(raw)
     lines = [words for raw in raws if (words := _words(raw, placeholder))]
     if glued or not lines:
-        return _cut(glued or clean_text(stored), False)
+        return _cut(_without_address(glued or clean_text(stored)), False)
     if raws[0] != lines[0] and _MARK_RE.match(lines[0]) and re.fullmatch(_ADDRESS, raws[0]):
-        return _cut(re.sub(r"^https?://(?:www\.)?", "", raws[0]), False)   # a link, then a list of what it is
+        return _cut(_bare(raws[0]), False)   # a link, then a list of what it is
     line = lines[0] = _MARK_RE.sub("", lines[0])
     run_on = (not from_body and len(lines) > 1 and len(line) < TITLE_MIN_SENTENCE_CHARS
               and not _FINISHED_RE.search(line))
-    return _cut(" ".join(lines) if run_on else line, run_on)
+    if run_on and len(lines) == len(raws):
+        line = _run_on(lines, after_blank)
+    elif run_on:
+        line = " ".join(lines)
+    return _cut(_without_address(line), run_on)
+
+
+def _run_on(lines: List[str], after_blank: set) -> str:
+    """A short unfinished first line run on into the lines after it (issue 0069), up to a label's or an
+    address's line ("paper: https://…", issue 0072). A name and its subtitle, each a paragraph
+    ("LIFT", "Layout-In-Future Video Generation…"), read "LIFT: Layout-In-Future…"; a title wrapped in
+    lines reads as one."""
+    out = lines[0]
+    for i, line in enumerate(lines[1:], 1):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        label = _LABEL_LINE_RE.fullmatch(line) and (_TRAILING_ADDRESS_RE.search(line) or not nxt or _TRAILING_ADDRESS_RE.fullmatch(nxt))
+        if label or _TRAILING_ADDRESS_RE.fullmatch(line):
+            break
+        named = i == 1 and i in after_blank and out[-1:].isalnum() and line[:1].isupper()
+        out += (": " if named else " ") + line
+    return out
+
+
+# A label and its colon, one to three words (issue 0072: "paper:", "Download:", "📝 Blog:"), alone or
+# before an address: it says what the address is, never what the post is.
+_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2}:"
+_LABEL_LINE_RE = re.compile(rf"{_LABEL}(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{{2,}}/\S*))*\s*")
+_TRAILING_ADDRESS_RE = re.compile(r"(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{2,}/\S*))+\s*$")
+
+
+def _bare(address: str) -> str:
+    """An address as a title: no scheme, no www., no trailing slash ("agentville.world")."""
+    return re.sub(r"^https?://(?:www\.)?", "", address).rstrip("/")
+
+
+def _without_address(line: str) -> str:
+    """A title without the address it ends in, nor a label that address leaves alone (issue 0072:
+    "Вышла GPT-6.1 Terra https://…" is "Вышла GPT-6.1 Terra"); after a finished sentence, the words that
+    only led to it go too ("Thanks! Details are at"), and words that point at it (":", "->") keep it,
+    bare. A title left without words is the address, bare."""
+    address = _TRAILING_ADDRESS_RE.search(line)
+    if not address:
+        return line
+    words, bare = line[:address.start()].strip(), _bare(address.group(0).split()[0])
+    if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
+        return bare
+    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: llama.app")
+        return f"{words} {bare}"
+    ends = [m.end() for m in SENTENCE_END_RE.finditer(words, TITLE_MIN_SENTENCE_CHARS - 1)]
+    return words[:ends[-1]] if ends and ends[-1] < len(words) else words
 
 
 def _cut(line: str, run_on: bool) -> str:
