@@ -737,6 +737,15 @@ class KindHttpTests(unittest.TestCase):
         self.assertIsInstance(error, ValueError, "existing callers keep catching ValueError")
         self.assertTrue(str(error).startswith("HTTP 429 "))
 
+    def test_a_web_page_answer_is_its_status_line_not_its_html(self):
+        # Issue 0072: Hacker News's source sheet showed a proxy's 502 page as the error.
+        page = b"<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body><center>nginx</center></body></html>"
+        error = self._failing(urllib.error.HTTPError("u", 502, "Bad Gateway", email.message.Message(), io.BytesIO(page)))
+        self.assertEqual(str(error), "HTTP 502 while fetching https://reddit.com/r/x/.rss: Bad Gateway")
+        error = self._failing(urllib.error.HTTPError("u", 400, "Bad Request", email.message.Message(),
+                                                     io.BytesIO(b'{"error": "bad limit"}')))
+        self.assertTrue(str(error).endswith(': {"error": "bad limit"}'), "a text answer is kept")
+
     def test_other_statuses_do_not_slow_down(self):
         error = self._failing(urllib.error.HTTPError("u", 403, "Forbidden", email.message.Message(), io.BytesIO()))
         self.assertEqual((error.status, error.retry_after, error.limiting), (403, None, False))

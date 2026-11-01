@@ -572,6 +572,10 @@ export interface SourceReplacement {
   title: string;
   found: number | null;
   prefix: string | null;
+  /** How many of its items are the source's own (issue 0072: never 0 at another address). */
+  shared?: number;
+  /** Its latest titles, shown before Switch. */
+  latest?: string[];
 }
 
 export interface SourceHealthSummary {

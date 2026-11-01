@@ -77,6 +77,8 @@ class Feed:
     title: str                  # the feed's own <title>; "" when it has none
     # The item addresses in the part of the feed read to prove it (issue 0060: what it holds).
     items: Tuple[str, ...] = field(default=(), compare=False)
+    # Their titles, in feed order (issue 0072: the source doctor's evidence and preview).
+    titles: Tuple[str, ...] = field(default=(), compare=False)
 
 
 @dataclass(frozen=True)
@@ -127,7 +129,7 @@ async def page_feeds(http: KindHttp, url: str) -> Tuple[Feed, ...]:
             body, here = page
             title = _feed_title(body)
             if title is not None:
-                return (Feed(here, title, _feed_items(body, here)),)
+                return (Feed(here, title, *_feed_entries(body, here)),)
             return await search._prove(_feed_links(body, here))
     except TimeoutError:
         return ()
@@ -165,7 +167,7 @@ class _Search:
             self.tried.update({url, here})
             title = _feed_title(body)
             if title is not None:
-                return FeedFinding("feed", (Feed(here, title, _feed_items(body, here)),))
+                return FeedFinding("feed", (Feed(here, title, *_feed_entries(body, here)),))
             if feeds := await self._prove(_feed_links(body, here)):
                 return FeedFinding("found", feeds)
 
@@ -217,7 +219,7 @@ class _Search:
         if got is None:
             return None
         title = _feed_title(got[0])
-        return None if title is None else (got[1], Feed(url, title, _feed_items(got[0], got[1])))
+        return None if title is None else (got[1], Feed(url, title, *_feed_entries(got[0], got[1])))
 
     async def _prove(self, candidates: Iterable[str], limit: Optional[int] = MAX_CANDIDATES,
                      first: bool = False) -> Tuple[Feed, ...]:
@@ -312,12 +314,20 @@ def _feed_title(start: bytes) -> Optional[str]:
 
 
 def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
-    """The item addresses in start (as far as it reads), absolute, once each, in feed order: an
-    RSS item's <link> (else a permalink <guid>), an Atom entry's alternate <link href>."""
+    """The item addresses in start (_feed_entries)."""
+    return _feed_entries(start, feed_url)[0]
+
+
+def _feed_entries(start: bytes, feed_url: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """(the item addresses, the item titles) in start, as far as it reads, in feed order. An
+    address is absolute, once each: an RSS item's <link> (else a permalink <guid>), an Atom
+    entry's alternate <link href>. A title is the item's <title> text, its spaces single."""
     parser = ET.XMLPullParser(events=("start", "end"))
     found: List[str] = []
+    titles: List[str] = []
     depth = 0           # inside an item or entry
     link: Optional[str] = None
+    titled = False      # an item's first title only (not a media:title after it)
     try:
         for offset in range(0, len(start), PARSE_CHUNK):
             parser.feed(start[offset:offset + PARSE_CHUNK])
@@ -325,11 +335,15 @@ def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
                 name = local_name(element.tag).lower()
                 if name in ("item", "entry"):
                     if event == "start":
-                        depth, link = depth + 1, None
+                        depth, link, titled = depth + 1, None, False
                     else:
                         depth -= 1
                         if link and (url := _absolute(feed_url, link)):
                             found.append(url)
+                elif depth and event == "end" and name == "title" and not titled:
+                    titled = True
+                    if text := " ".join("".join(element.itertext()).split()):
+                        titles.append(text)
                 elif depth and event == "end" and link is None:
                     if name == "link":
                         href = element.get("href")
@@ -341,7 +355,7 @@ def _feed_items(start: bytes, feed_url: str) -> Tuple[str, ...]:
                         link = text if text.startswith(("http://", "https://")) else None
     except ET.ParseError:
         pass
-    return tuple(dict.fromkeys(found))
+    return tuple(dict.fromkeys(found)), tuple(titles)
 
 
 def _feed_links(body: bytes, page_url: str) -> List[str]:

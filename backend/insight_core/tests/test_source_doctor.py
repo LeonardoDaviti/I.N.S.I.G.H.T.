@@ -57,6 +57,11 @@ BLOG = "https://arena.ai/blog/"
 NEW_FEED = "https://arena.ai/blog/feed.xml"
 GONE = HttpError(f"HTTP 404 while fetching {OLD}: Not Found", status=404)
 FLAKY = HttpError(f"HTTP 500 while fetching {OLD}: oops", status=500)
+BAD_GATEWAY = HttpError(f"HTTP 502 while fetching {OLD}: Bad Gateway", status=502)
+NETWORK = HttpError(f"Failed fetching {OLD}: [Errno -2] Name or service not known")
+# rss()'s one item: what the source stored before its feed broke (the doctor's evidence).
+STORED = [("https://x.example/0", "Post 0")]
+SERVER_ERROR = {"replacement": None, "dismissed": False, "server_error": True, "note": "server error, not moved"}
 
 
 WORKING_AGAIN = {"replacement": None, "dismissed": False, "working_again": True,
@@ -78,11 +83,22 @@ def blog_with(feed: str) -> dict:
             "https://arena.ai/": page(), feed: rss("Arena blog")}
 
 
+def feed_of(title: str, *items: tuple[str, str]) -> str:
+    """A recorded feed answer with these (address, title) items."""
+    entries = "".join(f"<item><title>{t}</title><link>{u}</link></item>" for u, t in items)
+    return (f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>{title}</title>'
+            f"{entries}</channel></rss>")
+
+
 class RecordingStore:
-    def __init__(self, switch_raises: Exception | None = None):
+    def __init__(self, switch_raises: Exception | None = None, items=STORED):
         self.records: list[tuple[str, datetime, dict]] = []
         self.switches: list[tuple[str, str, dict | None]] = []
         self.switch_raises = switch_raises
+        self.stored = list(items)
+
+    def items(self, source_id):
+        return self.stored
 
     def record(self, source_id, *, checked_at, finding):
         self.records.append((source_id, checked_at, finding))
@@ -124,8 +140,10 @@ class TriggerTests(unittest.TestCase):
     def test_the_signals(self):
         self.assertEqual(failure_signal(GONE), "gone")
         self.assertEqual(failure_signal(HttpError("HTTP 410", status=410)), "gone")
-        self.assertIsNone(failure_signal(FLAKY))
-        self.assertIsNone(failure_signal(HttpError("Timed out", timed_out=True)))
+        self.assertEqual(failure_signal(FLAKY), "server_error")
+        self.assertEqual(failure_signal(BAD_GATEWAY), "server_error")
+        self.assertEqual(failure_signal(HttpError("Timed out", timed_out=True)), "server_error")
+        self.assertIsNone(failure_signal(NETWORK))
         with self.assertRaises(ET.ParseError) as caught:
             ET.fromstring("<!DOCTYPE html><html><body>moved</html>")
         self.assertEqual(failure_signal(caught.exception), "not_feed")
@@ -154,7 +172,7 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual((store.records, http.requests), ([], []))
 
     def test_a_second_failure_without_a_signal_is_left_alone(self):
-        store, http, _ = look(blog_with(NEW_FEED), failures=2, error=FLAKY)
+        store, http, _ = look(blog_with(NEW_FEED), failures=2, error=NETWORK)
         self.assertEqual((store.records, http.requests), ([], []))
 
     def test_the_section_is_the_address_less_its_last_segment(self):
@@ -195,11 +213,11 @@ class ActTests(unittest.TestCase):
         self.assertEqual(checked_at, NOW)
         self.assertEqual(finding, {"dismissed": False, "replacement": {
             "kind": "feed", "url": "https://feeds.example.com/arena.xml", "title": "Arena blog",
-            "found": None, "prefix": None}})
+            "found": None, "prefix": None, "shared": 1, "latest": ["Post 0"]}})
 
-    def test_a_flaky_feed_is_only_suggested(self):
-        responses = {**blog_with(NEW_FEED), OLD: FLAKY}
-        store, _, _ = look(responses, failures=3, error=FLAKY)
+    def test_a_feed_failing_otherwise_is_only_suggested(self):
+        responses = {**blog_with(NEW_FEED), OLD: NETWORK}
+        store, _, _ = look(responses, failures=3, error=NETWORK)
         self.assertEqual(store.switches, [])
         self.assertEqual(store.records[0][2]["replacement"]["url"], NEW_FEED)
 
@@ -213,13 +231,15 @@ class ActTests(unittest.TestCase):
         old = f"{SITE}/news/rss"
         responses = anthropic(**{old: GONE, f"{SITE}/": page(), f"{SITE}/news/": anthropic()[LISTING]})
         source = {"id": "s1", "platform": "rss", "handle_or_url": old, "settings": {"display_name": "Anthropic"}}
-        store, _, _ = look(responses, source=source)
+        store, _, _ = look(responses, source=source,
+                           store=RecordingStore(items=[(f"{SITE}/news/s1-sec", "Anthropic files S-1")]))
         self.assertEqual(store.switches, [])
         replacement = store.records[0][2]["replacement"]
-        self.assertEqual({k: replacement[k] for k in ("kind", "url", "title", "prefix")},
+        self.assertEqual({k: replacement[k] for k in ("kind", "url", "title", "prefix", "shared")},
                          {"kind": "page_watch", "url": f"{SITE}/news/", "title": "anthropic.com/news",
-                          "prefix": "/news/"})
+                          "prefix": "/news/", "shared": 1})
         self.assertGreater(replacement["found"], 0)
+        self.assertIn("Anthropic files S-1", replacement["latest"])
 
     def test_a_root_source_is_offered_the_sites_blog_with_the_most_articles_not_its_home_page(self):
         # Issue 0041: the whole site is a root source's section; its home page mixes everything.
@@ -261,7 +281,7 @@ class ActTests(unittest.TestCase):
     def test_an_old_address_that_reads_as_a_feed_again_is_working_again(self):
         # Answering again (flaky): the old address is checked first; that is no move, and
         # nothing else is looked at.
-        store, http, _ = look({OLD: rss("Arena"), BLOG: page(), "https://arena.ai/": page()}, failures=3, error=FLAKY)
+        store, http, _ = look({OLD: rss("Arena"), BLOG: page(), "https://arena.ai/": page()}, failures=3, error=NETWORK)
         self.assertEqual(store.switches, [])
         self.assertEqual(store.records, [("s1", NOW, WORKING_AGAIN)])
         self.assertEqual(http.requests, [OLD])
@@ -277,6 +297,90 @@ class ActTests(unittest.TestCase):
                 raise RuntimeError("database down")
 
         store, _, _ = look({OLD: GONE}, store=Broken())   # no exception
+
+
+# --------------------------------------------------------------------------- what it never offers (issue 0072)
+
+
+class NeverOfferedTests(unittest.TestCase):
+    """The v9.13 review: Hacker News (hnrss.org/newest, HTTP 502) was offered
+    hnrss.github.io/updates.xml, hnrss's own changelog, with a Switch button."""
+
+    HN = "https://hnrss.org/newest?points=100&count=100"
+    CHANGELOG = "https://hnrss.github.io/updates.xml"
+
+    def _hn(self, error):
+        responses = {self.HN: error, "https://hnrss.org/": page(
+            f'<link rel="alternate" type="application/rss+xml" href="{self.CHANGELOG}">'),
+                     self.CHANGELOG: feed_of("hnrss.org updates", ("https://hnrss.github.io/updates#v2", "Version 2"))}
+        source = {"id": "s1", "platform": "rss", "handle_or_url": self.HN, "settings": {"display_name": "Hacker News"}}
+        stored = [("https://news.ycombinator.com/item?id=1", "A story on the front page")]
+        return look(responses, source=source, failures=6, error=error, store=RecordingStore(items=stored))
+
+    def test_a_server_error_offers_nothing_and_looks_at_nothing(self):
+        for error in (BAD_GATEWAY, FLAKY, HttpError("Timed out fetching x", timed_out=True)):
+            store, http, progress = self._hn(error)
+            self.assertEqual((store.switches, progress.events, http.requests), ([], [], []), error)
+            self.assertEqual(store.records, [("s1", NOW, SERVER_ERROR)])
+
+    def test_the_hn_case_once_it_is_gone_still_offers_nothing(self):
+        # Even gone, the changelog holds none of the source's items.
+        store, _, _ = self._hn(HttpError(f"HTTP 404 while fetching {self.HN}: Not Found", status=404))
+        self.assertEqual(store.switches, [])
+        self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
+
+    def test_a_server_error_hides_an_offer_stored_before(self):
+        row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.HN, "enabled": True, "settings": {},
+                          "state": state(6, doctor_checked_at=NOW, doctor_finding=SERVER_ERROR)},
+                         generic(), Availability(True, False), NOW)
+        self.assertEqual((row["doctor_looked_at"], row["replacement"]), (None, None))
+
+    def test_an_offer_stored_before_the_check_is_not_offered(self):
+        # The server's stored finding: {replacement: {url: hnrss.github.io/updates.xml, ...}}, no `shared`.
+        before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "hnrss.org updates",
+                                                      "found": None, "prefix": None}}
+        row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.HN, "enabled": True, "settings": {},
+                          "state": state(6, doctor_checked_at=NOW, doctor_finding=before)},
+                         generic(), Availability(True, False), NOW)
+        self.assertEqual((row["doctor_looked_at"], row["replacement"]), (NOW.isoformat(), None))
+
+    def test_a_same_site_feed_without_the_sources_items_is_never_switched_to(self):
+        other = feed_of("Arena changelog", ("https://arena.ai/changelog/1", "Version 1"))
+        store, _, progress = look({**blog_with(NEW_FEED), NEW_FEED: other})
+        self.assertEqual((store.switches, progress.events), ([], []))
+        self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
+
+    def test_the_next_feed_that_holds_them_is_taken(self):
+        other, own = "https://arena.ai/blog/changelog.xml", NEW_FEED
+        responses = {OLD: GONE, BLOG: page(f'<link rel="alternate" type="application/rss+xml" href="{other}">'
+                                           f'<link rel="alternate" type="application/rss+xml" href="{own}">'),
+                     "https://arena.ai/": page(), other: feed_of("Changelog", ("https://arena.ai/c/1", "Version 1")),
+                     own: rss("Arena blog")}
+        store, _, _ = look(responses)
+        self.assertEqual(store.switches, [("s1", own, None)])
+
+    def test_the_same_title_at_another_address_is_the_sources_item(self):
+        moved = feed_of("Arena", ("https://arena.ai/posts/zero", "Post 0"), ("https://arena.ai/posts/one", "Post 1"))
+        store, _, _ = look({**blog_with(NEW_FEED), NEW_FEED: moved})
+        self.assertEqual(store.switches, [("s1", NEW_FEED, None)])
+
+    def test_a_page_holding_none_of_the_sources_items_is_not_offered(self):
+        old = "https://shop.example/rss"
+        responses = {old: GONE, "https://shop.example/": page(body='<a href="/blog">Blog</a>'), **dated_section("/blog", 5)}
+        source = {"id": "s1", "platform": "rss", "handle_or_url": old, "settings": {}}
+        store, _, _ = look(responses, source=source, store=RecordingStore(items=[("https://shop.example/p/9", "Other")]))
+        self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
+
+    def test_a_source_with_no_stored_post_is_offered_no_other_address(self):
+        store, _, _ = look(blog_with("https://feeds.example.com/arena.xml"), store=RecordingStore(items=[]))
+        self.assertEqual(store.records[0][2], {"replacement": None, "dismissed": False})
+
+    def test_the_evidence_reads_addresses_as_the_saver_does_and_titles_as_the_story_job_does(self):
+        stored = [("https://www.arena.ai/blog/one/", "Opening day"), ("https://arena.ai/blog/two", "It\u2019s here")]
+        self.assertEqual(source_doctor.shared(stored, ["http://arena.ai/blog/one"], []), 1)
+        self.assertEqual(source_doctor.shared(stored, [], ["it's  here", "Elsewhere"]), 1)
+        self.assertEqual(source_doctor.shared(stored, ["https://arena.ai/blog/three"], ["Three"]), 0)
+        self.assertEqual(source_doctor.shared([], ["https://arena.ai/blog/one"], ["Opening day"]), 0)
 
 
 # --------------------------------------------------------------------------- the server's dry run
@@ -439,7 +543,8 @@ class SwitchDbTests(unittest.TestCase):
             self.repo.record_outcome(cur, FetchOutcome(self.source_id, OutcomeStatus.ERROR, 0, "HTTP 404", 0.1),
                                      trigger="scheduler", now=NOW, backoff=lambda n: timedelta(hours=n))
             self.repo.record_doctor(cur, self.source_id, checked_at=NOW, finding={
-                "replacement": {"kind": "feed", "url": self.new, "title": "Arena blog", "found": None, "prefix": None},
+                "replacement": {"kind": "feed", "url": self.new, "title": "Arena blog", "found": None, "prefix": None,
+                                "shared": 1, "latest": ["One"]},
                 "dismissed": False})
             conn.commit()
 
@@ -513,9 +618,14 @@ class SwitchDbTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             ops.dismiss_replacement(self.source_id)
 
+    def test_the_db_store_reads_the_sources_latest_posts(self):
+        store = source_doctor.DbDoctorStore(self.url, switch=self.sync.switch_source)
+        self.assertEqual(store.items(self.source_id), [(f"{self.base}/blog/one", "One")])
+
     def test_the_auto_switch_end_to_end_through_the_db_store(self):
         http = FakeHttp({self.old: GONE, f"{self.base}/blog/": page(
-            f'<link rel="alternate" type="application/rss+xml" href="{self.new}">'), self.new: rss("Arena blog")})
+            f'<link rel="alternate" type="application/rss+xml" href="{self.new}">'),
+                         self.new: feed_of("Arena blog", (f"{self.base}/blog/one", "One"))})
         progress = RecordingProgressSink()
         d = SourceDoctor(http=http, registry=KindRegistry.default(http, None), clock=FixedClock(NOW),
                          store=source_doctor.DbDoctorStore(self.url, switch=self.sync.switch_source))
@@ -544,7 +654,7 @@ class RouteTests(unittest.TestCase):
             self.handle = cur.fetchone()[0]
             FetchStateRepository().record_doctor(cur, self.source_id, checked_at=NOW, finding={
                 "replacement": {"kind": "page_watch", "url": f"{self.handle}/blog/", "title": "x", "found": 7,
-                                "prefix": "/blog/"}, "dismissed": False})
+                                "prefix": "/blog/", "shared": 2, "latest": []}, "dismissed": False})
             conn.commit()
 
     def tearDown(self):
