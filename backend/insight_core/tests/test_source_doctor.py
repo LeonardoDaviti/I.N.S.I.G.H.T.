@@ -303,18 +303,18 @@ class ActTests(unittest.TestCase):
 
 
 class NeverOfferedTests(unittest.TestCase):
-    """The v9.13 review: Hacker News (hnrss.org/newest, HTTP 502) was offered
-    hnrss.github.io/updates.xml, hnrss's own changelog, with a Switch button."""
+    """The v9.13 review: an aggregator's feed failing by HTTP 502 was offered the feed tool's
+    own changelog (another site, none of the source's items), with a Switch button."""
 
-    HN = "https://hnrss.org/newest?points=100&count=100"
-    CHANGELOG = "https://hnrss.github.io/updates.xml"
+    HN = "https://feeds.example/newest?points=100&count=100"
+    CHANGELOG = "https://feeds-tool.example.io/updates.xml"
 
     def _hn(self, error):
-        responses = {self.HN: error, "https://hnrss.org/": page(
+        responses = {self.HN: error, "https://feeds.example/": page(
             f'<link rel="alternate" type="application/rss+xml" href="{self.CHANGELOG}">'),
-                     self.CHANGELOG: feed_of("hnrss.org updates", ("https://hnrss.github.io/updates#v2", "Version 2"))}
-        source = {"id": "s1", "platform": "rss", "handle_or_url": self.HN, "settings": {"display_name": "Hacker News"}}
-        stored = [("https://news.ycombinator.com/item?id=1", "A story on the front page")]
+                     self.CHANGELOG: feed_of("Feed tool updates", ("https://feeds-tool.example.io/updates#v2", "Version 2"))}
+        source = {"id": "s1", "platform": "rss", "handle_or_url": self.HN, "settings": {"display_name": "Front page"}}
+        stored = [("https://news.example/item?id=1", "A story on the front page")]
         return look(responses, source=source, failures=6, error=error, store=RecordingStore(items=stored))
 
     def test_a_server_error_offers_nothing_and_looks_at_nothing(self):
@@ -323,7 +323,7 @@ class NeverOfferedTests(unittest.TestCase):
             self.assertEqual((store.switches, progress.events, http.requests), ([], [], []), error)
             self.assertEqual(store.records, [("s1", NOW, SERVER_ERROR)])
 
-    def test_the_hn_case_once_it_is_gone_still_offers_nothing(self):
+    def test_the_same_case_once_it_is_gone_still_offers_nothing(self):
         # Even gone, the changelog holds none of the source's items.
         store, _, _ = self._hn(HttpError(f"HTTP 404 while fetching {self.HN}: Not Found", status=404))
         self.assertEqual(store.switches, [])
@@ -336,8 +336,8 @@ class NeverOfferedTests(unittest.TestCase):
         self.assertEqual((row["doctor_looked_at"], row["replacement"]), (None, None))
 
     def test_an_offer_stored_before_the_check_is_not_offered(self):
-        # The server's stored finding: {replacement: {url: hnrss.github.io/updates.xml, ...}}, no `shared`.
-        before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "hnrss.org updates",
+        # The stored finding as the old code wrote it: {replacement: {url: the changelog, ...}}, no `shared`.
+        before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "Feed tool updates",
                                                       "found": None, "prefix": None}}
         row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.HN, "enabled": True, "settings": {},
                           "state": state(6, doctor_checked_at=NOW, doctor_finding=before)},

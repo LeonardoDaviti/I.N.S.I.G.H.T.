@@ -11,7 +11,7 @@ streak whose finding the owner dismissed; a fetch that works clears the finding.
 
 A server error (HTTP 5xx) or a timeout is no move (issue 0072): the site is there and failing.
 That is recorded ("server error, not moved"); nothing is looked at and nothing is offered, so an
-offer stored before is replaced (Hacker News's 502 was offered hnrss's own changelog).
+offer stored before is replaced (an aggregator's 502 was offered a feed tool's changelog).
 
 First it reads the old address itself: when it reads again (a feed that parses; a followed
 page that still lists articles), the error was temporary. That is recorded ("temporary error,

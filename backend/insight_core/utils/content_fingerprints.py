@@ -11,7 +11,7 @@ from typing import Literal
 
 HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 # A tag read as the HTML parser reads it: a ">" inside a quoted attribute value doesn't end it
-# (Hugging Face's class="max-md:[&amp;>a]:hidden", issue 0072); a comment ends at "-->". A quote
+# (a utility class: class="max-md:[&amp;>a]:hidden", issue 0072); a comment ends at "-->". A quote
 # counts only after "=", as in HTML; a tag the rule can't read (an unclosed quote) ends at its
 # first ">", as HTML_TAG_RE does.
 TAG_RE = re.compile(r"""(?is)<!--.*?-->|<[a-z/!?](?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>|<[^>]+>""")

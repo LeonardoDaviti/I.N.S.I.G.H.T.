@@ -738,7 +738,7 @@ class KindHttpTests(unittest.TestCase):
         self.assertTrue(str(error).startswith("HTTP 429 "))
 
     def test_a_web_page_answer_is_its_status_line_not_its_html(self):
-        # Issue 0072: Hacker News's source sheet showed a proxy's 502 page as the error.
+        # Issue 0072: a source sheet showed a proxy's 502 page as the error.
         page = b"<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body><center>nginx</center></body></html>"
         error = self._failing(urllib.error.HTTPError("u", 502, "Bad Gateway", email.message.Message(), io.BytesIO(page)))
         self.assertEqual(str(error), "HTTP 502 while fetching https://reddit.com/r/x/.rss: Bad Gateway")

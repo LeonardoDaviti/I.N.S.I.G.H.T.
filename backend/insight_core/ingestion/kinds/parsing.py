@@ -1044,7 +1044,7 @@ def _page_titles(page: str) -> List[str]:
     return [_title_key(html_lib.unescape(title)) for title in found if title and title.strip()]
 
 
-PICTURE_RUN = 3            # list items in a row, each only a linked picture: Hugging Face's 6-22 upvoters; not measured
+PICTURE_RUN = 3            # list items in a row, each only a linked picture (a blog's 6-22 upvoters); not measured
 PICTURE_ITEM_RE = re.compile(rf"(?is)<li\b{ATTRS}>\s*<a\b(?P<attrs>{ATTRS})>\s*(?P<img><img\b{ATTRS}>)\s*</a>\s*</li>")
 IMAGE_FILE_RE = re.compile(r"(?i)\.(?:jpe?g|png|gif|webp|avif|svg)$")
 
