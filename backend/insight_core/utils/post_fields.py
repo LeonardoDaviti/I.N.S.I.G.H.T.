@@ -13,8 +13,8 @@ from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
 from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 
-TITLE_MAX_CHARS = 120
-TITLE_MIN_SENTENCE_CHARS = 20
+TITLE_MAX_CHARS = 120             # not measured
+TITLE_MIN_SENTENCE_CHARS = 20     # not measured
 # A sentence ends at . ! ? or …, not at the period of a letter's abbreviation: an initial or "U.S." (issue 0070;
 # "I" ends sentences: "Part I.").
 SENTENCE_END_RE = re.compile(r"(?:[!?…]|(?<!\b[^\W\dI_])\.)(?=\s|$)")

@@ -30,8 +30,12 @@ HREF = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\']', re.I)
 LINK_TEXT = re.compile(r'[^>]*>(.*?)</a\s*>', re.I | re.S)
 TAG = re.compile(r'<[^>]+>')
 MEDIA = re.compile(r'\.(jpe?g|png|gif|webp|svg|mp4|webm|mp3|m4a|pdf)$', re.I)
-LINK_TEXT_MAX = 300
+LINK_TEXT_MAX = 300   # not measured
 
+# The kinds of source whose posts are a platform's, not articles (issue 0070): their HTML says who and
+# what (a Reddit author, a link post's words, a quoted tweet, a link preview: StoriesRepository reads it),
+# and a post of 3+ links among them can be about one story (story_rules.group).
+PLATFORM_KINDS = ("x", "telegram", "reddit", "hn")
 # The kind of place a source is, as the voice and share rules need it (not the fetch kind).
 _KIND_PATTERNS = (
     ("reddit", re.compile(r"reddit", re.I)),
@@ -59,8 +63,8 @@ ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
 # A site's section (issue 0060): the first path segment SECTION_SHARE of its articles share, at least
 # SECTION_MIN of them, never one that orders by time or by number (/2026/, /10/, /2026-10-31/).
 # Follow starts there (ingestion/where_linked.py); Discover suggests it (issue 0065).
-SECTION_SHARE = 0.6
-SECTION_MIN = 2
+SECTION_SHARE = 0.6   # measured (0060): 27 of the lab's top 60 Discover sites have one section holding 60%+
+SECTION_MIN = 2       # not measured
 NUMBERISH = re.compile(r"^\d[\d_.-]*$")
 # A language tag's shape (issue 0067): en, ru-RU, zh-hans, en_US, es-419. Many sections share it (/ai/, /us/,
 # huggingface.co/ai-sage), so a first segment of this shape is read as a language only when a section and a

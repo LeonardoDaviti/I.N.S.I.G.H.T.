@@ -35,8 +35,10 @@ if TYPE_CHECKING:   # story_rules imports this module: it draws each story's tre
 # Why a post hangs from its parent (issue 0064; repost, thread, quote: 0066), most certain first.
 # Mark X adds meaning, attribution.
 PARENT_REASONS = ("address", "repost", "thread", "quote", "citation", "copy", "time", "none")
-TIME_APART = timedelta(minutes=10)         # two trustworthy times closer than this make no order
-PAGE_ORIGIN_MIN_POSTS = 2                  # an outside page 2+ of a story's posts link can be its origin
+TIME_APART = timedelta(minutes=10)         # two trustworthy times closer than this make no order; not measured
+# An outside page 2+ of a story's posts link can be its origin. Measured, the rule: 358 of the lab's
+# 465 stories of 2+ voices have such a page (0064); no other count compared.
+PAGE_ORIGIN_MIN_POSTS = 2
 
 @dataclass
 class Tree:
@@ -177,6 +179,7 @@ def _origin_node(shape: Tree) -> Optional[str]:
 # letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
 # A leading id (5+ digits: help.openai.com's 20001626-api-credits-...) or date (2026-01-13-pocket-tts)
 # is no word of it (issue 0070); a short number is ("16-charts-that-explain", "2025-ai-index-report").
+# Measured, the order of evidence: 81 -> 188 of the lab's 415 outside origins titled (0068); 3 not compared.
 SLUG_MIN_WORDS = 3
 _SLUG = re.compile(r"[-_+]+")
 _SLUG_ID = re.compile(r"^(?:\d{5,}|(?:19|20)\d\d[-_]\d\d(?:[-_]\d\d)?)(?:[-_+]|$)")
@@ -204,15 +207,15 @@ def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
        (0051's rule, titled_link_text);
     3. else link words the address's slug confirms (the same words): the words, as written;
     4. else the title of a link post that is only this link: a Reddit or HN post with few words of
-       its own (LINK_POST_MAX_WORDS, a share) and no other kept link is titled for it (issue 0070);
+       its own (StoryPost.link_post, a share) and no other kept link is titled for it (issue 0070);
     5. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
     6. else one voice's link words that read as a title;
     7. else None: the reader shows the address."""
-    from insight_core.utils.story_rules import LINK_POST_MAX_WORDS, count_voices   # story_rules imports this module
+    from insight_core.utils.story_rules import count_voices   # story_rules imports this module
 
     quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
-    shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.kind in ("reddit", "hn")
-                     and (p.words or 0) < LINK_POST_MAX_WORDS and {target for target, _ in p.links} == {url})
+    shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.link_post
+                     and {target for target, _ in p.links} == {url})
     for found in (quoted, shared):
         found.pop("", None)
     if quoted:

@@ -208,10 +208,12 @@ LAYOUT_ROLES = frozenset({"presentation", "none"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # A tag's attributes, quoted values and all: huggingface.co's class="max-md:[&>a]:hidden".
 ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
+# The reader's values were measured together on the page corpus (0032: 93 -> 113 of 123 checks;
+# 0053: 367 -> 404 of 420), never one value against another: "not measured" below means that.
 MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
 FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
 CANDIDATE_TEXT_SHARE = 0.2 # nor one around a candidate article holding this much of it
-ARTICLE_MIN_CHARS = 500
+ARTICLE_MIN_CHARS = 500    # not measured
 
 
 # How a page hides text from the eye but not from a screen reader (issue 0063), never a
@@ -851,7 +853,7 @@ IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|sr
 # Where an <img> keeps its address, in this order: a lazy image's real one first; a srcset's
 # first candidate last (an image known only by its srcset).
 IMAGE_ADDRESSES = ("data-src", "data-lazy-src", "data-original", "src", "srcset", "data-srcset")
-ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge
+ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge; not measured
 STYLE_PX_RE = re.compile(r"(?i)(?<![-\w])(?:max-)?(?:width|height)\s*:\s*(\d+)px")
 
 
@@ -914,7 +916,7 @@ HEADING_RE = re.compile(r"(?is)<h([1-6])\b")
 EMPTY_FIGURE_RE = re.compile(r"(?is)\n?<figure>(?:\s|<(?!img\b)[^>]*>)*</figure>")
 TAG_RE = re.compile(rf"<[a-zA-Z]{ATTRS}>")
 QUOTED_RE = re.compile(r""""[^"]*"|'[^']*'""")
-SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:")
+SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:"); not measured
 
 
 def _escaped_attributes(html: str) -> str:
@@ -963,13 +965,13 @@ LINK_RE = re.compile(rf"(?is)<a\b(?P<attrs>{ATTRS})>(?P<text>.*?)</a>")
 HREF_RE = re.compile(r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
 TITLE_TAG_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 LABEL_MAX_CHARS = 50       # a block shorter than this, with no sentence end, is a label ("Share:", "5 min read")
-EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list
+EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list (neither measured)
 # A block with this share of its text in links is a link: a card's title or a related
-# list's item is all link (0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
+# list's item is all link (measured, 0053: 0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
 # Constructive Prediction …” ICLR 2020.") about three quarters.
 LINK_SHARE = 0.8
 SENTENCE_END = (".", "!", "?", "…", ".”", ".\"", "?”", "!”", ".)", ".’")
-LABEL_COLON_WORDS = 3
+LABEL_COLON_WORDS = 3      # not measured
 CONTENT_TAGS = frozenset({"pre", "table", "blockquote"})
 TITLE_SEPARATORS = ("|", "-", "–", "—", ":", "·", "•", "/")
 
@@ -1157,7 +1159,7 @@ def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
     }
 
 
-LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept
+LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept; not measured
 
 
 def lost_most_images(fidelity: Any) -> bool:

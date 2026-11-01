@@ -37,28 +37,33 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 
 from insight_core.utils import titles
 from insight_core.utils.addresses import bare, host_of, is_tweet, site_of
-from insight_core.utils.post_links import NUMBERISH, is_home, is_reference
+from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
-SAME_TEXT_WITHIN = timedelta(days=30)
-SAME_TEXT_MIN_CHARS = 120
-SAME_TITLE_WITHIN = timedelta(days=7)
-SAME_TITLE_MIN_WORDS = 5
-SAME_ADDRESS_WITHIN = timedelta(days=30)   # two posts at one address (0064), as a shared text
-LINK_WITHIN = timedelta(hours=72)
-THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066)
+# Each tuned value says whether it was measured (issue 0071). "The prototype's": the value of
+# plan/research/dedup-prototype, whose rules were checked as a whole (0050: 24 stories, none wrong),
+# never one value against another.
+SAME_TEXT_WITHIN = timedelta(days=30)     # the prototype's, not measured
+SAME_TEXT_MIN_CHARS = 120                 # the prototype's, not measured
+SAME_TITLE_WITHIN = timedelta(days=7)     # the prototype's, not measured
+SAME_TITLE_MIN_WORDS = 5                  # the prototype's, not measured
+SAME_ADDRESS_WITHIN = SAME_TEXT_WITHIN    # two posts at one address (0064), as a shared text
+LINK_WITHIN = timedelta(hours=72)         # the prototype's, not measured
+THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066); not measured
+# A post with 3+ anchors is a roundup: the prototype's value. Measured, the rule: its first link's
+# join is right 34 of 40 times on the lab (0050); no other count compared.
 ROUNDUP_ANCHORS = 3
-LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share
-SHORT_KINDS = ("x", "telegram", "reddit", "hn")   # posts on a platform, not articles (issue 0070)
+LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share; the prototype's, not measured
+LINK_POST_KINDS = ("reddit", "hn")   # the kinds whose posts can be a link with a few words of its own
 SIGNATURE_SHARE = 0.25            # a link in 25% of a source's posts ...
-SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature
+SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature (the prototype's, not measured)
 WORD = re.compile(r"\w+", re.U)
 
 REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   # why a post is in its story; Mark X adds more
 # Kinds whose posts' addresses are not their own pages: an HN item is the page it links, a Saved
 # page is anyone's. Their posts never claim an address.
 NOT_PUBLISHERS = ("hn", "saved")
-HOME_SITE_SHARE = 0.5                      # a source whose address is elsewhere publishes on a site holding half its posts
+HOME_SITE_SHARE = 0.5   # a source whose address is elsewhere publishes on a site holding half its posts; not measured
 
 
 @dataclass
@@ -110,7 +115,7 @@ class StoryPost:
     @property
     def link_post(self) -> bool:
         """A Reddit or HN post that is mostly a link (fewer than LINK_POST_MAX_WORDS words of its own)."""
-        return self.kind in ("reddit", "hn") and (self.words or 0) < LINK_POST_MAX_WORDS
+        return self.kind in LINK_POST_KINDS and (self.words or 0) < LINK_POST_MAX_WORDS
 
     @property
     def text_key(self) -> Optional[str]:
@@ -382,7 +387,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
             or any(why[p.id] & {"thread", "quote"} for p in group_posts)
 
     members = grouped()
-    # A post with links about one story (issue 0070): a platform's post (SHORT_KINDS) with 3+ links,
+    # A post with links about one story (issue 0070): a platform's post (PLATFORM_KINDS) with 3+ links,
     # whose first link joins no story, is a member of the story its first link into a story is the
     # origin of, when it links that story twice or more (the origin and a page or post of the
     # story's) and links no other story. r/LocalLLaMA's "mistralai/Mistral-Large-4-1T-A52B · Hugging
@@ -397,7 +402,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
                 pages[root] |= {("post", p.id), *every[p.id]}
     origins: Dict[str, Optional[str]] = {}
     for pid, mentions in listed.items():
-        if by_id[pid].kind not in SHORT_KINDS or uf.find(pid) in pages:
+        if by_id[pid].kind not in PLATFORM_KINDS or uf.find(pid) in pages:
             continue
         roots = {story_of.get(target if what == "post" else _PAGE + target) for what, target in mentions} - {None}
         if len(roots) != 1:

@@ -16,9 +16,9 @@ from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS, StoryPost, anchors
 from insight_core.utils.url_normalization import TWEET_PATH
 
-DISCOVER_MIN_VOICES = 3
-DISCOVER_MIN_ARTICLES = 2
-DISCOVER_ARTICLE_SHARE = 0.4
+DISCOVER_MIN_VOICES = 3        # the prototype's, not measured (the prototype: plan/research/dedup-prototype)
+DISCOVER_MIN_ARTICLES = 2      # the prototype's, not measured
+DISCOVER_ARTICLE_SHARE = 0.4   # the prototype's, not measured
 # The sites where INSIGHT follows one account, not the whole site: its source kinds (Reddit, X,
 # Telegram, YouTube) and the feed finder's platform feeds (GitHub, Medium). Measured on the
 # server's data, 2026-10-30: a test by "8+ first path segments" called 249 hosts platforms, split
@@ -33,7 +33,7 @@ NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "se
 # elsewhere on a platform, /<account>/<number> (a Telegram post, t.me/<channel>/<id>).
 TWEET = TWEET_PATH
 PLATFORM_POST = re.compile(r"^/[^/?#]+/\d+(?:[?#]|$)")
-ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voices, as 0064 measured them
+ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voices, the ones 0064 counted; not measured
 
 # ---- Discover --------------------------------------------------------------------------------
 

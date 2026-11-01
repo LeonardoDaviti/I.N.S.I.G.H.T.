@@ -34,22 +34,29 @@ from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_v
 from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
+# Each says whether it was measured (issue 0071). "The prototype's": the value of
+# plan/research/dedup-prototype, checked as a whole (0051: 19 of 20 surges real), not one by one.
 
 NEWS_DAYS = 7                       # News shows the stories whose first post is in the last 7 days ...
-NEWS_RECENT = timedelta(hours=48)   # ... in two parts: "Last 48 hours" and "Earlier this week"
-NEWS_MIN_VOICES = 2
-SHARE_WEIGHT = 0.5
-MENTION_WEIGHT = 0.5
+NEWS_RECENT = timedelta(hours=48)   # ... in two parts: "Last 48 hours" and "Earlier this week"; neither measured
+NEWS_MIN_VOICES = 2                 # the prototype's, not measured
+SHARE_WEIGHT = 0.5                  # the prototype's, not measured
+MENTION_WEIGHT = 0.5                # the prototype's, not measured
 NAME_WINDOW = timedelta(hours=48)   # a name surges within 48 hours ...
 NAME_MIN_POSTS = 3                  # ... in 3+ posts ...
-NAME_MIN_VOICES = 2                 # ... of 2+ voices ...
+NAME_MIN_VOICES = 2                 # ... of 2+ voices (these three the prototype's, not measured) ...
 NAME_MAX_USUAL = 1                  # ... said at most once in the 30 days before (measured on the server's data,
-NAME_BASELINE = timedelta(days=30)  # 2026-10-30: never before ~88% real, once ~75%, twice or more ~27%) ...
-NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (issue 0070) ...
-                                    # ... only sources followed for all of those 30 days counting
-NAME_WAVE_VOICES = 3                # a later burst of 3+ voices new to the name is judged as a first (issue 0070)
-NAME_TITLE_DAYS = 32                # the job reads the titles of the last 32 days (a full run: every one)
-NAME_MAX_WORDS = 3
+NAME_BASELINE = timedelta(days=30)  # 2026-10-30: never before ~88% real, once ~75%, twice or more ~27%;
+                                    # the 30 days the prototype's) ...
+NAME_MIN_NEW_VOICES = 2             # ... by 2+ voices that didn't say it then (issue 0070, measured on the lab:
+                                    # it drops 19 surges, 3 of them real) ... only sources followed for all of
+                                    # those 30 days counting
+# A later burst of 3+ voices new to the name is judged as a first (issue 0070). Measured, the rule: 16 more
+# surges on the lab, 12 real; 3 not compared.
+NAME_WAVE_VOICES = 3
+NAME_TITLES = NAME_BASELINE + NAME_WINDOW   # the titles a windowed job reads (a full run: every one): a burst
+                                    # of the last 48 hours and its 30 days before; an older one's baseline is shorter (0051)
+NAME_MAX_WORDS = 3                  # not measured
 NAME_SKIP_KINDS = frozenset({"arxiv"})
 
 # ---- names in titles ------------------------------------------------------------------------

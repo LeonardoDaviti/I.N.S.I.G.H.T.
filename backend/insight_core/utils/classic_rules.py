@@ -15,9 +15,11 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from insight_core.utils.addresses import bare, publication_of, site_of
 from insight_core.utils.post_links import is_reference, titled_link_text
 
-CLASSIC_MIN_VOICES = 2
-CLASSIC_MIN_SPREAD = timedelta(days=180)   # measured on the server's data, 2026-10-30: at 30 days most were news with legs
-CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first
+CLASSIC_MIN_VOICES = 2   # the prototype's (plan/research/dedup-prototype), not measured
+# Measured on the server's data, 2026-10-30 (0051): at 30 days most were news with legs (~15% real
+# classics in a sample); at 180, 172 classics, ~80% real in a random 30.
+CLASSIC_MIN_SPREAD = timedelta(days=180)
+CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first; not measured
 BACKGROUND_SHOWN = 2
 
 

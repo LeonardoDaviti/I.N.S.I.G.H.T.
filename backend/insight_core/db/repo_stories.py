@@ -14,15 +14,12 @@ from urllib.parse import parse_qs, urlparse
 from psycopg import Cursor
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
-from insight_core.utils.post_links import PostLink, extract_links, is_article, source_kind
+from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
 from insight_core.utils.story_rules import HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
-# The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words,
-# the tweet a tweet quotes (issue 0066), the words of a page it quotes (a Telegram link preview, 0070).
-HTML_KINDS = ("reddit", "hn", "x", "telegram")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
@@ -140,7 +137,7 @@ class SourceFacts:
         return [source_id for source_id, kind in self.kind.items() if kind in kinds]
 
     def html_sources(self) -> List[str]:
-        return [source_id for source_id, kind in self.kind.items() if kind in HTML_KINDS]
+        return [source_id for source_id, kind in self.kind.items() if kind in PLATFORM_KINDS]
 
 
 class StoriesRepository:

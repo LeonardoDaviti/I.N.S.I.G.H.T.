@@ -156,7 +156,7 @@ def _words(n: int) -> str:
 
 
 def posts() -> List[Dict[str, Any]]:
-    """The sample's posts, as StoriesRepository.load_posts returns them (HTML only for HTML_KINDS)."""
+    """The sample's posts, as StoriesRepository.load_posts returns them (HTML only for PLATFORM_KINDS)."""
     p = _post
     return [
         # An outside page 2+ voices link within 72 hours (link), titled by the link words they agree

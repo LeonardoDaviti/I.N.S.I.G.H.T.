@@ -24,7 +24,7 @@ from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
-from insight_core.utils.news_rules import NAME_TITLE_DAYS, NEWS_DAYS, NEWS_RECENT, lead, news, surges
+from insight_core.utils.news_rules import NAME_TITLES, NEWS_DAYS, NEWS_RECENT, lead, news, surges
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import reddit_author
@@ -46,7 +46,7 @@ class NewsService:
                 full: bool) -> Dict[str, Any]:
         """News over the job's posts (`posts`, grouped into `stories`) and every classic, on the
         caller's transaction. Returns what it counted and how many rows changed."""
-        since = None if full else self.clock() - timedelta(days=NAME_TITLE_DAYS)
+        since = None if full else self.clock() - NAME_TITLES
         titled = [
             StoryPost(id=row["id"], source_id=row["source_id"], kind=sources.kind.get(row["source_id"], "site"),
                       own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])

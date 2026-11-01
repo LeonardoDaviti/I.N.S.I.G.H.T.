@@ -20,7 +20,7 @@ import re
 import time
 from collections import Counter, defaultdict
 from functools import lru_cache
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from insight_core.db import database as db
@@ -35,13 +35,13 @@ from insight_core.utils.addresses import host_of, site_of, x_account
 from insight_core.utils.post_links import quoted_tweet, quoted_words, reddit_author
 from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
                                               discover_address, discover_open, discover_place, origins)
-from insight_core.utils.story_rules import StoryPost, group
+from insight_core.utils.story_rules import LINK_POST_KINDS, SAME_TEXT_WITHIN, StoryPost, group
 from insight_core.utils.tree_rules import origin_title
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
 
-STORY_WINDOW = timedelta(days=30)
+STORY_WINDOW = SAME_TEXT_WITHIN   # as far as a join reaches (a text, an address), so a run meets what a new post joins
 SETTINGS_KEY = "stories"
 LOCK_KEY = "insight.stories"
 DISCOVER_ARTICLES_SHOWN = 20
@@ -111,7 +111,7 @@ class StoriesService:
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
-            words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
+            words=len(_TAGS.sub("", html or "").split()) if kind in LINK_POST_KINDS else None,
             author=reddit_author(html) if kind == "reddit" else row["author"],
             url=row["url"], links=row["links"],
             # The tree's evidence (issue 0064): link words, a page updated since its date, its own site.
