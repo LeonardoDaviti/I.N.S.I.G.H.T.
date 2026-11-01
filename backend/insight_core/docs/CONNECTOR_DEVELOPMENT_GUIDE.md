@@ -174,8 +174,8 @@ due source. `open()` may raise `KindUnavailable`. It must never prompt.
    Site adapters go in `ADAPTER_CLASSES` in `adapters/__init__.py`.
 3. Add a host floor in `gates.py` if the host rate-limits.
 4. Add tests (below).
-5. Add a source of the new kind in the Sources page. The page also writes it to
-   `config/sources.json`, which is mirrored into the database on every container start.
+5. Add a source of the new kind in the Sources page. It is stored in the database, and
+   `config/sources.json` is rewritten as the export of the sources.
 
 ## Tests
 

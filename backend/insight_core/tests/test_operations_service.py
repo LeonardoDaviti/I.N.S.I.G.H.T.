@@ -11,7 +11,6 @@ class OperationsServiceTests(unittest.TestCase):
     def test_operations_overview_builds_alerts_and_stats(self):
         self.service.get_scheduler_config = lambda: {  # type: ignore[method-assign]
             "interval_hours": 20.0,
-            "sync_sources_each_cycle": True,
             "updated_at": None,
         }
         self.service.list_recent_jobs = lambda limit=30: [  # type: ignore[method-assign]

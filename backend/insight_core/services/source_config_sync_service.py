@@ -1,15 +1,27 @@
 """
-Bidirectional sync between sources.json and the database-backed source registry.
+sources.json and the database's sources (issue 0071).
+
+The database is the truth. sources.json is its export, rewritten after each change, and a
+file can be imported: that adds sources and sets their on/off, and never deletes one.
+Removing a source is Remove in the app.
 """
 from __future__ import annotations
 
 import json
 import os
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from insight_core.db import database as db
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.services.sources_service import SourcesService
+
+# system_settings: when a start first imported sources.json into this database. Later starts
+# don't import again, so a stale file can't turn back what the app changed.
+IMPORTED_KEY = "sources_json_imported"
 
 
 def _handle(value: Any) -> str:
@@ -18,7 +30,7 @@ def _handle(value: Any) -> str:
 
 
 class SourceConfigSyncService:
-    """Keep sources.json and the database source registry in sync."""
+    """Export the database's sources to sources.json, and import a file add-only."""
 
     def __init__(self, db_url: str, config_path: str | Path | None = None):
         self.db_url = db_url
@@ -30,129 +42,76 @@ class SourceConfigSyncService:
         )
         self.logger = get_component_logger("source_config_sync")
 
-    # Refuse to mirror-delete more than this fraction of the registry in one sync.
-    # Override per-run with INSIGHT_ALLOW_BULK_SOURCE_DELETE=true.
-    MAX_MIRROR_DELETE_RATIO = 0.34
+    def import_json(self) -> Dict[str, Any]:
+        """Add the file's sources the database lacks and set each one's on/off as the file says.
 
-    def sync_json_to_db(self, mirror: bool = True) -> Dict[str, Any]:
-        if mirror and not self.config_path.exists():
-            # load_json() returns an empty document when the file is missing, which
-            # would make desired_keys empty and hand EVERY source to delete_source().
-            # posts_source_id_fkey is ON DELETE CASCADE, so that silently destroys the
-            # entire corpus. The config directory is a host bind mount and this runs on
-            # every container start and every scheduler cycle, so a mount that fails to
-            # attach is sufficient to trigger it. Never mirror from a file that is not there.
-            message = (
-                f"sources.json not found at {self.config_path}; refusing to mirror "
-                f"(would delete every source and cascade-delete all posts)"
-            )
-            self.logger.error(message)
-            return {
-                "success": False,
-                "stats": {"added": 0, "updated": 0, "deleted": 0, "errors": [message]},
-            }
+        Never deletes. A missing, empty or broken file changes nothing; a bad entry, or a source
+        another process added meanwhile, is skipped with a line in the log. `read` says whether
+        the file could be read at all."""
+        stats: Dict[str, Any] = {"read": False, "added": 0, "updated": 0, "skipped": []}
+        try:
+            document = json.loads(self.config_path.read_text(encoding="utf-8"))
+            platforms = document["platforms"]
+            if not isinstance(platforms, dict):
+                raise ValueError("platforms is not an object")
+        except FileNotFoundError:
+            self.logger.warning("No sources.json at %s: nothing imported", self.config_path)
+            return stats
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            self.logger.error("sources.json at %s could not be read (%r): nothing imported", self.config_path, exc)
+            return stats
+        stats["read"] = True
+        current = {(s["platform"], _handle(s["handle_or_url"])): s for s in self.sources_service.get_all_sources()}
 
-        document = self.load_json()
-        desired_sources = self._flatten_sources(document)
-        current_sources = self.sources_service.get_all_sources()
-        # Both sides keyed as add_source stores a handle (stripped): a padded id in the file
-        # must match its row, or the next sync would mirror-delete it with its posts.
-        current_lookup = {
-            (source["platform"], _handle(source["handle_or_url"])): source
-            for source in current_sources
-        }
-
-        stats = {"added": 0, "updated": 0, "deleted": 0, "errors": []}
-        desired_keys = set()
-
-        for platform, handle_or_url, enabled, in_main_digest in desired_sources:
-            desired_keys.add((platform, handle_or_url))
-            current = current_lookup.get((platform, handle_or_url))
-
-            if not current:
-                try:
+        for platform, handle_or_url, enabled, in_main_digest in self._flatten_sources(platforms, stats["skipped"]):
+            row = current.get((platform, handle_or_url))
+            try:
+                if row is None:
                     # in_main_digest is a creation default only: an existing row's flag is
-                    # never overwritten by a sync, so a later change in the UI sticks.
-                    created = self.sources_service.add_source(
-                        platform, handle_or_url, in_main_digest=in_main_digest
-                    )
+                    # never overwritten by an import, so a later change in the app sticks.
+                    created = self.sources_service.add_source(platform, handle_or_url, in_main_digest=in_main_digest)
                     if not enabled:
                         self.sources_service.update_source_status(created["source_id"], False)
                     stats["added"] += 1
-                except Exception as exc:
-                    stats["errors"].append(f"add {platform}/{handle_or_url}: {exc}")
-                continue
-
-            if current["enabled"] != enabled:
-                try:
-                    self.sources_service.update_source_status(current["id"], enabled)
+                elif row["enabled"] != enabled:
+                    self.sources_service.update_source_status(row["id"], enabled)
                     stats["updated"] += 1
-                except Exception as exc:
-                    stats["errors"].append(f"update {platform}/{handle_or_url}: {exc}")
+            except Exception as exc:  # noqa: BLE001 - one source never stops the rest
+                stats["skipped"].append(f"{platform}/{handle_or_url}: {exc}")
 
-        if mirror:
-            doomed = [
-                (key, current)
-                for key, current in current_lookup.items()
-                if key not in desired_keys
-            ]
-            # A parse failure, a truncated write, or an editing mistake in sources.json
-            # should not be able to wipe the registry. Deleting a source cascades to every
-            # post it ever collected, so a bulk delete must be an explicit act.
-            allow_bulk = str(os.getenv("INSIGHT_ALLOW_BULK_SOURCE_DELETE", "")).strip().lower() in {"1", "true", "yes", "on"}
-            over_threshold = (
-                current_lookup
-                and len(doomed) > max(1, int(len(current_lookup) * self.MAX_MIRROR_DELETE_RATIO))
-            )
-            if over_threshold and not allow_bulk:
-                message = (
-                    f"refusing to mirror-delete {len(doomed)} of {len(current_lookup)} sources "
-                    f"(over {self.MAX_MIRROR_DELETE_RATIO:.0%} threshold); "
-                    f"set INSIGHT_ALLOW_BULK_SOURCE_DELETE=true to override"
-                )
-                self.logger.error(message)
-                stats["errors"].append(message)
-                doomed = []
+        for line in stats["skipped"]:
+            self.logger.warning("sources.json import skipped %s", line)
+        self.logger.info("Imported sources.json: added=%s updated=%s skipped=%s",
+                         stats["added"], stats["updated"], len(stats["skipped"]))
+        return stats
 
-            for (platform, handle_or_url), current in doomed:
-                try:
-                    self.sources_service.delete_source(current["id"])
-                    stats["deleted"] += 1
-                    self.logger.warning("Mirror-deleted source %s/%s and its posts", platform, handle_or_url)
-                except Exception as exc:
-                    stats["errors"].append(f"delete {platform}/{handle_or_url}: {exc}")
-
-        self.logger.info(
-            "Synced sources.json to DB: added=%s updated=%s deleted=%s errors=%s",
-            stats["added"],
-            stats["updated"],
-            stats["deleted"],
-            len(stats["errors"]),
-        )
-        return {
-            "success": not stats["errors"],
-            "stats": stats,
-        }
+    def import_once(self) -> Dict[str, Any]:
+        """import_json, the first time a start reads a file into this database (a new install,
+        or the first start after 0071); later starts leave the database as it is."""
+        with db.transaction(self.db_url) as cur:
+            if SystemSettingsRepository.get(cur, IMPORTED_KEY):
+                self.logger.info("sources.json was imported before: the database is the truth")
+                return {"read": False, "added": 0, "updated": 0, "skipped": [], "imported_before": True}
+        stats = self.import_json()
+        if stats["read"]:
+            with db.transaction(self.db_url) as cur:
+                SystemSettingsRepository.upsert(cur, IMPORTED_KEY, {
+                    "at": datetime.now(timezone.utc).isoformat(), "added": stats["added"], "updated": stats["updated"]})
+        return stats
 
     def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        """SourcesService.switch_source, with sources.json rewritten in step (issue 0036).
-
-        A file still naming the old address would make the next sync add the old address back
-        and mirror-delete the switched source with its posts. So when the file cannot be
-        written the switch is undone and the error raised: the database never holds an
-        address the file does not.
-        """
+        """SourcesService.switch_source (issue 0036), then the export. A file that can't be
+        written is logged: the switch stands, since the database is the truth."""
         old = self.sources_service.switch_source(source_id, url, page_watch)
         try:
             self.export_db_to_json()
-        except Exception:
-            self.logger.exception("Could not write sources.json after switching %s; switching back", source_id)
-            self.sources_service.switch_source(source_id, old["handle_or_url"], old["page_watch"])
-            raise
+        except Exception:  # noqa: BLE001
+            self.logger.exception("Could not write sources.json after switching %s", source_id)
         return old
 
     def export_db_to_json(self) -> Dict[str, Any]:
-        current_document = self.load_json() if self.config_path.exists() else self._default_document()
+        """Write every source to sources.json: to a temporary file beside it, then renamed over it,
+        so a crash mid-write leaves the old file whole."""
         sources = self.sources_service.get_all_sources()
 
         platforms: Dict[str, Dict[str, Any]] = {}
@@ -173,15 +132,21 @@ class SourceConfigSyncService:
         for platform_data in platforms.values():
             platform_data["sources"].sort(key=lambda item: item["id"])
 
-        document = {
-            "metadata": current_document.get("metadata", self._default_document()["metadata"]),
-            "platforms": dict(sorted(platforms.items())),
-        }
+        document = {**self._default_document(), "platforms": dict(sorted(platforms.items()))}
 
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.config_path.open("w", encoding="utf-8") as handle:
-            json.dump(document, handle, indent=4, ensure_ascii=False)
-            handle.write("\n")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.config_path.parent,
+                                         prefix=f".{self.config_path.name}.", delete=False) as handle:
+            try:
+                json.dump(document, handle, indent=4, ensure_ascii=False)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            except BaseException:
+                os.unlink(handle.name)
+                raise
+        os.chmod(handle.name, 0o644)
+        os.replace(handle.name, self.config_path)
 
         self.logger.info("Exported DB sources to %s", self.config_path)
         return {
@@ -193,19 +158,19 @@ class SourceConfigSyncService:
     def sync_db_to_json(self) -> Dict[str, Any]:
         return self.export_db_to_json()
 
-    def load_json(self) -> Dict[str, Any]:
-        if not self.config_path.exists():
-            return self._default_document()
-        with self.config_path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-
-    def _flatten_sources(self, document: Dict[str, Any]) -> List[Tuple[str, str, bool, bool]]:
-        """(platform, handle_or_url, enabled, in_main_digest); in_main_digest is optional, default true."""
+    def _flatten_sources(self, platforms: Dict[str, Any], skipped: List[str]) -> List[Tuple[str, str, bool, bool]]:
+        """(platform, handle_or_url, enabled, in_main_digest); in_main_digest is optional, default
+        true. An entry that isn't a source is added to `skipped` instead."""
         flattened: List[Tuple[str, str, bool, bool]] = []
-        for platform, platform_data in document.get("platforms", {}).items():
-            for source in platform_data.get("sources", []):
-                handle_or_url = _handle(source.get("id"))
+        for platform, platform_data in platforms.items():
+            entries = platform_data.get("sources") if isinstance(platform_data, dict) else None
+            if not isinstance(entries, list):
+                skipped.append(f"{platform}: no sources list")
+                continue
+            for source in entries:
+                handle_or_url = _handle(source.get("id")) if isinstance(source, dict) else ""
                 if not handle_or_url:
+                    skipped.append(f"{platform}: an entry with no id ({str(source)[:80]})")
                     continue
                 enabled = source.get("state", "disabled") == "enabled"
                 in_main_digest = source.get("in_main_digest", True) is not False
@@ -216,7 +181,8 @@ class SourceConfigSyncService:
         return {
             "metadata": {
                 "name": "I.N.S.I.G.H.T.",
-                "description": "Intelligence Network for Systematic Gathering and Handling of Topics",
+                "description": "The sources, exported from the database after each change (import: "
+                               "scripts/sync_sources_json.py json-to-db, which only adds)",
             },
             "platforms": {},
         }

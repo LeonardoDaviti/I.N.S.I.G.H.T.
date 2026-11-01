@@ -22,10 +22,10 @@ import psycopg
 
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, insert_scratch_source, requires_db
+from insight_core.tests._db import db_url, requires_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.news_rules import Citation, classics
 from insight_core.utils.post_links import publication_of, site_of
-from insight_core.utils.url_normalization import normalize_url
 
 T0 = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
 
@@ -65,19 +65,11 @@ class PublicationVoicesJobTests(unittest.TestCase):
         self.conn.close()
 
     def _source(self, name, handle_host):
-        source = insert_scratch_source(self.cur, in_main_digest=True)
-        self.cur.execute("UPDATE sources SET handle_or_url = %s, settings = jsonb_build_object('display_name', %s::text)"
-                         " WHERE id = %s", (f"https://{handle_host}/feed?{uuid.uuid4().hex}", name, source))
-        return source
+        return insert_source(self.cur, name, handle=f"https://{handle_host}/feed?{uuid.uuid4().hex}", in_main_digest=True)
 
     def _post(self, source, host, *, hours_ago, html):
-        url = f"https://{host}/p/{uuid.uuid4().hex}"
-        self.cur.execute(
-            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
-                                  published_at)
-               VALUES (%s, %s, %s, %s, 'A post', 'Body', %s, %s, %s) RETURNING id""",
-            (source, url, normalize_url(url), host, html, uuid.uuid4().hex, self.now - timedelta(hours=hours_ago)))
-        return str(self.cur.fetchone()[0])
+        return str(insert_post(self.cur, source, f"https://{host}/p/{uuid.uuid4().hex}", at=self.now - timedelta(hours=hours_ago),
+                               title="A post", content="Body", html=html, content_hash=uuid.uuid4().hex, host=host))
 
     def _job(self):
         while StoriesRepository().fill_missing_links(self.cur):

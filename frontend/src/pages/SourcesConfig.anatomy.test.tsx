@@ -50,7 +50,7 @@ function setup(route = '/settings/sources?tab=ingestion&sub=sources', overrides:
     getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
     getSourceFolders: vi.fn().mockResolvedValue({ success: true, folder_ids: [] }),
     getOperationsOverview: vi.fn().mockResolvedValue({ success: true, jobs: [], alerts: [] }),
-    getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: { interval_hours: 24, sync_sources_each_cycle: true, ingest_tick_minutes: 60, state: {} } }),
+    getSchedulerConfig: vi.fn().mockResolvedValue({ success: true, scheduler: { interval_hours: 24, ingest_tick_minutes: 60, state: {} } }),
     getVersion: vi.fn().mockResolvedValue({ version: null, commit: null, commit_date: null }),
     ...overrides,
   };

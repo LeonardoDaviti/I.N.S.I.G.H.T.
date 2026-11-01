@@ -32,22 +32,32 @@ cd frontend && npm install && npm run dev
 Open `http://localhost:5173`. Run the scheduler too (`python backend/insight_core/scripts/run_scheduler.py`)
 if you want sources fetched on their cadence.
 
-## The app: three places
+## The app
 
-The top bar reads `feed / sources`.
+The top bar reads `feed / sources / blog`.
 
-- **feed** (`/`): every source in one reading flow. The rail holds tracks and sources.
-- **post** (`/posts/:id`): the content only, with open original, star and copy.
-- **sources** (`/settings/sources`): tabs `sources / connections / ingestion`. The `ingestion`
-  tab holds the run report, `Run due sources`, the scheduler status and the job history.
+- **feed** (`/`, `/read/...`): every source in one reading flow. The rail holds tracks (folders)
+  and sources. Its views: **Stream**, **By source**, **News** (the stories several of your voices
+  cover now) and **Classics** (pages your voices keep linking over time). A post that several
+  sources cover is one row, a story, with its other posts under it as a tree.
+- **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉),
+  and the story it belongs to, as a tree from its origin.
+- **search** (`/search`): every post, by title, source name and text.
+- **save** (`/save`): save any page as a post (the bookmarklet's and ⌘K's).
+- **sources** (`/settings/sources`): tabs `sources / discover / connections / ingestion`. Discover
+  suggests the sites and accounts your sources keep linking that you don't follow.
+- **blog** (`/blog`); the Design Studio (`/design`) is reached from ⌘K.
 
-That is the whole app: a reader. The old analysis layer (briefings, stories, the inbox, experts)
-was retired; the tag `mark-ix-analysis-archive` holds its last version.
+The `ingestion` tab holds the run report, `Run due sources`, the scheduler status and the job
+history. Stories, News, Classics and Discover are made by the story job after each fetch that
+saved posts; Sources → Ingestion → Background work shows it. The old analysis layer (briefings,
+the inbox, experts) was retired; the tag `mark-ix-analysis-archive` holds its last version.
 
 ## First steps in the app
 
-1. **Add sources.** `sources` in the top bar (`/settings/sources`), or edit
-   `backend/insight_core/config/sources.json` before the first start.
+1. **Add sources.** `sources` in the top bar (`/settings/sources`), or copy
+   `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it
+   before the first start, which imports it once.
 2. **Fetch.** New sources are due on the next ingestion tick. To fetch now, use `Fetch now` on a
    source's row, or `Run due sources` in the ingestion tab (`/settings/sources?tab=ingestion`).
 3. **Read.** `/` is the unread feed for the main digest. `j`/`k` move, `o` opens, `m` toggles

@@ -5,12 +5,23 @@ default. The design rules (principles, tokens, component inventory, page docs)
 live in `frontend/src/design/docs`, shown at `/design`; this file is the how-to. Never introduce colour fills, gradients,
 pastel chips or coloured status dots: status is a glyph plus a word (`StatusGlyph`).
 
-## Three places
+## The places
 
-The app is a reader. It has three places: **feed** (`/`, plus `/read/...` and
-`/tracks/:id`), **post** (`/posts/:id`) and **sources** (`/settings/sources`, with tabs
-`sources / connections / ingestion`), plus the blog. The top bar reads `feed / sources / blog`.
-Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not a page.
+The app is a reader. The top bar reads `feed / sources / blog`:
+
+- **feed** (`/`, plus `/read/...` and `/tracks/:id`, `pages/ReaderPage.tsx`). Its views (the
+  toolbar's view menu, `components/reader/FeedToolbar.tsx`): Stream, By source, **News**
+  (`components/reader/NewsList.tsx`) and **Classics** (`components/reader/ClassicsList.tsx`).
+  A story is one row with its other posts under it as a tree (`components/reader/FeedItem.tsx`,
+  `lib/story.ts`, issues 0050 and 0064).
+- **post** (`/posts/:id`, `pages/PostDetailPage.tsx`): the content, and its story's tree
+  (`CoveredBy`).
+- **search** (`/search`) and **save** (`/save`, the bookmarklet's).
+- **sources** (`/settings/sources`), with tabs `sources / discover / connections / ingestion`.
+  Discover is `components/sources/SuggestedSources.tsx` (`?tab=suggested`, its old name, still
+  opens it). Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`), not
+  a page.
+- **blog** (`/blog`) and the Design Studio (`/design/*`, from ⌘K).
 
 - Routes: `App.tsx` has the route table. `/ingestion/:tab` redirects to
   `/settings/sources?tab=ingestion` (`sourcesIngestionHref`; the old tab becomes `&sub=`).
@@ -18,9 +29,10 @@ Ingestion is the `?tab=ingestion` tab (`components/sources/IngestionPanel.tsx`),
   to `/`, replacing the history entry.
 - Navigation: `NAV_ITEMS` and the switcher list in `components/layout/navigation.ts`. ⌘K has
   one entry per track and points "Ingestion" at the sources tab.
-- Analysis (briefings, stories, the inbox, experts, milestones, the post page's summary, notes and
-  chat) was removed in issue 0005. Its code is at the git tag `mark-ix-analysis-archive`; it comes
-  back, if at all, as new work on the reading core.
+- Analysis (briefings, the old stories, the inbox, experts, milestones, the post page's summary,
+  notes and chat) was removed in issue 0005; its code is at the git tag
+  `mark-ix-analysis-archive`. Stories came back on the reading core (issues 0050, 0051, 0064):
+  derived from links by the backend's story job, read in the feed, News, Classics and Discover.
 
 ## Layout of `frontend/src`
 

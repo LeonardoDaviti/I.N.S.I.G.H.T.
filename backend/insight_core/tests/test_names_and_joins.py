@@ -23,7 +23,8 @@ import psycopg
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, insert_scratch_source, requires_db, requires_test_db
+from insight_core.tests._db import db_url, requires_db, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.tests.test_news import T0, followed, post
 from insight_core.utils.news_rules import names, news, surges, tally
 from insight_core.utils.post_links import extract_links
@@ -239,19 +240,12 @@ class JobCase(unittest.TestCase):
         self.conn.close()
 
     def source(self, name, handle, platform="rss"):
-        source = insert_scratch_source(self.cur, platform=platform, in_main_digest=True)
-        self.cur.execute("UPDATE sources SET handle_or_url = %s, settings = jsonb_build_object('display_name', %s::text)"
-                         " WHERE id = %s", (handle, name, source))
-        return source
+        return insert_source(self.cur, name, handle=handle, platform=platform, in_main_digest=True)
 
     def post(self, source, url, *, hours_ago, html="", title="A post", text=None, author=None):
-        self.cur.execute(
-            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
-                                  published_at, author)
-               VALUES (%s, %s, %s, split_part(split_part(%s, '://', 2), '/', 1), %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (source, url, normalize_url(url), url, title, text or f"Body {uuid.uuid4().hex}", html,
-             uuid.uuid4().hex if text is None else f"hash-{text}", self.now - timedelta(hours=hours_ago), author))
-        return str(self.cur.fetchone()[0])
+        return str(insert_post(self.cur, source, url, at=self.now - timedelta(hours=hours_ago), title=title,
+                               content=text or f"Body {uuid.uuid4().hex}", html=html, author=author,
+                               content_hash=uuid.uuid4().hex if text is None else f"hash-{text}"))
 
     def job(self):
         while StoriesRepository().fill_missing_links(self.cur):

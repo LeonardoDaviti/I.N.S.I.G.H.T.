@@ -35,10 +35,6 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-insight}:${DB_PASSWORD:-insight}@postgres:5432/${DB_NAME:-insight}
       API_PORT: 8000
-      # uvicorn --workers uses multiprocessing "spawn": zero copy-on-write, so each
-      # worker pays the full ~116MB import cost privately, plus the supervisor which
-      # imports the app and then only supervises. 1 worker is plenty for this load.
-      API_WORKERS: ${API_WORKERS:-1}
       BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
@@ -57,8 +53,10 @@ services:
       # shared by the API and ingestion so both decrypt the same Connections values.
       - insight_secrets:/app/secrets
     command: ["/app/docker/start-backend.sh"]
+    # The API answers only this machine (issue 0071): it has no login and can delete sources.
+    # The app reaches it through the frontend's nginx on the compose network (/api).
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     # The frontend starts once this passes (depends_on below), so an update's downtime is the API's
     # start (issue 0069): checked every second from the start, then every 30 s. The start period
     # leaves migrations time; a failure in it doesn't count. start_interval: Engine 25+, Compose 2.20.2+.
@@ -92,7 +90,6 @@ services:
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json
       INSIGHT_INGEST_INTERVAL_HOURS: ${INSIGHT_INGEST_INTERVAL_HOURS:-20}
       INSIGHT_INGEST_TICK_MINUTES: ${INSIGHT_INGEST_TICK_MINUTES:-60}
-      INSIGHT_SYNC_SOURCES_EACH_CYCLE: ${INSIGHT_SYNC_SOURCES_EACH_CYCLE:-true}
       INSIGHT_LOG_DIR: /app/logs
       # glibc: cap per-thread arenas and keep the trim threshold static, so freed
       # pages actually return to the OS instead of being pinned by fragmentation.

@@ -15,8 +15,8 @@ stored keeps its date. Otherwise the page is read as page watch reads an article
 (page_watch.article_post: the full-text reader, title, date, images). A page that cannot be
 read as an article (built with JavaScript, blocked, an error) is still saved, with its title
 (the page's, else the one the bookmarklet sent) and its address, and the answer says why
-(readable false, reason). The Saved source is created by the first save and written to
-sources.json at once: a source missing from that file is deleted at the next start.
+(readable false, reason). The Saved source is created by the first save, and sources.json
+(the sources' export) is rewritten.
 
 Meanwhile the feed finder looks at the page: a feed that is not a source yet comes back as
 feed {url, title}, so the save page can offer to follow it.

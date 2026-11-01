@@ -17,7 +17,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.story_rules import Origin, discover_address, discover_article, discover_place, origins
 
 NOW = datetime(2026, 10, 31, tzinfo=timezone.utc)
@@ -104,21 +105,10 @@ class DiscoverOriginsTests(unittest.TestCase):
     # ---- fixture ----------------------------------------------------------------------------
 
     def _source(self, name, handle=None):
-        source = insert_scratch_source(self.cur)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text), "
-                         "handle_or_url = COALESCE(%s, handle_or_url) WHERE id = %s", (name, handle, source))
-        return source
+        return insert_source(self.cur, name, handle=handle)
 
     def _post(self, source, url, links=(), *, days=0):
-        host = url.split("/")[2]
-        self.cur.execute(
-            "INSERT INTO posts (source_id, url, normalized_url, url_host, published_at, links_scanned_at) "
-            "VALUES (%s, %s, %s, %s, %s, now()) RETURNING id", (source, url, url, host, NOW - timedelta(days=days)))
-        post_id = self.cur.fetchone()[0]
-        for position, target in enumerate(links):
-            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, '', %s)",
-                             (post_id, target, position))
-        return post_id
+        return insert_post(self.cur, source, url, at=NOW - timedelta(days=days), normalized=url, links=list(links))
 
     def _story(self, origin, posts, *, days=0):
         """A story whose root is the page `origin`, outside INSIGHT, and its posts under it."""

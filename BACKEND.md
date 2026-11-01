@@ -352,10 +352,10 @@ save lock; it never raises).
   health row as `doctor_looked_at` and `replacement`. A fetch that works clears it.
 - **Switch** (`SourceConfigSyncService.switch_source`, used by the doctor and the route): the
   new `handle_or_url` and `settings.page_watch` (set or removed) and a clean fetch state, in
-  one transaction; the id, name, tracks, read state and posts stay. Then sources.json is
-  rewritten; when it cannot be, the switch is undone, because a file still naming the old
-  address would make the next sync re-add it and mirror-delete the switched source. Nothing
-  is re-fetched: posts match by URL, and an archive brings the older ones.
+  one transaction; the id, name, tracks, read state and posts stay. Then sources.json, the
+  export, is rewritten; when it cannot be, the log says so and the switch stands (the database
+  is the truth, issue 0071). Nothing is re-fetched: posts match by URL, and an archive brings
+  the older ones.
 - `KindRegistry` caches by platform, address and whether `settings.page_watch` is set, so an
   address once asked about as a feed resolves as page_watch once a source follows it.
 
@@ -400,10 +400,12 @@ Run them inside the backend image, never on the host:
 ```bash
 ./run-tests.sh                                        # whole suite
 ./run-tests.sh insight_core.tests.test_feed_routes    # one module
-MIGRATE=1 ./run-tests.sh                              # migrate the test database first
+TEST_DATABASE_URL=postgresql://insight:insight@postgres:5432/mine_test MIGRATE=1 ./run-tests.sh   # a database of yours
 ```
 
-It uses the scratch database `insight_test`, never the live `insight`.
+By default each run creates its own database (`insight_run_<time>_<pid>_test`), migrates it and
+drops it at the end, never the live `insight`. The posts and sources tests make come from one
+factory, `insight_core/tests/_stories.py`.
 
 ### Manual API Testing
 
@@ -465,7 +467,8 @@ the result when the job finishes.
 | Method | Path | Purpose | Body or query |
 |---|---|---|---|
 | GET | `/` | Liveness text | |
-| GET | `/health` | Container health check | |
+| GET | `/health` | Container health check: one quick database query through the pool; 503 `{status: "unhealthy", database: false}` when the database doesn't answer (issue 0071) | |
+| GET | `/api/version` | The build stamp (issue 0020): `{version, commit, commit_date}`, each null in a dev build | |
 | GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
 | GET | `/api/feed` | Every post list, newest first (Later: oldest saved first), one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|later\|starred` (starred is Keep, "Kept"; later on `all` holds every source), `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
 | GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder; `later: {count, minutes}` | |
@@ -477,20 +480,27 @@ the result when the job finishes.
 | POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
 | PUT | `/api/feed/later` | Read later (issue 0022): put posts in Later or take them out, answers `{updated, ids}` | `{ids, later}` (1-500 ids) |
 | POST | `/api/posts/item/{post_id}/favorite` | Star (Keep) or unstar | `{favorited}` |
+| GET | `/api/news` | News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 7 days, with a post from the scope's sources. A FeedPage (no next page): each item a story's lead with its `story` and `news` `{part: recent \| earlier, first_at, reports, shares, mentions, score}`; recent (48 hours) first, then by score, then the newest | `scope` (`all` \| `folder:<uuid>`) |
+| GET | `/api/classics` | Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope among them, not hidden: `{classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again, citers [{name, at}], read_at, later_at}]}`, cited again this week first, then most voices, then cited longest. Nothing is fetched | `scope` |
+| POST | `/api/classics/hide` | Hide a classic for good ("I know it" and "not for me" in one) | `{url}` |
 | PUT | `/api/posts/item/{post_id}/position` | Where a long post was left (issue 0030); `block: null` clears it. Marking a post read clears it too | `{block, blocks}` (`0 <= block < blocks`) |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
 | POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
 | GET | `/api/sources/export.opml` | Every source as OPML 2.0 (`text/x-opml`, a download `insight-sources.opml`, issue 0035): one outline per track in track order, each source under its first track (`category` names all its tracks), then the sources in none (the built-in Saved source, issue 0031, is left out). A source outline: `text`/`title` (name or address), `xmlUrl` (its address), and the `insight:` attributes (namespace `https://insight.local/opml`) `displayName`, `pageWatchPrefix` (followed pages, with `htmlUrl`; empty: the path is inferred) and `platform` (when not rss) | |
 | POST | `/api/sources/find-feed` | The feeds for any page address (`ingestion/feed_finder.py`, under 10 s): `{status: feed\|found\|direct\|none, feeds: [{url, title}], homepage, pages}`; for a site's home page with no feed (issue 0041) `homepage: true` and `pages`, its own blog or news pages that can be followed instead, each with its page-watch preview `{url, prefix, found, sitemap, items}`, the most articles first (previewed at once, within 15 s more); when it names none (issue 0047), its own menu links (header and navigation, then footer, at most 12) are previewed instead and only one that reads as an article list (3 posts dated within a year) is offered; when your sources linked the site's articles (issue 0060, `ingestion/where_linked.py`), `linked` is how many and every feed and page carries `holds`, how many of them it holds, the most first (a tie to the narrower path); a home page whose links are 60%+ under one section that is not a date or a number starts there (`start`, else null), the home page's own feeds beside the section's, and one linked article is fetched to see where a moved section went | `{url}` (no scheme: https) |
 | POST | `/api/sources/page-watch/preview` | Following a page without a feed (`ingestion/kinds/page_watch.py`, issue 0028): `{prefix, found, sitemap, items: [{url, title, published_at}]}`, `found` the article URLs under the prefix (listing links and sitemap), `items` the first 5 read; no items: its articles need a browser. 400 when the page cannot be read (its status only, never the site's answer) | `{url, prefix?}` (no scheme: https; only http and https; prefix inferred from the page's path) |
-| POST | `/api/saved` | Save any page (`services/saved_service.py`, issue 0031) as an unread post of the Saved source (platform `saved`, created by the first save and written to sources.json at once); every save puts the post in Later at the save time (issue 0022), and a new saved post is dated by it (`published_at`; the page's own date in `metadata.article_published_at`), so it sorts by when it was saved. A page already stored goes to Later with its date unchanged. `{status: saved, post_id, title, source_id, readable, reason, feed}`: `readable` false when the page could not be read as an article (saved with its title and address; `reason` its status or "no article on the page", never the site's answer); `feed` a feed of the site that is not a source yet (`{url, title}`) or null. A page already stored (its URL or where it redirects, normalised): `{status: already, post_id, title}`. 400 for an empty or non-http(s) address. Under ~10 s (the feed finder runs meanwhile) | `{url, title?}` (no scheme: https; `title` the bookmarklet's) |
+| POST | `/api/saved` | Save any page (`services/saved_service.py`, issue 0031) as an unread post of the Saved source (platform `saved`, created by the first save, then sources.json rewritten); every save puts the post in Later at the save time (issue 0022), and a new saved post is dated by it (`published_at`; the page's own date in `metadata.article_published_at`), so it sorts by when it was saved. A page already stored goes to Later with its date unchanged. `{status: saved, post_id, title, source_id, readable, reason, feed}`: `readable` false when the page could not be read as an article (saved with its title and address; `reason` its status or "no article on the page", never the site's answer); `feed` a feed of the site that is not a source yet (`{url, title}`) or null. A page already stored (its URL or where it redirects, normalised): `{status: already, post_id, title}`. 400 for an empty or non-http(s) address. Under ~10 s (the feed finder runs meanwhile) | `{url, title?}` (no scheme: https; `title` the bookmarklet's) |
 | PUT | `/api/sources/{source_id}/settings` | Edit settings | any of `{display_name, fetch_delay_seconds, priority, page_watch}` |
 | PUT | `/api/sources/{source_id}/enabled` | Enable or disable | `{enabled}` |
 | PUT | `/api/sources/{source_id}/main-digest` | In or out of the "all" feed | `{in_main_digest}` |
 | PUT | `/api/sources/{source_id}/cadence` | Set or clear the fetch interval override | `{override_hours}` (1-2160, or null) |
 | DELETE | `/api/sources/{source_id}` | Delete a source and its posts | |
-| POST | `/api/sources/{source_id}/switch` | Point a source at its replacement (issue 0036): name, tracks and posts kept, failures cleared, sources.json rewritten (the switch undone when it cannot be): `{handle_or_url, previous}`. 400: bad address or already a source | `{url, page_watch?}` (`page_watch: {prefix?}` follows the page) |
+| POST | `/api/sources/{source_id}/switch` | Point a source at its replacement (issue 0036): name, tracks and posts kept, failures cleared, sources.json rewritten (when it cannot be, the switch stands): `{handle_or_url, previous}`. 400: bad address or already a source | `{url, page_watch?}` (`page_watch: {prefix?}` follows the page) |
 | POST | `/api/sources/{source_id}/replacement/dismiss` | Hide the source doctor's finding until the next failure streak: `{row}`. 404 without a finding | |
+| POST | `/api/sources/{source_id}/tidy/keep` | Keep a source marked quiet or never opened (issue 0046): its marks hide for 90 days and come back only if still true; the fresh health row. 404 for no such source | |
+| GET | `/api/sources/suggested` | Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like pages that you don't follow, each `{key, url, voices, voice_names, article_count, link_count, articles, origins, origin_stories, follows?}`, the most stories started there first (issue 0065), then most voices; `archives` (followed sources whose own pages started stories they don't hold) and `unnamed`. Nothing is fetched | |
+| POST | `/api/sources/suggested/hide` | Not interested: the key is never suggested again | `{key}` |
+| GET | `/api/sources/anatomy` | Source anatomy (issue 0054): every source, how it is read and what it gives: `{window_days, generated_at, rows: [{source_id, display_name, address, platform, enabled, kind, full_text, watch_changes, watched_pages, validators, status, interval_hours, next_due_at, last_outcome, last_error, recent, all}]}`, most posts in the window first. Nothing is fetched | |
 | GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
 | GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary; a row carries the source doctor's `doctor_looked_at` and `replacement` (`{kind: feed\|page_watch, url, title, found, prefix}`, null: none found) | |
 | POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
@@ -510,8 +520,9 @@ the result when the job finishes.
 | GET | `/api/ingestion/logs` | Tail of a log file | `log`, `lines` (1-1000) |
 | GET | `/api/operations/overview` | Recent jobs, source health, alerts | |
 | GET | `/api/operations/jobs/{job_id}` | One job with its result | |
+| GET | `/api/operations/background` | What runs on its own (issue 0062): stories, the search index, link reading, each with its progress. Read only | |
 | GET | `/api/operations/scheduler` | Scheduler settings and state | |
-| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, syncSourcesEachCycle?, ingestTickMinutes?}` (tick >= 15) |
+| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, ingestTickMinutes?}` (tick >= 15) |
 | GET | `/api/credentials` | Every connection, without its values | |
 | PUT | `/api/credentials/{provider}/{key}` | Save one secret | `{value}` |
 | DELETE | `/api/credentials/{provider}/{key}` | Remove one secret | |

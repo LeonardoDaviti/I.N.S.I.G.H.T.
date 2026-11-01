@@ -192,7 +192,7 @@ gap times the posts it exposes) is a quarter full, but not more than hourly.
   one run over all enabled sources; cadence makes it touch only the due ones. Two full runs
   never overlap (a Postgres advisory run lock); a second one reports `skipped_busy`.
 - **Daily work** once `interval_hours` have passed since the last one: prune job_runs,
-  refresh source cadence, sync sources.json. The first
+  refresh source cadence (sources.json is never read here, issue 0071). The first
   tick after a deploy seeds the gate from the last successful `scheduler_cycle` job.
 - The state (`last_tick_at`, `next_tick_at`, `last_daily_work_at`, `next_daily_work_at`) is in
   `system_settings['scheduler_state']` and served by `GET /api/operations/scheduler`.

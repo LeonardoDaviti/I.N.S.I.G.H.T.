@@ -7,7 +7,7 @@ Two clocks:
   one run_ingestion over all enabled sources. Cadence decides which are due, so a tick only
   touches the sources whose fetch interval has elapsed (or whose backoff has expired).
 - daily work, once interval_hours have passed since system_settings.scheduler_state
-  .last_daily_work_at: prune job_runs, refresh source cadence and sync sources.json. On
+  .last_daily_work_at: prune job_runs and refresh source cadence. On
   the first tick after deploy last_daily_work_at is seeded from the newest successful
   scheduler_cycle job, so a deploy does not run the daily work twice.
 
@@ -177,9 +177,9 @@ async def tick(
 
 
 async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dict[str, Any]) -> None:
-    """The upkeep: prune job_runs, refresh source cadence, sync sources.json -> DB."""
+    """The upkeep: prune job_runs, refresh source cadence. sources.json is never read here: the
+    database is the truth (issue 0071)."""
     from insight_core.ingestion.ports import DbFetchStateStore
-    from insight_core.services.source_config_sync_service import SourceConfigSyncService
 
     try:
         pruned = operations_service.prune_job_runs(env_int("INSIGHT_JOB_RUNS_RETAIN_DAYS", 30))
@@ -194,11 +194,6 @@ async def daily_work(db_url: str, operations_service: Any, scheduler_config: Dic
         logger.info("Cadence refreshed for %s sources", refreshed)
     except Exception:  # noqa: BLE001
         logger.exception("Cadence refresh failed (continuing with stored tiers)")
-
-    if scheduler_config.get("sync_sources_each_cycle", True):
-        sync_service = SourceConfigSyncService(db_url)
-        sync_result = sync_service.sync_json_to_db(mirror=True)
-        logger.info("sources.json -> DB sync result: %s", sync_result)
 
 
 async def main() -> None:
