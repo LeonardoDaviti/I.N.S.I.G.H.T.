@@ -2,7 +2,8 @@
 """
 sources.json and the database (issue 0071): the database is the truth.
 
-  json-to-db         import the file now: adds sources and sets their on/off, never deletes
+  json-to-db         import the file now: adds only the sources the database lacks and never
+                     one that was removed (issue 0072); never deletes, never changes on/off
   json-to-db --once  the same, only if no start imported a file into this database before
                      (what the containers run at start)
   db-to-json         export the database's sources to the file

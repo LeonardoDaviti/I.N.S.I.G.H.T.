@@ -81,7 +81,11 @@ deletes a source because a file lacks it: a source is removed only by Remove in 
 - **A new install** starts with no sources, or with your file: copy
   `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it before
   the first start. The first start of a database imports the file once, add-only: it adds the
-  sources the database lacks and sets each one's on/off. Later starts don't read it.
+  sources the database lacks, each on or off as the file says. Later starts don't read it.
+- **An import only adds** (v9.14): it never changes the on/off of a source the database has, and
+  never adds back a source removed in the app (or an address a source was switched away from): the
+  database remembers those (`removed_sources`). Adding the source again in the app forgets it.
+  Sources removed before v9.14 left no trace, so an old file can still add them back.
 - **Importing a file by hand**, add-only, any time:
   `docker compose exec backend python insight_core/scripts/sync_sources_json.py json-to-db`.
   It never deletes. It exits 1 when the file can't be read or an entry was skipped, and the log
