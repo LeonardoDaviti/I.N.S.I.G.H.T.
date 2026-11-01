@@ -14,7 +14,6 @@ const MINUTE = 60_000;
 function scheduler(overrides: Partial<SchedulerConfig> = {}): SchedulerConfig {
   return {
     interval_hours: 24,
-    sync_sources_each_cycle: true,
     ingest_tick_minutes: 60,
     state: {
       last_tick_at: new Date(Date.now() - 10 * MINUTE).toISOString(),
@@ -210,14 +209,14 @@ describe('Sources → ingestion tab', () => {
     expect(await within(status).findByText(/could not read the scheduler/i)).toBeInTheDocument();
   });
 
-  it('the tick interval can be changed; the dialog has no briefing settings', async () => {
+  it('the tick interval can be changed; the dialog has no briefing or sources.json settings', async () => {
     const updateSchedulerConfig = vi.fn().mockImplementation((config: SchedulerConfig) => Promise.resolve({ success: true, scheduler: scheduler(config) }));
     setup({ overrides: { updateSchedulerConfig } });
     await userEvent.click(await screen.findByRole('button', { name: 'Change interval' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/briefing/i)).toBeNull();
-    // The sync toggle says what it deletes (issue 0027).
-    expect(within(dialog).getByText('The sources follow the file: a source missing from it is deleted, with its posts.')).toBeInTheDocument();
+    // The database is the truth for sources: nothing syncs from the file (issue 0071).
+    expect(within(dialog).queryByText(/sources\.json/i)).toBeNull();
     const tick = within(dialog).getByLabelText(/check for due sources every/i);
     await userEvent.clear(tick);
     await userEvent.type(tick, '30');

@@ -17,7 +17,7 @@ The analysis layer (entity/event memory, experts, briefings, stories, inbox, Gem
 - Fetches every source through one ingestion entry point, on a per-source cadence with backoff for failing sources.
 - Gives you one reader over all sources (`/`): unread, starred and read state, tracks (folders) as filters.
 - Uses the same post storage path for archive and live ingestion.
-- Keeps `backend/insight_core/config/sources.json` and the database source registry in sync.
+- Keeps your sources in the database, and writes them to `backend/insight_core/config/sources.json` as an export after each change.
 
 ## Data Model
 
@@ -33,20 +33,21 @@ Important tables:
 
 The full schema is in `backend/insight_core/docs/DB.md`.
 
-## Source Sync
+## Sources and sources.json
 
-`sources.json` and the database stay synchronized in both directions:
+The database is the truth for your sources (issue 0071). `sources.json` is their export:
 
-- On backend start: `sources.json -> DB`
-- On scheduler cycle: `sources.json -> DB`
-- On API source changes: `DB -> sources.json`
+- Adding, editing and removing a source in the app write the database, then rewrite the file
+  (to a temporary file, then renamed over it, so a crash never leaves it cut short).
+- A source is removed only by Remove in the app. Nothing deletes a source because a file lacks it.
+- The first start of a database imports the file once: it adds the sources the database lacks and
+  sets each one's on/off, and never deletes. Later starts don't read it.
+- To import a file by hand (add-only):
+  `docker compose exec backend python insight_core/scripts/sync_sources_json.py json-to-db`.
+- A missing, empty or broken file changes nothing; a bad entry is skipped with a line in the log.
+- The file is not in git. `backend/insight_core/config/sources.example.json` is a starting point.
 
-File path:
-
-- `backend/insight_core/config/sources.json`
-- Override with `INSIGHT_SOURCES_JSON_PATH`
-
-This lets you keep editing `sources.json` manually without losing DB-backed behavior.
+File path: `backend/insight_core/config/sources.json`; override with `INSIGHT_SOURCES_JSON_PATH`.
 
 ## Supported Source Types
 
@@ -82,7 +83,7 @@ The recommended production layout is the included `docker-compose.yml`:
 The scheduler has two clocks:
 
 - the ingestion tick, every `ingest_tick_minutes` (default `60`, floor `15`, env `INSIGHT_INGEST_TICK_MINUTES`). Each tick is one ingestion run over all enabled sources, and each source's cadence decides whether it is due, so a tick fetches only the sources whose interval has passed or whose backoff has expired. A failing source retries on a backoff ladder (`INSIGHT_BACKOFF_*` in `.env.example`).
-- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs`, refresh source cadence and sync `sources.json -> DB`.
+- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs` and refresh source cadence.
 
 Archive is never run automatically; it is a manual action only. Backend and ingestion share a persistent `insight_logs` volume, so the Ingestion tab can show recent runtime logs.
 
@@ -105,7 +106,9 @@ Important values:
 - `FRONTEND_PORT`
 - `INSIGHT_SOURCES_JSON_PATH`
 
-3. Optional: edit `backend/insight_core/config/sources.json` before first boot if you want some sources preloaded without using the frontend.
+3. Optional: to start with some sources without using the app, copy
+   `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it before
+   the first start. The first start imports it once.
 
 4. Start the stack:
 
@@ -130,10 +133,10 @@ Default URLs:
 What happens automatically on startup:
 
 - PostgreSQL starts and persists data in `postgres_data`
-- backend runs migrations, syncs `sources.json -> DB`, and starts the API
-- ingestion runs migrations, syncs `sources.json -> DB`, runs its first tick immediately, then ticks every `ingest_tick_minutes`
+- backend runs migrations, imports `sources.json` if this database never imported one (add-only), and starts the API
+- ingestion runs migrations, the same import, runs its first tick immediately, then ticks every `ingest_tick_minutes`
 - daily work runs when `interval_hours` have passed since it last ran; the first tick after a deploy does not run it again
-- source changes made in the API are exported back into `sources.json`
+- source changes made in the app are written to the database, then exported to `sources.json`
 
 Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources`:
 

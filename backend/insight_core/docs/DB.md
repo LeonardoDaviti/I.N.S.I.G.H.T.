@@ -71,8 +71,9 @@ may be `reddit_comments_fetch`): status, trigger, message and a jsonb `payload` 
 and the run report. Pruned after 30 days by the daily work.
 
 ### system_settings
-Key/value jsonb: `scheduler_config` (tick minutes, daily-work interval, sources.json sync)
-and `scheduler_state` (last and next tick, last and next daily work).
+Key/value jsonb: `scheduler_config` (tick minutes, daily-work interval), `scheduler_state`
+(last and next tick, last and next daily work), and `sources_json_imported` (when a start first
+imported sources.json into this database, issue 0071: later starts don't import again).
 
 ### youtube_watch_progress
 Watch position per YouTube video: progress, duration, completed, sessions.

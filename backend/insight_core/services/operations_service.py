@@ -4,7 +4,6 @@ Operational controls for scheduler config, job history, alerts, and source healt
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -347,7 +346,6 @@ class OperationsService:
 
         payload = {
             "interval_hours": merged["interval_hours"],
-            "sync_sources_each_cycle": merged["sync_sources_each_cycle"],
             "ingest_tick_minutes": merged["ingest_tick_minutes"],
         }
 
@@ -881,7 +879,6 @@ class OperationsService:
         return self._normalize_scheduler_config(
             {
                 "interval_hours": env_float("INSIGHT_INGEST_INTERVAL_HOURS", 20),
-                "sync_sources_each_cycle": os.getenv("INSIGHT_SYNC_SOURCES_EACH_CYCLE", "true").lower() == "true",
                 "ingest_tick_minutes": env_float("INSIGHT_INGEST_TICK_MINUTES", 60),
                 "updated_at": None,
             }
@@ -897,7 +894,6 @@ class OperationsService:
         tick = max(INGEST_TICK_MINUTES_MIN, min(tick, INGEST_TICK_MINUTES_MAX))
         return {
             "interval_hours": interval_hours,
-            "sync_sources_each_cycle": bool(config.get("sync_sources_each_cycle", True)),
             "ingest_tick_minutes": int(tick) if float(tick).is_integer() else tick,
             "updated_at": config.get("updated_at"),
         }

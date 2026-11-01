@@ -279,7 +279,6 @@ class IngestionRunRequest(BaseModel):
 
 class SchedulerConfigRequest(BaseModel):
     intervalHours: float | None = None
-    syncSourcesEachCycle: bool | None = None
     ingestTickMinutes: float | None = None
 
 
@@ -556,7 +555,8 @@ def _unavailable(reason: str) -> JSONResponse:
 
 
 def _export_sources_json() -> None:
-    """Mirror the sources to sources.json. A source change still succeeds when this fails."""
+    """Write the sources' export, sources.json (issue 0071). A source change still succeeds when
+    this fails: the database is the truth."""
     try:
         services().source_config_sync.sync_db_to_json()
     except Exception:
@@ -725,7 +725,8 @@ async def get_media(post: str, url: str):
 
 
 # ============= SOURCES =============
-# One route per action. A change also rewrites sources.json, the server's list of sources.
+# One route per action. A change also rewrites sources.json, the export of the sources (the
+# database is the truth, issue 0071).
 
 
 @app.get("/api/sources")
@@ -928,7 +929,9 @@ async def set_source_enabled(source_id: str, request: SourceEnabledRequest):
 @error_detail("update the main-digest setting")
 async def set_source_main_digest(source_id: str, request: MainDigestRequest):
     """Include (true) or exclude (false) one source from the "all" feed."""
-    return {"success": True, **services().sources.set_in_main_digest(source_id, request.in_main_digest)}
+    result = services().sources.set_in_main_digest(source_id, request.in_main_digest)
+    _export_sources_json()
+    return {"success": True, **result}
 
 
 @app.delete("/api/sources/{source_id}")
@@ -946,8 +949,8 @@ async def delete_source(source_id: str):
 async def switch_source(source_id: str, request: SwitchSourceRequest):
     """Point a source at its replacement (issue 0036): a feed, or with page_watch ({} or
     {prefix}) a page to follow. Its id, name, tracks, read state and posts stay; its failures
-    clear; sources.json is rewritten in step (the switch is undone when it cannot be). Nothing
-    is re-fetched now. 404 for no such source; 400 for a bad address or one already a source."""
+    clear; sources.json is rewritten after it. Nothing is re-fetched now. 404 for no such
+    source; 400 for a bad address or one already a source."""
     old = await asyncio.to_thread(services().source_config_sync.switch_source, source_id, request.url,
                                   request.page_watch)
     source = services().sources.get_source_by_id(source_id) or {}
@@ -1051,6 +1054,7 @@ async def set_folder_main_digest(folder_id: str, request: MainDigestRequest):
     track's sources out of the "all" feed while they are still ingested. The sources hold the
     answer; the track shows what its sources say (issue 0027)."""
     result = services().sources.set_folder_in_main_digest(folder_id, request.in_main_digest)
+    _export_sources_json()
     return {"success": True, **result}
 
 
@@ -1387,8 +1391,6 @@ async def update_scheduler_config(request: SchedulerConfigRequest):
     payload = {}
     if request.intervalHours is not None:
         payload["interval_hours"] = request.intervalHours
-    if request.syncSourcesEachCycle is not None:
-        payload["sync_sources_each_cycle"] = request.syncSourcesEachCycle
     if request.ingestTickMinutes is not None:
         if request.ingestTickMinutes < 15:
             raise HTTPException(status_code=400, detail="ingestTickMinutes must be at least 15")

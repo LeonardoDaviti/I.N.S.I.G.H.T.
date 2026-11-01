@@ -46,8 +46,9 @@ was retired; the tag `mark-ix-analysis-archive` holds its last version.
 
 ## First steps in the app
 
-1. **Add sources.** `sources` in the top bar (`/settings/sources`), or edit
-   `backend/insight_core/config/sources.json` before the first start.
+1. **Add sources.** `sources` in the top bar (`/settings/sources`), or copy
+   `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it
+   before the first start, which imports it once.
 2. **Fetch.** New sources are due on the next ingestion tick. To fetch now, use `Fetch now` on a
    source's row, or `Run due sources` in the ingestion tab (`/settings/sources?tab=ingestion`).
 3. **Read.** `/` is the unread feed for the main digest. `j`/`k` move, `o` opens, `m` toggles

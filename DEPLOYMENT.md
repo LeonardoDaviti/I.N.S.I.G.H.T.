@@ -6,7 +6,7 @@ feature overview; this file covers deploying, updating and troubleshooting.
 | Service | Container | What it does |
 | --- | --- | --- |
 | `postgres` | `insight-db` | PostgreSQL 15 with pgvector. Internal to the Docker network only. |
-| `backend` | `insight-api` | FastAPI on port 8000 (`BACKEND_PORT` on the host). Runs migrations and `sources.json -> DB` on start. |
+| `backend` | `insight-api` | FastAPI on port 8000 (`BACKEND_PORT` on the host). Runs migrations on start, and imports `sources.json` once per database (add-only). |
 | `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`. |
 | `frontend` | `insight-frontend` | The built React app behind Nginx (`FRONTEND_PORT`), proxying `/api` to the backend. |
 
@@ -62,6 +62,52 @@ docker compose exec backend python -m insight_core.scripts.import_env_secrets
 
 It prints only the names it stored or skipped (empty values, template placeholders, values
 already stored), never a value. An older Telegram session file is not imported: sign in again.
+
+## Your sources: the database is the truth
+
+Your sources live in the database. `backend/insight_core/config/sources.json` is their export,
+rewritten after each change in the app (to a temporary file, then renamed over it). Nothing
+deletes a source because a file lacks it: a source is removed only by Remove in the app.
+
+- **A new install** starts with no sources, or with your file: copy
+  `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it before
+  the first start. The first start of a database imports the file once, add-only: it adds the
+  sources the database lacks and sets each one's on/off. Later starts don't read it.
+- **Importing a file by hand**, add-only, any time:
+  `docker compose exec backend python insight_core/scripts/sync_sources_json.py json-to-db`.
+  It never deletes. It exits 1 when the file can't be read or an entry was skipped, and the log
+  names each skipped entry.
+- **A missing, empty or broken file** changes nothing and never stops a start.
+- The file is not in git (it was until v9.13). Copy it with your backups if you keep any.
+
+### Pulling v9.13 on a server whose sources.json was in git (once)
+
+Until v9.13 `sources.json` was tracked, and the app rewrote it on the server, so the server's
+copy has local changes. The pull that untracks it would refuse to run over them, and the old
+code still running reads the file. So: move the file out of the way (the old code refuses to
+mirror a missing file, so nothing is deleted meanwhile), pull, put it back, then update. In the
+server's checkout, and change no source in the app until the update is done:
+
+```bash
+F=backend/insight_core/config/sources.json
+sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FROM sources'   # note the number
+mv "$F" ~/sources.json.keep          # the running code refuses to mirror a missing file
+git pull --ff-only                   # removes the tracked file; nothing of yours is overwritten
+cp ~/sources.json.keep "$F"          # put it back: untracked and ignored from now on
+git status --short "$F"              # prints nothing
+bash ./update
+sudo docker compose logs backend ingestion | grep -E "sources.json|Imported"
+sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FROM sources'   # the same number
+```
+
+- The first start reads the file once as an add-only import. The log says
+  `Imported sources.json: added=0 updated=0 skipped=0` when the file was in step with the
+  database, as the app's own export is. The other container's start then says it was imported
+  before.
+- If `git pull` refuses anyway, put the file back (`mv ~/sources.json.keep "$F"`) and stop:
+  nothing has changed.
+- Use your `DB_USER` and `DB_NAME` if they are not `insight`. Keep `~/sources.json.keep` until
+  you have checked the count.
 
 ## Updating
 

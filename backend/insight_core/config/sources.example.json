@@ -1,0 +1,21 @@
+{
+    "metadata": {
+        "name": "I.N.S.I.G.H.T.",
+        "description": "An example: copy it to sources.json before the first start to begin with these sources. The first start imports sources.json (add-only); later the app rewrites it as the export of your sources."
+    },
+    "platforms": {
+        "rss": {
+            "enabled": true,
+            "sources": [
+                {
+                    "id": "https://blog.example.com/feed.xml",
+                    "state": "enabled"
+                },
+                {
+                    "id": "https://news.example.org/rss",
+                    "state": "disabled"
+                }
+            ]
+        }
+    }
+}

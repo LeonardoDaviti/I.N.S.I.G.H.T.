@@ -79,7 +79,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
         availability=availability_from_env,
         clock=clock,
         # The doctor's look uses the Add source dialog's short timeout; a switch rewrites
-        # sources.json too, so the next sync keeps the new address (issue 0036).
+        # sources.json, the sources' export, too (issue 0036).
         doctor=SourceDoctor(
             http=KindHttp(timeout=5), registry=registry, clock=clock,
             store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),

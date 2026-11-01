@@ -2,7 +2,7 @@
 set -euo pipefail
 
 python insight_core/db/migrate.py
-python insight_core/scripts/sync_sources_json.py json-to-db
+python insight_core/scripts/sync_sources_json.py json-to-db --once
 
 # NOTE: do not add --limit-max-requests here. With --workers 1 uvicorn runs
 # in-process with no supervisor (uvicorn/main.py: `elif config.workers > 1:

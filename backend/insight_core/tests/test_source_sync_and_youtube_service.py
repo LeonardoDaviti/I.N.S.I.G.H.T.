@@ -2,9 +2,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from insight_core.services.source_config_sync_service import SourceConfigSyncService
+import psycopg
+
+from insight_core.services.source_config_sync_service import IMPORTED_KEY, SourceConfigSyncService
 from insight_core.services.youtube_service import YouTubeService
+from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db, scratch_handle
 
 
 class FakeSourcesService:
@@ -45,9 +49,8 @@ class FakeSourcesService:
         return {"source_id": source_id, "enabled": enabled}
 
     def delete_source(self, source_id):
-        self.sources = [source for source in self.sources if source["id"] != source_id]
         self.deleted.append(source_id)
-        return True
+        raise AssertionError("an import never deletes a source")
 
 
 class SourceConfigSyncServiceTests(unittest.TestCase):
@@ -69,39 +72,86 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             self.assertEqual(payload["platforms"]["rss"]["sources"][0]["state"], "enabled")
             self.assertEqual(payload["platforms"]["youtube"]["sources"][0]["state"], "disabled")
 
-    def test_sync_json_to_db_mirrors_add_update_delete(self):
+    def test_an_import_adds_and_updates_and_a_file_missing_sources_deletes_nothing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "sources.json"
-            config_path.write_text(
-                json.dumps(
-                    {
-                        "metadata": {},
-                        "platforms": {
-                            "rss": {
-                                "enabled": True,
-                                "sources": [
-                                    {"id": "https://new.example/feed.xml", "state": "enabled"},
-                                ],
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            fake_sources = FakeSourcesService(
-                [
-                    {"id": "old-1", "platform": "rss", "handle_or_url": "https://old.example/feed.xml", "enabled": True},
-                    {"id": "old-2", "platform": "rss", "handle_or_url": "https://new.example/feed.xml", "enabled": False},
-                ]
-            )
+            self._write(config_path, [{"id": "https://new.example/feed.xml", "state": "enabled"},
+                                      {"id": "https://off.example/feed.xml", "state": "disabled"}])
+            fake_sources = FakeSourcesService([
+                {"id": "kept", "platform": "rss", "handle_or_url": "https://kept.example/feed.xml", "enabled": True},
+                {"id": "off-1", "platform": "rss", "handle_or_url": "https://off.example/feed.xml", "enabled": True},
+            ])
             service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
             service.sources_service = fake_sources
 
-            result = service.sync_json_to_db(mirror=True)
+            result = service.import_json()
 
-            self.assertTrue(result["success"])
-            self.assertIn(("old-2", True), fake_sources.updated)
-            self.assertIn("old-1", fake_sources.deleted)
+            self.assertEqual((result["read"], result["added"], result["updated"], result["skipped"]), (True, 1, 1, []))
+            self.assertEqual(fake_sources.added, [("rss", "https://new.example/feed.xml")])
+            self.assertIn(("off-1", False), fake_sources.updated)
+            self.assertEqual(fake_sources.deleted, [])
+            self.assertIn("https://kept.example/feed.xml", {s["handle_or_url"] for s in fake_sources.sources})
+
+    def test_a_missing_empty_or_broken_file_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            fake_sources = FakeSourcesService([
+                {"id": "kept", "platform": "rss", "handle_or_url": "https://kept.example/feed.xml", "enabled": True},
+            ])
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+            for text in (None, "", '{"platforms": {"rss": {"sources": [{"id": "https://cut.exa', "[]", '{"platforms": 3}'):
+                if text is not None:
+                    config_path.write_text(text, encoding="utf-8")
+                with self.subTest(text=text):
+                    result = service.import_json()
+                    self.assertEqual((result["read"], result["added"], result["updated"]), (False, 0, 0))
+            self.assertEqual((fake_sources.added, fake_sources.updated, fake_sources.deleted), ([], [], []))
+
+    def test_a_bad_entry_or_a_source_added_meanwhile_is_skipped_and_the_rest_imported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            config_path.write_text(json.dumps({"platforms": {
+                "rss": {"sources": ["not an entry", {"state": "enabled"}, {"id": "https://raced.example/feed.xml"},
+                                    {"id": "https://good.example/feed.xml", "state": "enabled"}]},
+                "youtube": {"sources": "not a list"},
+            }}), encoding="utf-8")
+            fake_sources = FakeSourcesService([])
+            # Another container's start added this one between the read and the add.
+            fake_sources.get_all_sources = lambda: []
+            fake_sources.sources.append({"id": "r", "platform": "rss", "handle_or_url": "https://raced.example/feed.xml",
+                                         "enabled": True})
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+
+            result = service.import_json()
+
+            self.assertEqual(fake_sources.added, [("rss", "https://good.example/feed.xml")])
+            self.assertEqual(len(result["skipped"]), 4, result["skipped"])
+            self.assertTrue(any("already a source" in line for line in result["skipped"]))
+
+    def test_the_export_is_atomic_a_failed_write_leaves_the_old_file_whole(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            config_path.write_text('{"platforms": {}}\n', encoding="utf-8")
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = FakeSourcesService([
+                {"id": "1", "platform": "rss", "handle_or_url": "https://example.com/feed.xml", "enabled": True},
+            ])
+
+            def cut_short(document, handle, **kwargs):
+                handle.write('{"platforms": {"rss"')
+                raise OSError("disk full")
+
+            with mock.patch("insight_core.services.source_config_sync_service.json.dump", side_effect=cut_short):
+                with self.assertRaises(OSError):
+                    service.export_db_to_json()
+
+            self.assertEqual(config_path.read_text(encoding="utf-8"), '{"platforms": {}}\n')
+            self.assertEqual(sorted(p.name for p in Path(tmpdir).iterdir()), ["sources.json"], "no temporary file left")
+            service.export_db_to_json()
+            self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["platforms"]["rss"]["sources"],
+                             [{"id": "https://example.com/feed.xml", "state": "enabled"}])
 
     def _write(self, config_path, sources):
         config_path.write_text(
@@ -120,10 +170,10 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
             service.sources_service = fake_sources
 
-            first = service.sync_json_to_db(mirror=True)
-            second = service.sync_json_to_db(mirror=True)
+            first = service.import_json()
+            second = service.import_json()
 
-            self.assertEqual((first["success"], second["success"]), (True, True), second["stats"]["errors"])
+            self.assertEqual((first["skipped"], second["skipped"]), ([], []))
             self.assertEqual(fake_sources.added, [("rss", "https://blog.example/feed.xml")])
             self.assertEqual(fake_sources.deleted, [])
 
@@ -138,7 +188,7 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
             service.sources_service = fake_sources
 
-            service.sync_json_to_db(mirror=False)
+            service.import_json()
 
             flags = {s["handle_or_url"]: s["in_main_digest"] for s in fake_sources.sources}
             self.assertEqual(flags, {"https://rss.arxiv.org/rss/cs.AI": False, "https://blog.example/feed.xml": True})
@@ -155,9 +205,9 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
             service.sources_service = fake_sources
 
-            result = service.sync_json_to_db(mirror=True)
+            result = service.import_json()
 
-            self.assertTrue(result["success"])
+            self.assertEqual(result["skipped"], [])
             self.assertTrue(fake_sources.sources[0]["in_main_digest"], "the user's re-enable sticks")
 
     def test_export_round_trips_in_main_digest(self):
@@ -179,9 +229,55 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
 
             fresh = FakeSourcesService([])
             service.sources_service = fresh
-            service.sync_json_to_db(mirror=False)
+            service.import_json()
             self.assertEqual({s["handle_or_url"]: s["in_main_digest"] for s in fresh.sources},
                              {"https://rss.arxiv.org/rss/cs.AI": False, "https://blog.example/feed.xml": True})
+
+
+@requires_test_db
+class ImportOnceDbTests(unittest.TestCase):
+    """The containers' start imports a file once per database (issue 0071)."""
+
+    def setUp(self):
+        self.url = db_url()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_path = Path(self.tmp.name) / "sources.json"
+        self.handle = scratch_handle()
+        self._clean()
+        self.addCleanup(self._clean)
+        self.service = SourceConfigSyncService(self.url, config_path=self.config_path)
+
+    def _clean(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            cur.execute("DELETE FROM system_settings WHERE key = %s", (IMPORTED_KEY,))
+
+    def _write(self):
+        self.config_path.write_text(json.dumps({"platforms": {"rss": {"sources": [
+            {"id": self.handle, "state": "disabled"}]}}}), encoding="utf-8")
+
+    def _count(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM sources WHERE handle_or_url = %s", (self.handle,))
+            return cur.fetchone()[0]
+
+    def test_the_first_start_imports_and_a_later_one_leaves_the_database_as_it_is(self):
+        self._write()
+        self.assertEqual(self.service.import_once()["added"], 1)
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:   # Remove in the app
+            delete_scratch_sources(cur)
+
+        later = self.service.import_once()
+
+        self.assertTrue(later["imported_before"])
+        self.assertEqual(self._count(), 0, "a file still naming a removed source doesn't bring it back")
+
+    def test_a_start_with_no_file_imports_the_file_a_later_start_finds(self):
+        self.assertFalse(self.service.import_once()["read"])
+        self._write()
+        self.assertEqual(self.service.import_once()["added"], 1)
+        self.assertEqual(self._count(), 1)
 
 
 class YouTubeServiceTests(unittest.TestCase):

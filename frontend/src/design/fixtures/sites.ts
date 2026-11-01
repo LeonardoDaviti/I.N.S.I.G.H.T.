@@ -171,7 +171,6 @@ function namedRows(now: Date): SourceHealthRow[] {
 export function scheduler(now: Date, overrides: Partial<SchedulerConfig> = {}): SchedulerConfig {
   return {
     interval_hours: 24,
-    sync_sources_each_cycle: true,
     ingest_tick_minutes: 60,
     state: { last_tick_at: at(now, -12 * MINUTE), next_tick_at: at(now, 48 * MINUTE) },
     ...overrides,
