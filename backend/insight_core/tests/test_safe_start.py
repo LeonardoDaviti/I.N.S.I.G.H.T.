@@ -43,6 +43,19 @@ class StartScriptTests(unittest.TestCase):
                 self.assertIn("starting anyway", result.stderr)
 
 
+class OneWorkerTests(unittest.TestCase):
+    def test_the_api_start_refuses_more_than_one_worker_and_says_why(self):
+        result, calls = run_start("start-backend.sh", env={"API_WORKERS": "2"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("one worker", result.stderr)
+        self.assertEqual(calls, "", "nothing runs: no migration, no import, no server")
+
+    def test_the_api_starts_one_worker_even_when_uvicorn_would_read_more(self):
+        result, calls = run_start("start-backend.sh", env={"API_WORKERS": "1", "WEB_CONCURRENCY": "4"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(calls.splitlines()[-1].endswith("--workers 1"), calls)
+
+
 class PendingMigrationsTests(unittest.TestCase):
     @requires_db
     def test_update_lists_only_the_migrations_the_database_has_not_run(self):

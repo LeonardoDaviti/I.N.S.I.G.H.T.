@@ -35,10 +35,6 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-insight}:${DB_PASSWORD:-insight}@postgres:5432/${DB_NAME:-insight}
       API_PORT: 8000
-      # uvicorn --workers uses multiprocessing "spawn": zero copy-on-write, so each
-      # worker pays the full ~116MB import cost privately, plus the supervisor which
-      # imports the app and then only supervises. 1 worker is plenty for this load.
-      API_WORKERS: ${API_WORKERS:-1}
       BACKEND_PUBLIC_URL: http://localhost:${BACKEND_PORT:-8000}
       FRONTEND_PUBLIC_URL: http://localhost:${FRONTEND_PORT:-3000}
       INSIGHT_SOURCES_JSON_PATH: /app/insight_core/config/sources.json

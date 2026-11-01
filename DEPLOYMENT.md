@@ -10,6 +10,10 @@ feature overview; this file covers deploying, updating and troubleshooting.
 | `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`. |
 | `frontend` | `insight-frontend` | The built React app behind Nginx (`FRONTEND_PORT`), proxying `/api` to the backend. |
 
+The API runs as one uvicorn worker. Its start refuses `API_WORKERS` other than 1, with a line in
+`docker compose logs backend` saying why (issue 0071): two workers would close each other's jobs,
+lose an archive's or a Telegram sign-in's state between requests, and repeat the start's work.
+
 ## Networking
 
 - All four services share one bridge network, `insight-network`. The API and the scheduler
