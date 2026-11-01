@@ -37,7 +37,8 @@ export function jobDuration(job: JobRun): string | null {
   const events = job.status === 'interrupted' && Array.isArray(job.payload?.events)
     ? (job.payload.events as Array<Record<string, unknown>>).filter((event) => event.status !== 'interrupted') : [];
   const last = events.length ? events[events.length - 1].at : null;
-  return formatJobDuration(job.started_at, typeof last === 'string' ? last : job.status === 'interrupted' ? job.started_at : job.finished_at);
+  if (job.status === 'interrupted') return typeof last === 'string' ? formatJobDuration(job.started_at, last) : null;   // unknown: none
+  return formatJobDuration(job.started_at, job.finished_at);
 }
 
 /** The jobs that fetch posts; the daily `scheduler_cycle` is not one. */

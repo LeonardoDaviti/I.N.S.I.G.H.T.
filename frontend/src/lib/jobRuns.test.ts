@@ -68,7 +68,7 @@ test('a job a restart ended names its source and ran until its last event, not t
   } as unknown as JobRun;
   assert.equal(jobSummary(job), 'Fetch A Newsletter');
   assert.equal(jobDuration(job), '8s');
-  assert.equal(jobDuration({ ...job, payload: { events: [] } }), '<1s', 'no event before the restart: it ran no time we know of');
+  assert.equal(jobDuration({ ...job, payload: {} }), null, 'no events (the list): no length we know of, never the restart\'s');
   assert.equal(jobDuration({ ...job, status: 'success' }), '25h 18m', 'a finished job: start to finish');
 });
 
