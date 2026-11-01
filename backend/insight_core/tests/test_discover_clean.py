@@ -17,7 +17,8 @@ import psycopg
 
 from insight_core.db.repo_discover import KEPT_KEY
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.tests.test_discover_counts import assert_links_as_walked, reference_discover
 from insight_core.tests.test_discover_origins import root
 from insight_core.utils.post_links import section_of
@@ -79,21 +80,12 @@ class DiscoverCleanTests(unittest.TestCase):
         self.conn.close()
 
     def _voice(self, n):
-        source = insert_scratch_source(self.cur)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text) WHERE id = %s",
-                         (f"Voice {n} {self.mark}", source))
-        return source, f"voice{n}-{self.mark}.example"
+        return insert_source(self.cur, f"Voice {n} {self.mark}"), f"voice{n}-{self.mark}.example"
 
     def _post(self, voice, links, *, html=""):
         source, host = voice
         url = f"https://{host}/p/{uuid.uuid4().hex}"
-        self.cur.execute(
-            "INSERT INTO posts (source_id, url, normalized_url, url_host, content_html, published_at, links_scanned_at) "
-            "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id", (source, url, url, host, html))
-        post_id = self.cur.fetchone()[0]
-        for position, target in enumerate(links):
-            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position) VALUES (%s, %s, '', %s)",
-                             (post_id, target, position))
+        insert_post(self.cur, source, url, html=html, host=host, normalized=url, links=list(links))
 
     def _pages(self, host, n=2):
         return [f"https://{host}-{self.mark}.example/2026/10/story-{k}" for k in range(n)]

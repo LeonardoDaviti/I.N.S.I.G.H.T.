@@ -26,11 +26,11 @@ from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.posts_service import STORED_BODIES_KEY, PostsService
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.news_rules import news, tally
 from insight_core.utils.post_links import site_of
 from insight_core.utils.story_rules import StoryPost, group, origin_title, roles
-from insight_core.utils.url_normalization import normalize_url
 
 NOON = datetime(2026, 10, 27, 12, 0, 7, tzinfo=timezone.utc)
 ID = 2114444636303364349
@@ -137,23 +137,14 @@ class ReadingGapsJobTests(unittest.TestCase):
         self.conn.close()
 
     def _source(self, name, handle=None):
-        source = insert_scratch_source(self.cur, in_main_digest=True)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text),"
-                         " handle_or_url = COALESCE(%s, handle_or_url) WHERE id = %s", (name, handle, source))
-        return source
+        return insert_source(self.cur, name, handle=handle, in_main_digest=True)
 
     def _x(self, user):
         return self._source(user, f"https://nitter.local/{user}/rss")
 
     def _post(self, source, url, title, *, hours, html):
-        self.cur.execute(
-            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
-                                  published_at)
-               VALUES (%s, %s, %s, %s, %s, 'Body', %s, %s, %s) RETURNING id""",
-            (source, url, normalize_url(url), url.split("/")[2], title, html, uuid.uuid4().hex,
-             self.now - timedelta(hours=hours)),
-        )
-        return str(self.cur.fetchone()[0])
+        return str(insert_post(self.cur, source, url, at=self.now - timedelta(hours=hours), title=title,
+                               content="Body", html=html, content_hash=uuid.uuid4().hex))
 
     def _tweet(self, source, user, n, title, *, minutes=0, html=None):
         text = title.split(": ", 1)[-1] if title.startswith(("RT by @", "R to @")) else title

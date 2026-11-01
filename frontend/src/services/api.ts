@@ -406,9 +406,8 @@ export interface SchedulerState {
 }
 
 export interface SchedulerConfig {
-  /** The daily upkeep interval (pruning, cadence, the sources.json sync). Not edited here; sent back as read. */
+  /** The daily upkeep interval (pruning, cadence). Not edited here; sent back as read. */
   interval_hours?: number;
-  sync_sources_each_cycle: boolean;
   /** How often the ingestion tick looks for due sources (>= 15). */
   ingest_tick_minutes?: number;
   updated_at?: string | null;
@@ -1070,7 +1069,6 @@ export function createApi() {
       method: 'PUT',
       body: {
         intervalHours: config.interval_hours,
-        syncSourcesEachCycle: config.sync_sources_each_cycle,
         ingestTickMinutes: config.ingest_tick_minutes,
       },
     })),

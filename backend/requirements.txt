@@ -1,7 +1,15 @@
-telethon
-python-dotenv
+# Pinned to the versions in the image that runs v9.12 (pip freeze in insight-backend:lab-f15fd9d,
+# issue 0071), so a rebuild installs what was tested. Change a pin on purpose, then run the tests.
+# pydantic and starlette are imported directly (main.py), so they are pinned too.
+# yt-dlp alone floats: sites break it, and a newer one is the fix. It is reinstalled only when this
+# file changes or on ./update --refresh, which rebuilds the pip layer (2026.10.26 in that image).
+telethon==1.45.0
+python-dotenv==1.2.4
 yt-dlp
-fastapi
-uvicorn
-psycopg[binary,pool]
-cryptography
+fastapi==0.162.0
+starlette==1.10.0
+pydantic==2.14.2
+uvicorn==0.54.0
+psycopg[binary,pool]==3.3.6
+psycopg-pool==3.3.3
+cryptography==50.0.2

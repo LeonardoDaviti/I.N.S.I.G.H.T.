@@ -12,6 +12,7 @@ import sys
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -23,6 +24,7 @@ from insight_core.db.repo_stories import StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.news_rules import (Citation, classics, is_reference, lead, names, news, score, surges,
                                           tally)
 from insight_core.utils.story_rules import StoryPost, group
@@ -32,11 +34,7 @@ T0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
 LONG_AGO = T0 - timedelta(days=400)
 
 
-def post(pid, source, *, hours=0.0, kind="site", site=None, title=None, text_hash=None, chars=0, links=(),
-         author=None, words=None):
-    return StoryPost(id=pid, source_id=source, kind=kind, own_site=site or f"{source}.test",
-                     t=T0 + timedelta(hours=hours), title=title, content_hash=text_hash, text_chars=chars,
-                     words=words, author=author, links=[(u, s) for u, s in links])
+post = partial(story_post, at=T0, chars=0)
 
 
 def followed(*sources, since=LONG_AGO):
@@ -238,21 +236,12 @@ class NewsJobTests(unittest.TestCase):
         self.conn.close()
 
     def _source(self, name, *, days_followed=60, main=True):
-        source = insert_scratch_source(self.cur, in_main_digest=main)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text), "
-                         "created_at = now() - make_interval(days => %s) WHERE id = %s", (name, days_followed, source))
-        return source
+        return insert_source(self.cur, name, in_main_digest=main, followed_days=days_followed)
 
     def _post(self, source, *, site, hours_ago=1.0, title="A post", html=None, url=None):
         url = url or f"https://{site}-{self.mark}.test/{uuid.uuid4().hex}"
-        self.cur.execute(
-            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
-                                  published_at)
-               VALUES (%s, %s, %s, %s, %s, 'Body', %s, %s, %s) RETURNING id""",
-            (source, url, normalize_url(url), f"{site}-{self.mark}.test", title, html, uuid.uuid4().hex,
-             self.now - timedelta(hours=hours_ago)),
-        )
-        return str(self.cur.fetchone()[0])
+        return str(insert_post(self.cur, source, url, at=self.now - timedelta(hours=hours_ago), title=title,
+                               content="Body", html=html, content_hash=uuid.uuid4().hex, host=f"{site}-{self.mark}.test"))
 
     def _job(self):
         while StoriesRepository().fill_missing_links(self.cur):

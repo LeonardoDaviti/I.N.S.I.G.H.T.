@@ -204,7 +204,7 @@ class SourceDoctor:
                 and site(replacement["url"]) == site(address)):
             try:
                 await asyncio.to_thread(self.store.switch, str(source["id"]), replacement["url"], None)
-            except Exception as exc:  # noqa: BLE001 - already a source, sources.json unwritable: suggest it
+            except Exception as exc:  # noqa: BLE001 - already a source: suggest it
                 logger.warning("Source doctor: could not switch %s to %s (%s)", name, replacement["url"], exc)
             else:
                 line = f"{name}: feed moved, now following {short_address(replacement['url'])}"

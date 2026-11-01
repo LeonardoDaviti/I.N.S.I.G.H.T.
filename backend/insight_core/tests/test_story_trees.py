@@ -23,10 +23,10 @@ from insight_core.db.repo_reader import FeedQuery, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.post_detail_service import PostDetailService
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import db_url, requires_test_db, scratch_handle
+from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.news_rules import lead
 from insight_core.utils.story_rules import PARENT_REASONS, StoryPost, group
-from insight_core.utils.url_normalization import normalize_url
 
 DAY = datetime(2026, 10, 26, tzinfo=timezone.utc)   # 00:00:00: a date alone
 NOON = DAY + timedelta(hours=12)
@@ -34,12 +34,9 @@ PAGE = "https://openai.com/index/introducing-terra"
 LONG = "x" * 200
 
 
-def post(pid, source, *, at=None, hours=0.0, kind="site", site=None, url=None, links=(), title=None,
-         text_hash=None, home=None, updated=False, texts=None):
-    return StoryPost(id=pid, source_id=source, kind=kind, own_site=site or f"{source}.test",
-                     t=(at or NOON) + timedelta(hours=hours), title=title, url=url or f"https://{source}.test/{pid}",
-                     content_hash=text_hash, text_chars=200 if text_hash else 0, links=list(links),
-                     link_texts=dict(texts or {}), updated=updated, home_site=home)
+def post(pid, source, *, at=None, url=None, **fields):
+    """story_post at NOON, at its own address unless `url` says."""
+    return story_post(pid, source, at=at or NOON, url=url or f"https://{source}.test/{pid}", **fields)
 
 
 def only(posts):
@@ -253,19 +250,11 @@ class TreeJobTests(unittest.TestCase):
         self.conn.close()
 
     def _source(self, name, handle_suffix=""):
-        source = insert_scratch_source(self.cur, in_main_digest=True)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text),"
-                         " handle_or_url = handle_or_url || %s WHERE id = %s", (name, handle_suffix, source))
-        return source
+        return insert_source(self.cur, name, handle=scratch_handle() + handle_suffix, in_main_digest=True)
 
     def _post(self, source, url, *, at, title, html=None):
-        self.cur.execute(
-            """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
-                                  published_at)
-               VALUES (%s, %s, %s, %s, %s, 'Body', %s, %s, %s) RETURNING id""",
-            (source, url, normalize_url(url), url.split("/")[2], title, html, uuid.uuid4().hex, at),
-        )
-        return str(self.cur.fetchone()[0])
+        return str(insert_post(self.cur, source, url, at=at, title=title, content="Body", html=html,
+                               content_hash=uuid.uuid4().hex))
 
     def _terra(self):
         page = f"https://openai-{self.mark}.test/index/introducing-terra"

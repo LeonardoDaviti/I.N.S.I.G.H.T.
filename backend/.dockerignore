@@ -39,3 +39,5 @@ docs/
 # Git
 .git/
 .gitignore
+# The sources export lives in the bind-mounted config directory, never in the image
+insight_core/config/sources.json

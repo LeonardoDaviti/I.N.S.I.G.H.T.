@@ -303,7 +303,7 @@ describe('SourcesConfig', () => {
     const getSourcesHealth = vi.fn().mockResolvedValue(healthResponse([
       healthRow({ source_id: 'simon', display_name: 'Simon Willison’s Weblog', status: 'due', decision: 'fetch_due', folders: [ai] }),
     ]));
-    const getSchedulerConfig = vi.fn().mockResolvedValue({ success: true, scheduler: { sync_sources_each_cycle: false, state } });
+    const getSchedulerConfig = vi.fn().mockResolvedValue({ success: true, scheduler: { state } });
     setup('/settings/sources', { getSourcesHealth, getSchedulerConfig });
     await userEvent.click(await screen.findByRole('button', { name: 'Simon Willison’s Weblog' }));
     const sheet = await screen.findByRole('dialog');

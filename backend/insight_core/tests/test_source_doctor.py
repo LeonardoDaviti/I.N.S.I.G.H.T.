@@ -479,11 +479,11 @@ class SwitchDbTests(unittest.TestCase):
         self.assertEqual(self._fetch("SELECT settings ? 'page_watch', settings->>'display_name' FROM sources WHERE id = %s"),
                          (False, "Arena"))
 
-    def test_when_sources_json_cannot_be_written_the_switch_is_undone(self):
+    def test_when_sources_json_cannot_be_written_the_switch_stands(self):
+        """The database is the truth (issue 0071): the export failing is logged, nothing undone."""
         with mock.patch.object(self.sync, "export_db_to_json", side_effect=OSError("read-only")):
-            with self.assertRaises(OSError):
-                self.sync.switch_source(self.source_id, self.new)
-        self.assertEqual(self._fetch("SELECT handle_or_url FROM sources WHERE id = %s")[0], self.old)
+            self.sync.switch_source(self.source_id, self.new)
+        self.assertEqual(self._fetch("SELECT handle_or_url FROM sources WHERE id = %s")[0], self.new)
 
     def test_an_address_that_is_already_a_source_is_refused(self):
         with psycopg.connect(self.url) as conn, conn.cursor() as cur:

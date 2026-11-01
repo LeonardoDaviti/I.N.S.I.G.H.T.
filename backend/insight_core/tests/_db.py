@@ -5,7 +5,7 @@ Two isolation patterns (spec §5 conventions):
     as long as every assertion is scoped to the test's own scratch rows.
   - scratch-source + commit: rows that must be committed. Those classes are decorated
     with @requires_test_db, so they only ever run against a database whose name ends in
-    `_test` - run-tests.sh defaults to the live `insight` DB.
+    `_test`. run-tests.sh gives each run a database of its own, named so (issue 0071).
 """
 from __future__ import annotations
 

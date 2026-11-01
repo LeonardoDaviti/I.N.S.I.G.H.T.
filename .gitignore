@@ -14,7 +14,9 @@ __pycache__
 !index.html
 youtube_transcript_https
 reddit_post_analysis_https
-!sources.json
+# sources.json is the export of your sources, never committed (issue 0071); new installs
+# start from the example
+!backend/insight_core/config/sources.example.json
 !.env.example
 !package.json
 !frontend/package-lock.json

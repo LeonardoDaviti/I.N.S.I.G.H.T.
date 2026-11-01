@@ -164,22 +164,19 @@ class DailyWorkTests(unittest.IsolatedAsyncioTestCase):
     async def test_the_upkeep_runs_and_starts_no_jobs(self):
         ops = PruneOps()
         with mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=3) as cadence, \
-             mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.sync_json_to_db",
-                        return_value={"success": True}) as sync:
+             mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.import_json") as sync:
             # An old stored config may still carry the retired briefing switches: ignored.
             await daily_work("postgresql://unused@localhost/none", ops,
                              {"generate_daily_briefing": True, "generate_topic_briefing": True})
         self.assertEqual(ops.pruned, 1)
         self.assertEqual(cadence.call_count, 1)
-        self.assertEqual(sync.call_count, 1)
+        self.assertEqual(sync.call_count, 0, "sources.json is never read by the upkeep (issue 0071)")
         self.assertEqual(ops.job_types(), [])
 
     async def test_a_malformed_retention_falls_back_to_30_days(self):
         ops = PruneOps()
         with mock.patch.dict("os.environ", {"INSIGHT_JOB_RUNS_RETAIN_DAYS": "a month"}), \
-             mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=0), \
-             mock.patch("insight_core.services.source_config_sync_service.SourceConfigSyncService.sync_json_to_db",
-                        return_value={"success": True}):
+             mock.patch("insight_core.ingestion.ports.DbFetchStateStore.refresh_cadence", return_value=0):
             await daily_work("postgresql://unused@localhost/none", ops, {})
         self.assertEqual(ops.retain_days, 30)
 

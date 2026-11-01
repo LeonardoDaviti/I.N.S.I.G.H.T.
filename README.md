@@ -2,13 +2,25 @@
 
 I.N.S.I.G.H.T. is a single place for all your sources and one calm reading flow. It collects posts from selected sources on a per-source cadence, stores them in PostgreSQL, and gives you one reader over all of them. It also supports one-time archive backfills.
 
-Mark IX is a **reading-only** app. It has three places:
+Mark IX is a **reader**. The top bar reads `feed / sources / blog`:
 
-- **feed** (`/`): every source in one reading flow. The rail holds tracks (folders) and sources.
-- **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉).
-- **sources** (`/settings/sources`): the list, add, tracks, health and cadence, plus the `connections` and `ingestion` tabs.
+- **feed** (`/`, `/read/...`): every source in one reading flow. The rail holds tracks (folders)
+  and sources. Its views: **Stream**, **By source**, **News** (the stories several of your voices
+  cover now) and **Classics** (pages your voices keep linking over time). A post that several
+  sources cover is one row, a story, with its other posts under it as a tree.
+- **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉),
+  and the story it belongs to, as a tree from its origin.
+- **search** (`/search`): every post, by title, source name and text.
+- **save** (`/save`): save any page as a post (the bookmarklet's and ⌘K's).
+- **sources** (`/settings/sources`): tabs `sources / discover / connections / ingestion`. Discover
+  suggests the sites and accounts your sources keep linking that you don't follow.
+- **blog** (`/blog`); the Design Studio (`/design`) is reached from ⌘K.
 
-The analysis layer (entity/event memory, experts, briefings, stories, inbox, Gemini) was retired in issue 0005. The last commit that still holds it is tagged `mark-ix-analysis-archive`.
+Stories came back as a reading feature (issues 0050, 0051, 0064): the story job groups the posts
+that cover one thing (by address, text, title, links, reposts, threads and quotes), draws each
+story as a tree, and derives News, Classics and Discover from the same links. The old analysis
+layer (entity and event memory, experts, briefings, the inbox, Gemini) was retired in issue 0005;
+the tag `mark-ix-analysis-archive` holds it.
 
 ## What It Does
 
@@ -17,7 +29,7 @@ The analysis layer (entity/event memory, experts, briefings, stories, inbox, Gem
 - Fetches every source through one ingestion entry point, on a per-source cadence with backoff for failing sources.
 - Gives you one reader over all sources (`/`): unread, starred and read state, tracks (folders) as filters.
 - Uses the same post storage path for archive and live ingestion.
-- Keeps `backend/insight_core/config/sources.json` and the database source registry in sync.
+- Keeps your sources in the database, and writes them to `backend/insight_core/config/sources.json` as an export after each change.
 
 ## Data Model
 
@@ -33,20 +45,21 @@ Important tables:
 
 The full schema is in `backend/insight_core/docs/DB.md`.
 
-## Source Sync
+## Sources and sources.json
 
-`sources.json` and the database stay synchronized in both directions:
+The database is the truth for your sources (issue 0071). `sources.json` is their export:
 
-- On backend start: `sources.json -> DB`
-- On scheduler cycle: `sources.json -> DB`
-- On API source changes: `DB -> sources.json`
+- Adding, editing and removing a source in the app write the database, then rewrite the file
+  (to a temporary file, then renamed over it, so a crash never leaves it cut short).
+- A source is removed only by Remove in the app. Nothing deletes a source because a file lacks it.
+- The first start of a database imports the file once: it adds the sources the database lacks and
+  sets each one's on/off, and never deletes. Later starts don't read it.
+- To import a file by hand (add-only):
+  `docker compose exec backend python insight_core/scripts/sync_sources_json.py json-to-db`.
+- A missing, empty or broken file changes nothing; a bad entry is skipped with a line in the log.
+- The file is not in git. `backend/insight_core/config/sources.example.json` is a starting point.
 
-File path:
-
-- `backend/insight_core/config/sources.json`
-- Override with `INSIGHT_SOURCES_JSON_PATH`
-
-This lets you keep editing `sources.json` manually without losing DB-backed behavior.
+File path: `backend/insight_core/config/sources.json`; override with `INSIGHT_SOURCES_JSON_PATH`.
 
 ## Supported Source Types
 
@@ -82,7 +95,7 @@ The recommended production layout is the included `docker-compose.yml`:
 The scheduler has two clocks:
 
 - the ingestion tick, every `ingest_tick_minutes` (default `60`, floor `15`, env `INSIGHT_INGEST_TICK_MINUTES`). Each tick is one ingestion run over all enabled sources, and each source's cadence decides whether it is due, so a tick fetches only the sources whose interval has passed or whose backoff has expired. A failing source retries on a backoff ladder (`INSIGHT_BACKOFF_*` in `.env.example`).
-- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs`, refresh source cadence and sync `sources.json -> DB`.
+- daily work, once `interval_hours` (default `20`) have passed since it last ran: prune old `job_runs` and refresh source cadence.
 
 Archive is never run automatically; it is a manual action only. Backend and ingestion share a persistent `insight_logs` volume, so the Ingestion tab can show recent runtime logs.
 
@@ -105,7 +118,9 @@ Important values:
 - `FRONTEND_PORT`
 - `INSIGHT_SOURCES_JSON_PATH`
 
-3. Optional: edit `backend/insight_core/config/sources.json` before first boot if you want some sources preloaded without using the frontend.
+3. Optional: to start with some sources without using the app, copy
+   `backend/insight_core/config/sources.example.json` to `sources.json` beside it and edit it before
+   the first start. The first start imports it once.
 
 4. Start the stack:
 
@@ -130,22 +145,25 @@ Default URLs:
 What happens automatically on startup:
 
 - PostgreSQL starts and persists data in `postgres_data`
-- backend runs migrations, syncs `sources.json -> DB`, and starts the API
-- ingestion runs migrations, syncs `sources.json -> DB`, runs its first tick immediately, then ticks every `ingest_tick_minutes`
+- backend runs migrations, imports `sources.json` if this database never imported one (add-only), and starts the API
+- ingestion runs migrations, the same import, runs its first tick immediately, then ticks every `ingest_tick_minutes`
 - daily work runs when `interval_hours` have passed since it last ran; the first tick after a deploy does not run it again
-- source changes made in the API are exported back into `sources.json`
+- source changes made in the app are written to the database, then exported to `sources.json`
 
-Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources`:
+Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources / blog`:
 
 - `/`, `/read/:scopeKind/:scopeId`: the reader. Unread / starred / all, stream or by source, keyboard shortcuts (`?` lists them). The rail lists tracks and sources.
 - `/posts/:postId`: the reading view of one post, with prev/next in feed order. Content only, with ↗ ☆ ⧉.
 - `/tracks/:trackId`: one track's reading view. ⌘K has one "Tracks…" entry per track. Fetch, rename, main digest and delete are in the track group's ⋯ menu on the sources list.
-- `/settings/sources`: three tabs, `sources / connections / ingestion`.
+- `/search`: search every post. `/save`: save any page. `/blog`: the engineering blog.
+- News and Classics are views of the reader (the toolbar's view menu), of the Main feed or a track.
+- `/settings/sources`: four tabs, `sources / discover / connections / ingestion`.
   - `sources`: the list, add/edit, tracks, health and cadence. The old `?tab=health` URL still works and opens the list with its status filter.
+  - `discover` (`?tab=discover`): the sites and accounts 3+ of your sources link that you don't follow, and the stories they started.
   - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram and Substack. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
   - `ingestion` (`?tab=ingestion`): the run report, `Run due sources`, the scheduler interval and status, and the job history (`&sub=jobs`; `&job=<id>` opens one job).
 
-The old analysis paths `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
+The old analysis paths `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/` (stories today live in the feed, not at `/stories`). `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
 
 The UI is monochrome, dark by default, with a theme toggle in the top bar. The design rules live in `frontend/src/design/docs` (shown at `/design`).
 
@@ -153,7 +171,7 @@ The UI is monochrome, dark by default, with a theme toggle in the top bar. The d
 
 These are configurable in `.env`:
 
-- `BACKEND_PORT`: host port for backend API
+- `BACKEND_PORT`: host port for backend API, published on `127.0.0.1` only (the app reaches the API through the frontend's `/api`)
 - `FRONTEND_PORT`: host port for frontend
 
 The backend CORS config follows `FRONTEND_PUBLIC_URL` and can be overridden with `CORS_ALLOW_ORIGINS`.
@@ -294,7 +312,7 @@ References:
 
 ## Tests
 
-Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so it defaults to the scratch database `insight_test`, never the live `insight`; override with `TEST_DATABASE_URL`. `MIGRATE=1` applies pending migrations to that database first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
+Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so each run creates a database of its own (`insight_run_<time>_<pid>_test`), migrates it, and drops it when the run ends, so two runs at once never share rows; never the live `insight`. `TEST_DATABASE_URL` uses a database of your own instead, and `MIGRATE=1` applies pending migrations to it first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
 ## Notes
 
