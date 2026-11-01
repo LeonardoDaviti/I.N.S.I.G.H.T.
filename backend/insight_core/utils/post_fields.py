@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Tuple
 from .addresses import tweet_author
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
+from .post_links import quoted_tweet
 from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 
 TITLE_MAX_CHARS = 120             # not measured
@@ -46,14 +47,16 @@ def _glued_first_line(cut: str, content: str | None, whole: bool = False) -> str
 
     A `whole` title (not cut, issue 0069: "$500Изменения уже действуют.") ends only where the title
     runs on into the next line's first character; a space a tag left in the body ("@user !",
-    "ИИ , знают", "« Смит") is not a line's end. Its own spacing is kept."""
+    "ИИ , знают", "« Смит") is not a line's end. Its own spacing is kept. Neither is it in a cut
+    title, nor a space before a lowercase letter (issue 0072: "Model Z , а" was "<b>Model Z</b>, а")."""
     title, body = clean_text(cut), clean_text(content)
     i = j = 0
     while i < len(title) and j < len(body):
         if title[i] == body[j]:
             i, j = i + 1, j + 1
         elif body[j].isspace() and not title[i].isspace():
-            if len(_WORD_RE.findall(body[:j])) >= 2 and (not whole or (_starts_line(title, i) and body[j + 1:j + 2] == title[i])):
+            if len(_WORD_RE.findall(body[:j])) >= 2 and _starts_line(title, i) and (
+                    body[j + 1:j + 2] == title[i] if whole else not title[i].islower()):
                 return (title[:i] if whole else body[:j]).rstrip()
             j += 1   # a space after a leading emoji or one word ("🌸 Релизим"), or a tag's
         else:
@@ -76,20 +79,82 @@ _MARK_RE = re.compile(r"^[>•*\-–—]\s+")
 # page's title and description, each ended by a break; the stored text has lost those breaks.
 _PREVIEW_SITE_RE = re.compile(r"<cite>.*?</cite>", re.I | re.S)
 # A preview of a tweet is titled by its author, "Percy Liang (@percyliang)": who, not what; its text says it.
-_BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)$")
+# A quoted tweet's words open on it too (issue 0072): who is quoted, not what.
+_BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)(?:\s+|$)")
 _LINE_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/b|/blockquote|/li|/h[1-6])>", re.I)
+# A line's end in a body's HTML (issue 0072): a break or a block's end; a bold word ends no line.
+_BLOCK_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/div|/blockquote|/li|/h[1-6])>", re.I)
+
+
+# Nitter's quote of a tweet (issue 0072): a card that opens on its author in bold, "Name (@user)", and
+# ends on a footer citing it, "— https://nitter.local/user/status/1#m"; the post links the quoted tweet
+# above it by a bare address. Who and where, never the post's words: they leave its text and HTML.
+_QUOTE_CARD_RE = re.compile(r"<blockquote>\s*<b>([^<]*\(@(\w+)\))</b>", re.I)
+_QUOTE_FOOTER_RE = re.compile(r"\s*— https?://\S+/status/\d+\S*\s*$")
+_QUOTE_FOOTER_HTML_RE = re.compile(r"\s*<footer>\s*—\s*<cite>\s*<a\b[^>]*/status/\d+[^>]*>[^<]*</a>\s*(?:</cite>\s*)?</footer>", re.I)
+
+
+def _quoted_address_re(user: str) -> re.Pattern:
+    """The bare link to a tweet of `user` (its text an address, no spaces) that Nitter writes before a quote card."""
+    return re.compile(rf'<a\b[^>]*href="[^"]*/{re.escape(user)}/status/\d+[^"]*"[^>]*>([^<\s]*)</a>', re.I)
+
+
+def without_quote_marks(content: str | None, html: str | None) -> Tuple[str | None, str | None]:
+    """A tweet's text and HTML without its quote card's byline and footer and the quoted tweet's bare
+    address (issue 0072); the quoted words stay, in the card. Anything else as it is. `html` may be only
+    the HTML's start: a card that starts after it is left alone."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card:
+        return content, html
+    address = _quoted_address_re(card.group(2))
+    link = address.search(html[:card.start()])
+    if content:
+        content = _QUOTE_FOOTER_RE.sub("", content)
+        # The byline becomes a line's end: the post's own words end where the quote begins.
+        for mark, gap in ((html_lib.unescape(link.group(1)) if link else None, " "), (html_lib.unescape(card.group(1)), "\n")):
+            at = content.find(mark) if mark else -1
+            if at >= 0:
+                content = (content[:at].rstrip() + gap + content[at + len(mark):].lstrip()).strip()
+    html = _QUOTE_FOOTER_HTML_RE.sub("", html)
+    if link:
+        html = html[:link.start()] + html[link.end():]
+    return content, _EMPTY_P_RE.sub("", html).strip()
+
+
+def quote_only(html: str | None) -> str | None:
+    """The tweet a post only quotes, normalized (issue 0072): before the quote card it has nothing of its
+    own (no words, emoji or pictures), only the quoted tweet's bare address. Else None."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card:
+        return None
+    own = _quoted_address_re(card.group(2)).sub("", html[:card.start()])
+    if re.search(r"<(?:img|video)\b", own, re.I) or html_lib.unescape(_TAG_RE.sub("", own)).strip():
+        return None
+    return quoted_tweet(html)
 
 
 def _words(line: str, preview: bool = False) -> str:
     """A line as a title's words, a placeholder nothing. `preview`: the text under a placeholder
     title, where a leading address is the link the post shares, its words after it."""
-    line = _LEADING_ADDRESS_RE.sub("", line) if preview else line
-    return "" if _PLACEHOLDER_RE.match(line) or (preview and _BYLINE_RE.match(line)) else line
+    line = _BYLINE_RE.sub("", _LEADING_ADDRESS_RE.sub("", line)) if preview else line
+    return "" if _PLACEHOLDER_RE.match(line) else line
 
 
-def _html_lines(html: str) -> str:
-    """HTML's text, one line per break or block, a link preview's site name left out."""
-    return html_lib.unescape(_TAG_RE.sub("", _LINE_END_RE.sub("\n", _PREVIEW_SITE_RE.sub("", html))))
+def _html_lines(html: str, ends: re.Pattern = _LINE_END_RE) -> str:
+    """HTML's text, one line per break or block (`ends`), a link preview's site name left out."""
+    return html_lib.unescape(_TAG_RE.sub("", ends.sub("\n", _PREVIEW_SITE_RE.sub("", html))))
+
+
+def _squashed(text: str | None) -> str:
+    """Text without its whitespace, to tell whether one text starts another (issue 0072: "X *" and
+    "X*" are one start)."""
+    return re.sub(r"\s+", "", clean_text(text))
+
+
+def _false_end(title: str) -> bool:
+    """A title the source ended where no sentence ends (issue 0072): inside an open bracket ("(?"),
+    or at an abbreviation's period ("т.к.", "U.S.") that SENTENCE_END_RE doesn't take as an end."""
+    return title.count("(") > title.count(")") or (title.endswith(".") and not SENTENCE_END_RE.search(title, len(title) - 1))
 
 
 def display_title(title: str | None, content: str | None, html: str | None = None) -> str:
@@ -110,23 +175,86 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     link preview's `html` gives the page's title as its own line, not run on with the site's name.
     """
     stored = REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip()))   # issue 0066
+    # A quote card's byline and footer aren't the post's words (issue 0072).
+    content = _QUOTE_FOOTER_RE.sub("", without_quote_marks(content, html)[0] or "")
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
+    cut = re.sub(r"&#?\w*$", "", cut).rstrip() if cut != stored else cut   # the bridge cut inside "&quot;" (0072)
     placeholder = bool(stored) and not _words(clean_text(stored))
-    glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder else None
-    from_body = not stored or placeholder or (
-        cut != stored and bool(cut) and clean_text(content).startswith(clean_text(cut))
-    )
-    text = (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content) if from_body else stored
-    raws = [clean_text(raw) for raw in (text or "").splitlines() if clean_text(raw)]
+    # Issue 0072: a title ended where no sentence ends is cut too, and a cut title starts the text
+    # whatever its spaces; its line comes from the HTML's breaks when the text has lost them.
+    false_end = cut == stored and _false_end(stored)
+    starts = _squashed(content).startswith(_squashed(cut)) and (not false_end or len(_squashed(content)) > len(_squashed(cut)))
+    from_body = not stored or placeholder or ((cut != stored or false_end) and bool(cut) and starts)
+    lines_html = _html_lines(html, _BLOCK_END_RE) if html and from_body and not placeholder else None
+    first = next((clean_text(line) for line in (lines_html or "").splitlines() if _WORD_RE.search(line)), "")
+    if not (first and (_squashed(first).startswith(_squashed(cut)) or _squashed(cut).startswith(_squashed(first)))):
+        lines_html = None   # the HTML opens on something else: the text says it
+    glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder and not lines_html else None
+    text = (lines_html or (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content)) if from_body else stored
+    raws, after_blank, blank = [], set(), False   # a line that opens a paragraph (issue 0072)
+    for raw in (text or "").splitlines():
+        if clean_text(raw):
+            after_blank |= {len(raws)} if blank else set()
+            raws.append(clean_text(raw))
+        blank = not clean_text(raw)
     lines = [words for raw in raws if (words := _words(raw, placeholder))]
     if glued or not lines:
-        return _cut(glued or clean_text(stored), False)
+        return _cut(_without_address(glued or clean_text(stored)), False)
     if raws[0] != lines[0] and _MARK_RE.match(lines[0]) and re.fullmatch(_ADDRESS, raws[0]):
-        return _cut(re.sub(r"^https?://(?:www\.)?", "", raws[0]), False)   # a link, then a list of what it is
+        return _cut(_bare(raws[0]), False)   # a link, then a list of what it is
     line = lines[0] = _MARK_RE.sub("", lines[0])
     run_on = (not from_body and len(lines) > 1 and len(line) < TITLE_MIN_SENTENCE_CHARS
               and not _FINISHED_RE.search(line))
-    return _cut(" ".join(lines) if run_on else line, run_on)
+    if run_on and len(lines) == len(raws):
+        line = _run_on(lines, after_blank)
+    elif run_on:
+        line = " ".join(lines)
+    return _cut(_without_address(line), run_on)
+
+
+def _run_on(lines: List[str], after_blank: set) -> str:
+    """A short unfinished first line run on into the lines after it (issue 0069), up to a label's or an
+    address's line ("paper: https://…", issue 0072). A name and its subtitle, each a paragraph
+    ("NAME", "A Subtitle…"), read "NAME: A Subtitle…"; a title wrapped in
+    lines reads as one."""
+    out = lines[0]
+    for i, line in enumerate(lines[1:], 1):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        label = _LABEL_LINE_RE.fullmatch(line) and (_TRAILING_ADDRESS_RE.search(line) or not nxt or _TRAILING_ADDRESS_RE.fullmatch(nxt))
+        if label or _TRAILING_ADDRESS_RE.fullmatch(line):
+            break
+        named = i == 1 and i in after_blank and out[-1:].isalnum() and line[:1].isupper()
+        out += (": " if named else " ") + line
+    return out
+
+
+# A label and its colon, one to three words (issue 0072: "paper:", "Download:", "📝 Blog:"), alone or
+# before an address: it says what the address is, never what the post is.
+_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2}:"
+_LABEL_LINE_RE = re.compile(rf"{_LABEL}(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{{2,}}/\S*))*\s*")
+_TRAILING_ADDRESS_RE = re.compile(r"(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{2,}/\S*))+\s*$")
+
+
+def _bare(address: str) -> str:
+    """An address as a title: no scheme, no www., no trailing slash ("agentville.world")."""
+    return re.sub(r"^https?://(?:www\.)?", "", address).rstrip("/")
+
+
+def _without_address(line: str) -> str:
+    """A title without the address it ends in, nor a label that address leaves alone (issue 0072:
+    "Вышла новая модель https://…" is "Вышла новая модель"); after a finished sentence, the words that
+    only led to it go too ("Thanks! Details are at"), and words that point at it (":", "->") keep it,
+    bare. A title left without words is the address, bare."""
+    address = _TRAILING_ADDRESS_RE.search(line)
+    if not address:
+        return line
+    words, bare = line[:address.start()].rstrip(" ([{«\"'"), _bare(address.group(0).split()[0])
+    if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
+        return bare
+    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: tool.test")
+        return f"{words} {bare}"
+    ends = [m.end() for m in SENTENCE_END_RE.finditer(words, TITLE_MIN_SENTENCE_CHARS - 1)]
+    return words[:ends[-1]] if ends and ends[-1] < len(words) else words
 
 
 def _cut(line: str, run_on: bool) -> str:
@@ -145,6 +273,7 @@ def _cut(line: str, run_on: bool) -> str:
 
 
 _TAG_RE = re.compile(r"(<[^>]*>)")
+_EMPTY_P_RE = re.compile(r"<p>\s*</p>\s*", re.I)
 _BLOCK_TAG_RE = re.compile(r"</?(?:p|br|h[1-6]|div|li|ul|ol|blockquote|hr|figure|section|header|article|table|tr|pre)\b", re.I)
 # What a title taken out of a body leaves at its start: breaks, and elements left empty.
 _LEFT_AT_START_RE = re.compile(r"^((?:\s*<(?!br\b)[a-z][^>]*>)*)\s*(?:<br\s*/?>\s*|<([a-z][a-z0-9]*)\b[^>]*>\s*</\2>\s*)+", re.I)
@@ -204,6 +333,24 @@ _HNRSS_LINE_RE = re.compile(r"(?:<hr\s*/?>\s*)?<p>\s*(?:Article URL|Comments URL
                             r"|(?:Article URL|Comments URL): \S+\s*|(?:Points|# Comments): \d+\s*", re.S)
 
 
+# Reddit's item footer (issue 0072): "submitted by /u/x [link] [comments]", the author and the page the
+# post shares; never its text. `[link]` is the shared page (its own thread for a text post).
+_SPACE = r"(?:\s|&#32;)*"
+_REDDIT_FOOTER_RE = re.compile(rf"{_SPACE}submitted by{_SPACE}/u/\S+{_SPACE}\[link\]{_SPACE}\[comments\]\s*$")
+_REDDIT_FOOTER_HTML_RE = re.compile(
+    rf'{_SPACE}submitted by{_SPACE}<a\b[^>]*>\s*/u/[^<]*</a>\s*(?:<br\s*/?>)?\s*<span>\s*<a href="([^"]*)">\[link\]</a>\s*</span>'
+    rf'{_SPACE}<span>\s*<a\b[^>]*>\[comments\]</a>\s*</span>', re.I)
+# A text that opens on a picture's address (a Reddit image post: "https://preview.redd.it/x.png?…"): no words.
+_LEADING_PICTURE_RE = re.compile(r"^(?:https?://\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?\s+)+", re.I)
+
+
+def link_post_target(html: str | None) -> str | None:
+    """The page a Reddit link post shares (its footer's `[link]`), when it is not Reddit itself; else None."""
+    match = _REDDIT_FOOTER_HTML_RE.search(html or "")
+    url = html_lib.unescape(match.group(1)) if match else ""
+    return url if url.startswith(("http://", "https://")) and "reddit.com" not in url and "redd.it" not in url else None
+
+
 def hnrss_counts(content: str | None) -> Dict[str, int] | None:
     """{points, comments} of a Hacker News item as hnrss writes it, else None."""
     match = _HNRSS_COUNTS_RE.search(content or "")
@@ -211,8 +358,16 @@ def hnrss_counts(content: str | None) -> Dict[str, int] | None:
 
 
 def body_without_feed_lines(body: str | None) -> str | None:
-    """A body (text or HTML) without hnrss's four lines; any other body as it is."""
-    return _HNRSS_LINE_RE.sub("", body).strip() if body and _HNRSS_COUNTS_RE.search(body) else body
+    """A body (text or HTML) without an aggregator's lines: hnrss's four, Reddit's footer (issue 0072:
+    a body left with no words, a link post's thumbnail, is empty); any other body as it is."""
+    if not body:
+        return body
+    if _HNRSS_COUNTS_RE.search(body):
+        return _HNRSS_LINE_RE.sub("", body).strip()
+    if _REDDIT_FOOTER_HTML_RE.search(body):
+        rest = _REDDIT_FOOTER_HTML_RE.sub("", body).strip()
+        return rest if _WORD_RE.search(strip_html(rest)) else ""
+    return _REDDIT_FOOTER_RE.sub("", body).strip() if _REDDIT_FOOTER_RE.search(body) else body
 
 
 def reading_text(title: str | None, content: str | None, html: str | None = None
@@ -221,7 +376,8 @@ def reading_text(title: str | None, content: str | None, html: str | None = None
     and the title out of the body's start when it was taken from it (issue 0070). Where the stored
     text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
     ended: `html` may be only the HTML's start."""
-    content, html = body_without_feed_lines(content), body_without_feed_lines(html)
+    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
+    content = _LEADING_PICTURE_RE.sub("", content) if content else content   # a picture's address is no text (0072)
     shown = display_title(title, content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after

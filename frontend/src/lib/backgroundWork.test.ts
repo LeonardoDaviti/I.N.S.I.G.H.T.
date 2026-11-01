@@ -25,7 +25,7 @@ test('all done: the last run with its counts, the index up to date, every link r
   assert.deepEqual(stories, {
     key: 'stories', label: 'Stories', status: 'ok', word: 'done',
     details: ['Last run 12m ago, took 5s · next run: after the next fetch run',
-      '5,018 posts grouped · 86 stories · 90 in News · 175 Classics'],
+      '5,018 posts grouped · 86 stories · 90 News stories, last 30 days · 175 Classics'],
   });
   assert.deepEqual([search.status, search.word], ['ok', 'up to date']);
   assert.deepEqual([links.status, links.word], ['ok', 'all read']);

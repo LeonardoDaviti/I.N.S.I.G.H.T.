@@ -21,12 +21,13 @@ export interface BackgroundLine {
   details: string[];
 }
 
-/** "5,018 posts grouped · 86 stories · 90 in News · 175 Classics": the counts the run recorded. */
+/** "5,018 posts grouped · 86 stories · 90 News stories, last 30 days · 175 Classics": the counts the run recorded.
+ *  News's count is every News story of the posts it grouped, not this week's that News lists (issue 0072). */
 export function storiesRunCounts(run: StoriesRunSummary): string {
   const parts: string[] = [];
   if (typeof run.posts === 'number') parts.push(`${plural(run.posts, 'post')} grouped`);
   if (typeof run.stories === 'number') parts.push(plural(run.stories, 'story', 'stories'));
-  if (typeof run.news === 'number') parts.push(`${formatCount(run.news)} in News`);
+  if (typeof run.news === 'number') parts.push(`${plural(run.news, 'News story', 'News stories')}, ${run.full ? 'all time' : 'last 30 days'}`);
   if (typeof run.classics === 'number') parts.push(plural(run.classics, 'Classic'));
   return parts.join(' · ');
 }

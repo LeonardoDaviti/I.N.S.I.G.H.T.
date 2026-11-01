@@ -62,6 +62,15 @@ describe('PostDetailPage header', () => {
     expect(screen.queryByText(/No content available/)).toBeNull();
   });
 
+  it('a link post with no words of its own opens the page it shares (issue 0072)', async () => {
+    const thread = 'https://www.reddit.com/r/sub/comments/1/a_model_is_now_open_weight/';
+    render(baseApi(rssPost({ url: thread, content: '', content_html: '', link: { url: 'https://models.test/news/open', title: null, post_id: null } })));
+    const article = await screen.findByRole('article', { name: 'Post content' });
+    expect(within(article).getByRole('link', { name: 'Read on models.test ↗' })).toHaveAttribute('href', 'https://models.test/news/open');
+    render(baseApi(rssPost({ url: thread, content: '', content_html: '', link: { url: 'https://models.test/news/open', title: 'Open weights, today', post_id: 'p-9' } })));
+    expect(await screen.findByRole('link', { name: 'Read “Open weights, today” on models.test' })).toHaveAttribute('href', '/posts/p-9');
+  });
+
   it('a post whose HTML field is blank reads its plain text', async () => {
     render(baseApi(rssPost({ content: 'A short summary of the post.', content_html: ' ' })));
     const article = await screen.findByRole('article', { name: 'Post content' });

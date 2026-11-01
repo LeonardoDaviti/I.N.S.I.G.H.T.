@@ -301,6 +301,18 @@ class TreeJobTests(unittest.TestCase):
         page_story = PostDetailService.story(self.cur, self.simon)
         self.assertEqual((page_story["parent_id"], page_story["parent_reason"]), (self.openai, "citation"))
 
+    def test_a_saved_page_is_never_named(self):
+        # Issue 0072: Saved is never a voice (0070 A8), so "covered by" never names it.
+        self._terra()
+        saved = insert_source(self.cur, "Saved", handle=scratch_handle(), platform="saved", in_main_digest=True)
+        page = self._post(saved, f"https://openai-{self.mark}.test/index/introducing-terra#saved", at=self.now, title="A saved copy")
+        self.cur.execute("UPDATE posts SET normalized_url = %s WHERE id = %s", (f"https://openai-{self.mark}.test/index/introducing-terra", page))
+        self.service.regroup(self.cur, cutoff=None)
+        item = {"id": self.openai}
+        ReaderRepository.attach_stories(self.cur, [item])
+        self.assertIn(page, [p["id"] for p in item["story"]["posts"]], "the saved page is in the story")
+        self.assertNotIn("Saved", [s["name"] for s in item["story"]["sources"]])
+
     def test_a_page_origin_is_stored_on_the_story(self):
         page = f"https://anthropic-{self.mark}.test/news/claude-fable-5"
         link = f'<p><a href="{page}">Claude Fable 5 and Mythos 5</a></p>'

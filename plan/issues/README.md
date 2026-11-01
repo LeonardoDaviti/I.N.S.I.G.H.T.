@@ -83,7 +83,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0069](0069-v9.11-deploy-reading-voices.md) | v9.11: a deploy that finishes, text that reads, one voice per publication | built, not deployed (v9.11) |
 | [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, not deployed (A9 measured, not built) |
 | [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | spec (v9.13); A and C5-C7 merged, B1 and C1-C4 built (branch `issue-0071-rules`); not deployed |
-| [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); C built (branch `issue-0072-safety`); not deployed |
+| [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); C built (merged); B built (branch `issue-0072-rows`); not deployed |
 | [0072](0072-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft), for v9.14 |
 
 ## Analysis archive

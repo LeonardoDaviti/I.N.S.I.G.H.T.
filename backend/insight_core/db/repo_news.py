@@ -15,6 +15,7 @@ from psycopg import Cursor
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory
+from insight_core.utils.post_fields import quote_only
 
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
@@ -182,7 +183,8 @@ class NewsRepository:
             sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope = row[-10:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
-                         "_in_scope": bool(in_scope), "_origin": bool(origin)})
+                         "_in_scope": bool(in_scope), "_origin": bool(origin),
+                         "_quotes": quote_only(row[21])})   # issue 0072: a post that only quotes a tweet
             out.append(item)
         return out
 

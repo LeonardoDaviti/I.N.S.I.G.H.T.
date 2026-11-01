@@ -28,6 +28,7 @@ from insight_core.utils.news_rules import NAME_TITLES, NEWS_DAYS, NEWS_RECENT, l
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import reddit_author
+from insight_core.utils.url_normalization import normalize_url
 from insight_core.utils.story_rules import Story, StoryPost
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", "Earlier this week"
@@ -121,6 +122,8 @@ class NewsService:
                     if not any(s["id"] == source["id"] for s in sources):
                         sources.append(source)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
+            # A post that only quotes a post of the story is no line (issue 0072): it was read there.
+            addresses = {normalize_url(p["url"]) for p in posts} - {None}
             item["story"] = {
                 "id": head["_news"], "voices": head["_voices"], "sources": sources,
                 "posts": [{
@@ -129,7 +132,7 @@ class NewsService:
                     "sort_at": p["sort_at"], "published_at": p["published_at"], "read_at": p["read_at"],
                     "role": p["role"], "repost": p["repost"],   # issue 0070: its line names the author
                     "reposted_by": (p["repost"] or {}).get("by") or None,   # issue 0068
-                } for p in posts if p["id"] != lead_id],
+                } for p in posts if p["id"] != lead_id and p["_quotes"] not in addresses],
             }
             item["news"] = {
                 "part": "recent" if head["_first_at"] >= now - NEWS_RECENT else "earlier",

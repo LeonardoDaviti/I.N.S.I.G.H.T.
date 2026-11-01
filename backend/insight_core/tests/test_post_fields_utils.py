@@ -6,7 +6,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, reading_text,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_post_target, quote_only,
+    reading_text,
 )
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
@@ -132,11 +133,11 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("[Photo]", "А теперь наша любимая рубрика..."), "А теперь наша любимая рубрика...")
         self.assertEqual(display_title("[Video]", ""), "[Video]", "a post with no words keeps its placeholder")
         self.assertEqual(display_title("RT by @steipete: Image", "jason (@jxnlco) Post your best codex billboard"),
-                         "jason (@jxnlco) Post your best codex billboard")
+                         "Post your best codex billboard", "a quoted tweet's byline is no word (issue 0072)")
         self.assertEqual(display_title("R to @badlogicgames: Gif", ""), "Gif")
         self.assertEqual(display_title("R to @pankajkumar_dev: x.com/pankajkumar_dev/status…",
                                        "nitter.net/pankajkumar_dev/status… Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out."),
-                         "Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out.", "a self-quote reads as the quoted words")
+                         "Gemini 4 Carbon is out.", "a self-quote reads as the quoted words, not who wrote them (0072)")
         self.assertEqual(display_title("https://lean-lang.org/eval/", "https://lean-lang.org/eval/ Lean Evaluating provers"),
                          "Lean Evaluating provers", "a shared link reads as its preview's words")
         self.assertEqual(display_title("https://github.com/sqlc-dev/sqlc is pretty sweet", ""),
@@ -245,6 +246,121 @@ class TitleNotReadTwiceTests(unittest.TestCase):
         html = '<h1>Soft-deprecating re.match()</h1>\n<p>Python has a concept of soft deprecation.</p>'
         self.assertEqual(body_after_title("Soft-deprecating re.match()", html, html=True),
                          "<p>Python has a concept of soft deprecation.</p>")
+
+
+class BridgeTitleTests(unittest.TestCase):
+    """Issue 0072: a title the Telegram bridge cut ends where the post's headline ends."""
+
+    def test_a_cut_title_ends_at_the_htmls_line_not_the_texts(self):
+        html = ('<a href="https://media.test/1.jpg"><img src="https://media.test/1/thumb.jpeg"/></a><br/><br/>'
+                '<b>Учёные показали новый способ обучать модели дешевле без потери качества</b><br><br>'
+                'На конференции, проходящей сейчас, представили метод.')
+        text = "Учёные показали новый способ обучать модели дешевле без потери качества На конференции, проходящей сейчас, представили метод."
+        self.assertEqual(display_title("Учёные показали новый способ обучать модели дешевле без [...]", text, html),
+                         "Учёные показали новый способ обучать модели дешевле без потери качества")
+
+    def test_a_bold_words_space_is_no_line_end(self):
+        text = "Классика: издание (американское кстати) утверждает , что недавно выпущенная модель была дистиллирована"
+        self.assertEqual(display_title("Классика: издание (американское кстати) утверждает, что недавно вы [...]", text),
+                         text, "not cut at 'утверждает': without the HTML the tag's space stays")
+        html = 'Успех не просто <b>Model Z</b>, а новая архитектура.<br><br>Дальше.'
+        self.assertEqual(display_title("Успех не просто Model Z, а новая [...]", "Успех не просто Model Z , а новая архитектура. Дальше.", html),
+                         "Успех не просто Model Z, а новая архитектура.")
+
+    def test_a_cut_title_starts_the_text_whatever_its_spaces(self):
+        html = "Acme* купила Widget – соцсеть для агентов<br><br>Помните, в конце января"
+        self.assertEqual(display_title("Acme* купила Widget – соцсеть для агентовПомните, в конце янва [...]",
+                                       "Acme * купила Widget – соцсеть для агентов Помните, в конце января", html),
+                         "Acme* купила Widget – соцсеть для агентов")
+        self.assertEqual(display_title("Расходы перешли в фазу &q [...]", 'Расходы перешли в фазу "роста" и дальше.'),
+                         'Расходы перешли в фазу "роста" и дальше.', "a cut inside an HTML code")
+
+    def test_a_title_ended_where_no_sentence_ends_is_cut_again(self):
+        text = "Автор признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст."
+        self.assertEqual(display_title("Автор признал провал модели в программировании, т.к.", text),
+                         "Автор признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст.")
+        self.assertEqual(display_title("Компания собирается выпускать модель (?", "Компания собирается выпускать модель (?) Дальше."),
+                         "Компания собирается выпускать модель (?) Дальше.")
+        self.assertEqual(display_title("Модель вышла.", "Модель вышла. Дальше."), "Модель вышла.", "a real end stands")
+
+
+class TitleAddressTests(unittest.TestCase):
+    """Issue 0072: a title doesn't end in an address, and a label's line ends it."""
+
+    def test_a_trailing_address_leaves_the_title(self):
+        self.assertEqual(display_title("Вышла новая модель https://models.test/news/new-model/", ""), "Вышла новая модель")
+        self.assertEqual(display_title("Thank you for sharing @someone! More details can be found at https://a.test/x", ""),
+                         "Thank you for sharing @someone!", "the words that only led to it go too")
+        self.assertEqual(display_title("The tool now has an official website: https://tool.test", ""),
+                         "The tool now has an official website: tool.test", "words that point at it keep it, bare")
+
+    def test_a_label_and_its_address_are_the_address(self):
+        self.assertEqual(display_title("paper: https://papers.test/abs/2610.11765", ""), "papers.test/abs/2610.11765")
+        self.assertEqual(display_title("https://models.test/news/open/\n\nDownload: https://hub.test/org/Model-1T", ""),
+                         "hub.test/org/Model-1T")
+
+    def test_a_name_and_its_subtitle_run_on_up_to_the_label(self):
+        title = "Steady Agents\n\nModels Keep Working When Told To Stop\n\npaper: https://papers.test/abs/1"
+        self.assertEqual(display_title(title, ""), "Steady Agents: Models Keep Working When Told To Stop")
+        wrapped = "A Small Study\nOf Long Titles: \nWhy Feeds Wrap Them Across Lines"
+        self.assertEqual(display_title(wrapped, ""), "A Small Study Of Long Titles: Why Feeds Wrap Them Across Lines",
+                         "a title wrapped in lines reads as one")
+
+
+class QuoteCardTests(unittest.TestCase):
+    """Issue 0072: Nitter's quote card says who is quoted and where, never the post's words."""
+    ADDRESS = '<p><a href="https://nitter.net/ann/status/2115097309847630047?s=20">nitter.net/ann/status…</a></p>\n'
+    CARD = ('<hr/>\n<blockquote>\n<b>Ann Lee (@ann)</b>\n<p>\n<p>Here is one more output of mine.<br>\n<br>\nThe speed is good, and I would put it above the model I used before this week for most of my daily work.</p>\n'
+            '<img src="https://nitter.local/pic/a.jpg" />\n</p>\n<footer>\n— <cite><a href="https://nitter.local/ann/status/'
+            '2115097309847630047#m">https://nitter.local/ann/status/2115097309847630047#m</a>\n</footer>\n</blockquote>')
+    TEXT = ("nitter.net/ann/status… Ann Lee (@ann) Here is one more output of mine. The speed is good, and I would put it above the model I used before this week for most of my daily work. "
+            "— https://nitter.local/ann/status/2115097309847630047#m")
+
+    def test_a_quote_only_tweet_is_titled_and_read_by_the_quoted_words(self):
+        title, text, html = reading_text("R to @ann: x.com/ann/status…", self.TEXT, self.ADDRESS + self.CARD)
+        self.assertEqual(title, "Here is one more output of mine.")
+        self.assertEqual(text, "The speed is good, and I would put it above the model I used before this week for most of my daily work.")
+        self.assertNotIn("<footer>", html)
+        self.assertNotIn("nitter.net/ann/status…", html)
+        self.assertIn("<b>Ann Lee (@ann)</b>", html, "the card still says who it quotes")
+        self.assertEqual(display_title("R to @ann: x.com/ann/status…", self.TEXT), "Here is one more output of mine.", "without the HTML too")
+
+    def test_the_posts_own_words_end_where_the_quote_begins(self):
+        title, text, _ = reading_text("Indeed...", "Indeed... " + self.TEXT.split(" ", 1)[1], "<p>Indeed...</p>\n" + self.CARD)
+        self.assertEqual(title, "Indeed...", "not run on into the quote's byline")
+        self.assertNotIn("(@ann)", text)
+
+    def test_a_post_with_nothing_of_its_own_only_quotes(self):
+        self.assertEqual(quote_only(self.ADDRESS + self.CARD), "https://x.com/ann/status/2115097309847630047")
+        for own in ("<p>Its out guys.</p>\n", "<p>🫶</p>\n", '<p></p>\n<img src="https://nitter.local/pic/b.jpg" />\n'):
+            self.assertIsNone(quote_only(own + self.CARD), own)
+        self.assertIsNone(quote_only("<p>No quote here.</p>"))
+
+
+class RedditFooterTests(unittest.TestCase):
+    """Issue 0072: Reddit's "submitted by /u/x [link] [comments]" is the item's footer, never its text."""
+    THREAD = "https://www.reddit.com/r/sub/comments/1/a_model_is_now_open_weight/"
+    FOOTER = (' &#32; submitted by &#32; <a href="https://www.reddit.com/user/someone"> /u/someone </a> <br/> '
+              '<span><a href="{link}">[link]</a></span> &#32; <span><a href="' + THREAD + '">[comments]</a></span>')
+    THUMB = '<table> <tr><td> <a href="' + THREAD + '"> <img src="https://preview.test/a.jpeg" /> </a> </td><td>{own}{footer}</td></tr></table>'
+
+    def test_a_link_post_with_nothing_else_is_empty_and_opens_its_page(self):
+        html = self.THUMB.format(own="", footer=self.FOOTER.format(link="https://models.test/news/open"))
+        self.assertEqual(body_without_feed_lines(html), "")
+        self.assertEqual(body_without_feed_lines("&#32; submitted by &#32; /u/someone [link] &#32; [comments]"), "")
+        self.assertEqual(link_post_target(html), "https://models.test/news/open")
+        self.assertIsNone(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=self.THREAD))), "a text post links itself")
+
+    def test_a_posts_own_words_stay(self):
+        html = self.THUMB.format(own='<div class="md"><p>i hope it is real</p></div>', footer=self.FOOTER.format(link=self.THREAD))
+        self.assertIn("i hope it is real", body_without_feed_lines(html))
+        self.assertNotIn("submitted by", body_without_feed_lines(html))
+        self.assertEqual(body_without_feed_lines("i hope it is real &#32; submitted by &#32; /u/someone [link] &#32; [comments]"),
+                         "i hope it is real")
+
+    def test_a_picture_address_is_no_text(self):
+        text = "https://preview.redd.it/abc.png?width=1482&amp;format=png Results of my run on two cards."
+        self.assertEqual(reading_text("My run", text)[1], "Results of my run on two cards.")
 
 
 class FeedLinesTests(unittest.TestCase):
