@@ -33,7 +33,6 @@ import asyncio
 import json
 import logging
 import sys
-import urllib.parse
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +48,7 @@ from insight_core.ingestion.http import HttpError, KindHttp  # noqa: E402
 from insight_core.ingestion.kinds import KindRegistry  # noqa: E402
 from insight_core.ingestion.kinds.base import KindUnavailable  # noqa: E402
 from insight_core.ingestion.kinds.substack import SUBSTACK_HOST_KEY, SubstackKind  # noqa: E402
+from insight_core.utils.addresses import host_of  # noqa: E402
 from insight_core.utils.content_fingerprints import decode_entities  # noqa: E402
 
 logger = logging.getLogger("insight.scripts.repair_full_text")
@@ -75,7 +75,7 @@ def plan(posts: Sequence[Dict[str, Any]], registry: KindRegistry) -> Tuple[Dict[
         elif not full_text.page_is_article(post["url"]):
             skipped["link is not an article"] += 1
         else:
-            sites[(urllib.parse.urlparse(post["url"]).hostname or "").lower()].append((post, kind))
+            sites[host_of(post["url"])].append((post, kind))
     return dict(sites), skipped
 
 

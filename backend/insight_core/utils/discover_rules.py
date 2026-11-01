@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from insight_core.utils.post_links import (PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare, is_article,
-                                          section_of, site_of)
+from insight_core.utils.addresses import PLATFORM_SITES, account_key, bare, site_of, x_account
+from insight_core.utils.post_links import SECTION_MIN, SECTION_SHARE, is_article, section_of
 from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS, StoryPost, anchors
 from insight_core.utils.url_normalization import TWEET_PATH
@@ -69,7 +69,7 @@ def discover_address(url: str) -> Tuple[Optional[str], str, bool]:
     tweet = TWEET.match("/" + rest)
     if tweet:
         user = tweet.group(1).lower()
-        return (None if user in NOT_ACCOUNT else "x.com/" + user), "x.com", True
+        return (None if user in NOT_ACCOUNT else x_account(user)), "x.com", True
     site = site_of(host)
     if site in DISCOVER_PLATFORMS:
         return (None if re.split(r"[/?#]", rest)[0].lower() in NOT_ACCOUNT else account_key(url)), site, True
@@ -97,7 +97,7 @@ def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], h
                 followed_accounts: Set[str] = frozenset(), mirrors: Set[str] = frozenset()) -> List[Suggestion]:
     """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
     links, that you don't follow and did not hide. On a platform the unit is the account: it is
-    followed, or hidden, only as that account (`followed_accounts`, post_links.account_key), so
+    followed, or hidden, only as that account (`followed_accounts`, addresses.account_key), so
     following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
     keys or sites); a tweet mirror's other pages (`mirrors`: hosts where tweets are found, issue
     0067) are X's kinds of page, never a site. `links`: (voice, address, whether the linking post is

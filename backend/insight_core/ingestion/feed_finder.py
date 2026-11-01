@@ -39,6 +39,7 @@ from typing import Iterable, List, Literal, Optional, Sequence, Tuple
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry
 from insight_core.ingestion.kinds.parsing import local_name, origin_from_source, path_segments, web_address
+from insight_core.utils.addresses import BLOG_HOSTS, blog_site, host_of, publication_of
 
 logger = logging.getLogger("insight.ingestion.feed_finder")
 
@@ -53,7 +54,6 @@ MAX_CANDIDATES = 6              # per stage, from the pages' links
 # A page with no feed may link its own blog or newsroom, often on a subdomain
 # (www.cloudflare.com -> blog.cloudflare.com): links so named, on the same site, at most two.
 BLOG_LINK_TEXTS = frozenset({"blog", "the blog", "our blog", "news", "newsroom", "press", "engineering blog"})
-BLOG_HOSTS = ("blog.", "news.", "newsroom.")
 MAX_BLOG_LINKS = 2
 # A home page that names no blog may still have one under another word ("Now", "Latest"): its
 # own menu links, header and navigation before the footer, the shallowest first, at most twelve
@@ -185,8 +185,8 @@ class _Search:
         links = _links(linking[0]) if linking else _FeedLinks()
         blogs = _blog_links(links, linking[1]) if linking else []
         blog_pages = await asyncio.gather(*(self._get(blog, PAGE_BYTES) for blog in blogs))
-        site = _site(_host(here))
-        self.pages = tuple(dict.fromkeys(got[1] for got in blog_pages if got and _site(_host(got[1])) == site
+        site = blog_site(host_of(here))
+        self.pages = tuple(dict.fromkeys(got[1] for got in blog_pages if got and blog_site(host_of(got[1])) == site
                                          and got[1].rstrip("/") != here.rstrip("/")))
         if linking and not self.pages:
             self.menu = tuple(_menu_links(links, linking[1]))
@@ -262,7 +262,7 @@ def _first_known(tasks: Sequence["asyncio.Task[Optional[Tuple[str, Feed]]]"]) ->
 def _platform_feed(url: str) -> Optional[str]:
     """The feed a platform keeps at a known address for this page, else None."""
     parsed = urllib.parse.urlparse(url)
-    host = (parsed.hostname or "").lower().removeprefix("www.")
+    host = publication_of(host_of(url))
     segments = path_segments(url)
     feed = None
     if host == "medium.com" and segments and segments[0].startswith("@"):
@@ -362,18 +362,18 @@ def _links(body: bytes) -> "_FeedLinks":
     return links
 
 
-def _same_site(links: Iterable[str], page_url: str) -> List[str]:
-    """The links, absolute, on the page's site (a blog./news. subdomain included), less the
-    page itself, once each, the shallowest first: /blog before /blog/tag/research."""
-    site = _site(_host(page_url))
+def _on_blog_site(links: Iterable[str], page_url: str) -> List[str]:
+    """The links, absolute, on the page's blog site (addresses.blog_site: a blog./news. subdomain
+    included), less the page itself, once each, the shallowest first: /blog before /blog/tag/research."""
+    site = blog_site(host_of(page_url))
     absolute = (_absolute(page_url, href) for href in links)
-    same = (url for url in absolute if url and url.rstrip("/") != page_url.rstrip("/") and _site(_host(url)) == site)
+    same = (url for url in absolute if url and url.rstrip("/") != page_url.rstrip("/") and blog_site(host_of(url)) == site)
     return sorted(dict.fromkeys(same), key=lambda url: len(path_segments(url)))
 
 
 def _blog_links(links: "_FeedLinks", page_url: str) -> List[str]:
     """The page's links to its own blog or newsroom (see BLOG_LINK_TEXTS), at most MAX_BLOG_LINKS."""
-    return _same_site(links.blogs, page_url)[:MAX_BLOG_LINKS]
+    return _on_blog_site(links.blogs, page_url)[:MAX_BLOG_LINKS]
 
 
 def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
@@ -381,21 +381,8 @@ def _menu_links(links: "_FeedLinks", page_url: str) -> List[str]:
     shallowest first, at most MAX_MENU_LINKS: the pages that may be its blog under another word."""
     menu = [href for _, href in sorted(links.menu, key=lambda link: link[0])]
     # A link with a query is the page in another state (a sign-up form), not a page of its own.
-    return [url for url in _same_site(menu, page_url)
+    return [url for url in _on_blog_site(menu, page_url)
             if path_segments(url) and not urllib.parse.urlparse(url).query][:MAX_MENU_LINKS]
-
-
-def _host(url: str) -> str:
-    try:
-        return (urllib.parse.urlparse(url).hostname or "").lower()
-    except ValueError:      # a malformed link
-        return ""
-
-
-def _site(host: str) -> str:
-    """The host without a www., blog., news. or newsroom. label: the site it belongs to."""
-    first, _, rest = host.partition(".")
-    return rest if rest and f"{first}." in ("www.",) + BLOG_HOSTS else host
 
 
 def _absolute(base: str, href: str) -> Optional[str]:
@@ -467,7 +454,7 @@ class _FeedLinks(HTMLParser):
             if _looks_like_feed(href, text) and not _is_comments(href, text):
                 self.anchors.append(href)
             elif ({" ".join(text.lower().split()), " ".join(label.lower().split())} & BLOG_LINK_TEXTS
-                  or _host(href).startswith(BLOG_HOSTS)):
+                  or host_of(href).startswith(BLOG_HOSTS)):
                 self.blogs.append(href)
 
 

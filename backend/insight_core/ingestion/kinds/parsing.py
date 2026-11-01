@@ -14,6 +14,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
+from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
 
@@ -973,12 +974,10 @@ TITLE_SEPARATORS = ("|", "-", "–", "—", ":", "·", "•", "/")
 
 
 def _same_site(href: str, host: str) -> bool:
-    """A link within the page's own site (relative, or to its host or a host under the same
-    domain): menus, breadcrumbs, authors and related posts are; a link post's subject is not."""
-    target = (urllib.parse.urlparse(href).hostname or "").lower().removeprefix("www.")
-    if not target:
-        return True
-    return bool(host) and (target == host or target.endswith(f".{host}") or host.endswith(f".{target}"))
+    """A link within the page's own site (relative, or on its site: addresses.same_site): menus,
+    breadcrumbs, authors and related posts are; a link post's subject is not."""
+    target = urllib.parse.urlparse(href).hostname
+    return not target or same_site(target, host)
 
 
 def _block_kind(block: str, host: str) -> Tuple[str, bool]:
@@ -1059,7 +1058,7 @@ def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) ->
       or the labels just before it, and must hold two links or end on a link or a label, so an
       article's own closing link ("Watch the keynote") stays. Blocks with no letter at the very
       end ("0%") go."""
-    host = (urllib.parse.urlparse(base_url).hostname or "").lower().removeprefix("www.")
+    host = publication_of(host_of(base_url))
     kinds = [_block_kind(block, host) for block in blocks]
     keep = [True] * len(blocks)
     # The opening.

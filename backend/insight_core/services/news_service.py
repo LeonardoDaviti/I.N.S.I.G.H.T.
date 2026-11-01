@@ -25,6 +25,7 @@ from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
 from insight_core.utils.news_rules import NAME_TITLE_DAYS, NEWS_DAYS, NEWS_RECENT, lead, news, surges
+from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
@@ -115,7 +116,7 @@ class NewsService:
             # tweet a post holds are voices too, as on the feed row (issue 0068).
             for p in covered:
                 accounts = [p["repost"]["author"] or "", *p["repost"]["by"]] if p["repost"] else []
-                held = [followed["x.com/" + a.lower()] for a in accounts if "x.com/" + a.lower() in followed]
+                held = [followed[x_account(a)] for a in accounts if x_account(a) in followed]
                 for source in [{"id": p["source_id"], "name": p["source_display_name"]}, *held]:
                     if not any(s["id"] == source["id"] for s in sources):
                         sources.append(source)

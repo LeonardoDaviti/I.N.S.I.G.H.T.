@@ -15,13 +15,13 @@ reads in all, RETRY_APART between two. Each read is counted in metadata.page_tri
 """
 from __future__ import annotations
 
-import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
+from insight_core.utils.addresses import host_of
 from insight_core.utils.content_fingerprints import normalize_text
 
 # A body shorter than this is probably a teaser.
@@ -51,7 +51,7 @@ def full_page_enabled(source: Mapping[str, Any]) -> bool:
 def page_is_article(url: Any) -> bool:
     if not isinstance(url, str) or not url.startswith("http"):
         return False
-    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    host = host_of(url)
     return not any(host == blocked or host.endswith(f".{blocked}") for blocked in NOT_ARTICLE_HOSTS)
 
 

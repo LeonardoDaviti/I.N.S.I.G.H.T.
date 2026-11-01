@@ -29,7 +29,7 @@ from insight_core.tests._db import db_url, insert_scratch_source, requires_test_
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.news_rules import news, tally
-from insight_core.utils.post_links import site_of
+from insight_core.utils.addresses import site_of
 from insight_core.utils.story_rules import StoryPost, group, roles
 from insight_core.utils.tree_rules import origin_title
 

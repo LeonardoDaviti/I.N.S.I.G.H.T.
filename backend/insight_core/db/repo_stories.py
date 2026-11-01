@@ -13,8 +13,8 @@ from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
-                                          publication_of, site_of, source_kind)
+from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
+from insight_core.utils.post_links import PostLink, extract_links, is_article, source_kind
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
 from insight_core.utils.story_rules import HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
@@ -26,7 +26,7 @@ HTML_KINDS = ("reddit", "hn", "x", "telegram")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
-    """The platform account a source follows, as Discover keys it (post_links.account_key): a
+    """The platform account a source follows, as Discover keys it (addresses.account_key): a
     Telegram channel read through a bridge is t.me/<channel>, a Nitter feed x.com/<user>, a
     subreddit reddit.com/r/<sub>, a YouTube channel youtube.com/channel/<id>, any other address
     the account its path is under (github.com/<owner>). The kinds' own parsers read the address."""
@@ -39,7 +39,7 @@ def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[s
             channel = telegram_rss._username(handle) if "://" in handle else handle
             return "t.me/" + channel.lstrip("@").lower()
         if kind == "x" and "nitter" in handle:
-            return "x.com/" + nitter_rss._username(handle).lower()
+            return x_account(nitter_rss._username(handle))
         if kind == "reddit":
             return "reddit.com/r/" + reddit.subreddit_name(handle).lower()
     except ValueError:
@@ -399,12 +399,12 @@ class StoriesRepository:
     def linked_articles(cur: Cursor, host: str) -> List[str]:
         """The article-like addresses on a host (www. aside) your sources' kept links point to,
         once each, in address order: what a site's findings are ranked by (issue 0060)."""
-        host = (host or "").lower().removeprefix("www.")
+        host = publication_of(host)
         if not host:
             return []
         cur.execute("SELECT DISTINCT target_url FROM post_links WHERE target_site = %s AND NOT boilerplate",
                     (site_of(host),))
-        return sorted(url for (url,) in cur.fetchall() if host_of(url).removeprefix("www.") == host and is_article(url))
+        return sorted(url for (url,) in cur.fetchall() if publication_of(host_of(url)) == host and is_article(url))
 
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:

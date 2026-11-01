@@ -39,7 +39,7 @@ import { countsLabel, middleTruncate, plural } from '../lib/format';
 import { feedDateLabel, feedFullTime, formatLocalDateTime, postBylineTime } from '../lib/dates';
 import { pageState, updateLine } from '../lib/pageUpdate';
 import { formatClock } from '../lib/duration';
-import { siteOf } from '../lib/savePage';
+import { publicationOf } from '../lib/addresses';
 import type {
   Api,
   FeedItem,
@@ -1314,7 +1314,7 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
           ) : post.url ? (
             // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself.
             <p data-read-on>
-              <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Read on {siteOf(post.url)} ↗</a>
+              <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Read on {publicationOf(post.url) || post.url} ↗</a>
             </p>
           ) : null}
         </div>

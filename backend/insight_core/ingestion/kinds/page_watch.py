@@ -54,6 +54,7 @@ from insight_core.ingestion.http import AddressMemory, Conditional, HttpError, K
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
 from insight_core.ingestion.kinds.generic_rss import StoredUrls
+from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.json_safe import iso
 
 logger = logging.getLogger("insight.ingestion.page_watch")
@@ -109,19 +110,15 @@ def _clean(url: str, base: Optional[str] = None) -> Optional[str]:
     return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/") or "/"))
 
 
-def _site(url: str) -> str:
-    return (urllib.parse.urlparse(url).hostname or "").lower().removeprefix("www.")
-
-
 def infer_prefix(listing_url: str, links: Sequence[str]) -> str:
     """The listing page's path; for a home page, the most common first segment of its
     same-host links two or more segments deep ("/" when it has none)."""
     path = urllib.parse.urlparse(listing_url).path.strip("/")
     if path:
         return f"/{path}/"
-    site = _site(listing_url)
+    site = publication_of(host_of(listing_url))
     firsts = Counter(segments[0] for link in links
-                     if _site(link) == site and len(segments := parsing.path_segments(link)) >= 2)
+                     if publication_of(host_of(link)) == site and len(segments := parsing.path_segments(link)) >= 2)
     return f"/{firsts.most_common(1)[0][0]}/" if firsts else "/"
 
 
@@ -206,11 +203,11 @@ async def _discover(get: Reader, http: KindHttp, listing_url: str, prefix: Optio
     listing = _clean(landed) or landed
     links = [url for href in LINK_RE.findall(page) if (url := _clean(href, landed))]
     prefix = normalise_prefix(prefix) if prefix else infer_prefix(listing, links)
-    site = _site(listing)
+    site = publication_of(host_of(listing))
 
     def under(url: str) -> bool:
         path = urllib.parse.urlparse(url).path
-        return _site(url) == site and url != listing and path.startswith(prefix) and path + "/" != prefix
+        return publication_of(host_of(url)) == site and url != listing and path.startswith(prefix) and path + "/" != prefix
 
     listed = tuple(dict.fromkeys(url for url in links if under(url)))
     sitemap: Dict[str, Optional[datetime]] = {}

@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from insight_core.utils.post_links import bare, is_reference, publication_of, site_of, titled_link_text
+from insight_core.utils.addresses import bare, publication_of, site_of
+from insight_core.utils.post_links import is_reference, titled_link_text
 
 CLASSIC_MIN_VOICES = 2
 CLASSIC_MIN_SPREAD = timedelta(days=180)   # measured on the server's data, 2026-10-30: at 30 days most were news with legs

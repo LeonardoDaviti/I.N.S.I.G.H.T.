@@ -43,7 +43,8 @@ from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.parsing import web_address
-from insight_core.utils.post_links import NUMBERISH, SECTION_MIN, SECTION_SHARE, site_of
+from insight_core.utils.addresses import host_of, same_site
+from insight_core.utils.post_links import NUMBERISH, SECTION_MIN, SECTION_SHARE
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.where_linked")
@@ -242,11 +243,6 @@ def _others(found: Sequence[feed_finder.Feed], more: Sequence[feed_finder.Feed])
     return [feed for feed in more if normalize_url(feed.url) not in urls and not (feed.items and feed.items[0] in firsts)]
 
 
-def _same_site(url: str, address: str) -> bool:
-    a, b = _split(url), _split(address)
-    return bool(a and b and site_of(a[0]) == site_of(b[0]))
-
-
 async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Sequence[str]) -> Dict[str, Any]:
     """POST /api/sources/find-feed's answer: {status, feeds, homepage, pages, linked, start}.
     ValueError for an empty address."""
@@ -258,7 +254,7 @@ async def follow(http: KindHttp, registry: KindRegistry, url: str, linked: Seque
     pages: List[Dict[str, Any]] = []
     # A section that cannot be read (or lands on the home page, or another site) is no section:
     # the finder took the home page's links and feeds, as for the home page.
-    read = (bool(finding.landed) and _same_site(finding.landed, address)
+    read = (bool(finding.landed) and same_site(host_of(normalize_url(finding.landed)), host_of(normalize_url(address)))
             and not page_watch.is_home(finding.landed))
     if start and not read:
         start = None

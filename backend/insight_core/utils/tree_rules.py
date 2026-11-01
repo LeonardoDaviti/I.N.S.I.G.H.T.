@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote
 
 from insight_core.utils.post_fields import display_title
-from insight_core.utils.post_links import bare, titled_link_text
+from insight_core.utils.addresses import bare
+from insight_core.utils.post_links import titled_link_text
 
 if TYPE_CHECKING:   # story_rules imports this module: it draws each story's tree
     from insight_core.utils.story_rules import StoryPost

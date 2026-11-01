@@ -18,7 +18,7 @@ from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import posts_service
 from insight_core.services.stories_service import StoriesService, rules_stamp
 from insight_core.tests._db import db_url, requires_test_db
-from insight_core.utils import discover_rules, post_links, stamps, story_rules, tree_rules
+from insight_core.utils import addresses, discover_rules, stamps, story_rules, tree_rules
 from insight_core.utils.discover_rules import discover_address
 from insight_core.utils.story_rules import REASONS, group
 from insight_core.utils.tree_rules import PARENT_REASONS
@@ -60,10 +60,10 @@ class SampleCoversTheRulesTests(unittest.TestCase):
 
 class StampsFollowTheRulesTests(unittest.TestCase):
     def test_a_rule_that_makes_other_output_changes_its_stamp(self):
-        stories, addresses, bodies = stamps_now()
+        stories, sites, bodies = stamps_now()
         # 0068's miss, replayed: a github.io writer's site as before the Public Suffix List's private section
-        with mock.patch.object(post_links, "_hosting_suffixes", lambda: frozenset()):
-            self.assertNotEqual(discover_rules.address_rules(), addresses)
+        with mock.patch.object(addresses, "_hosting_suffixes", lambda: frozenset()):
+            self.assertNotEqual(discover_rules.address_rules(), sites)
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         # 0068's other miss: how an outside origin is titled
         with mock.patch.object(tree_rules, "origin_title", lambda url, posts: None):
@@ -76,7 +76,7 @@ class StampsFollowTheRulesTests(unittest.TestCase):
 
     def test_a_rename_keeps_every_stamp(self):
         before = stamps_now()
-        title_key, site_of = story_rules.title_key, post_links.site_of
+        title_key, site_of = story_rules.title_key, addresses.site_of
 
         def renamed_title_key(title):
             return title_key(title)

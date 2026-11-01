@@ -7,7 +7,8 @@ import SavePage from './SavePage';
 import type { SavedPage } from '../services/api';
 import { makeFakeApi } from '../test/fakeApi';
 import { renderWithProviders } from '../test/render';
-import { bookmarkletCode, siteOf } from '../lib/savePage';
+import { publicationOf } from '../lib/addresses';
+import { bookmarkletCode } from '../lib/savePage';
 import { DESTINATIONS, filterDestinations } from '../components/layout/navigation';
 
 const ARTICLE = 'https://www.example.com/2026/10/an-essay';
@@ -117,7 +118,7 @@ describe('the bookmarklet', () => {
   });
 
   it('names a page by its site', () => {
-    expect(siteOf('https://www.example.com/a')).toBe('example.com');
-    expect(siteOf('example.org/b')).toBe('example.org');
+    expect(publicationOf('https://www.example.com/a')).toBe('example.com');
+    expect(publicationOf('example.org/b')).toBe('example.org');
   });
 });

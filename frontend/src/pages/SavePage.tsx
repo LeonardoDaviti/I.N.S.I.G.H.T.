@@ -11,7 +11,7 @@ import { SOURCES_HEALTH_KEY } from '../hooks/useSourcesHealth';
 import { useIngestionRun } from '../hooks/useIngestionRun';
 import { postHref, sourceReadPath } from '../lib/feedContext';
 import { sourceLabel } from '../lib/sourceLabel';
-import { siteOf } from '../lib/savePage';
+import { publicationOf } from '../lib/addresses';
 import BookmarkletHint from '../components/BookmarkletHint';
 
 const LATER_PATH = '/?filter=later';
@@ -110,8 +110,8 @@ export default function SavePage() {
       <div className="space-y-5">
         {given ? (
           <div className="space-y-1 rounded-md border border-line p-4">
-            <p className="break-words text-[1rem] font-semibold text-fg">{givenTitle || siteOf(given)}</p>
-            <p className="text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">{siteOf(given)}</p>
+            <p className="break-words text-[1rem] font-semibold text-fg">{givenTitle || publicationOf(given) || given}</p>
+            <p className="text-[0.8125rem] text-fg-2 [overflow-wrap:anywhere]">{publicationOf(given) || given}</p>
           </div>
         ) : !result ? (
           <form id="save-page" onSubmit={(event) => void save(event)} className="space-y-1.5">

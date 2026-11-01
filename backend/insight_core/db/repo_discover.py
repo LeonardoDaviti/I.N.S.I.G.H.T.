@@ -54,6 +54,7 @@ from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_S
                                                discover_article)
 from insight_core.utils.post_links import REDDIT_AUTHOR
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS
+from insight_core.utils.url_normalization import TWEET_SHAPE
 
 LOCK_KEY = "insight.discover_addresses"
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
@@ -154,7 +155,7 @@ SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, (SELECT n FROM unknown)
 # The hosts where tweets are found by shape (0066's TWEET_PATH in a link of a post's HTML): X and its
 # mirrors (nitter.net, xcancel.com, ...), found, never listed. Read once per post, after its links are
 # read (links_scanned_at): the kept hosts and the newest post read are kept with Discover's counts.
-TWEET_HREF = r"https?://([A-Za-z0-9.-]+)/[A-Za-z0-9_]+/status/[0-9]{15}"
+TWEET_HREF = r"https?://([A-Za-z0-9.-]+)" + TWEET_SHAPE
 _MIRRORS = """
 SELECT COALESCE(array_agg(DISTINCT lower(m[1])), '{}'), (SELECT max(links_scanned_at) FROM posts)
 FROM posts p, regexp_matches(p.content_html, %(tweet)s, 'g') m

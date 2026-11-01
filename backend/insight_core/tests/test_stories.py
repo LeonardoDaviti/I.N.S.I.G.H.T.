@@ -26,7 +26,8 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository, source_
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
-from insight_core.utils.post_links import account_key, extract_links, is_home, site_of, source_kind
+from insight_core.utils.addresses import account_key, site_of
+from insight_core.utils.post_links import extract_links, is_home, source_kind
 from insight_core.utils.discover_rules import suggestions
 from insight_core.utils.story_rules import StoryPost, count_voices, group, roles
 from insight_core.utils.url_normalization import normalize_url

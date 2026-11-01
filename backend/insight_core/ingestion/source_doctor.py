@@ -45,6 +45,7 @@ from insight_core.ingestion.feed_finder import FEED_BYTES, feed_title, find_feed
 from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.parsing import path_segments
+from insight_core.utils.addresses import host_of, publication_of
 
 logger = logging.getLogger("insight.ingestion.source_doctor")
 
@@ -82,14 +83,10 @@ def should_look(kind_name: str, state: FetchStateRow, signal: Optional[str], now
     return signal is not None or state.consecutive_failures >= FAILURES_BEFORE_LOOKING
 
 
-def site(url: str) -> str:
-    return (urllib.parse.urlparse(url).hostname or "").lower().removeprefix("www.")
-
-
 def short_address(url: str) -> str:
     """"https://www.arena.ai/blog/feed.xml" -> "arena.ai/blog/feed.xml"."""
     parsed = urllib.parse.urlparse(url)
-    return (site(url) + parsed.path.rstrip("/") + (f"?{parsed.query}" if parsed.query else "")) or url
+    return (publication_of(host_of(url)) + parsed.path.rstrip("/") + (f"?{parsed.query}" if parsed.query else "")) or url
 
 
 def section(url: str) -> str:
@@ -108,7 +105,7 @@ def within_section(candidate: str, address: str) -> bool:
     """A feed on the source's site stays within its section ("/oldnewthing/" for
     "/oldnewthing/feed"); for a source at the root ("/rss") that is the whole site. A feed on
     another site is never switched to (only suggested), so it is not judged here."""
-    if site(candidate) != site(address):
+    if publication_of(host_of(candidate)) != publication_of(host_of(address)):
         return True
     scope = urllib.parse.urlparse(section(address)).path
     return (urllib.parse.urlparse(candidate).path or "/").startswith(scope)
@@ -201,7 +198,7 @@ class SourceDoctor:
             return
         replacement = await find_replacement(self.http, self.registry, address, follows_page=followed is not None)
         if (replacement and replacement["kind"] == "feed" and signal == "gone"
-                and site(replacement["url"]) == site(address)):
+                and publication_of(host_of(replacement["url"])) == publication_of(host_of(address))):
             try:
                 await asyncio.to_thread(self.store.switch, str(source["id"]), replacement["url"], None)
             except Exception as exc:  # noqa: BLE001 - already a source: suggest it

@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import NUMBERISH, bare, host_of, is_home, is_reference, is_tweet, site_of
+from insight_core.utils.addresses import bare, host_of, is_tweet, site_of
+from insight_core.utils.post_links import NUMBERISH, is_home, is_reference
 from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
 SAME_TEXT_WITHIN = timedelta(days=30)

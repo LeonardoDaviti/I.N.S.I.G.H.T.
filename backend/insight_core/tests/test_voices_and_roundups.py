@@ -25,7 +25,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, requires_db
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.classic_rules import Citation, classics
-from insight_core.utils.post_links import publication_of, site_of
+from insight_core.utils.addresses import publication_of, site_of
 
 T0 = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
 

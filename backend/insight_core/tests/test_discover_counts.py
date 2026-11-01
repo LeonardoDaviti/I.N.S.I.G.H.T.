@@ -77,7 +77,7 @@ def reference_discover(url: str):
         hidden = StoriesRepository.hidden(cur)
         classic_urls = set(NewsRepository.classic_urls(cur))
         cur.execute("SELECT content_html FROM posts WHERE content_html IS NOT NULL")
-        mirrors = {host.lower() for (html,) in cur.fetchall() for host in re.findall(TWEET_HREF, html)}
+        mirrors = {host.lower() for (html,) in cur.fetchall() for host, *_ in re.findall(TWEET_HREF, html)}
     roundups = {post_id for post_id, its in post_links.items()
                 if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
     triples, names = [], {}

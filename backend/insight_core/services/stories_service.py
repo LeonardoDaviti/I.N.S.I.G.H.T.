@@ -31,7 +31,8 @@ from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
 from insight_core.utils.post_fields import REPLY_TO_RE
-from insight_core.utils.post_links import host_of, quoted_tweet, quoted_words, reddit_author, site_of
+from insight_core.utils.addresses import host_of, site_of, x_account
+from insight_core.utils.post_links import quoted_tweet, quoted_words, reddit_author
 from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
                                               discover_address, discover_open, discover_place, origins)
 from insight_core.utils.story_rules import StoryPost, group
@@ -106,7 +107,7 @@ class StoriesService:
         kind = sources.kind.get(row["source_id"], "site")
         html = row["html"]
         reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
-        author_source = sources.of_account.get("x.com/" + row["author"].lower()) if kind == "x" and row["author"] else None
+        author_source = sources.of_account.get(x_account(row["author"])) if kind == "x" and row["author"] else None
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
@@ -117,13 +118,13 @@ class StoriesService:
             link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
             # On X (issue 0066): a tweet of another account (a repost), the account a reply answers, a quote.
             reposted=kind == "x" and bool(row["author"])
-            and sources.account.get(row["source_id"]) != "x.com/" + row["author"].lower(),
+            and sources.account.get(row["source_id"]) != x_account(row["author"]),
             reply_to=reply.group(1) if reply else None,
             quoted=quoted_tweet(html) if kind == "x" else None,
             quoted_words=quoted_words(html),   # the words of the pages it quotes (issue 0070)
             # Who else of your sources put it before you (issue 0068): its author's own source, when
             # another source holds it, and the sources that reposted it. Voices of its story.
-            reposters=tuple(sorted({sources.of_account.get("x.com/" + by.lower()) for by in row["reposted_by"]}
+            reposters=tuple(sorted({sources.of_account.get(x_account(by)) for by in row["reposted_by"]}
                                    - {None, row["source_id"], author_source})),
             author_source=author_source if author_source != row["source_id"] else None,
         )
