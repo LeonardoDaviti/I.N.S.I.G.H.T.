@@ -279,6 +279,24 @@ _HNRSS_LINE_RE = re.compile(r"(?:<hr\s*/?>\s*)?<p>\s*(?:Article URL|Comments URL
                             r"|(?:Article URL|Comments URL): \S+\s*|(?:Points|# Comments): \d+\s*", re.S)
 
 
+# Reddit's item footer (issue 0072): "submitted by /u/x [link] [comments]", the author and the page the
+# post shares; never its text. `[link]` is the shared page (its own thread for a text post).
+_SPACE = r"(?:\s|&#32;)*"
+_REDDIT_FOOTER_RE = re.compile(rf"{_SPACE}submitted by{_SPACE}/u/\S+{_SPACE}\[link\]{_SPACE}\[comments\]\s*$")
+_REDDIT_FOOTER_HTML_RE = re.compile(
+    rf'{_SPACE}submitted by{_SPACE}<a\b[^>]*>\s*/u/[^<]*</a>\s*(?:<br\s*/?>)?\s*<span>\s*<a href="([^"]*)">\[link\]</a>\s*</span>'
+    rf'{_SPACE}<span>\s*<a\b[^>]*>\[comments\]</a>\s*</span>', re.I)
+# A text that opens on a picture's address (a Reddit image post: "https://preview.redd.it/x.png?…"): no words.
+_LEADING_PICTURE_RE = re.compile(r"^(?:https?://\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?\s+)+", re.I)
+
+
+def link_post_target(html: str | None) -> str | None:
+    """The page a Reddit link post shares (its footer's `[link]`), when it is not Reddit itself; else None."""
+    match = _REDDIT_FOOTER_HTML_RE.search(html or "")
+    url = html_lib.unescape(match.group(1)) if match else ""
+    return url if url.startswith(("http://", "https://")) and "reddit.com" not in url and "redd.it" not in url else None
+
+
 def hnrss_counts(content: str | None) -> Dict[str, int] | None:
     """{points, comments} of a Hacker News item as hnrss writes it, else None."""
     match = _HNRSS_COUNTS_RE.search(content or "")
@@ -286,8 +304,16 @@ def hnrss_counts(content: str | None) -> Dict[str, int] | None:
 
 
 def body_without_feed_lines(body: str | None) -> str | None:
-    """A body (text or HTML) without hnrss's four lines; any other body as it is."""
-    return _HNRSS_LINE_RE.sub("", body).strip() if body and _HNRSS_COUNTS_RE.search(body) else body
+    """A body (text or HTML) without an aggregator's lines: hnrss's four, Reddit's footer (issue 0072:
+    a body left with no words, a link post's thumbnail, is empty); any other body as it is."""
+    if not body:
+        return body
+    if _HNRSS_COUNTS_RE.search(body):
+        return _HNRSS_LINE_RE.sub("", body).strip()
+    if _REDDIT_FOOTER_HTML_RE.search(body):
+        rest = _REDDIT_FOOTER_HTML_RE.sub("", body).strip()
+        return rest if _WORD_RE.search(strip_html(rest)) else ""
+    return _REDDIT_FOOTER_RE.sub("", body).strip() if _REDDIT_FOOTER_RE.search(body) else body
 
 
 def reading_text(title: str | None, content: str | None, html: str | None = None
@@ -297,6 +323,7 @@ def reading_text(title: str | None, content: str | None, html: str | None = None
     text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
     ended: `html` may be only the HTML's start."""
     content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
+    content = _LEADING_PICTURE_RE.sub("", content) if content else content   # a picture's address is no text (0072)
     shown = display_title(title, content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after

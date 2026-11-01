@@ -19,7 +19,7 @@ from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
 from insight_core.utils.post_links import body_hrefs, quoted_tweet
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import hnrss_counts, reading_text
+from insight_core.utils.post_fields import display_title, hnrss_counts, link_post_target, reading_text
 
 
 # A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
@@ -93,6 +93,7 @@ class PostDetailService:
                 background = self.news.background(cur, post_id) if row else []
                 story = self.story(cur, post_id) if row else None
                 internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
+                link = self.link(cur, link_post_target(row[8]), story) if row else None
 
         if not row:
             return None
@@ -135,6 +136,8 @@ class PostDetailService:
             # A repost (issue 0066): "↻ @by, from @author", as the feed row says it.
             "repost": repost_of(row[21], row[22], row[24], row[25]),
             "internal_links": internal,
+            # A link post's page (issue 0072): {url, title, post_id}, read when the post has no words of its own.
+            "link": link,
         }
 
     @staticmethod
@@ -165,6 +168,19 @@ class PostDetailService:
                 reply["html"] = without_quote(content_html) if reply["quotes_above"] else content_html
                 reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url, content_html, content)
         return story
+
+    @staticmethod
+    def link(cur: psycopg.Cursor, url: Optional[str], story: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The page a link post shares (issue 0072): {url, title, post_id}, titled by the stored post at
+        its address (opened here), else by its story's outside origin when it is that page."""
+        if not url:
+            return None
+        address = normalize_url(url)
+        cur.execute("SELECT id, title, content FROM posts WHERE normalized_url = %s ORDER BY fetched_at, id LIMIT 1", (address,))
+        stored = cur.fetchone()
+        origin = (story or {}).get("origin") or {}
+        title = display_title(stored[1], stored[2]) if stored else origin.get("title") if origin.get("url") == address else None
+        return {"url": url, "title": title or None, "post_id": str(stored[0]) if stored else None}
 
     @staticmethod
     def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],

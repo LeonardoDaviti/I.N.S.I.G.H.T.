@@ -6,7 +6,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, quote_only, reading_text,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_post_target, quote_only,
+    reading_text,
 )
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
@@ -311,6 +312,32 @@ class QuoteCardTests(unittest.TestCase):
         for own in ("<p>Its out guys.</p>\n", "<p>🫶</p>\n", '<p></p>\n<img src="https://nitter.local/pic/b.jpg" />\n'):
             self.assertIsNone(quote_only(own + self.CARD), own)
         self.assertIsNone(quote_only("<p>No quote here.</p>"))
+
+
+class RedditFooterTests(unittest.TestCase):
+    """Issue 0072: Reddit's "submitted by /u/x [link] [comments]" is the item's footer, never its text."""
+    THREAD = "https://www.reddit.com/r/sub/comments/1/a_model_is_now_open_weight/"
+    FOOTER = (' &#32; submitted by &#32; <a href="https://www.reddit.com/user/someone"> /u/someone </a> <br/> '
+              '<span><a href="{link}">[link]</a></span> &#32; <span><a href="' + THREAD + '">[comments]</a></span>')
+    THUMB = '<table> <tr><td> <a href="' + THREAD + '"> <img src="https://preview.test/a.jpeg" /> </a> </td><td>{own}{footer}</td></tr></table>'
+
+    def test_a_link_post_with_nothing_else_is_empty_and_opens_its_page(self):
+        html = self.THUMB.format(own="", footer=self.FOOTER.format(link="https://models.test/news/open"))
+        self.assertEqual(body_without_feed_lines(html), "")
+        self.assertEqual(body_without_feed_lines("&#32; submitted by &#32; /u/someone [link] &#32; [comments]"), "")
+        self.assertEqual(link_post_target(html), "https://models.test/news/open")
+        self.assertIsNone(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=self.THREAD))), "a text post links itself")
+
+    def test_a_posts_own_words_stay(self):
+        html = self.THUMB.format(own='<div class="md"><p>i hope it is real</p></div>', footer=self.FOOTER.format(link=self.THREAD))
+        self.assertIn("i hope it is real", body_without_feed_lines(html))
+        self.assertNotIn("submitted by", body_without_feed_lines(html))
+        self.assertEqual(body_without_feed_lines("i hope it is real &#32; submitted by &#32; /u/someone [link] &#32; [comments]"),
+                         "i hope it is real")
+
+    def test_a_picture_address_is_no_text(self):
+        text = "https://preview.redd.it/abc.png?width=1482&amp;format=png Results of my run on two cards."
+        self.assertEqual(reading_text("My run", text)[1], "Results of my run on two cards.")
 
 
 class FeedLinesTests(unittest.TestCase):

@@ -776,6 +776,12 @@ interface PostArticleProps {
  * open and reading time). Keyed by the post id, so nothing of another post
  * carries over.
  */
+/** "Read on mistral.ai", or "Read “<the page's title>” on mistral.ai" when it says more than the post's title (issue 0072). */
+function readOnLabel(link: { url: string; title: string | null }, shown: string): string {
+  const site = publicationOf(link.url) || link.url;
+  return link.title && link.title !== shown ? `Read “${link.title}” on ${site}` : `Read on ${site}`;
+}
+
 function PostArticle({ postId, detail, api, fixture, current, readOn, divider, offerResume, keysEnabled }: PostArticleProps) {
   const queryClient = useQueryClient();
   const initial = useMemo(() => initialComments(detail.post as Post), [detail.post]);
@@ -1311,10 +1317,14 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
             </div>
           ) : bodyIsTitle ? null : renderContent.trim() ? (
             markdownBody
-          ) : post.url ? (
-            // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself.
+          ) : post.link?.post_id ? (
+            // A link post's page stored in INSIGHT (issue 0072) opens here.
+            <p data-read-on><Link to={`/posts/${post.link.post_id}`} className="text-link">{readOnLabel(post.link, displayTitle)}</Link></p>
+          ) : post.link || post.url ? (
+            // No body stored (issue 0069): the title above is all INSIGHT has, so the next step is the page itself;
+            // a link post's is the page it shares (issue 0072).
             <p data-read-on>
-              <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-link">Read on {publicationOf(post.url) || post.url} ↗</a>
+              <a href={post.link?.url ?? post.url} target="_blank" rel="noopener noreferrer" className="text-link">{readOnLabel(post.link ?? { url: post.url ?? "", title: null }, displayTitle)} ↗</a>
             </p>
           ) : null}
         </div>
