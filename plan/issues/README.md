@@ -1,7 +1,14 @@
 # Local issues
 
 INSIGHT has no external issue tracker. Each issue is one markdown file here, numbered
-`NNNN-slug.md`, with a `Status:` line (`open` / `discussion` / `ready-for-agent` / `planned` / `built` / `done`).
+`NNNN-slug.md`, with a `Status:` line: `discussion`, `future` (not now), `spec` (written, not
+built), `built` (on `main`), `decided: no change`, or `done`. A part may carry its own status.
+
+**What is on the server.** The server runs v9.5: the copy of its database taken 2026-10-30
+(`insight_server_copy`) has applied every migration up to `0037`, v9.5's last, and every issue up
+to 0048 was built in v9.5's commit (d1d3c75) or before. So the rows below say "on the server
+(v9.5)" for those, where an issue file's own Status line, written when it was built, may still
+say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 
 | # | Title | Status |
 |---|---|---|
@@ -9,50 +16,50 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0002](0002-track-briefing-reading.md) | Track briefing: a readable, clickable briefing for the analysis version | discussion |
 | [0003](0003-source-name-opens-source-settings.md) | Clicking a source/track name opens it in Sources (sheet open) | done |
 | [0004](0004-citation-graph-sources-of-truth.md) | Citation graph: parents and sources of truth between posts | discussion |
-| [0005](0005-minimal-codebase.md) | Minimal codebase: keep what reading uses, retire analysis completely | built, not deployed |
-| [0006](0006-image-cache.md) | Post images through a 24-hour cache | built |
-| [0007](0007-visible-jobs-live-reader.md) | See the jobs that run, and a reader that updates by itself | built |
-| [0008](0008-clean-full-text.md) | Full text that is clean: no site menus, no HTML codes | built, not deployed |
-| [0009](0009-short-titles.md) | A title is a title: cut posts whose whole text is the title | built |
-| [0010](0010-post-page-navigation.md) | Post page: back always in reach, the source name reads the source | built |
-| [0011](0011-sources-list-sort-and-read.md) | Sources list: sort by column, find the newest source, read from a row | built |
-| [0012](0012-reddit-comments-and-bursts.md) | Reddit: comments that load, posts that don't flood the top | bursts half built; comments half waits for the owner |
+| [0005](0005-minimal-codebase.md) | Minimal codebase: keep what reading uses, retire analysis completely | built, on the server (v9.5) |
+| [0006](0006-image-cache.md) | Post images through a 24-hour cache | built, on the server (v9.5) |
+| [0007](0007-visible-jobs-live-reader.md) | See the jobs that run, and a reader that updates by itself | built, on the server (v9.5) |
+| [0008](0008-clean-full-text.md) | Full text that is clean: no site menus, no HTML codes | built, on the server (v9.5) |
+| [0009](0009-short-titles.md) | A title is a title: cut posts whose whole text is the title | built, on the server (v9.5) |
+| [0010](0010-post-page-navigation.md) | Post page: back always in reach, the source name reads the source | built, on the server (v9.5) |
+| [0011](0011-sources-list-sort-and-read.md) | Sources list: sort by column, find the newest source, read from a row | built, on the server (v9.5) |
+| [0012](0012-reddit-comments-and-bursts.md) | Reddit: comments that load, posts that don't flood the top | bursts half built, on the server (v9.5); comments half waits for the owner |
 | [0013](0013-priority-order.md) | Priority order: the sources I read most come first | discussion (future; 0051 ranks by coverage until there is reading data) |
-| [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | built |
-| [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | built, not deployed |
-| [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, not deployed |
-| [0017](0017-hacker-news.md) | Hacker News: the article and its discussion | first version built (hnrss.org); kind and comments future |
-| [0018](0018-pipecraft-blog.md) | pipecraft.me: a blog with no feed, read from its own JSON API | built, not deployed |
-| [0019](0019-feed-row-read-and-source.md) | Feed rows: one read button, the source name reads the source | built |
-| [0020](0020-version-display.md) | The running version on the Ingestion tab, in the Mark scheme | built |
-| [0021](0021-useful-ingestion-logs.md) | Ingestion jobs that say what they delivered | built |
-| [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | built, not deployed |
-| [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | Trending built (RSS feed); Following later |
+| [0014](0014-continuous-reading.md) | Continuous reading: scroll from one post into the next | built, on the server (v9.5) |
+| [0015](0015-smart-archiving.md) | Smart archiving: continue below what I have; no measuring phase in fetch runs | built, on the server (v9.5) |
+| [0016](0016-learned-pace.md) | A pace that learns: survive 429s and timeouts instead of failing | built, on the server (v9.5) |
+| [0017](0017-hacker-news.md) | Hacker News: the article and its discussion | first version built (hnrss.org), on the server (v9.5); kind and comments future |
+| [0018](0018-pipecraft-blog.md) | pipecraft.me: a blog with no feed, read from its own JSON API | built, on the server (v9.5) |
+| [0019](0019-feed-row-read-and-source.md) | Feed rows: one read button, the source name reads the source | built, on the server (v9.5) |
+| [0020](0020-version-display.md) | The running version on the Ingestion tab, in the Mark scheme | built, on the server (v9.5) |
+| [0021](0021-useful-ingestion-logs.md) | Ingestion jobs that say what they delivered | built, on the server (v9.5) |
+| [0022](0022-bookmarks-and-read-later.md) | Bookmarks: read later, keep, and what the star means | built, on the server (v9.5) |
+| [0023](0023-github-feed.md) | GitHub Trending in INSIGHT, without scrolling github.com | Trending built (RSS feed), on the server (v9.5); Following later |
 | [0024](0024-release-updates.md) | Release updates: new versions of the apps and services I use | future |
 | [0025](0025-reddit-after-rss.md) | Reddit after its RSS ends (13 Nov 2026) | decided: no change |
-| [0026](0026-feed-finder.md) | Find a site's feed from any page URL | built, not deployed |
-| [0027](0027-illogicalities.md) | Illogicalities: controls and words that contradict their place | built, not deployed |
-| [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, not deployed |
-| [0029](0029-review-fixes.md) | Review fixes: correctness and overengineering in today's work | built, not deployed |
-| [0030](0030-continue-where-i-stopped.md) | Continue where I stopped: a long post offers to go back to where it was left | built, not deployed |
-| [0031](0031-save-any-page.md) | Save any page: a bookmarklet and "paste a URL" | built, not deployed |
-| [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | built, not deployed (steps 1-2; step 3 measured: not adopted) |
-| [0033](0033-continuous-reading-design.md) | Continuous reading: one calm column of separate articles | built, not deployed |
-| [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built, not deployed |
-| [0035](0035-add-many-sources.md) | Add many sources at once: a paste box and OPML | built, not deployed |
-| [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | built, not deployed |
+| [0026](0026-feed-finder.md) | Find a site's feed from any page URL | built, on the server (v9.5) |
+| [0027](0027-illogicalities.md) | Illogicalities: controls and words that contradict their place | built, on the server (v9.5) |
+| [0028](0028-follow-a-page-without-a-feed.md) | Follow a page without a feed: its links and its sitemap | built, on the server (v9.5) |
+| [0029](0029-review-fixes.md) | Review fixes: correctness and overengineering in today's work | ★ set built, on the server (v9.5); 7, 11, 14, 15 and the judgement calls open |
+| [0030](0030-continue-where-i-stopped.md) | Continue where I stopped: a long post offers to go back to where it was left | built, on the server (v9.5) |
+| [0031](0031-save-any-page.md) | Save any page: a bookmarklet and "paste a URL" | built, on the server (v9.5) |
+| [0032](0032-reading-fidelity.md) | Reading fidelity: know when INSIGHT reads a page worse than the site shows it | built, on the server (v9.5) (steps 1-2; step 3 measured: not adopted) |
+| [0033](0033-continuous-reading-design.md) | Continuous reading: one calm column of separate articles | built, on the server (v9.5) |
+| [0034](0034-one-reading-density.md) | One reading density: the compact choice goes | built, on the server (v9.5) (frontend only) |
+| [0035](0035-add-many-sources.md) | Add many sources at once: a paste box and OPML | built, on the server (v9.5) |
+| [0036](0036-source-doctor.md) | Source doctor: a broken source finds its replacement | built, on the server (v9.5) |
 | [0037](0037-full-arxiv-papers.md) | Full arXiv papers, from their HTML version | future |
 | [0038](0038-pdf-text.md) | Reading the PDFs posts link to | future |
-| [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | built, not deployed |
-| [0040](0040-search.md) | Search across every post | built, not deployed |
-| [0041](0041-follow-the-sites-blog.md) | Paste a homepage, follow its blog | built, not deployed |
-| [0042](0042-reader-keeps-structure.md) | The reader keeps tables, figures and captions | built, not deployed |
-| [0043](0043-gwern-reader-cleanup.md) | The Gwern reader reads only Gwern's writing | built, not deployed |
-| [0044](0044-conditional-fetching.md) | Conditional fetching: an unchanged feed costs nothing | built, not deployed |
-| [0045](0045-reading-settings.md) | Reading settings: font, size and width | built, not deployed |
-| [0046](0046-source-hygiene.md) | Source hygiene: quiet and never-opened sources | built, not deployed |
-| [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, not deployed |
-| [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, not deployed |
+| [0039](0039-page-change-watching.md) | Watching pages for changes (Gwern first) | built, on the server (v9.5) |
+| [0040](0040-search.md) | Search across every post | built, on the server (v9.5) |
+| [0041](0041-follow-the-sites-blog.md) | Paste a homepage, follow its blog | built, on the server (v9.5) |
+| [0042](0042-reader-keeps-structure.md) | The reader keeps tables, figures and captions | built, on the server (v9.5) |
+| [0043](0043-gwern-reader-cleanup.md) | The Gwern reader reads only Gwern's writing | built, on the server (v9.5) |
+| [0044](0044-conditional-fetching.md) | Conditional fetching: an unchanged feed costs nothing | built, on the server (v9.5) |
+| [0045](0045-reading-settings.md) | Reading settings: font, size and width | built, on the server (v9.5) |
+| [0046](0046-source-hygiene.md) | Source hygiene: quiet and never-opened sources | built, on the server (v9.5) |
+| [0047](0047-blog-under-another-name.md) | Find a site's blog when it isn't called "Blog" | built, on the server (v9.5) |
+| [0048](0048-gwern-noise-cleanup.md) | Remove the Gwern posts that aren't Gwern's writing | built, on the server (v9.5) |
 | [0049](0049-one-post-one-address.md) | One post, one address: a post is never saved twice under another form of its URL | built, not deployed (v9.6) |
 | [0050](0050-one-story-many-sources.md) | One story, many sources: the links inside posts, story groups, "covered by", and Discover | built, not deployed (v9.7) |
 | [0051](0051-news-and-classics.md) | News and Classics: what many of my sources cover now, and what they keep citing | built, not deployed (v9.7) |
@@ -63,6 +70,7 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0056](0056-search-finds-stories.md) | Search finds stories: version names, folded results, News and Classics | built, not deployed (v9.8) |
 | [0057](0057-links-stay-in-insight.md) | A link to a post you already have opens it in INSIGHT | built, not deployed (v9.8) |
 | [0058](0058-known-news-is-not-new.md) | A page your sources linked before is not "new to you" | built, not deployed (v9.8) |
+| [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 | [0060](0060-follow-where-your-links-point.md) | Follow a site where your sources' links point | built, not deployed (v9.8) |
 | [0061](0061-smooth-loading.md) | Smooth loading: no broken tab after a deploy, no wait on the first post, a budget that measures what you wait for | built, not deployed (v9.8) |
 | [0062](0062-what-the-pipeline-review-found.md) | What the pipeline review found: same address, teasers retried, a shorter update, Discover in the database, background work you can see | built, not deployed (v9.9) |
@@ -73,9 +81,8 @@ INSIGHT has no external issue tracker. Each issue is one markdown file here, num
 | [0067](0067-discover-clean-less-noise.md) | Discover: cleaner, less noise (a roundup weighs half in the order; languages and mirrors aren't sites) | built, not deployed (v9.9) |
 | [0068](0068-reading-v9.9-gaps.md) | What reading v9.9 would show: threads, roundups, reposts, origin titles, phones, labels, shared blog hosts | built, not deployed (v9.10) |
 | [0069](0069-v9.11-deploy-reading-voices.md) | v9.11: a deploy that finishes, text that reads, one voice per publication | built, not deployed (v9.11) |
-| [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, not deployed (A9 not built) |
+| [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, not deployed (A9 measured, not built) |
 | [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | spec (v9.13) |
-| [0059](0059-classics-discussion.md) | Classics: what's wrong with them (to discuss) | discussion |
 
 ## Analysis archive
 
@@ -89,6 +96,5 @@ list the files to look at. The finished analysis plans are in `plan/archive/`.
 
 Still open from the old backend `FUTURES.md` (the rest is built or obsolete):
 
-- Conditional fetching: send `ETag` / `If-Modified-Since` and skip unchanged feeds (v9.5).
 - Post versioning: keep a post's earlier text when its source edits it.
 - Retention: a policy for old posts (soft delete, then purge).

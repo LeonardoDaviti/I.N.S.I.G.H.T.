@@ -2,13 +2,25 @@
 
 I.N.S.I.G.H.T. is a single place for all your sources and one calm reading flow. It collects posts from selected sources on a per-source cadence, stores them in PostgreSQL, and gives you one reader over all of them. It also supports one-time archive backfills.
 
-Mark IX is a **reading-only** app. It has three places:
+Mark IX is a **reader**. The top bar reads `feed / sources / blog`:
 
-- **feed** (`/`): every source in one reading flow. The rail holds tracks (folders) and sources.
-- **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉).
-- **sources** (`/settings/sources`): the list, add, tracks, health and cadence, plus the `connections` and `ingestion` tabs.
+- **feed** (`/`, `/read/...`): every source in one reading flow. The rail holds tracks (folders)
+  and sources. Its views: **Stream**, **By source**, **News** (the stories several of your voices
+  cover now) and **Classics** (pages your voices keep linking over time). A post that several
+  sources cover is one row, a story, with its other posts under it as a tree.
+- **post** (`/posts/:postId`): the content only, with open original (↗), star (☆) and copy (⧉),
+  and the story it belongs to, as a tree from its origin.
+- **search** (`/search`): every post, by title, source name and text.
+- **save** (`/save`): save any page as a post (the bookmarklet's and ⌘K's).
+- **sources** (`/settings/sources`): tabs `sources / discover / connections / ingestion`. Discover
+  suggests the sites and accounts your sources keep linking that you don't follow.
+- **blog** (`/blog`); the Design Studio (`/design`) is reached from ⌘K.
 
-The analysis layer (entity/event memory, experts, briefings, stories, inbox, Gemini) was retired in issue 0005. The last commit that still holds it is tagged `mark-ix-analysis-archive`.
+Stories came back as a reading feature (issues 0050, 0051, 0064): the story job groups the posts
+that cover one thing (by address, text, title, links, reposts, threads and quotes), draws each
+story as a tree, and derives News, Classics and Discover from the same links. The old analysis
+layer (entity and event memory, experts, briefings, the inbox, Gemini) was retired in issue 0005;
+the tag `mark-ix-analysis-archive` holds it.
 
 ## What It Does
 
@@ -138,17 +150,20 @@ What happens automatically on startup:
 - daily work runs when `interval_hours` have passed since it last ran; the first tick after a deploy does not run it again
 - source changes made in the app are written to the database, then exported to `sources.json`
 
-Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources`:
+Frontend pages. Every page sits under one top bar with the slash nav and a Cmd/Ctrl+K switcher. The top bar reads `feed / sources / blog`:
 
 - `/`, `/read/:scopeKind/:scopeId`: the reader. Unread / starred / all, stream or by source, keyboard shortcuts (`?` lists them). The rail lists tracks and sources.
 - `/posts/:postId`: the reading view of one post, with prev/next in feed order. Content only, with ↗ ☆ ⧉.
 - `/tracks/:trackId`: one track's reading view. ⌘K has one "Tracks…" entry per track. Fetch, rename, main digest and delete are in the track group's ⋯ menu on the sources list.
-- `/settings/sources`: three tabs, `sources / connections / ingestion`.
+- `/search`: search every post. `/save`: save any page. `/blog`: the engineering blog.
+- News and Classics are views of the reader (the toolbar's view menu), of the Main feed or a track.
+- `/settings/sources`: four tabs, `sources / discover / connections / ingestion`.
   - `sources`: the list, add/edit, tracks, health and cadence. The old `?tab=health` URL still works and opens the list with its status filter.
+  - `discover` (`?tab=discover`): the sites and accounts 3+ of your sources link that you don't follow, and the stories they started.
   - `connections` (`?tab=connections`): provider credentials, one row per provider, stored encrypted. The only place API keys live: Telegram and Substack. To move keys from an older `.env`, run `docker compose exec backend python -m insight_core.scripts.import_env_secrets` once.
   - `ingestion` (`?tab=ingestion`): the run report, `Run due sources`, the scheduler interval and status, and the job history (`&sub=jobs`; `&job=<id>` opens one job).
 
-The old analysis paths `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/`. `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
+The old analysis paths `/briefing*`, `/stories`, `/inbox`, `/experts` and the `/tracks` list redirect to `/` (stories today live in the feed, not at `/stories`). `/ingestion` and `/ingestion/:tab` redirect to `/settings/sources?tab=ingestion` and carry the tab across as `sub`, so `/ingestion/jobs` opens `?tab=ingestion&sub=jobs`. Every redirect replaces the history entry.
 
 The UI is monochrome, dark by default, with a theme toggle in the top bar. The design rules live in `frontend/src/design/docs` (shown at `/design`).
 

@@ -467,7 +467,8 @@ the result when the job finishes.
 | Method | Path | Purpose | Body or query |
 |---|---|---|---|
 | GET | `/` | Liveness text | |
-| GET | `/health` | Container health check | |
+| GET | `/health` | Container health check: one quick database query through the pool; 503 `{status: "unhealthy", database: false}` when the database doesn't answer (issue 0071) | |
+| GET | `/api/version` | The build stamp (issue 0020): `{version, commit, commit_date}`, each null in a dev build | |
 | GET | `/api/status` | System state for an agent: corpus, scheduler, folders, recent jobs | |
 | GET | `/api/feed` | Every post list, newest first (Later: oldest saved first), one page | `scope=all\|source:<id>\|folder:<id>`, `filter=all\|unread\|later\|starred` (starred is Keep, "Kept"; later on `all` holds every source), `view=stream\|by_source`, `cursor`, `limit` (1-100), `days=N` or `date=YYYY-MM-DD` (UTC) |
 | GET | `/api/feed/unread-counts` | Unread posts: total, per source, per folder; `later: {count, minutes}` | |
@@ -479,6 +480,9 @@ the result when the job finishes.
 | POST | `/api/posts/item/{post_id}/reading-session` | Record time spent reading | `{durationSeconds, metadata?}` |
 | PUT | `/api/feed/later` | Read later (issue 0022): put posts in Later or take them out, answers `{updated, ids}` | `{ids, later}` (1-500 ids) |
 | POST | `/api/posts/item/{post_id}/favorite` | Star (Keep) or unstar | `{favorited}` |
+| GET | `/api/news` | News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 7 days, with a post from the scope's sources. A FeedPage (no next page): each item a story's lead with its `story` and `news` `{part: recent \| earlier, first_at, reports, shares, mentions, score}`; recent (48 hours) first, then by score, then the newest | `scope` (`all` \| `folder:<uuid>`) |
+| GET | `/api/classics` | Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope among them, not hidden: `{classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again, citers [{name, at}], read_at, later_at}]}`, cited again this week first, then most voices, then cited longest. Nothing is fetched | `scope` |
+| POST | `/api/classics/hide` | Hide a classic for good ("I know it" and "not for me" in one) | `{url}` |
 | PUT | `/api/posts/item/{post_id}/position` | Where a long post was left (issue 0030); `block: null` clears it. Marking a post read clears it too | `{block, blocks}` (`0 <= block < blocks`) |
 | GET | `/api/sources` | Every source with settings, `post_count`, `in_main_digest`; `total_posts` | |
 | POST | `/api/sources` | Add a source | `{platform="rss", handle_or_url, display_name?, fetch_delay_seconds?, priority?, state="enabled", page_watch?}` (`page_watch: {prefix?}` follows a page without a feed, stored as `settings.page_watch`) |
@@ -493,6 +497,10 @@ the result when the job finishes.
 | DELETE | `/api/sources/{source_id}` | Delete a source and its posts | |
 | POST | `/api/sources/{source_id}/switch` | Point a source at its replacement (issue 0036): name, tracks and posts kept, failures cleared, sources.json rewritten (when it cannot be, the switch stands): `{handle_or_url, previous}`. 400: bad address or already a source | `{url, page_watch?}` (`page_watch: {prefix?}` follows the page) |
 | POST | `/api/sources/{source_id}/replacement/dismiss` | Hide the source doctor's finding until the next failure streak: `{row}`. 404 without a finding | |
+| POST | `/api/sources/{source_id}/tidy/keep` | Keep a source marked quiet or never opened (issue 0046): its marks hide for 90 days and come back only if still true; the fresh health row. 404 for no such source | |
+| GET | `/api/sources/suggested` | Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like pages that you don't follow, each `{key, url, voices, voice_names, article_count, link_count, articles, origins, origin_stories, follows?}`, the most stories started there first (issue 0065), then most voices; `archives` (followed sources whose own pages started stories they don't hold) and `unnamed`. Nothing is fetched | |
+| POST | `/api/sources/suggested/hide` | Not interested: the key is never suggested again | `{key}` |
+| GET | `/api/sources/anatomy` | Source anatomy (issue 0054): every source, how it is read and what it gives: `{window_days, generated_at, rows: [{source_id, display_name, address, platform, enabled, kind, full_text, watch_changes, watched_pages, validators, status, interval_hours, next_due_at, last_outcome, last_error, recent, all}]}`, most posts in the window first. Nothing is fetched | |
 | GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
 | GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary; a row carries the source doctor's `doctor_looked_at` and `replacement` (`{kind: feed\|page_watch, url, title, found, prefix}`, null: none found) | |
 | POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
@@ -512,8 +520,9 @@ the result when the job finishes.
 | GET | `/api/ingestion/logs` | Tail of a log file | `log`, `lines` (1-1000) |
 | GET | `/api/operations/overview` | Recent jobs, source health, alerts | |
 | GET | `/api/operations/jobs/{job_id}` | One job with its result | |
+| GET | `/api/operations/background` | What runs on its own (issue 0062): stories, the search index, link reading, each with its progress. Read only | |
 | GET | `/api/operations/scheduler` | Scheduler settings and state | |
-| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, syncSourcesEachCycle?, ingestTickMinutes?}` (tick >= 15) |
+| PUT | `/api/operations/scheduler` | Edit scheduler settings | `{intervalHours?, ingestTickMinutes?}` (tick >= 15) |
 | GET | `/api/credentials` | Every connection, without its values | |
 | PUT | `/api/credentials/{provider}/{key}` | Save one secret | `{value}` |
 | DELETE | `/api/credentials/{provider}/{key}` | Remove one secret | |
