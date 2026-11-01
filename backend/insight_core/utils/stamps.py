@@ -235,6 +235,10 @@ def posts() -> List[Dict[str, Any]]:
         p("k3", "s-alpha", _at(112 + 7 * 24), "A Field Guide To Small Language Models", "https://blog.alpha.example/field-guide"),
         p("k4", "s-tg1", _at(112 + 14 * 24, 1), "A Field Guide To Small Language Models", "https://t.me/sample_channel/160",
           html="<p>k4</p>"),
+        # ... its entities decoded and its quotes as they are compared (utils/titles.py, issue 0071)
+        p("k5", "s-tg2", _at(118), "Notes on &quot;Small&quot; Language Models Today", "https://t.me/other_channel/270",
+          html="<p>k5</p>"),
+        p("k6", "s-gamma", _at(119), "Notes on “Small” Language Models Today", "https://gamma.example/research/notes-on-small"),
         # Another path of a stored page is that page; a writer's guest post on another github.io site
         # is not at its own site (issue 0068), so Hacker News' post of it hangs from it by time
         p("m1", "s-gamma", _at(120), "Redesigning the index", "https://gamma.example/research/redesigning-the-index", updated=True),

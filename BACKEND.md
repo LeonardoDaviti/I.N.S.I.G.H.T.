@@ -24,6 +24,7 @@ return; the repositories hold the SQL. One job each:
 |---|---|
 | `addresses.py` | what an address says, one definition each: its **host** (`host_of`), **site** (`site_of`, `same_site`; the feed finder's narrower `blog_site`), **publication** (`publication_of`), whether it is a **tweet** and whose (`is_tweet`, `tweet_author`, `x_account`), the account it is under on a platform (`account_key`) |
 | `post_links.py` | the outside links in a post's HTML, and the small facts the story rules read of an address (home page, article, section, reference page) |
+| `titles.py` | what a title is when two are compared (`title_key`: entities, NFKC, case, quotes, spaces; `comparable` keeps the case for names), as SQL's `post_title_key` |
 | `story_rules.py` | the **story**: `StoryPost` (what the rules read of a post), `group` (joins by address, text, title, link, citation, thread, quote), roles, voices |
 | `tree_rules.py` | the **tree**: each post's parent and why, the origin, an outside origin's title (`origin_title`) |
 | `discover_rules.py` | **Discover**: an address's key, site and article (`discover_address`), suggestions (the reference `repo_discover` counts in SQL), where stories start; `ADDRESS_RULES` |

@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import bisect
 import re
-import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
+from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
 
@@ -64,12 +64,6 @@ _TRIM = ".’'"
 # title the bridge glued from two lines) is two words; within one script a capital is a name's own
 # ("OpenAI"). Measured on the lab (issue 0070): 871 titles, none a word of two scripts.
 GLUED = re.compile(r"(?<=[A-Za-z0-9])(?=[А-ЯЁ])|(?<=[а-яёА-ЯЁ])(?=[A-Z])")
-
-
-def comparable(text: Optional[str]) -> str:
-    """Text as it is compared, never as it is shown (issue 0070): styled letters as plain ones
-    (NFKC: "𝙻𝙵𝙼𝟹" is "LFM3", a no-break space a space)."""
-    return unicodedata.normalize("NFKC", text or "")
 
 
 def _words(title: Optional[str]) -> List[str]:

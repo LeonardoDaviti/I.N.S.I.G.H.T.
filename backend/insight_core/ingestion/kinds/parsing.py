@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
+from insight_core.utils.titles import title_key
 
 TELEGRAM_BASE_URL = "https://telegram.local"
 IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
@@ -1020,12 +1021,9 @@ def _block_kind(block: str, host: str) -> Tuple[str, bool]:
     return ("short" if len(text) <= EXCERPT_MAX_CHARS else "text"), False
 
 
-QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
-
-
 def _title_key(text: str) -> str:
-    """A title as compared: its words, in any case, with straight quotes."""
-    return " ".join(strip_html(text).split()).casefold().translate(QUOTES)
+    """A title as compared (utils/titles.py): its words, in any case, with straight quotes."""
+    return title_key(strip_html(text))
 
 
 def _repeats_title(block: str, titles: List[str]) -> bool:
