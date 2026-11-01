@@ -21,6 +21,34 @@
 
   Each to be measured for idle, peak, job time and row-by-row identical results.
 
+## Update: the memory analysis stopped cleanly (WIP commit `fb45501` on `issue-api-memory`)
+- **Where the 926 MB went:**
+  - ~45 MB live Python data;
+  - ~640 MB freed by glibc but not returned (`malloc_trim(0)` returns it);
+  - ~300 MB of Python's own fragmented small-object memory.
+- **By step:** the bodies repair (2,958 bodies read at once) adds ~657 MB, and the story job ~270 MB (posts ~120, News phrases ~128).
+- **Why the lab showed 926 and not ~600:** the lab's API container is started with `docker run` and has none of compose's `MALLOC_*` settings. With them, v9.13 holds 612–635 MB; v9.12 held 594 MB on the same data.
+- **Measured (first start, idle / peak MB, all identical row by row):**
+
+  | approach | idle | peak |
+  |---|---|---|
+  | base | 612–635 | 796 |
+  | `malloc_trim` | 352–364 | 796 |
+  | child process (B) | 47 | 874 |
+  | bodies in batches (D1) | 485–513 | 555–567 |
+  | **B + D1 (the WIP commit)** | **46** | **643** |
+  | B + D1 + News phrases only for names (D3) | 47 | 555 |
+
+- **The WIP commit:** the start's bodies step and story job, and the story job after each fetch (API and ingestion), run in a `spawn` child process (0.3–1.2 s per job), plus bodies read 200 at a time. About 30 lines plus tests; 102 tests in the touched modules pass.
+- **Still to do before merging:**
+  - the full test suite;
+  - turn the WIP into a final commit;
+  - D3 (keep News phrases only for names), timed on a quiet machine;
+  - D2 (streaming posts and links), D4 (`__slots__`), D5 (Classics citations in SQL; likely a small saving);
+  - the plain-restart case.
+- **Also:** give the lab's API container compose's `MALLOC_*` settings, or start it through compose.
+- **Full details:** `plan/research/api-memory/HANDOFF.md` (private), with the scripts under `runs/`.
+
 ## To continue
 1. Finish or redo the memory analysis on `issue-api-memory`. Measure B, with A as a fallback, on a scratch copy of `insight_lab` (back to back, with the load average recorded). Confirm stories, News, Classics and Discover are identical, then merge.
 2. Build 0072 part A on top: the incremental story job (the full rebuild stays as the oracle), `post_edges`, fewer writes, smaller Discover and `/api/sources` answers, "first" only when true, and threads as one item in News and trees.
