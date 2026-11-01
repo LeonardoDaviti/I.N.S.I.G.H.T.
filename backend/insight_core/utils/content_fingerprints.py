@@ -10,6 +10,11 @@ from typing import Literal
 
 
 HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
+# A tag read as the HTML parser reads it: a ">" inside a quoted attribute value doesn't end it
+# (Hugging Face's class="max-md:[&amp;>a]:hidden", issue 0072); a comment ends at "-->". A quote
+# counts only after "=", as in HTML; a tag the rule can't read (an unclosed quote) ends at its
+# first ">", as HTML_TAG_RE does.
+TAG_RE = re.compile(r"""(?is)<!--.*?-->|<[a-z/!?](?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>|<[^>]+>""")
 WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -34,15 +39,17 @@ def strip_html(value: str | None, *, entities: Literal["decode", "decode_first"]
     """Plain text from HTML: every tag becomes a space, every run of whitespace one space.
 
     entities: "decode" decodes &amp; and friends once the tags are gone (clean_text), so an
-    escaped tag (&lt;b&gt;) stays as text; "decode_first" decodes them once, before, so escaped
-    tags go too. The content hash uses "decode_first": what it returns is part of every stored hash.
+    escaped tag (&lt;b&gt;) stays as text, and reads a tag to its end past a ">" in a quoted
+    value (TAG_RE); "decode_first" decodes them once, before, so escaped tags go too, and keeps
+    the first-">" rule. The content hash uses "decode_first": what it returns is part of every
+    stored hash, so it never changes.
     """
     if not value:
         return ""
     text = str(value)
     if entities == "decode_first":
         return WHITESPACE_RE.sub(" ", HTML_TAG_RE.sub(" ", html.unescape(text))).strip()
-    return clean_text(HTML_TAG_RE.sub(" ", text))
+    return clean_text(TAG_RE.sub(" ", text))
 
 
 def normalize_text(value: str | None) -> str:
