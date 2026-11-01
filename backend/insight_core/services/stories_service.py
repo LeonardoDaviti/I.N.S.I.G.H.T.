@@ -6,8 +6,8 @@ once when the backend starts (main.py, in the background):
 2. it marks each source's signature links and links to its own site as boilerplate;
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
    A story that began before the window is frozen. The first run (no `stories` setting yet)
-   groups every post, and so does a run whose rules differ from the setting's (`RULES_VERSION`,
-   issue 0069: a rule change reaches the frozen stories too).
+   groups every post, and so does a run whose rules differ from the setting's (`rules_stamp`,
+   issue 0069: a rule change reaches the frozen stories too; issue 0071: the stamp is derived).
 4. it refreshes News (the names surging in titles join stories, for News only) and Classics
    (issue 0051, services/news_service.py), on the same transaction.
 It is deterministic and idempotent: a second run over the same posts writes nothing. One job at a
@@ -19,7 +19,8 @@ import logging
 import re
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from insight_core.db import database as db
@@ -27,16 +28,20 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
+from insight_core.utils import stamps
+from insight_core.utils.news_rules import news, surges
 from insight_core.utils.post_fields import REPLY_TO_RE
-from insight_core.utils.post_links import host_of, quoted_tweet, quoted_words, reddit_author, site_of
-from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, RULES_VERSION,
-                                           Origin, StoryPost, discover_address, discover_open, discover_place, group,
-                                           origin_title, origins)
+from insight_core.utils.addresses import host_of, site_of, x_account
+from insight_core.utils.post_links import quoted_tweet, quoted_words, reddit_author
+from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
+                                              discover_address, discover_open, discover_place, origins)
+from insight_core.utils.story_rules import LINK_POST_KINDS, SAME_TEXT_WITHIN, StoryPost, group
+from insight_core.utils.tree_rules import origin_title
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
 
-STORY_WINDOW = timedelta(days=30)
+STORY_WINDOW = SAME_TEXT_WITHIN   # as far as a join reaches (a text, an address), so a run meets what a new post joins
 SETTINGS_KEY = "stories"
 LOCK_KEY = "insight.stories"
 DISCOVER_ARTICLES_SHOWN = 20
@@ -75,12 +80,12 @@ class StoriesService:
             settings = SystemSettingsRepository.get(cur, SETTINGS_KEY)
             previous = (settings or ({}, None))[0] or {}
             # Stories grouped by other rules are all regrouped, the frozen ones too (issue 0069).
-            full = full or settings is None or previous.get("rules") != RULES_VERSION
+            full = full or settings is None or previous.get("rules") != rules_stamp()
             summary = {"computed_at": now.isoformat(), "full": full, "links_filled": filled,
                        **self.regroup(cur, cutoff=None if full else now - STORY_WINDOW),
                        "seconds": round(time.monotonic() - started, 2)}
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {
-                **summary, "rules": RULES_VERSION, "full_at": now.isoformat() if full else previous.get("full_at"),
+                **summary, "rules": rules_stamp(), "full_at": now.isoformat() if full else previous.get("full_at"),
             })
         self.fill_discover_addresses()
         return summary
@@ -102,24 +107,24 @@ class StoriesService:
         kind = sources.kind.get(row["source_id"], "site")
         html = row["html"]
         reply = REPLY_TO_RE.match(row["title"] or "") if kind == "x" else None
-        author_source = sources.of_account.get("x.com/" + row["author"].lower()) if kind == "x" and row["author"] else None
+        author_source = sources.of_account.get(x_account(row["author"])) if kind == "x" and row["author"] else None
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
-            words=len(_TAGS.sub("", html or "").split()) if kind in ("reddit", "hn") else None,
+            words=len(_TAGS.sub("", html or "").split()) if kind in LINK_POST_KINDS else None,
             author=reddit_author(html) if kind == "reddit" else row["author"],
             url=row["url"], links=row["links"],
             # The tree's evidence (issue 0064): link words, a page updated since its date, its own site.
             link_texts=row["link_texts"], updated=row["updated"], home_site=sources.home_site(row["source_id"]),
             # On X (issue 0066): a tweet of another account (a repost), the account a reply answers, a quote.
             reposted=kind == "x" and bool(row["author"])
-            and sources.account.get(row["source_id"]) != "x.com/" + row["author"].lower(),
+            and sources.account.get(row["source_id"]) != x_account(row["author"]),
             reply_to=reply.group(1) if reply else None,
             quoted=quoted_tweet(html) if kind == "x" else None,
             quoted_words=quoted_words(html),   # the words of the pages it quotes (issue 0070)
             # Who else of your sources put it before you (issue 0068): its author's own source, when
             # another source holds it, and the sources that reposted it. Voices of its story.
-            reposters=tuple(sorted({sources.of_account.get("x.com/" + by.lower()) for by in row["reposted_by"]}
+            reposters=tuple(sorted({sources.of_account.get(x_account(by)) for by in row["reposted_by"]}
                                    - {None, row["source_id"], author_source})),
             author_source=author_source if author_source != row["source_id"] else None,
         )
@@ -177,10 +182,13 @@ class StoriesService:
     @staticmethod
     def _title_articles(cur: Any, sources: SourceFacts, found: List[Dict[str, Any]]) -> None:
         """Each shown article's title (issue 0070): a stored post's own, as the reader shows it, else
-        by the evidence a story's outside origin is titled by (origin_title), from every post linking it."""
+        by the evidence a story's outside origin is titled by (origin_title), from every post linking it,
+        in time order as a story's are (issue 0071: link words written two ways as often are a tie the
+        first one wins, and the database returns rows in any order)."""
         urls = sorted({url for s in found for url, _ in s["articles"]})
         linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
-        for row in StoriesRepository.load_posts(cur, sources, None, linking=urls):
+        rows = StoriesRepository.load_posts(cur, sources, None, linking=urls)
+        for row in sorted(rows, key=lambda row: (row["t"], row["id"])):
             post = StoriesService._story_post(row, sources)
             for target, _ in post.links:
                 linking[target][post.id] = post
@@ -255,7 +263,7 @@ class StoriesService:
                 suggestion["follows"] = sorted({p for p in held if p.split("/", 1)[0] == host} - {key})
         # The stories you read that start there first (issue 0065), then a suggestion that holds
         # classics (issue 0051), then most voices, one linking it only in roundups counting half
-        # (issue 0067), then all voices, articles, links, key (story_rules.suggestions).
+        # (issue 0067), then all voices, articles, links, key (discover_rules.suggestions).
         out.sort(key=lambda s: (-s["origins"], s["classics"] == 0, -weight[s["key"]], -s["voices"],
                                 -s["article_count"], -s["link_count"], s["key"]))
         archives = [{
@@ -275,7 +283,7 @@ class StoriesService:
 
     @staticmethod
     def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str]) -> Dict[str, str]:
-        """The places your sources hold (story_rules.discover_place -> a source): the platform
+        """The places your sources hold (discover_rules.discover_place -> a source): the platform
         accounts they follow, and on the sites you follow where stories start, the sections their
         own posts are in (the source with the most posts there)."""
         held = {account: source_id for source_id, account in sorted(sources.platform_accounts().items())}
@@ -308,6 +316,19 @@ class StoriesService:
         with db.transaction(self.db_url) as cur:
             self.repo.hide(cur, [key], "not_interested")
         return {"success": True, "key": key}
+
+
+@lru_cache(maxsize=1)
+def rules_stamp() -> str:
+    """The rules stories are grouped by (issue 0071): a fingerprint of the stories, trees and News the
+    job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post).
+    Any rule change that changes them (story_rules, tree_rules, news_rules, post_links, how a voice
+    is told) changes it; a rename or a move doesn't."""
+    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
+    posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
+    stories = group(posts)
+    found = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
+    return stamps.fingerprint([stories, found, news(posts, stories, found)])
 
 
 def _first(stories: List[Origin], *, pages: bool = False) -> List[Origin]:

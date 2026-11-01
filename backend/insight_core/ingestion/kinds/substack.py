@@ -38,6 +38,7 @@ from insight_core.ingestion.kinds.base import (
     resume_counts,
     start_at,
 )
+from insight_core.utils.addresses import host_of
 
 SUBSTACK_HOST_KEY = "substack.com"
 SUBSTACK_PROFILE = PolitenessProfile(concurrency_pool="host-lock", page_delay_s=1)
@@ -104,7 +105,7 @@ class SubstackKind(BaseKind):
     def matches(self, source: Source) -> bool:
         if (source.get("settings") or {}).get("substack") is True:
             return True
-        return is_substack_host(urllib.parse.urlparse(str(source.get("handle_or_url") or "")).hostname or "")
+        return is_substack_host(host_of(str(source.get("handle_or_url") or "")))
 
     def host_key(self, source: Source) -> str:
         return SUBSTACK_HOST_KEY

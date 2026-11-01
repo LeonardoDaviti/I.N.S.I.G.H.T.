@@ -25,9 +25,8 @@ import psycopg
 from insight_core.db import database
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.services.reader_service import ReaderService
-from insight_core.services.stories_service import SETTINGS_KEY, StoriesService
+from insight_core.services.stories_service import SETTINGS_KEY, StoriesService, rules_stamp
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
-from insight_core.utils.story_rules import RULES_VERSION
 
 HELD_SECONDS = 0.5
 
@@ -145,13 +144,13 @@ class RulesVersionTests(unittest.TestCase):
         self.assertTrue(summary["full"], "a setting without a rules version: a full run")
         self.assertEqual(self.cutoffs, [None])
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            self.assertEqual(SystemSettingsRepository.get(cur, SETTINGS_KEY)[0]["rules"], RULES_VERSION)
+            self.assertEqual(SystemSettingsRepository.get(cur, SETTINGS_KEY)[0]["rules"], rules_stamp())
 
         self.assertFalse(self.service.recompute()["full"], "the same rules: the window only")
         self.assertIsNotNone(self.cutoffs[-1])
 
-        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": False, "rules": RULES_VERSION - 1})
-        self.assertTrue(self.service.recompute()["full"], "an older version: a full run")
+        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": False, "rules": "older rules"})
+        self.assertTrue(self.service.recompute()["full"], "other rules: a full run")
         self.assertEqual(self.cutoffs[-1], None)
 
 

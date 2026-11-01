@@ -1,4 +1,5 @@
 import type { BackgroundClassic, Classic } from '../services/api';
+import { bareAddress } from './addresses.ts';
 import { sourceLabel } from './sourceLabel.ts';
 
 // Classics (issue 0051): kept apart from lib/story.ts, which the feed row (the reader's initial
@@ -17,5 +18,5 @@ export function citedBy(classic: Pick<Classic, 'citers'>): string {
 
 /** A classic's name: its title, else its address without the scheme. */
 export function classicTitle(classic: Pick<Classic | BackgroundClassic, 'title' | 'url'>): string {
-  return classic.title?.trim() || classic.url.replace(/^https?:\/\/(www\.)?/, '');
+  return classic.title?.trim() || bareAddress(classic.url);
 }

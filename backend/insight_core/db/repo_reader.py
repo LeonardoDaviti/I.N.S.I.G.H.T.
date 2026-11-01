@@ -41,6 +41,7 @@ from insight_core.db.repo_stories import source_account
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
+from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import REPLY_TO_RE, display_title, hnrss_counts, reading_text
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
@@ -494,7 +495,7 @@ class ReaderRepository:
                 sources = stories[lead]["sources"]
                 for author, by in found:
                     for account in (author or "", *by):
-                        source = followed.get("x.com/" + account.lower())
+                        source = followed.get(x_account(account))
                         if source and source["id"] not in {s["id"] for s in sources}:
                             sources.append(source)
         # Each source's roundup that is most about the story (issue 0069): the one that links the story's

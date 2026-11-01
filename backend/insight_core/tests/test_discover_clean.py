@@ -22,7 +22,7 @@ from insight_core.tests._stories import insert_post, insert_source
 from insight_core.tests.test_discover_counts import assert_links_as_walked, reference_discover
 from insight_core.tests.test_discover_origins import root
 from insight_core.utils.post_links import section_of
-from insight_core.utils.story_rules import origins, suggestions
+from insight_core.utils.discover_rules import origins, suggestions
 
 
 class LanguageSegmentTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 import type { FeedStory, Repost, StoryOrigin, StoryPost, SuggestedSource } from '../services/api';
 import { plural } from './format.ts';
 import { sourceLabel } from './sourceLabel.ts';
+import { bareAddress, publicationOf } from './addresses.ts';
 import { SAVE_PATH } from './savePage.ts';
 
 /**
@@ -89,11 +90,8 @@ export function storyTree(story: FeedStory, selfId: string, selfAt?: string | nu
 
 /** "openai.com · Introducing GPT-6.1 Terra · linked by 14": an outside origin's line. */
 export function originLabel(origin: StoryOrigin): { site: string; title: string; linkedBy: string } {
-  let site = origin.url;
-  try {
-    site = new URL(origin.url).hostname.replace(/^www\./, '') || origin.url;
-  } catch { /* the address as it is */ }
-  return { site, title: origin.title?.trim() || origin.url.replace(/^https?:\/\/(www\.)?/, ''), linkedBy: `linked by ${origin.linked_by}` };
+  const site = publicationOf(origin.url) || origin.url;
+  return { site, title: origin.title?.trim() || bareAddress(origin.url), linkedBy: `linked by ${origin.linked_by}` };
 }
 
 /** Opening an outside origin: Save any page (issue 0031) on its address, saving nothing until you press Save. */

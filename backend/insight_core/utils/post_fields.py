@@ -7,14 +7,14 @@ import html as html_lib
 import re
 import unicodedata
 from typing import Any, Dict, List, Tuple
-from urllib.parse import urlparse
 
+from .addresses import tweet_author
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
-from .url_normalization import TWEET_PATH, canonicalize_url, extract_url_host, normalize_url
+from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 
-TITLE_MAX_CHARS = 120
-TITLE_MIN_SENTENCE_CHARS = 20
+TITLE_MAX_CHARS = 120             # not measured
+TITLE_MIN_SENTENCE_CHARS = 20     # not measured
 # A sentence ends at . ! ? or …, not at the period of a letter's abbreviation: an initial or "U.S." (issue 0070;
 # "I" ends sentences: "Part I.").
 SENTENCE_END_RE = re.compile(r"(?:[!?…]|(?<!\b[^\W\dI_])\.)(?=\s|$)")
@@ -225,12 +225,6 @@ def reading_text(title: str | None, content: str | None, html: str | None = None
     shown = display_title(title, content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after
-
-
-def tweet_author(url: str | None) -> str | None:
-    """A tweet's account, as its address writes it (issue 0066): `user` of /<user>/status/<id>."""
-    match = TWEET_PATH.match(urlparse(url or "").path)
-    return match.group(1) if match else None
 
 
 def reposted_by(title: str | None, author: str | None) -> List[str]:

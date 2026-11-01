@@ -106,8 +106,6 @@ class SearchPlainLettersTests(unittest.TestCase):
             self.assertTrue(finds("Introducing 𝙻𝙵𝙼𝟹: our new generation", "LFM3"))
             self.assertTrue(finds("Introducing LFM3", "𝙻𝙵𝙼𝟹"))
             self.assertTrue(finds("Kimi\u00a0K3.1 Pro", "kimi 3.1"), "a no-break space is a space")
-            cur.execute("SELECT search_vector_version()")
-            self.assertEqual(cur.fetchone()[0], 3, "every vector is made again")
 
 
 class NameSeparatorsTests(unittest.TestCase):

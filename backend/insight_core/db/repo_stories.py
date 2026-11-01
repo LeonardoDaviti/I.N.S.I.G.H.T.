@@ -1,8 +1,8 @@
 """Stories storage (issue 0050): post links, stories, their posts and mentions, Discover's hidden
 suggestions. Every method takes the caller's cursor and never commits.
 
-The rules live in utils/post_links.py and utils/story_rules.py; this file only reads what they
-need and writes what they return, touching only the rows that differ.
+The rules live in utils/post_links.py, story_rules.py, tree_rules.py and discover_rules.py; this
+file only reads what they need and writes what they return, touching only the rows that differ.
 """
 from __future__ import annotations
 
@@ -13,20 +13,17 @@ from urllib.parse import parse_qs, urlparse
 
 from psycopg import Cursor
 
-from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
-                                          publication_of, site_of, source_kind)
-from insight_core.utils.story_rules import (DISCOVER_PLATFORMS, HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS,
-                                           SIGNATURE_SHARE, Story, source_site)
+from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
+from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
+from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
+from insight_core.utils.story_rules import HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
-# The kinds whose post HTML the rules read beyond its links: a Reddit author, a link post's words,
-# the tweet a tweet quotes (issue 0066), the words of a page it quotes (a Telegram link preview, 0070).
-HTML_KINDS = ("reddit", "hn", "x", "telegram")
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
-    """The platform account a source follows, as Discover keys it (post_links.account_key): a
+    """The platform account a source follows, as Discover keys it (addresses.account_key): a
     Telegram channel read through a bridge is t.me/<channel>, a Nitter feed x.com/<user>, a
     subreddit reddit.com/r/<sub>, a YouTube channel youtube.com/channel/<id>, any other address
     the account its path is under (github.com/<owner>). The kinds' own parsers read the address."""
@@ -39,7 +36,7 @@ def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[s
             channel = telegram_rss._username(handle) if "://" in handle else handle
             return "t.me/" + channel.lstrip("@").lower()
         if kind == "x" and "nitter" in handle:
-            return "x.com/" + nitter_rss._username(handle).lower()
+            return x_account(nitter_rss._username(handle))
         if kind == "reddit":
             return "reddit.com/r/" + reddit.subreddit_name(handle).lower()
     except ValueError:
@@ -58,6 +55,18 @@ class SourceFacts:
     def __init__(self, cur: Cursor) -> None:
         cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
         rows = cur.fetchall()
+        cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
+        self._read(rows, cur.fetchall())
+
+    @classmethod
+    def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]]) -> "SourceFacts":
+        """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
+        posts)), as read from the database: the rules' stamp reads its sample so (utils/stamps.py)."""
+        facts = cls.__new__(cls)
+        facts._read(list(rows), list(hosts))
+        return facts
+
+    def _read(self, rows: List[Tuple[Any, ...]], host_rows: List[Tuple[Any, str, int]]) -> None:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
         self.account = {str(r[0]): source_account(r[1], r[2]) for r in rows}
@@ -68,9 +77,8 @@ class SourceFacts:
                             if self.kind[str(r[0])] != "saved"}
         self.handle_host = {str(r[0]): publication_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
-        cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         hosts: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
-        for source_id, host, n in cur.fetchall():
+        for source_id, host, n in host_rows:
             if self.kind.get(str(source_id)) != "saved":
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
@@ -129,7 +137,7 @@ class SourceFacts:
         return [source_id for source_id, kind in self.kind.items() if kind in kinds]
 
     def html_sources(self) -> List[str]:
-        return [source_id for source_id, kind in self.kind.items() if kind in HTML_KINDS]
+        return [source_id for source_id, kind in self.kind.items() if kind in PLATFORM_KINDS]
 
 
 class StoriesRepository:
@@ -388,12 +396,12 @@ class StoriesRepository:
     def linked_articles(cur: Cursor, host: str) -> List[str]:
         """The article-like addresses on a host (www. aside) your sources' kept links point to,
         once each, in address order: what a site's findings are ranked by (issue 0060)."""
-        host = (host or "").lower().removeprefix("www.")
+        host = publication_of(host)
         if not host:
             return []
         cur.execute("SELECT DISTINCT target_url FROM post_links WHERE target_site = %s AND NOT boilerplate",
                     (site_of(host),))
-        return sorted(url for (url,) in cur.fetchall() if host_of(url).removeprefix("www.") == host and is_article(url))
+        return sorted(url for (url,) in cur.fetchall() if publication_of(host_of(url)) == host and is_article(url))
 
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:

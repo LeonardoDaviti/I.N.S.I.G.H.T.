@@ -31,7 +31,9 @@ from insight_core.services.stories_service import DISCOVER_ARTICLES_SHOWN, Stori
 from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.post_links import reddit_author
-from insight_core.utils.story_rules import StoryPost, discover_address, is_roundup, origin_title, suggestions
+from insight_core.utils.discover_rules import discover_address, is_roundup, suggestions
+from insight_core.utils.story_rules import StoryPost
+from insight_core.utils.tree_rules import origin_title
 
 
 LINK_FIELDS = ("key", "url", "voices", "voice_names", "article_count", "link_count", "classics", "articles")
@@ -49,7 +51,7 @@ def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
 
 def reference_discover(url: str):
     """Discover as 0050/0051 computed it: every kept link read into Python and walked; with 0067's
-    roundups (story_rules.is_roundup over each post's links and the stored post each is) and tweet
+    roundups (discover_rules.is_roundup over each post's links and the stored post each is) and tweet
     mirrors (TWEET_HREF in every post's HTML)."""
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         sources = SourceFacts(cur)
@@ -75,7 +77,7 @@ def reference_discover(url: str):
         hidden = StoriesRepository.hidden(cur)
         classic_urls = set(NewsRepository.classic_urls(cur))
         cur.execute("SELECT content_html FROM posts WHERE content_html IS NOT NULL")
-        mirrors = {host.lower() for (html,) in cur.fetchall() for host in re.findall(TWEET_HREF, html)}
+        mirrors = {host.lower() for (html,) in cur.fetchall() for host, *_ in re.findall(TWEET_HREF, html)}
     roundups = {post_id for post_id, its in post_links.items()
                 if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
     triples, names = [], {}

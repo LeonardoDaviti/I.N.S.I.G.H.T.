@@ -14,8 +14,10 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
+from insight_core.utils.addresses import host_of, publication_of, same_site
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import clean_url
+from insight_core.utils.titles import title_key
 
 TELEGRAM_BASE_URL = "https://telegram.local"
 IMG_SRC_RE = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
@@ -206,10 +208,12 @@ LAYOUT_ROLES = frozenset({"presentation", "none"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 # A tag's attributes, quoted values and all: huggingface.co's class="max-md:[&>a]:hidden".
 ATTRS = r"""(?:[^>"']|"[^"]*"|'[^']*')*"""
+# The reader's values were measured together on the page corpus (0032: 93 -> 113 of 123 checks;
+# 0053: 367 -> 404 of 420), never one value against another: "not measured" below means that.
 MAIN_TEXT_SHARE = 0.5      # no chrome rule drops an element holding more of the paragraph text
 FALLBACK_TEXT_SHARE = 0.8  # with no candidate, the smallest element holding this much of it
 CANDIDATE_TEXT_SHARE = 0.2 # nor one around a candidate article holding this much of it
-ARTICLE_MIN_CHARS = 500
+ARTICLE_MIN_CHARS = 500    # not measured
 
 
 # How a page hides text from the eye but not from a screen reader (issue 0063), never a
@@ -849,7 +853,7 @@ IMG_ATTR_RE = re.compile(r"""(?is)\b(src|data-src|data-lazy-src|data-original|sr
 # Where an <img> keeps its address, in this order: a lazy image's real one first; a srcset's
 # first candidate last (an image known only by its srcset).
 IMAGE_ADDRESSES = ("data-src", "data-lazy-src", "data-original", "src", "srcset", "data-srcset")
-ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge
+ICON_MAX_PX = 64           # an image this wide or high is an icon, an avatar or a badge; not measured
 STYLE_PX_RE = re.compile(r"(?i)(?<![-\w])(?:max-)?(?:width|height)\s*:\s*(\d+)px")
 
 
@@ -912,7 +916,7 @@ HEADING_RE = re.compile(r"(?is)<h([1-6])\b")
 EMPTY_FIGURE_RE = re.compile(r"(?is)\n?<figure>(?:\s|<(?!img\b)[^>]*>)*</figure>")
 TAG_RE = re.compile(rf"<[a-zA-Z]{ATTRS}>")
 QUOTED_RE = re.compile(r""""[^"]*"|'[^']*'""")
-SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:")
+SHORT_OPENING_CHARS = 25   # a first block shorter than this is a hint of chrome left in ("Share:"); not measured
 
 
 def _escaped_attributes(html: str) -> str:
@@ -961,24 +965,22 @@ LINK_RE = re.compile(rf"(?is)<a\b(?P<attrs>{ATTRS})>(?P<text>.*?)</a>")
 HREF_RE = re.compile(r"""(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
 TITLE_TAG_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
 LABEL_MAX_CHARS = 50       # a block shorter than this, with no sentence end, is a label ("Share:", "5 min read")
-EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list
+EXCERPT_MAX_CHARS = 200    # a paragraph this short may be a card's excerpt in a related list (neither measured)
 # A block with this share of its text in links is a link: a card's title or a related
-# list's item is all link (0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
+# list's item is all link (measured, 0053: 0.97-1.0 on the corpus), a reference ("[3] Rosenfeld et al. “A
 # Constructive Prediction …” ICLR 2020.") about three quarters.
 LINK_SHARE = 0.8
 SENTENCE_END = (".", "!", "?", "…", ".”", ".\"", "?”", "!”", ".)", ".’")
-LABEL_COLON_WORDS = 3
+LABEL_COLON_WORDS = 3      # not measured
 CONTENT_TAGS = frozenset({"pre", "table", "blockquote"})
 TITLE_SEPARATORS = ("|", "-", "–", "—", ":", "·", "•", "/")
 
 
 def _same_site(href: str, host: str) -> bool:
-    """A link within the page's own site (relative, or to its host or a host under the same
-    domain): menus, breadcrumbs, authors and related posts are; a link post's subject is not."""
-    target = (urllib.parse.urlparse(href).hostname or "").lower().removeprefix("www.")
-    if not target:
-        return True
-    return bool(host) and (target == host or target.endswith(f".{host}") or host.endswith(f".{target}"))
+    """A link within the page's own site (relative, or on its site: addresses.same_site): menus,
+    breadcrumbs, authors and related posts are; a link post's subject is not."""
+    target = urllib.parse.urlparse(href).hostname
+    return not target or same_site(target, host)
 
 
 def _block_kind(block: str, host: str) -> Tuple[str, bool]:
@@ -1021,12 +1023,9 @@ def _block_kind(block: str, host: str) -> Tuple[str, bool]:
     return ("short" if len(text) <= EXCERPT_MAX_CHARS else "text"), False
 
 
-QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
-
-
 def _title_key(text: str) -> str:
-    """A title as compared: its words, in any case, with straight quotes."""
-    return " ".join(strip_html(text).split()).casefold().translate(QUOTES)
+    """A title as compared (utils/titles.py): its words, in any case, with straight quotes."""
+    return title_key(strip_html(text))
 
 
 def _repeats_title(block: str, titles: List[str]) -> bool:
@@ -1059,7 +1058,7 @@ def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) ->
       or the labels just before it, and must hold two links or end on a link or a label, so an
       article's own closing link ("Watch the keynote") stays. Blocks with no letter at the very
       end ("0%") go."""
-    host = (urllib.parse.urlparse(base_url).hostname or "").lower().removeprefix("www.")
+    host = publication_of(host_of(base_url))
     kinds = [_block_kind(block, host) for block in blocks]
     keep = [True] * len(blocks)
     # The opening.
@@ -1160,7 +1159,7 @@ def read_fidelity(blocks: List[str], html: str) -> Dict[str, Any]:
     }
 
 
-LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept
+LOST_IMAGES_MIN = 3        # a page "lost most of its images" with at least this many, under half kept; not measured
 
 
 def lost_most_images(fidelity: Any) -> bool:

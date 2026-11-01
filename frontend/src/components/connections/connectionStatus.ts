@@ -1,5 +1,6 @@
 import type { CredentialField, CredentialProviderView, SourceHealthRow } from '../../services/api';
 import type { Status } from '../ui/styles';
+import { publicationOf } from '../../lib/addresses';
 import { localDateISO, toDate } from '../../lib/dates';
 
 /** The Connections tab's URL (spec §10.1); one place so every link agrees. */
@@ -47,14 +48,8 @@ export function fieldSummary(field: CredentialField): string {
 
 /** True for https://name.substack.com/… and substack.com URLs (the substack kind's own test). */
 export function isSubstackUrl(value: string): boolean {
-  const text = value.trim();
-  if (!text) return false;
-  try {
-    const host = new URL(/^[a-z]+:\/\//i.test(text) ? text : `https://${text}`).hostname.toLowerCase();
-    return host === 'substack.com' || host.endsWith('.substack.com');
-  } catch {
-    return false;
-  }
+  const host = publicationOf(value.trim());
+  return host === 'substack.com' || host.endsWith('.substack.com');
 }
 
 /** "substack.sid=abc" pasted from a cookie header: keep the value only (as the backend does). */

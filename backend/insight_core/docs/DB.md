@@ -1,6 +1,6 @@
 # I.N.S.I.G.H.T. database (Mark IX)
 
-PostgreSQL 15. The schema is the sum of `../db/migrations/0001` to `0053`; this file says what
+PostgreSQL 15. The schema is the sum of `../db/migrations/0001` to `0055`; this file says what
 each table is for. The runtime database is the one `DATABASE_URL` points at.
 
 ## Migrations
@@ -24,11 +24,11 @@ each table is for. The runtime database is the one `DATABASE_URL` points at.
 | Function | What it is | Defined last in |
 |---|---|---|
 | `post_search_vector`, `search_query` | the search index's text and the query, NFKC first | `0052` |
-| `search_vector_version()` | the search rule's version (3); `posts.search_version` older: refilled | `0052` |
+| `search_vector_version()` | the search rule's version: a fingerprint of what `post_search_vector` makes of a fixed sample (issue 0071), never bumped by hand; `posts.search_version` older: refilled | `0055` |
 | `search_version_parts`, `search_vector_with_parts`, `search_parts_phrase` | version words (`k3.1`) as parts | `0042` |
 | `posts_search_vector_fill`, `sources_search_name_changed` | the triggers that keep `search_vector` | `0042` |
 | `source_search_name` | a source's name as search reads it | `0033` |
-| `post_title_key` | two titles the same: case, whitespace, HTML entities | `0041` (as `0038`) |
+| `post_title_key` | two titles the same: HTML entities, styled letters (NFKC), case, curly quotes, whitespace, as Python's `utils/titles.title_key` | `0055` (0041's entities) |
 | `platform_post_address`, `post_body_opening`, `same_post_body` | one post at two addresses (0052, A5) | `0052` |
 | `fold_telegram_albums` | a Telegram album's pictures fold into one post | `0053` |
 

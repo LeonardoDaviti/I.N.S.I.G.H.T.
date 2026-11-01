@@ -23,14 +23,15 @@ from insight_core.db.repo_posts import PostsRepository
 from insight_core.db.repo_reader import FeedQuery, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.post_detail_service import PostDetailService
-from insight_core.services.posts_service import STORED_BODIES_KEY, PostsService
+from insight_core.services.posts_service import STORED_BODIES_KEY, PostsService, stored_bodies_stamp
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, insert_scratch_source, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.news_rules import news, tally
-from insight_core.utils.post_links import site_of
-from insight_core.utils.story_rules import StoryPost, group, origin_title, roles
+from insight_core.utils.addresses import site_of
+from insight_core.utils.story_rules import StoryPost, group, roles
+from insight_core.utils.tree_rules import origin_title
 
 NOON = datetime(2026, 10, 27, 12, 0, 7, tzinfo=timezone.utc)
 ID = 2114444636303364349
@@ -371,8 +372,8 @@ class StoredBodiesCatchUpTests(unittest.TestCase):
     def test_once_then_never_again(self):
         self.service.catch_up_stored_bodies()
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            self.assertEqual(SystemSettingsRepository.get(cur, STORED_BODIES_KEY)[0]["version"], 1)
-        self.assertEqual(self.service.catch_up_stored_bodies(), 0, "at the version: nothing is read again")
+            self.assertEqual(SystemSettingsRepository.get(cur, STORED_BODIES_KEY)[0]["rules"], stored_bodies_stamp())
+        self.assertEqual(self.service.catch_up_stored_bodies(), 0, "at the same rules: nothing is read again")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from insight_core.adapters.base_adapter import BaseSourceAdapter
 from insight_core.ingestion.kinds import parsing
 from insight_core.ingestion.kinds.base import Inspection, RateLimit, Source
+from insight_core.utils.addresses import host_of
 from insight_core.utils.json_safe import iso
 
 SECTIONS = ("posts", "essays")
@@ -28,7 +29,7 @@ class PipecraftAdapter(BaseSourceAdapter):
     PAGE_SIZE = 5
 
     def matches(self, source: Source) -> bool:
-        return (urllib.parse.urlparse(str(source.get("handle_or_url") or "")).hostname or "").lower() in self.HOSTS
+        return host_of(str(source.get("handle_or_url") or "")) in self.HOSTS
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         posts = [await self._fetch_entry_post(source, entry) for entry in (await self._entries(source))[:limit]]

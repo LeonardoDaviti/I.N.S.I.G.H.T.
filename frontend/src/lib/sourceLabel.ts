@@ -13,6 +13,8 @@
  *   https://simonwillison.net/atom/everything/               -> simonwillison.net
  *   r/x, "Road to VR"                                        -> unchanged
  */
+import { bareAddress, publicationOf } from './addresses.ts';
+
 const URLISH = /^(https?:\/\/)?(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/\S*)?$/i;
 
 function looksLikeUrl(value: string): boolean {
@@ -27,9 +29,9 @@ function deriveFromUrl(raw: string): string {
   try {
     url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
   } catch {
-    return raw.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '');
+    return bareAddress(raw).replace(/\/+$/, '');
   }
-  const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+  const host = publicationOf(url.href);
   const parts = url.pathname.split('/').filter(Boolean);
 
   if (host === 'github.com' && parts.length >= 2) {

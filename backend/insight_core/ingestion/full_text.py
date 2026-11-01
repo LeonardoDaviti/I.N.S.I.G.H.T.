@@ -15,25 +15,25 @@ reads in all, RETRY_APART between two. Each read is counted in metadata.page_tri
 """
 from __future__ import annotations
 
-import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from insight_core.db.repo_posts import FULL_TEXT_FLAG, PAGE_READ_KEY, PAGE_TRIES_KEY
 from insight_core.ingestion.http import KindHttp
 from insight_core.ingestion.kinds import parsing
+from insight_core.utils.addresses import host_of
 from insight_core.utils.content_fingerprints import normalize_text
 
-# A body shorter than this is probably a teaser.
+# A body shorter than this is probably a teaser. Not measured.
 SHORT_BODY_CHARS = 1400
 # The page is the same article when the body's first OPENING_CHARS appear in the first
-# quarter of the page text. A body under SAME_ARTICLE_MIN_CHARS is not checked.
+# quarter of the page text. A body under SAME_ARTICLE_MIN_CHARS is not checked. Neither measured.
 OPENING_CHARS = 80
 SAME_ARTICLE_MIN_CHARS = 200
 # Seconds between two article pages of one site.
 PAGE_DELAY_S = 2.0
 # A teaser whose page read failed: read at most MAX_PAGE_TRIES times in all, RETRY_APART apart,
-# up to RETRY_SLICE of a source's at one fetch (issue 0062).
+# up to RETRY_SLICE of a source's at one fetch (issue 0062). Not measured.
 MAX_PAGE_TRIES = 3
 RETRY_APART = timedelta(days=1)
 RETRY_SLICE = 20
@@ -51,7 +51,7 @@ def full_page_enabled(source: Mapping[str, Any]) -> bool:
 def page_is_article(url: Any) -> bool:
     if not isinstance(url, str) or not url.startswith("http"):
         return False
-    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    host = host_of(url)
     return not any(host == blocked or host.endswith(f".{blocked}") for blocked in NOT_ARTICLE_HOSTS)
 
 

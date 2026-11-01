@@ -13,12 +13,3 @@ export function bookmarkletCode(origin: string): string {
   const target = JSON.stringify(`${origin.replace(/\/+$/, '')}${SAVE_PATH}?url=`);
   return `javascript:(()=>{window.open(${target}+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'_blank','noopener')})()`;
 }
-
-/** "example.com" for a page address; the address itself when it has no host. */
-export function siteOf(url: string): string {
-  try {
-    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`).hostname.replace(/^www\./, '') || url;
-  } catch {
-    return url;
-  }
-}

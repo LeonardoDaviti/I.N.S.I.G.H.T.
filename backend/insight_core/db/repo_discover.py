@@ -2,22 +2,22 @@
 grouped and counted in one query, so the API never holds the 138k kept links in memory (it did:
 2.6-3.3 s and ~800 MB on the server's data).
 
-It is story_rules.suggestions (the reference, kept as a pure function) in SQL, over every kept link
+It is discover_rules.suggestions (the reference, kept as a pure function) in SQL, over every kept link
 (`post_links`, not boilerplate):
-- an address's key, site and platform (story_rules.discover_address) and whether it reads like an
+- an address's key, site and platform (discover_rules.discover_address) and whether it reads like an
   article (post_links.is_article) depend on the address alone: `discover_addresses` keeps them,
   each worked out once in Python (fill_addresses), by the story job after it reads links, or by
   Discover itself for an address it finds missing;
 - a key is a candidate with 2+ article-like addresses that are 40%+ of its addresses, unless you
-  follow it or hid it (story_rules.discover_open): this needs the addresses only;
+  follow it or hid it (discover_rules.discover_open): this needs the addresses only;
 - only the candidates' links are then read for their voices (StoryPost.voice: `site:<publication>`
   for a website, `reddit:<author>` for a Reddit post whose feed names its author, else
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
 each. Python orders them, names the voices and titles the articles (issue 0070: as a story's
-outside origin is titled, story_rules.origin_title; a stored post by its own title).
+outside origin is titled, tree_rules.origin_title; a stored post by its own title).
 
-Issue 0065: a post on a platform is an article of its account (story_rules.discover_article: a
+Issue 0065: a post on a platform is an article of its account (discover_rules.discover_article: a
 tweet in any form, a Telegram post), and a post of a platform account's source at another
 account's address (a repost) counts as that source's link to it, so discover_addresses also keeps
 the addresses of those sources' posts. Where each story starts (story_origins) and the places
@@ -31,7 +31,7 @@ a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.
 with the same list in the same order.
 
 Issue 0067: each voice also says whether it links a key only in roundups (posts of 3+ anchors,
-story_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
+discover_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
 are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
 (system_settings `discover_counts`): the story job counts them after it fills the addresses, and
 an open reads them while their stamp (the rules, the last story run, the sources with posts) holds.
@@ -49,20 +49,15 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.utils.post_fields import display_title
-from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR
-from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
-                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST,
-                                            ROUNDUP_ANCHORS, TWEET, Origin, discover_address, discover_article)
+from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
+                                               DISCOVER_MIN_VOICES, ORIGIN_MIN_VOICES, Origin, discover_address,
+                                               discover_article)
+from insight_core.utils.post_links import REDDIT_AUTHOR
+from insight_core.utils.story_rules import ROUNDUP_ANCHORS
+from insight_core.utils.url_normalization import TWEET_SHAPE
 
-# Which rules wrote a discover_addresses row. Bump ADDRESS_RULES_VERSION when discover_address,
-# site_of, account_key or discover_article change in a way the constants below don't show.
-ADDRESS_RULES_VERSION = 2
-ADDRESS_RULES = hashlib.sha1(repr((ADDRESS_RULES_VERSION, sorted(DISCOVER_PLATFORMS), sorted(NOT_ACCOUNT),
-                                   sorted(ACCOUNT_NAMESPACES), ARTICLE.pattern, TWEET.pattern,
-                                   PLATFORM_POST.pattern)).encode()).hexdigest()[:12]
 LOCK_KEY = "insight.discover_addresses"
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
-COUNTS_VERSION = 2             # bump when the counting query changes what it returns (2: titles, 0070)
 WORK_MEM = "48MB"
 
 _COUNTS = """
@@ -107,7 +102,7 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
-roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (story_rules.is_roundup): each
+roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (discover_rules.is_roundup): each
     SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
     WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster)
       AND (pl.target_url !~ %(home)s                                        -- a home page no post is at
@@ -160,7 +155,7 @@ SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, (SELECT n FROM unknown)
 # The hosts where tweets are found by shape (0066's TWEET_PATH in a link of a post's HTML): X and its
 # mirrors (nitter.net, xcancel.com, ...), found, never listed. Read once per post, after its links are
 # read (links_scanned_at): the kept hosts and the newest post read are kept with Discover's counts.
-TWEET_HREF = r"https?://([A-Za-z0-9.-]+)/[A-Za-z0-9_]+/status/[0-9]{15}"
+TWEET_HREF = r"https?://([A-Za-z0-9.-]+)" + TWEET_SHAPE
 _MIRRORS = """
 SELECT COALESCE(array_agg(DISTINCT lower(m[1])), '{}'), (SELECT max(links_scanned_at) FROM posts)
 FROM posts p, regexp_matches(p.content_html, %(tweet)s, 'g') m
@@ -168,6 +163,11 @@ WHERE strpos(p.content_html, '/status/') > 0 AND (%(since)s::timestamptz IS NULL
 """
 # A home page, as post_links.is_home reads one: a host and at most one segment, no query or fragment.
 HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
+
+# The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
+_COUNT_RULES = {"author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by", "rules": ADDRESS_RULES, "home": HOME,
+                "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
+                "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
 
 # A website voice is named after the source of its first kept link in post order; asked only for
 # the sites more than one website source shares (the others have one source).
@@ -243,10 +243,7 @@ class DiscoverRepository:
         cur.execute(_COUNTS, {
             "ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
             "accounts": [accounts.get(i, "") for i in ids],
-            "author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by",
-            "rules": ADDRESS_RULES, "mirrors": sorted(mirrors), "home": HOME, "roundup_anchors": ROUNDUP_ANCHORS,
-            "min_voices": DISCOVER_MIN_VOICES, "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE,
-            "shown": shown,
+            "mirrors": sorted(mirrors), "shown": shown, **_COUNT_RULES,
         })
         rows = cur.fetchall()
         unknown = int(rows[0][-1])   # on every row, and on the one row with no key
@@ -282,12 +279,13 @@ class DiscoverRepository:
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
-        """What the counts are counted from: the rules, the last story run (links are read and
-        classics refreshed before it) and `facts`, the facts of the sources with posts (a source
-        with none links nothing). Same stamp, same counts."""
+        """What the counts are counted from: the rules (the counting query as written, issue 0071, and
+        the addresses'), the last story run (links are read and classics refreshed before it) and
+        `facts`, the facts of the sources with posts (a source with none links nothing). Same stamp,
+        same counts."""
         cur.execute("SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories'")
         row = cur.fetchone()
-        what = json.dumps([COUNTS_VERSION, ADDRESS_RULES, row[0] if row else None, facts])
+        what = json.dumps([_COUNTS, _COUNT_RULES, row[0] if row else None, facts])
         return hashlib.sha1(what.encode()).hexdigest()[:16]
 
     @staticmethod

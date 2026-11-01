@@ -1,6 +1,7 @@
 """One story, many sources (issue 0050): the rules that join posts into stories, each post's
-role, a story's voices, and Discover's suggestions. Pure functions over plain data: the story
-job (services/stories_service.py) loads the posts and writes what these return.
+role and a story's voices. Pure functions over plain data: the story job (services/stories_service.py)
+loads the posts and writes what these return. Each story is a tree (tree_rules.py, issue 0064);
+Discover's rules are discover_rules.py (issue 0071 split them out of this file).
 
 Ported from the prototype (`plan/research/dedup-prototype/stories.py`, `rank.py`, `report.py`),
 the reference the real code reproduces. The thresholds are here, in one place.
@@ -17,20 +18,6 @@ the reference the real code reproduces. The thresholds are here, in one place.
   joins only the story of its first and mentions the others. Home and profile pages join nothing.
 - Two posts at one address (0049 keeps them apart when their titles differ) join (`address`).
 - A story is a group of posts from 2+ sources, keyed by its first post.
-- **A story is a tree (issue 0064):** each post gets a parent, the post (or the outside page) it
-  came from, or none for the origin, by evidence in order of certainty, never one signal alone:
-  1. `address`: a post at an address on its source's own site is that address's origin; the
-     other posts at the address hang from it, and a link to the address is a link to it;
-  2. `citation`: a post linking another post of the story, or a page outside INSIGHT 2+ of its
-     posts link (not as a roundup's mentions), is its child, whatever the dates say; the more
-     voices link a node, the more it is the parent (in-degree);
-  3. `copy`: the same text or title, the earlier time the parent, when both times are trustworthy;
-  4. `time`: the posts 1-3 leave unrelated hang from the origin, `time` when both times are
-     trustworthy (a time of day, not a Saved page, not a page updated since) and 10+ minutes
-     apart, the origin first; else `none` (no claim of order).
-  The origin is the root linked by the most voices, a post at its own site first, then the
-  earlier trustworthy time. One parent per post, no cycles. Mark X adds `meaning` and
-  `attribution` to the reasons without changing the shape.
 - **On X (issue 0066)** the platform says how tweets connect, and that is as certain as an address:
   - `repost`: a repost stored apart from its original (one address, 0049) hangs from it; a repost
     is a share, and never its address's own page;
@@ -43,72 +30,40 @@ the reference the real code reproduces. The thresholds are here, in one place.
 from __future__ import annotations
 
 import re
-import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
-from urllib.parse import unquote
 
-from insight_core.utils.post_fields import display_title
-from insight_core.utils.post_links import (NUMBERISH, PLATFORM_SITES, SECTION_MIN, SECTION_SHARE, account_key, bare,
-                                          host_of, is_article, is_home, is_reference, is_tweet, section_of, site_of,
-                                          titled_link_text)
-from insight_core.utils.url_normalization import TWEET_PATH
+from insight_core.utils import titles
+from insight_core.utils.addresses import bare, host_of, is_tweet, site_of
+from insight_core.utils.post_links import NUMBERISH, PLATFORM_KINDS, is_home, is_reference
+from insight_core.utils.tree_rules import _PAGE, SLUG_MIN_WORDS, _origin_node, _slug_words, tree
 
-# The version of the rules stories are grouped by (issue 0069). Bump it with a change to these rules,
-# to post_links (site_of, a publication) or to how a source's voice is told (SourceFacts): the next
-# story run then regroups every story, the frozen ones too. 1: issue 0069, a voice is its publication.
-# 2: issue 0070 C, an outside origin's title by the page's own words, a link post's title, a slug's id dropped.
-# 3: issue 0070 A, names counted in followed sources and later waves, titles as plain letters, a link to
-# another publication on a site of publications, a platform's post about one story, one page under two
-# paths, a Saved page no voice.
-# 4: issue 0070, a name's separators are one, and a post joins the News of the name it says first.
-# 5: issue 0070 B, a quoted text titled as the reader titles it (a list's mark, a letter's abbreviation:
-# 16 of the lab's 4,528 quoted texts read otherwise).
-RULES_VERSION = 5
-SAME_TEXT_WITHIN = timedelta(days=30)
-SAME_TEXT_MIN_CHARS = 120
-SAME_TITLE_WITHIN = timedelta(days=7)
-SAME_TITLE_MIN_WORDS = 5
-SAME_ADDRESS_WITHIN = timedelta(days=30)   # two posts at one address (0064), as a shared text
-LINK_WITHIN = timedelta(hours=72)
-THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066)
+# Each tuned value says whether it was measured (issue 0071). "The prototype's": the value of
+# plan/research/dedup-prototype, whose rules were checked as a whole (0050: 24 stories, none wrong),
+# never one value against another.
+SAME_TEXT_WITHIN = timedelta(days=30)     # the prototype's, not measured
+SAME_TEXT_MIN_CHARS = 120                 # the prototype's, not measured
+SAME_TITLE_WITHIN = timedelta(days=7)     # the prototype's, not measured
+SAME_TITLE_MIN_WORDS = 5                  # the prototype's, not measured
+SAME_ADDRESS_WITHIN = SAME_TEXT_WITHIN    # two posts at one address (0064), as a shared text
+LINK_WITHIN = timedelta(hours=72)         # the prototype's, not measured
+THREAD_WITHIN = timedelta(hours=24)       # a reply to itself continues the author's post before it (0066); not measured
+# A post with 3+ anchors is a roundup: the prototype's value. Measured, the rule: its first link's
+# join is right 34 of 40 times on the lab (0050); no other count compared.
 ROUNDUP_ANCHORS = 3
-LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share
-SHORT_KINDS = ("x", "telegram", "reddit", "hn")   # posts on a platform, not articles (issue 0070)
+LINK_POST_MAX_WORDS = 60          # a Reddit or HN post with fewer words of its own is a share; the prototype's, not measured
+LINK_POST_KINDS = ("reddit", "hn")   # the kinds whose posts can be a link with a few words of its own
 SIGNATURE_SHARE = 0.25            # a link in 25% of a source's posts ...
-SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature
-DISCOVER_MIN_VOICES = 3
-DISCOVER_MIN_ARTICLES = 2
-DISCOVER_ARTICLE_SHARE = 0.4
-# The sites where INSIGHT follows one account, not the whole site: its source kinds (Reddit, X,
-# Telegram, YouTube) and the feed finder's platform feeds (GitHub, Medium). Measured on the
-# server's data, 2026-10-30: a test by "8+ first path segments" called 249 hosts platforms, split
-# publishers by year or section (nytimes.com/2026) and hid blogs whose posts sit at the root.
-DISCOVER_PLATFORMS = frozenset(set().union(*(PLATFORM_SITES[k] for k in ("reddit", "x", "telegram", "youtube")))
-                               | {"github.com", "medium.com"})
-# First path segments of a platform that name a kind of page, not an account.
-NOT_ACCOUNT = frozenset({"status", "watch", "pull", "issues", "i", "p", "s", "search", "hashtag", "intent",
-                         "share", "home", "explore", "wiki", "posts", "in"})
-# A post of a platform account is one of its articles (issue 0065). A tweet by its shape, on any host
-# (x.com, a Nitter, xcancel.com, fxtwitter.com: the forms 0066 gives one address), is the account's;
-# elsewhere on a platform, /<account>/<number> (a Telegram post, t.me/<channel>/<id>).
-TWEET = TWEET_PATH
-PLATFORM_POST = re.compile(r"^/[^/?#]+/\d+(?:[?#]|$)")
-ORIGIN_MIN_VOICES = 2      # the stories whose origins Discover counts: 2+ voices, as 0064 measured them
+SIGNATURE_MIN_POSTS = 4           # ... and in 4 of them at least is the source's signature (the prototype's, not measured)
 WORD = re.compile(r"\w+", re.U)
 
 REASONS = ("address", "text", "title", "link", "citation", "thread", "quote")   # why a post is in its story; Mark X adds more
-# Why a post hangs from its parent (issue 0064; repost, thread, quote: 0066), most certain first.
-# Mark X adds meaning, attribution.
-PARENT_REASONS = ("address", "repost", "thread", "quote", "citation", "copy", "time", "none")
-TIME_APART = timedelta(minutes=10)         # two trustworthy times closer than this make no order
-PAGE_ORIGIN_MIN_POSTS = 2                  # an outside page 2+ of a story's posts link can be its origin
 # Kinds whose posts' addresses are not their own pages: an HN item is the page it links, a Saved
 # page is anyone's. Their posts never claim an address.
 NOT_PUBLISHERS = ("hn", "saved")
-HOME_SITE_SHARE = 0.5                      # a source whose address is elsewhere publishes on a site holding half its posts
+HOME_SITE_SHARE = 0.5   # a source whose address is elsewhere publishes on a site holding half its posts; not measured
 
 
 @dataclass
@@ -160,7 +115,7 @@ class StoryPost:
     @property
     def link_post(self) -> bool:
         """A Reddit or HN post that is mostly a link (fewer than LINK_POST_MAX_WORDS words of its own)."""
-        return self.kind in ("reddit", "hn") and (self.words or 0) < LINK_POST_MAX_WORDS
+        return self.kind in LINK_POST_KINDS and (self.words or 0) < LINK_POST_MAX_WORDS
 
     @property
     def text_key(self) -> Optional[str]:
@@ -194,8 +149,9 @@ class StoryPost:
 
 
 def title_key(title: Optional[str]) -> Optional[str]:
-    """A title as two posts share it: its words, lower case, styled letters as plain (NFKC, issue 0070)."""
-    words = WORD.findall(unicodedata.normalize("NFKC", title or "").lower())
+    """A title as two posts share it: the words of its comparable form (utils/titles.py: styled letters
+    as plain, issue 0070; entities decoded, issue 0071)."""
+    words = WORD.findall(titles.title_key(title))
     return " ".join(words) if len(words) >= SAME_TITLE_MIN_WORDS else None
 
 
@@ -431,7 +387,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
             or any(why[p.id] & {"thread", "quote"} for p in group_posts)
 
     members = grouped()
-    # A post with links about one story (issue 0070): a platform's post (SHORT_KINDS) with 3+ links,
+    # A post with links about one story (issue 0070): a platform's post (PLATFORM_KINDS) with 3+ links,
     # whose first link joins no story, is a member of the story its first link into a story is the
     # origin of, when it links that story twice or more (the origin and a page or post of the
     # story's) and links no other story. r/LocalLLaMA's "mistralai/Mistral-Large-4-1T-A52B · Hugging
@@ -446,7 +402,7 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
                 pages[root] |= {("post", p.id), *every[p.id]}
     origins: Dict[str, Optional[str]] = {}
     for pid, mentions in listed.items():
-        if by_id[pid].kind not in SHORT_KINDS or uf.find(pid) in pages:
+        if by_id[pid].kind not in PLATFORM_KINDS or uf.find(pid) in pages:
             continue
         roots = {story_of.get(target if what == "post" else _PAGE + target) for what, target in mentions} - {None}
         if len(roots) != 1:
@@ -486,206 +442,6 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
             origin_linked_by=shape.origin_linked_by,
         ))
     return sorted(stories, key=lambda s: (s.first_at, s.id))
-
-
-# ---- a story's tree (issue 0064) -------------------------------------------------------------
-
-
-@dataclass
-class Tree:
-    parents: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]]
-    origin_url: Optional[str] = None
-    origin_title: Optional[str] = None
-    origin_linked_by: int = 0
-
-
-_RANK = {reason: i for i, reason in enumerate(PARENT_REASONS)}
-_PAGE = "U:"   # a node that is a page outside INSIGHT: "U:" + its address
-_NEVER = datetime.max.replace(tzinfo=timezone.utc)
-
-
-def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
-         focused: Dict[str, List[Tuple[str, str]]], origin_of: Dict[str, str],
-         replies: Optional[Dict[str, str]] = None, quotes: Optional[Dict[str, str]] = None) -> Tree:
-    """Each post's parent in its story, by evidence in order of certainty (the module's notes).
-    `posts`: one story's. `every` / `focused`: each post's anchors resolved to the address's own
-    page (`group`): all of them, and those it is about (a roundup: its first only). `origin_of`:
-    address -> its own page. `replies` / `quotes` (issue 0066): a thread's reply -> the post it
-    continues, a quoting tweet -> the stored tweet it quotes."""
-    by_id = {p.id: p for p in posts}
-    edges: List[Tuple[str, str, str]] = []          # (child, parent node, reason)
-    about: Dict[str, Set[str]] = defaultdict(set)   # node -> the voices of the posts about it
-    # 1. The address's own site: the other posts at an address hang from its own page.
-    for p in posts:
-        own = origin_of.get(p.url or "")
-        if own and own != p.id and own in by_id and by_id[own].source_id != p.source_id:
-            edges.append((p.id, own, "repost" if p.reposted else "address"))
-            about[own].add(p.voice)
-    # On X (issue 0066): a reply continues the post before it; a quote is about the tweet it quotes.
-    for child, parent in (replies or {}).items():
-        if child in by_id and parent in by_id:
-            edges.append((child, parent, "thread"))
-    for child, parent in (quotes or {}).items():
-        if child in by_id and parent in by_id:
-            edges.append((child, parent, "quote"))
-            about[parent].add(by_id[child].voice)
-    # 2. Citation: a post links another post of the story (any of its links: whatever the dates
-    # say), or a page outside INSIGHT that 2+ of the story's posts are about (focused links).
-    page_posts: Dict[str, List[str]] = defaultdict(list)
-    for p in posts:
-        for what, target in focused.get(p.id, []):
-            if what == "url":
-                page_posts[target].append(p.id)
-    for p in posts:
-        about_it = focused.get(p.id, [])
-        for what, target in every.get(p.id, []):
-            if what == "post" and target in by_id:
-                edges.append((p.id, target, "citation"))
-                if (what, target) in about_it:
-                    about[target].add(p.voice)
-            elif what == "url" and (what, target) in about_it and len(page_posts[target]) >= PAGE_ORIGIN_MIN_POSTS:
-                edges.append((p.id, _PAGE + target, "quote" if target == p.quoted else "citation"))
-                about[_PAGE + target].add(p.voice)
-    # 3. Copy: the same text or title from another source, the earlier trustworthy time the parent.
-    for key in ("text_key", "title_key"):
-        same: Dict[str, List[StoryPost]] = defaultdict(list)
-        for p in posts:
-            if getattr(p, key) and p.trusted_time:
-                same[getattr(p, key)].append(p)
-        for run in same.values():
-            for a in run:
-                for b in run:
-                    if a.source_id != b.source_id and a.t < b.t:   # one time: no order
-                        edges.append((b.id, a.id, "copy"))
-
-    def node_key(node: str) -> Tuple:
-        """Equally certain parents: a stored post before a page, then the earlier trustworthy time."""
-        if node.startswith(_PAGE):
-            return (1, True, _NEVER, 0, node)
-        return (0, *_time_key(by_id[node]))
-
-    def origin_key(node: str) -> Tuple:
-        """The origin: linked by the most voices (in-degree), a post at its own site first, then
-        the earlier trustworthy time. A post's own out-links never count: a roundup is no origin."""
-        own = 0 if not node.startswith(_PAGE) and by_id[node].on_own_site else 1
-        return (-len(about[node]), own, *node_key(node))
-
-    # The origin is chosen first, among every post and every page 2+ posts are about: the node
-    # most voices are about is where the story starts, even when it links a page itself (Google's
-    # Gemini post links a benchmark page two of its copies link too). Only the origin may be a page.
-    pages = sorted(_PAGE + url for url, pids in page_posts.items() if len(pids) >= PAGE_ORIGIN_MIN_POSTS)
-    origin = min([p.id for p in posts] + pages, key=origin_key)
-    edges.sort(key=lambda e: (_RANK[e[2]], -len(about[e[1]]), node_key(e[1]), node_key(e[0])))
-    # One parent per post, the first edge in order of certainty, never a cycle; the origin has none.
-    parent: Dict[str, Tuple[str, str]] = {}
-    for child, node, reason in edges:
-        if child in parent or child == origin or (node.startswith(_PAGE) and node != origin):
-            continue
-        up = node
-        while up in parent and up != child:
-            up = parent[up][0]
-        if up != child:
-            parent[child] = (node, reason)
-    # 4. Time, as a tiebreaker: what 1-3 leave unrelated hangs from the origin, in order only
-    # when both times are trustworthy and 10+ minutes apart.
-    first = by_id.get(origin)
-    for p in posts:
-        if p.id != origin and p.id not in parent:
-            ordered = first is not None and first.trusted_time and p.trusted_time and p.t - first.t > TIME_APART
-            parent[p.id] = (origin, "time" if ordered else "none")
-    out: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
-    for p in posts:
-        node, reason = parent.get(p.id, (None, None))
-        if node is None:
-            out[p.id] = (None, None, None)
-        elif node.startswith(_PAGE):
-            out[p.id] = (None, node[len(_PAGE):], reason)
-        else:
-            out[p.id] = (node, None, reason)
-    if first is not None and first.kind == "saved":
-        # A Saved page is no voice (issue 0070): when it is the origin it is shown as the page everyone
-        # links, never as the first post; the Saved row is that page.
-        under = {pid for pid, (node, _, _) in out.items() if node == first.id}
-        for pid in under:
-            out[pid] = (None, first.url, out[pid][2])
-        out[first.id] = (None, first.url, "address")
-        return Tree(out, first.url, first.title, len(under))
-    if first is not None:
-        return Tree(out)
-    url = origin[len(_PAGE):]
-    return Tree(out, url, origin_title(url, [by_id[pid] for pid in dict.fromkeys(page_posts[url])]),
-                len(set(page_posts[url])))
-
-
-def _origin_node(shape: Tree) -> Optional[str]:
-    """A tree's origin as a node: its outside page ("U:" + address), else the post with no parent."""
-    if shape.origin_url:
-        return _PAGE + shape.origin_url
-    return next((pid for pid, parent in shape.parents.items() if parent == (None, None, None)), None)
-
-
-# An outside origin's title (issue 0068): an address's slug names its page with 3+ words of
-# letters (claude-fable-5-mythos-5); words with digits (a version, an id) are kept but not counted.
-# A leading id (5+ digits: help.openai.com's 20001626-api-credits-...) or date (2026-01-13-pocket-tts)
-# is no word of it (issue 0070); a short number is ("16-charts-that-explain", "2025-ai-index-report").
-SLUG_MIN_WORDS = 3
-_SLUG = re.compile(r"[-_+]+")
-_SLUG_ID = re.compile(r"^(?:\d{5,}|(?:19|20)\d\d[-_]\d\d(?:[-_]\d\d)?)(?:[-_+]|$)")
-_TOKENS = re.compile(r"\w+", re.U)
-
-
-def _slug_words(url: str) -> List[str]:
-    """The words of an address's last path segment (its slug), its extension and a leading id aside."""
-    _, _, rest = bare(url).partition("/")
-    slug = unquote(re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1])
-    return [w for w in _SLUG.split(_SLUG_ID.sub("", re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I))) if w]
-
-
-def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
-    """An outside page's title (issue 0068), from evidence, nothing fetched: a story's outside origin,
-    and Discover's articles (issue 0070). `posts`: those linking it. A page that is stored is no
-    outside origin: it is the root, with its own title. Measured on the lab (30 roots checked by
-    hand): link words that 2+ voices agree on are often a bare word ("Блогпост", "Веса", "Video"),
-    and a slug loses a title's case and dots ("Introducing chatgpt images 2 5"), so each signal of
-    other people's words needs another's support:
-    1. the page's own words, as a post quotes them (post_links.quoted_words: a quoted tweet's text,
-       a link preview's title), as the reader titles a post's text (display_title); those most
-       posts quote (issue 0070);
-    2. link words 2+ voices agree on (copies of one text are one voice) that read as a title
-       (0051's rule, titled_link_text);
-    3. else link words the address's slug confirms (the same words): the words, as written;
-    4. else the title of a link post that is only this link: a Reddit or HN post with few words of
-       its own (LINK_POST_MAX_WORDS, a share) and no other kept link is titled for it (issue 0070);
-    5. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
-    6. else one voice's link words that read as a title;
-    7. else None: the reader shows the address."""
-    quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
-    shared = Counter(" ".join(p.title.split()) for p in posts if p.title and p.kind in ("reddit", "hn")
-                     and (p.words or 0) < LINK_POST_MAX_WORDS and {target for target, _ in p.links} == {url})
-    for found in (quoted, shared):
-        found.pop("", None)
-    if quoted:
-        return min(quoted, key=lambda text: (-quoted[text], text))
-    said: Dict[str, List[StoryPost]] = defaultdict(list)
-    for p in posts:
-        text = " ".join((p.link_texts.get(url) or "").split())
-        if text and not re.match(r"https?://", text):
-            said[text.casefold()].append(p)
-    form = {key: Counter(" ".join(p.link_texts[url].split()) for p in ps).most_common(1)[0][0] for key, ps in said.items()}
-    by_use = sorted(said, key=lambda key: (-count_voices(said[key]), -len(said[key]), key))
-    agreed = [key for key in by_use if count_voices(said[key]) >= 2 and titled_link_text(form[key])]
-    words = _slug_words(url)
-    slug = _TOKENS.findall(" ".join(words).casefold())
-    confirmed = [key for key in by_use if len(slug) >= 2 and _TOKENS.findall(key) == slug]
-    if agreed or confirmed:
-        return form[(agreed or confirmed)[0]]
-    if shared:
-        return min(shared, key=lambda text: (-shared[text], text))
-    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
-        text = " ".join(words)
-        return text[0].upper() + text[1:]
-    titled = [key for key in by_use if titled_link_text(form[key])]
-    return form[titled[0]] if titled else None
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
@@ -732,169 +488,6 @@ def reposter_voice(source_id: str) -> str:
     return "source:" + source_id
 
 
-# ---- Discover --------------------------------------------------------------------------------
-
-
-@dataclass
-class Suggestion:
-    key: str                         # a site (openai.com) or a platform account (x.com/karpathy)
-    voices: List[str]                # the voices that link it
-    articles: List[str]              # its article-like addresses linked
-    links: int                       # every address of it linked
-    addresses: Set[str] = field(default_factory=set)   # those addresses (0051 counts its classics)
-    roundups: Set[str] = field(default_factory=set)    # the voices that link it only in roundups (0067)
-
-    @property
-    def weight(self) -> float:
-        """Its voices as Discover orders them (issue 0067): one linking it only in roundups counts half."""
-        return len(self.voices) - len(self.roundups) / 2
-
-
-def is_roundup(post: StoryPost) -> bool:
-    """A post whose links have 3+ anchors: it lists news, so it joins only the story of its first
-    (group) and weighs half in Discover's order (issue 0067)."""
-    return len(anchors(post)) >= ROUNDUP_ANCHORS
-
-
-def discover_address(url: str) -> Tuple[Optional[str], str, bool]:
-    """What Discover reads of one address: (its key, its site, whether the site is a platform).
-    On a platform the key is the account (account_key), none when the first path segment names a
-    kind of page (NOT_ACCOUNT); a tweet, on any host, is its author's (x.com/<user>, TWEET); elsewhere
-    it is the host. A function of the address alone, so the database keeps it once per address
-    (repo_discover, issue 0062)."""
-    host, _, rest = bare(url).partition("/")
-    tweet = TWEET.match("/" + rest)
-    if tweet:
-        user = tweet.group(1).lower()
-        return (None if user in NOT_ACCOUNT else "x.com/" + user), "x.com", True
-    site = site_of(host)
-    if site in DISCOVER_PLATFORMS:
-        return (None if re.split(r"[/?#]", rest)[0].lower() in NOT_ACCOUNT else account_key(url)), site, True
-    return host, site, False
-
-
-def discover_article(url: str) -> bool:
-    """What Discover counts as an article: an article-like address (post_links.is_article), or a
-    post of a platform account (issue 0065: a tweet in any form, a Telegram post)."""
-    host, _, rest = bare(url).partition("/")
-    path = "/" + rest
-    return is_article(url) or bool(TWEET.match(path)) or (
-        site_of(host) in DISCOVER_PLATFORMS and bool(PLATFORM_POST.match(path)))
-
-
-def discover_open(key: str, site: str, platform: bool, *, followed: Set[str], hidden: Set[str],
-                  followed_accounts: Set[str]) -> bool:
-    """A key you neither follow nor hid: on a platform as that account, elsewhere as its site."""
-    if platform:
-        return not (key in followed_accounts or key in hidden)
-    return not (site in followed or key in hidden or site in hidden)
-
-
-def suggestions(links: Iterable[Tuple[str, str, bool]], *, followed: Set[str], hidden: Set[str],
-                followed_accounts: Set[str] = frozenset(), mirrors: Set[str] = frozenset()) -> List[Suggestion]:
-    """Sites and accounts 3+ of your voices link, in 2+ article-like pages that make 40%+ of their
-    links, that you don't follow and did not hide. On a platform the unit is the account: it is
-    followed, or hidden, only as that account (`followed_accounts`, post_links.account_key), so
-    following one channel hides no other. Elsewhere it is the site (`followed`: sites; `hidden`:
-    keys or sites); a tweet mirror's other pages (`mirrors`: hosts where tweets are found, issue
-    0067) are X's kinds of page, never a site. `links`: (voice, address, whether the linking post is
-    a roundup) for every kept outside link. Most voices first, a voice linking a key only in
-    roundups counting half (Suggestion.weight), then all voices."""
-    links = list(links)
-    found: Dict[str, Tuple[Set[str], Set[str], Set[str], Set[str]]] = defaultdict(lambda: (set(), set(), set(), set()))
-    for voice, url, roundup in links:
-        key, site, platform = discover_address(url)
-        if key is None or (not platform and key in mirrors) or not discover_open(
-                key, site, platform, followed=followed, hidden=hidden, followed_accounts=followed_accounts):
-            continue
-        voices, articles, every, ordinary = found[key]
-        voices.add(voice)
-        every.add(url)
-        if not roundup:
-            ordinary.add(voice)
-        if discover_article(url):
-            articles.add(url)
-    out = [
-        Suggestion(key, sorted(voices), sorted(articles), len(every), set(every), voices - ordinary)
-        for key, (voices, articles, every, ordinary) in found.items()
-        if len(voices) >= DISCOVER_MIN_VOICES and len(articles) >= DISCOVER_MIN_ARTICLES
-        and len(articles) >= DISCOVER_ARTICLE_SHARE * len(every)
-    ]
-    return sorted(out, key=lambda s: (-s.weight, -len(s.voices), -len(s.articles), -s.links, s.key))
-
-
-# ---- Discover: where your stories start (issue 0065) --------------------------------------------
-
-
-@dataclass
-class Origin:
-    """A story's root (0064) as Discover reads it."""
-    story_id: str
-    url: str                         # the outside page (stories.origin_url), else the origin post's address
-    title: Optional[str]             # its link words, or the post's title; None: show the address
-    source_id: Optional[str]         # the origin post's source; None: a page outside INSIGHT
-    first_at: datetime
-    voices: Dict[str, str] = field(default_factory=dict)   # the story's voices -> the source naming each
-    own: bool = False                # an origin post on the site its source publishes on: held
-
-    @property
-    def stored(self) -> bool:
-        return self.source_id is not None
-
-
-@dataclass
-class Origins:
-    suggest: Dict[str, List[Origin]] = field(default_factory=lambda: defaultdict(list))   # key -> its stories
-    missing: Dict[str, List[Origin]] = field(default_factory=lambda: defaultdict(list))   # source -> its stories
-    unnamed: Dict[str, List[Origin]] = field(default_factory=lambda: defaultdict(list))   # youtube.com/watch -> them
-
-
-def discover_place(url: str) -> Optional[str]:
-    """Where an address is, as a source holds it: on a platform its account (None for a page that
-    names none), elsewhere its host and section (anthropic.com/news; the host alone at the root)."""
-    key, _, platform = discover_address(url)
-    section = "" if platform else section_of(url)
-    return f"{key}/{section}" if key and section else key
-
-
-def origins(roots: Iterable[Origin], *, followed: Set[str], held: Dict[str, str],
-            mirrors: Set[str] = frozenset()) -> Origins:
-    """Where your stories start, each story once:
-    - at its own source's site (Origin.own), or at a place one of your sources holds (`held`:
-      discover_place -> that source): nothing to suggest; a story the
-      source misses when its page is not stored (its archive may hold it, 0015);
-    - on a site you don't follow, or an account no source holds: that site or account;
-    - on a site you follow, in a section none of your sources holds: that section when SECTION_SHARE
-      of the site's such stories start there (0060's rule: anthropic.com/news), else the site;
-    - on a platform's page that names no account (youtube.com/watch?v=...), or a tweet mirror's page
-      that is not a tweet (`mirrors`, issue 0067: nitter.net/i/article/...): only listed."""
-    out = Origins()
-    elsewhere: Dict[str, List[Origin]] = defaultdict(list)   # a followed site's host -> its unheld stories
-    for root in roots:
-        key, site, platform = discover_address(root.url)
-        place = discover_place(root.url)
-        if root.own:
-            continue
-        if key is None or (not platform and key in mirrors):
-            if not root.stored:   # a stored one is its source's
-                _, _, rest = bare(root.url).partition("/")
-                out.unnamed[f"{site}/{re.split(r'[/?#]', rest)[0]}"].append(root)
-        elif place in held:
-            if not root.stored:
-                out.missing[held[place]].append(root)
-        elif platform or site not in followed:
-            out.suggest[key].append(root)
-        else:
-            elsewhere[key].append(root)
-    for host, found in elsewhere.items():
-        section, n = Counter(section_of(root.url) for root in found).most_common(1)[0]
-        if section and n >= max(SECTION_MIN, SECTION_SHARE * len(found)):
-            out.suggest[f"{host}/{section}"] = [root for root in found if section_of(root.url) == section]
-        else:
-            out.suggest[host] = found
-    return out
-
-
 def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = site_of) -> str:
     """A source's own site: the most common site of its posts' hosts ((host, posts) pairs); with
     `of=publication_of`, its publication (issue 0069)."""
@@ -904,6 +497,5 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "Suggestion", "Tree", "group", "tree", "threads", "address_origins", "roles", "count_voices", "suggestions",
-           "discover_address", "discover_article", "discover_open", "discover_place", "Origin", "Origins", "origins",
-           "source_site", "title_key", "anchors", "is_roundup"]
+__all__ = ["StoryPost", "Story", "group", "threads", "address_origins", "page_aliases", "roles", "count_voices",
+           "reposter_voice", "source_site", "title_key", "anchors"]

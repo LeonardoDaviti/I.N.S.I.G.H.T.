@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.db.migrate import MIGRATION_LOCK_KEY, acquire_migration_lock, apply_one
 from insight_core.tests._db import insert_scratch_source, requires_test_db
+from insight_core.utils.titles import title_key
 
 MIGRATIONS_DIR = BACKEND_DIR / "insight_core" / "db" / "migrations"
 
@@ -610,11 +611,14 @@ class OnePostOneAddressMigrationTests(unittest.TestCase):
                 ("Atomic Design in\u00a01998", "atomic design in 1998"),
                 ("Tom &amp; Jerry", "tom & jerry"), ("Tom &#38; Jerry", "tom & jerry"),
                 ("&lt;b&gt; &quot;q&quot; &apos;a&apos; &#39;b&#x27;", "<b> \"q\" 'a' 'b'"),
-                ("It&#8217;s &rsquo;", "it’s ’"), ("&amp;lt;", "&lt;"), ("&#38;#65;", "&#65;"),
+                ("It&#8217;s &rsquo;", "it's '"), ("&amp;lt;", "&lt;"), ("&#38;#65;", "&#65;"),
                 ("&#0; &#xD800; ok", "ok"), ("★ The iPhones 18 Pro", "★ the iphones 18 pro"),
+                ("Introducing 𝙻𝙵𝙼𝟹 “today”", 'introducing lfm3 "today"'),   # issue 0071: as utils/titles.py
             ]:
                 cur.execute("SELECT post_title_key(%s)", (title,))
                 self.assertEqual(cur.fetchone()[0], key, title)
+                if not title or "&#0;" not in title:
+                    self.assertEqual(title_key(title), key, f"the Python rule, {title!r}")
         finally:
             conn.rollback()
             conn.close()

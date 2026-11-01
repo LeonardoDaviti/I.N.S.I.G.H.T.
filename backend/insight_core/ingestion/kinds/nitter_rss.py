@@ -24,6 +24,7 @@ from insight_core.ingestion.kinds.base import (
     resume_counts,
     start_at,
 )
+from insight_core.utils.addresses import host_of
 
 # gates.HOST_FLOORS gives each a 10s floor.
 NITTER_HOSTS = frozenset({"nitter.local", "nitter.net"})
@@ -37,6 +38,8 @@ NITTER_PROFILE = PolitenessProfile(
     live_pages_rate_limited=True,
 )
 
+# A status id in your Nitter's own links: any id, an old tweet's too (an address on any host is a
+# tweet only with 15+ digits, url_normalization.TWEET_PATH, so other sites' /status/ pages aren't).
 STATUS_RE = re.compile(r"/status/(?P<post_id>\d+)")
 
 
@@ -76,8 +79,7 @@ class NitterRssKind(BaseKind):
     def matches(self, source: Source) -> bool:
         url = str(source.get("handle_or_url") or "")
         segments = parsing.path_segments(url)
-        host = (urllib.parse.urlparse(url).hostname or "").lower()
-        return host in NITTER_HOSTS and len(segments) >= 2 and segments[1] == "rss"
+        return host_of(url) in NITTER_HOSTS and len(segments) >= 2 and segments[1] == "rss"
 
     def checkpoint_resumable(self, checkpoint: Any) -> bool:
         return isinstance(checkpoint, dict) and checkpoint.get("mode") == "nitter_cursor" and checkpoint.get(

@@ -1,5 +1,6 @@
 """The outside links inside a post (issue 0050), and the small facts about an address the
-story rules read: its site, whether it is a home page, whether it reads like an article.
+story rules read: whether it is a home page, whether it reads like an article, its section. What
+an address's host, site and publication are, and whether it is a tweet: utils/addresses.py.
 
 A post's links are read from its HTML (`content_html`; a YouTube description counts when it is
 stored as HTML), made absolute against the post's own address and normalized as posts are
@@ -18,28 +19,23 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
-from insight_core.utils.url_normalization import TWEET_PATH, normalize_url
+from insight_core.utils.addresses import PLATFORM_SITES, bare, host_of, is_tweet, publication_of, site_of
+from insight_core.utils.url_normalization import normalize_url
 
 HREF = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\']', re.I)
 # The rest of the opening tag, then the link's own text up to its closing tag.
 LINK_TEXT = re.compile(r'[^>]*>(.*?)</a\s*>', re.I | re.S)
 TAG = re.compile(r'<[^>]+>')
 MEDIA = re.compile(r'\.(jpe?g|png|gif|webp|svg|mp4|webm|mp3|m4a|pdf)$', re.I)
-LINK_TEXT_MAX = 300
+LINK_TEXT_MAX = 300   # not measured
 
-# A post's links into the platform it came from say where it was posted, not what it is about.
-PLATFORM_SITES = {
-    "reddit": frozenset({"reddit.com", "redd.it"}),
-    "hn": frozenset({"ycombinator.com"}),
-    "x": frozenset({"x.com", "twitter.com"}),
-    "telegram": frozenset({"t.me", "telegram.me", "telegram.org"}),
-    "youtube": frozenset({"youtube.com", "youtu.be"}),
-}
+# The kinds of source whose posts are a platform's, not articles (issue 0070): their HTML says who and
+# what (a Reddit author, a link post's words, a quoted tweet, a link preview: StoriesRepository reads it),
+# and a post of 3+ links among them can be about one story (story_rules.group).
+PLATFORM_KINDS = ("x", "telegram", "reddit", "hn")
 # The kind of place a source is, as the voice and share rules need it (not the fetch kind).
 _KIND_PATTERNS = (
     ("reddit", re.compile(r"reddit", re.I)),
@@ -67,8 +63,8 @@ ARTICLE = re.compile(r'(/(19|20)\d\d[/-]|[a-z0-9]+(-[a-z0-9]+){3,})')
 # A site's section (issue 0060): the first path segment SECTION_SHARE of its articles share, at least
 # SECTION_MIN of them, never one that orders by time or by number (/2026/, /10/, /2026-10-31/).
 # Follow starts there (ingestion/where_linked.py); Discover suggests it (issue 0065).
-SECTION_SHARE = 0.6
-SECTION_MIN = 2
+SECTION_SHARE = 0.6   # measured (0060): 27 of the lab's top 60 Discover sites have one section holding 60%+
+SECTION_MIN = 2       # not measured
 NUMBERISH = re.compile(r"^\d[\d_.-]*$")
 # A language tag's shape (issue 0067): en, ru-RU, zh-hans, en_US, es-419. Many sections share it (/ai/, /us/,
 # huggingface.co/ai-sage), so a first segment of this shape is read as a language only when a section and a
@@ -96,53 +92,6 @@ def source_kind(platform: Optional[str], handle_or_url: Optional[str]) -> str:
     return "site"
 
 
-@lru_cache(maxsize=1)
-def _hosting_suffixes() -> FrozenSet[str]:
-    """The Public Suffix List's private section (public_suffix_private.dat): the hosting platforms
-    that register there so each subdomain is its own site (github.io, bearblog.dev). Its rules as
-    written: a suffix, `*.` before one, `!` before an exception."""
-    path = Path(__file__).with_name("public_suffix_private.dat")
-    return frozenset(line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith("//"))
-
-
-def site_of(host: Optional[str]) -> str:
-    """The registrable part of a host: one label under a hosting platform's suffix (issue 0068:
-    karpathy.github.io and lilianweng.github.io are two sites), else its last two labels, three for
-    a co.uk-like ending. Where a post is (Discover's places, a site's sections, a link to its own
-    site); who said it is its publication (publication_of, issue 0069)."""
-    host = (host or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
-    parts = host.split(".")
-    suffixes = _hosting_suffixes()
-    for i in range(1, len(parts)):   # the longest suffix first
-        suffix = ".".join(parts[i:])
-        if "!" + suffix in suffixes:
-            return suffix
-        if suffix in suffixes or (i + 1 < len(parts) and "*." + ".".join(parts[i + 1:]) in suffixes):
-            return ".".join(parts[i - 1:])
-    if len(parts) >= 3 and len(parts[-2]) <= 3 and len(parts[-1]) == 2:
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
-
-
-def publication_of(host: Optional[str]) -> str:
-    """A publication (issue 0069): a host without `www.`. A website source's voice is the one it
-    publishes at, so writers on one platform (Substack, github.io) are voices of their own, and two
-    sources at one host (a feed and a page watch) are one."""
-    host = (host or "").lower()
-    return host[4:] if host.startswith("www.") else host
-
-
-def bare(url: str) -> str:
-    """A normalized address without its scheme: `host/path?query`."""
-    return url.split("://", 1)[-1]
-
-
-def host_of(url: Optional[str]) -> str:
-    return bare(url or "").split("/", 1)[0].split(":", 1)[0].lower()
-
-
 def is_home(url: str) -> bool:
     """A site root or a one-segment path (a profile): it says who, not what."""
     _, _, rest = bare(url).partition("/")
@@ -160,22 +109,6 @@ def is_reference(url: str) -> bool:
         return True
     _, _, rest = bare(url).partition("/")
     return bool(REFERENCE.search("/" + rest))
-
-
-# A first path segment that names a kind of account, the account's name following it:
-# reddit.com/r/<sub>, reddit.com/u/<user>, youtube.com/channel/<id>, youtube.com/c/<name>.
-ACCOUNT_NAMESPACES = frozenset({"r", "u", "user", "c", "channel"})
-
-
-def account_key(url: str) -> str:
-    """The account an address on a platform is under: `host/first segment`, two segments when the
-    first only says what kind of account follows (`reddit.com/r/xreal`). Lowercase."""
-    host, _, rest = bare(url).partition("/")
-    segments = rest.split("?", 1)[0].split("/")
-    first = segments[0].lower()
-    if first in ACCOUNT_NAMESPACES and len(segments) > 1 and segments[1]:
-        return f"{host.lower()}/{first}/{segments[1].lower()}"
-    return f"{host.lower()}/{first}"
 
 
 def titled_link_text(text: Optional[str]) -> bool:
@@ -203,11 +136,6 @@ def section_of(url: str) -> str:
 def is_article(url: str) -> bool:
     _, _, rest = bare(url).partition("/")
     return bool(ARTICLE.search("/" + rest.lower()))
-
-
-def is_tweet(url: Optional[str]) -> bool:
-    """A normalized address that is a tweet (issue 0066: every form of one is x.com/<user>/status/<id>)."""
-    return host_of(url) == "x.com" and bool(TWEET_PATH.match("/" + bare(url or "").partition("/")[2]))
 
 
 def quoted_tweet(content_html: Optional[str]) -> Optional[str]:
