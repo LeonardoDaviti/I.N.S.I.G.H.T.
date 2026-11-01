@@ -6,7 +6,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, reading_text,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, quote_only, reading_text,
 )
 from insight_core.utils.language_detection import detect_language
 from insight_core.utils.url_normalization import extract_url_host, normalize_url
@@ -132,11 +132,11 @@ class DisplayTitleTests(unittest.TestCase):
         self.assertEqual(display_title("[Photo]", "А теперь наша любимая рубрика..."), "А теперь наша любимая рубрика...")
         self.assertEqual(display_title("[Video]", ""), "[Video]", "a post with no words keeps its placeholder")
         self.assertEqual(display_title("RT by @steipete: Image", "jason (@jxnlco) Post your best codex billboard"),
-                         "jason (@jxnlco) Post your best codex billboard")
+                         "Post your best codex billboard", "a quoted tweet's byline is no word (issue 0072)")
         self.assertEqual(display_title("R to @badlogicgames: Gif", ""), "Gif")
         self.assertEqual(display_title("R to @pankajkumar_dev: x.com/pankajkumar_dev/status…",
                                        "nitter.net/pankajkumar_dev/status… Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out."),
-                         "Pankaj Kumar (@pankajkumar_dev) Gemini 4 Carbon is out.", "a self-quote reads as the quoted words")
+                         "Gemini 4 Carbon is out.", "a self-quote reads as the quoted words, not who wrote them (0072)")
         self.assertEqual(display_title("https://lean-lang.org/eval/", "https://lean-lang.org/eval/ Lean Evaluating provers"),
                          "Lean Evaluating provers", "a shared link reads as its preview's words")
         self.assertEqual(display_title("https://github.com/sqlc-dev/sqlc is pretty sweet", ""),
@@ -245,6 +245,36 @@ class TitleNotReadTwiceTests(unittest.TestCase):
         html = '<h1>Soft-deprecating re.match()</h1>\n<p>Python has a concept of soft deprecation.</p>'
         self.assertEqual(body_after_title("Soft-deprecating re.match()", html, html=True),
                          "<p>Python has a concept of soft deprecation.</p>")
+
+
+class QuoteCardTests(unittest.TestCase):
+    """Issue 0072: Nitter's quote card says who is quoted and where, never the post's words."""
+    ADDRESS = '<p><a href="https://nitter.net/ann/status/2115097309847630047?s=20">nitter.net/ann/status…</a></p>\n'
+    CARD = ('<hr/>\n<blockquote>\n<b>Ann Lee (@ann)</b>\n<p>\n<p>Here is one more output of mine.<br>\n<br>\nThe speed is good, and I would put it above the model I used before this week for most of my daily work.</p>\n'
+            '<img src="https://nitter.local/pic/a.jpg" />\n</p>\n<footer>\n— <cite><a href="https://nitter.local/ann/status/'
+            '2115097309847630047#m">https://nitter.local/ann/status/2115097309847630047#m</a>\n</footer>\n</blockquote>')
+    TEXT = ("nitter.net/ann/status… Ann Lee (@ann) Here is one more output of mine. The speed is good, and I would put it above the model I used before this week for most of my daily work. "
+            "— https://nitter.local/ann/status/2115097309847630047#m")
+
+    def test_a_quote_only_tweet_is_titled_and_read_by_the_quoted_words(self):
+        title, text, html = reading_text("R to @ann: x.com/ann/status…", self.TEXT, self.ADDRESS + self.CARD)
+        self.assertEqual(title, "Here is one more output of mine.")
+        self.assertEqual(text, "The speed is good, and I would put it above the model I used before this week for most of my daily work.")
+        self.assertNotIn("<footer>", html)
+        self.assertNotIn("nitter.net/ann/status…", html)
+        self.assertIn("<b>Ann Lee (@ann)</b>", html, "the card still says who it quotes")
+        self.assertEqual(display_title("R to @ann: x.com/ann/status…", self.TEXT), "Here is one more output of mine.", "without the HTML too")
+
+    def test_the_posts_own_words_end_where_the_quote_begins(self):
+        title, text, _ = reading_text("Mogged...", "Mogged... " + self.TEXT.split(" ", 1)[1], "<p>Mogged...</p>\n" + self.CARD)
+        self.assertEqual(title, "Mogged...", "not run on into the quote's byline")
+        self.assertNotIn("(@ann)", text)
+
+    def test_a_post_with_nothing_of_its_own_only_quotes(self):
+        self.assertEqual(quote_only(self.ADDRESS + self.CARD), "https://x.com/ann/status/2115097309847630047")
+        for own in ("<p>Its out guys.</p>\n", "<p>🫶</p>\n", '<p></p>\n<img src="https://nitter.local/pic/b.jpg" />\n'):
+            self.assertIsNone(quote_only(own + self.CARD), own)
+        self.assertIsNone(quote_only("<p>No quote here.</p>"))
 
 
 class FeedLinesTests(unittest.TestCase):

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Tuple
 from .addresses import tweet_author
 from .content_fingerprints import clean_text, hash_post_content, strip_html
 from .language_detection import detect_language
+from .post_links import quoted_tweet
 from .url_normalization import canonicalize_url, extract_url_host, normalize_url
 
 TITLE_MAX_CHARS = 120             # not measured
@@ -76,15 +77,63 @@ _MARK_RE = re.compile(r"^[>•*\-–—]\s+")
 # page's title and description, each ended by a break; the stored text has lost those breaks.
 _PREVIEW_SITE_RE = re.compile(r"<cite>.*?</cite>", re.I | re.S)
 # A preview of a tweet is titled by its author, "Percy Liang (@percyliang)": who, not what; its text says it.
-_BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)$")
+# A quoted tweet's words open on it too (issue 0072): who is quoted, not what.
+_BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)(?:\s+|$)")
 _LINE_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/b|/blockquote|/li|/h[1-6])>", re.I)
+
+
+# Nitter's quote of a tweet (issue 0072): a card that opens on its author in bold, "Name (@user)", and
+# ends on a footer citing it, "— https://nitter.local/user/status/1#m"; the post links the quoted tweet
+# above it by a bare address. Who and where, never the post's words: they leave its text and HTML.
+_QUOTE_CARD_RE = re.compile(r"<blockquote>\s*<b>([^<]*\(@(\w+)\))</b>", re.I)
+_QUOTE_FOOTER_RE = re.compile(r"\s*— https?://\S+/status/\d+\S*\s*$")
+_QUOTE_FOOTER_HTML_RE = re.compile(r"\s*<footer>\s*—\s*<cite>\s*<a\b[^>]*/status/\d+[^>]*>[^<]*</a>\s*(?:</cite>\s*)?</footer>", re.I)
+
+
+def _quoted_address_re(user: str) -> re.Pattern:
+    """The bare link to a tweet of `user` (its text an address, no spaces) that Nitter writes before a quote card."""
+    return re.compile(rf'<a\b[^>]*href="[^"]*/{re.escape(user)}/status/\d+[^"]*"[^>]*>([^<\s]*)</a>', re.I)
+
+
+def without_quote_marks(content: str | None, html: str | None) -> Tuple[str | None, str | None]:
+    """A tweet's text and HTML without its quote card's byline and footer and the quoted tweet's bare
+    address (issue 0072); the quoted words stay, in the card. Anything else as it is. `html` may be only
+    the HTML's start: a card that starts after it is left alone."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card:
+        return content, html
+    address = _quoted_address_re(card.group(2))
+    link = address.search(html[:card.start()])
+    if content:
+        content = _QUOTE_FOOTER_RE.sub("", content)
+        # The byline becomes a line's end: the post's own words end where the quote begins.
+        for mark, gap in ((html_lib.unescape(link.group(1)) if link else None, " "), (html_lib.unescape(card.group(1)), "\n")):
+            at = content.find(mark) if mark else -1
+            if at >= 0:
+                content = (content[:at].rstrip() + gap + content[at + len(mark):].lstrip()).strip()
+    html = _QUOTE_FOOTER_HTML_RE.sub("", html)
+    if link:
+        html = html[:link.start()] + html[link.end():]
+    return content, _EMPTY_P_RE.sub("", html).strip()
+
+
+def quote_only(html: str | None) -> str | None:
+    """The tweet a post only quotes, normalized (issue 0072): before the quote card it has nothing of its
+    own (no words, emoji or pictures), only the quoted tweet's bare address. Else None."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card:
+        return None
+    own = _quoted_address_re(card.group(2)).sub("", html[:card.start()])
+    if re.search(r"<(?:img|video)\b", own, re.I) or html_lib.unescape(_TAG_RE.sub("", own)).strip():
+        return None
+    return quoted_tweet(html)
 
 
 def _words(line: str, preview: bool = False) -> str:
     """A line as a title's words, a placeholder nothing. `preview`: the text under a placeholder
     title, where a leading address is the link the post shares, its words after it."""
-    line = _LEADING_ADDRESS_RE.sub("", line) if preview else line
-    return "" if _PLACEHOLDER_RE.match(line) or (preview and _BYLINE_RE.match(line)) else line
+    line = _BYLINE_RE.sub("", _LEADING_ADDRESS_RE.sub("", line)) if preview else line
+    return "" if _PLACEHOLDER_RE.match(line) else line
 
 
 def _html_lines(html: str) -> str:
@@ -110,6 +159,8 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     link preview's `html` gives the page's title as its own line, not run on with the site's name.
     """
     stored = REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip()))   # issue 0066
+    # A quote card's byline and footer aren't the post's words (issue 0072).
+    content = _QUOTE_FOOTER_RE.sub("", without_quote_marks(content, html)[0] or "")
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
     placeholder = bool(stored) and not _words(clean_text(stored))
     glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder else None
@@ -145,6 +196,7 @@ def _cut(line: str, run_on: bool) -> str:
 
 
 _TAG_RE = re.compile(r"(<[^>]*>)")
+_EMPTY_P_RE = re.compile(r"<p>\s*</p>\s*", re.I)
 _BLOCK_TAG_RE = re.compile(r"</?(?:p|br|h[1-6]|div|li|ul|ol|blockquote|hr|figure|section|header|article|table|tr|pre)\b", re.I)
 # What a title taken out of a body leaves at its start: breaks, and elements left empty.
 _LEFT_AT_START_RE = re.compile(r"^((?:\s*<(?!br\b)[a-z][^>]*>)*)\s*(?:<br\s*/?>\s*|<([a-z][a-z0-9]*)\b[^>]*>\s*</\2>\s*)+", re.I)
@@ -221,7 +273,7 @@ def reading_text(title: str | None, content: str | None, html: str | None = None
     and the title out of the body's start when it was taken from it (issue 0070). Where the stored
     text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
     ended: `html` may be only the HTML's start."""
-    content, html = body_without_feed_lines(content), body_without_feed_lines(html)
+    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
     shown = display_title(title, content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after

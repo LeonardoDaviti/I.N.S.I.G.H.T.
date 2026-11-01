@@ -42,7 +42,7 @@ from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
-from insight_core.utils.post_fields import REPLY_TO_RE, display_title, hnrss_counts, reading_text
+from insight_core.utils.post_fields import REPLY_TO_RE, display_title, hnrss_counts, quote_only, reading_text
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -426,7 +426,8 @@ class ReaderRepository:
         source once. Issue 0069: a source's roundup is the one that links the story's pages earliest
         in it, then the first, and a source in the story has none. Issue 0070: a post its source
         reposted carries `repost` {by, author}, and `reposted_by` leaves that source out (its line
-        names the author and the reposter once)."""
+        names the author and the reposter once). Issue 0072: a post that only quotes a post of its story
+        is no line (`_without_quotes_of_itself`)."""
         if not items:
             return
         cur.execute(
@@ -434,7 +435,8 @@ class ReaderRepository:
             SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
-                   p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS})
+                   p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS}),
+                   COALESCE(p.normalized_url, p.url)
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -448,9 +450,11 @@ class ReaderRepository:
         )
         stories: Dict[str, Dict[str, Any]] = {}
         reposts: Dict[str, List[Tuple[Optional[str], List[str]]]] = {}   # lead -> (a tweet's author, its reposters)
+        addresses: Dict[str, set] = {}   # lead -> its story's posts' addresses
+        quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet (issue 0072)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author, handle, html) in cur.fetchall():
+             origin_linked_by, reposted_by, author, handle, html, address) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -460,6 +464,9 @@ class ReaderRepository:
             })
             if reposted_by:
                 reposts.setdefault(str(lead), []).append((author, reposted_by))
+            addresses.setdefault(str(lead), set()).add(address)
+            if str(post_id) != str(lead) and parent_reason and (quoted := quote_only(html)):
+                quoting[str(post_id)] = quoted
             story["thread"] |= parent_reason in ("thread", "quote")
             # The origin post first (issue 0064); before the tree is drawn, the first report.
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
@@ -482,7 +489,8 @@ class ReaderRepository:
                 })
             else:
                 story.update(parent)
-        for story in stories.values():
+        for lead, story in stories.items():
+            ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead]})
             # One account's replies to itself, or its quotes of itself, read as a thread (issue 0066).
             story["thread"] = story["thread"] and len(story["sources"]) == 1
             # A story whose origin is a page outside INSIGHT has no first post.
@@ -529,6 +537,19 @@ class ReaderRepository:
             story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]
         for item in items:
             item["story"] = stories.get(item["id"])
+
+    @staticmethod
+    def _without_quotes_of_itself(story: Dict[str, Any], quotes: set) -> None:
+        """A post with nothing of its own that only quotes a post of its story (issue 0072: a reply
+        repeating the thread's first tweet) is no line: what hung from it hangs from its parent."""
+        if not quotes:
+            return
+        parents = {p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}
+        for place in (story, *story["posts"]):
+            while place["parent_id"] in quotes:
+                place["parent_id"], reason = parents[place["parent_id"]]
+                place["parent_reason"] = place["parent_reason"] if place["parent_reason"] == "thread" else reason
+        story["posts"] = [p for p in story["posts"] if p["id"] not in quotes]
 
     @staticmethod
     def followed_accounts(cur: Cursor) -> Dict[str, Dict[str, str]]:

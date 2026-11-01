@@ -273,6 +273,24 @@ class XJobTests(unittest.TestCase):
         [line] = [p for p in PostDetailService.story(self.cur, root)["posts"] if p["id"] == reply]
         self.assertEqual((line["quotes_above"], line["html"]), (True, "<p>Its out guys.<br>\n</p>"))
 
+    def test_a_reply_that_only_quotes_its_thread_is_no_line(self):
+        # Issue 0072: a reply with nothing of its own, only a quote of the thread's first tweet, is no
+        # line in the tree or the thread page; the reply after it hangs from the post before.
+        user = f"pankaj{self.mark}"
+        source = self._x(user)
+        root = self._save(source, user, ID, "GPT-6.1 Terra one more output.")
+        card = (f'<p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n<hr/>\n'
+                f'<blockquote>\n<b>Pankaj Kumar (@{user})</b>\n<p>GPT-6.1 Terra one more output.</p>\n<footer>\n— <cite>'
+                f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
+        only = self._save(source, user, ID + 1, f"R to @{user}: x.com/{user}/status…", minutes=5, html=card)
+        after = self._save(source, user, ID + 2, f"R to @{user}: Benchmarks are out", minutes=10)
+        self._regroup()
+        story = PostDetailService.story(self.cur, root)
+        self.assertEqual([(p["id"], p["parent_id"], p["parent_reason"]) for p in story["posts"]], [(after, root, "thread")])
+        item = {"id": only}
+        ReaderRepository.attach_stories(self.cur, [item])
+        self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
+
 
 class MigrationTests(unittest.TestCase):
     @requires_test_db
