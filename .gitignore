@@ -34,3 +34,7 @@ briefings_export/
 !backend/insight_core/tests/fixtures/pages/expectations.json
 # The judged test cases from real data (plan/research/lab/README.md)
 !plan/research/lab/cases.json
+
+# Notes built from the owner's real data (channel names, titles): kept on disk, never pushed
+plan/research/
+*.tsbuildinfo
