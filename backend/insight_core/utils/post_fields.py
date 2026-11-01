@@ -47,14 +47,16 @@ def _glued_first_line(cut: str, content: str | None, whole: bool = False) -> str
 
     A `whole` title (not cut, issue 0069: "$500Изменения уже действуют.") ends only where the title
     runs on into the next line's first character; a space a tag left in the body ("@user !",
-    "ИИ , знают", "« Смит") is not a line's end. Its own spacing is kept."""
+    "ИИ , знают", "« Смит") is not a line's end. Its own spacing is kept. Neither is it in a cut
+    title, nor a space before a lowercase letter (issue 0072: "Kimi K3 , а" was "<b>Kimi K3</b>, а")."""
     title, body = clean_text(cut), clean_text(content)
     i = j = 0
     while i < len(title) and j < len(body):
         if title[i] == body[j]:
             i, j = i + 1, j + 1
         elif body[j].isspace() and not title[i].isspace():
-            if len(_WORD_RE.findall(body[:j])) >= 2 and (not whole or (_starts_line(title, i) and body[j + 1:j + 2] == title[i])):
+            if len(_WORD_RE.findall(body[:j])) >= 2 and _starts_line(title, i) and (
+                    body[j + 1:j + 2] == title[i] if whole else not title[i].islower()):
                 return (title[:i] if whole else body[:j]).rstrip()
             j += 1   # a space after a leading emoji or one word ("🌸 Релизим"), or a tag's
         else:
@@ -80,6 +82,8 @@ _PREVIEW_SITE_RE = re.compile(r"<cite>.*?</cite>", re.I | re.S)
 # A quoted tweet's words open on it too (issue 0072): who is quoted, not what.
 _BYLINE_RE = re.compile(r"^[^()\n]{1,60}\(@\w+\)(?:\s+|$)")
 _LINE_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/b|/blockquote|/li|/h[1-6])>", re.I)
+# A line's end in a body's HTML (issue 0072): a break or a block's end; a bold word ends no line.
+_BLOCK_END_RE = re.compile(r"<(?:br\s*/?|/br|/p|/div|/blockquote|/li|/h[1-6])>", re.I)
 
 
 # Nitter's quote of a tweet (issue 0072): a card that opens on its author in bold, "Name (@user)", and
@@ -136,9 +140,21 @@ def _words(line: str, preview: bool = False) -> str:
     return "" if _PLACEHOLDER_RE.match(line) else line
 
 
-def _html_lines(html: str) -> str:
-    """HTML's text, one line per break or block, a link preview's site name left out."""
-    return html_lib.unescape(_TAG_RE.sub("", _LINE_END_RE.sub("\n", _PREVIEW_SITE_RE.sub("", html))))
+def _html_lines(html: str, ends: re.Pattern = _LINE_END_RE) -> str:
+    """HTML's text, one line per break or block (`ends`), a link preview's site name left out."""
+    return html_lib.unescape(_TAG_RE.sub("", ends.sub("\n", _PREVIEW_SITE_RE.sub("", html))))
+
+
+def _squashed(text: str | None) -> str:
+    """Text without its whitespace, to tell whether one text starts another (issue 0072: "Meta *" and
+    "Meta*" are one start)."""
+    return re.sub(r"\s+", "", clean_text(text))
+
+
+def _false_end(title: str) -> bool:
+    """A title the source ended where no sentence ends (issue 0072): inside an open bracket ("(?"),
+    or at an abbreviation's period ("т.к.", "U.S.") that SENTENCE_END_RE doesn't take as an end."""
+    return title.count("(") > title.count(")") or (title.endswith(".") and not SENTENCE_END_RE.search(title, len(title) - 1))
 
 
 def display_title(title: str | None, content: str | None, html: str | None = None) -> str:
@@ -162,12 +178,19 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     # A quote card's byline and footer aren't the post's words (issue 0072).
     content = _QUOTE_FOOTER_RE.sub("", without_quote_marks(content, html)[0] or "")
     cut = TRAILING_ELLIPSIS_RE.sub("", stored).strip()
+    cut = re.sub(r"&#?\w*$", "", cut).rstrip() if cut != stored else cut   # the bridge cut inside "&quot;" (0072)
     placeholder = bool(stored) and not _words(clean_text(stored))
-    glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder else None
-    from_body = not stored or placeholder or (
-        cut != stored and bool(cut) and clean_text(content).startswith(clean_text(cut))
-    )
-    text = (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content) if from_body else stored
+    # Issue 0072: a title ended where no sentence ends is cut too, and a cut title starts the text
+    # whatever its spaces; its line comes from the HTML's breaks when the text has lost them.
+    false_end = cut == stored and _false_end(stored)
+    starts = _squashed(content).startswith(_squashed(cut)) and (not false_end or len(_squashed(content)) > len(_squashed(cut)))
+    from_body = not stored or placeholder or ((cut != stored or false_end) and bool(cut) and starts)
+    lines_html = _html_lines(html, _BLOCK_END_RE) if html and from_body and not placeholder else None
+    first = next((clean_text(line) for line in (lines_html or "").splitlines() if _WORD_RE.search(line)), "")
+    if not (first and (_squashed(first).startswith(_squashed(cut)) or _squashed(cut).startswith(_squashed(first)))):
+        lines_html = None   # the HTML opens on something else: the text says it
+    glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder and not lines_html else None
+    text = (lines_html or (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content)) if from_body else stored
     raws = [clean_text(raw) for raw in (text or "").splitlines() if clean_text(raw)]
     lines = [words for raw in raws if (words := _words(raw, placeholder))]
     if glued or not lines:

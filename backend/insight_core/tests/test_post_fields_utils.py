@@ -247,6 +247,42 @@ class TitleNotReadTwiceTests(unittest.TestCase):
                          "<p>Python has a concept of soft deprecation.</p>")
 
 
+class BridgeTitleTests(unittest.TestCase):
+    """Issue 0072: a title the Telegram bridge cut ends where the post's headline ends."""
+
+    def test_a_cut_title_ends_at_the_htmls_line_not_the_texts(self):
+        html = ('<a href="https://media.test/1.jpg"><img src="https://media.test/1/thumb.jpeg"/></a><br/><br/>'
+                '<b>Исследователи нашли способ тратить на 15% меньше вычислений без потери качества</b><br><br>'
+                'На конференции, проходящей сейчас, представили метод.')
+        text = "Исследователи нашли способ тратить на 15% меньше вычислений без потери качества На конференции, проходящей сейчас, представили метод."
+        self.assertEqual(display_title("Исследователи нашли способ тратить на 15% меньше вычислений без [...]", text, html),
+                         "Исследователи нашли способ тратить на 15% меньше вычислений без потери качества")
+
+    def test_a_bold_words_space_is_no_line_end(self):
+        text = "Классика: издание (американское кстати) утверждает , что недавно выпущенная модель была дистиллирована"
+        self.assertEqual(display_title("Классика: издание (американское кстати) утверждает, что недавно вы [...]", text),
+                         text, "not cut at 'утверждает': without the HTML the tag's space stays")
+        html = 'Успех не просто <b>Kimi K3</b>, а новая архитектура.<br><br>Дальше.'
+        self.assertEqual(display_title("Успех не просто Kimi K3, а новая [...]", "Успех не просто Kimi K3 , а новая архитектура. Дальше.", html),
+                         "Успех не просто Kimi K3, а новая архитектура.")
+
+    def test_a_cut_title_starts_the_text_whatever_its_spaces(self):
+        html = "Meta* купила Moltbook – вирусную соцсеть для агентов<br><br>Помните, в конце января"
+        self.assertEqual(display_title("Meta* купила Moltbook – вирусную соцсеть для агентовПомните, в конце янва [...]",
+                                       "Meta * купила Moltbook – вирусную соцсеть для агентов Помните, в конце января", html),
+                         "Meta* купила Moltbook – вирусную соцсеть для агентов")
+        self.assertEqual(display_title("Расходы перешли в фазу &q [...]", 'Расходы перешли в фазу "роста" и дальше.'),
+                         'Расходы перешли в фазу "роста" и дальше.', "a cut inside an HTML code")
+
+    def test_a_title_ended_where_no_sentence_ends_is_cut_again(self):
+        text = "Маск признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст."
+        self.assertEqual(display_title("Маск признал провал модели в программировании, т.к.", text),
+                         "Маск признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст.")
+        self.assertEqual(display_title("Компания собирается выпускать модель (?", "Компания собирается выпускать модель (?) Дальше."),
+                         "Компания собирается выпускать модель (?) Дальше.")
+        self.assertEqual(display_title("Модель вышла.", "Модель вышла. Дальше."), "Модель вышла.", "a real end stands")
+
+
 class QuoteCardTests(unittest.TestCase):
     """Issue 0072: Nitter's quote card says who is quoted and where, never the post's words."""
     ADDRESS = '<p><a href="https://nitter.net/ann/status/2115097309847630047?s=20">nitter.net/ann/status…</a></p>\n'
