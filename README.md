@@ -156,7 +156,7 @@ The UI is monochrome, dark by default, with a theme toggle in the top bar. The d
 
 These are configurable in `.env`:
 
-- `BACKEND_PORT`: host port for backend API
+- `BACKEND_PORT`: host port for backend API, published on `127.0.0.1` only (the app reaches the API through the frontend's `/api`)
 - `FRONTEND_PORT`: host port for frontend
 
 The backend CORS config follows `FRONTEND_PUBLIC_URL` and can be overridden with `CORS_ALLOW_ORIGINS`.

@@ -6,7 +6,7 @@ feature overview; this file covers deploying, updating and troubleshooting.
 | Service | Container | What it does |
 | --- | --- | --- |
 | `postgres` | `insight-db` | PostgreSQL 15 with pgvector. Internal to the Docker network only. |
-| `backend` | `insight-api` | FastAPI on port 8000 (`BACKEND_PORT` on the host). Runs migrations on start, and imports `sources.json` once per database (add-only). |
+| `backend` | `insight-api` | FastAPI on port 8000 (`BACKEND_PORT` on the host, `127.0.0.1` only). Runs migrations on start, and imports `sources.json` once per database (add-only). |
 | `ingestion` | `insight-ingestion` | The scheduler (`scripts/run_scheduler.py`): an ingestion tick every `ingest_tick_minutes`, daily work every `interval_hours`. |
 | `frontend` | `insight-frontend` | The built React app behind Nginx (`FRONTEND_PORT`), proxying `/api` to the backend. |
 
@@ -14,6 +14,11 @@ feature overview; this file covers deploying, updating and troubleshooting.
 
 - All four services share one bridge network, `insight-network`. The API and the scheduler
   reach the database as `postgres:5432`. PostgreSQL has no host port.
+- The API's port is published on `127.0.0.1` only (issue 0071): it has no login and can delete
+  sources, so only the machine it runs on reaches it. The app reaches it through the frontend's
+  nginx (`/api` on `FRONTEND_PORT`), which proxies to `backend:8000` on the compose network.
+  Leave `VITE_API_URL` empty: a build that points the browser at `http://<host>:8000` can't reach it.
+  From another machine, use a tunnel: `ssh -L 8000:localhost:8000 <host>`.
 - The Telegram RSS bridge and Nitter are self-hosted outside this compose file. Sources reach
   them as `https://telegram.local/...` and `https://nitter.local/...`, so those names must
   resolve from inside the `backend` and `ingestion` containers.
@@ -40,7 +45,7 @@ takes a PostgreSQL advisory lock, so the two containers can start together safel
 migrations are recorded and never re-run.
 
 Open `http://<host>:${FRONTEND_PORT}`. `/` is the reader. API docs are at
-`http://<host>:${BACKEND_PORT}/docs`.
+`http://localhost:${BACKEND_PORT}/docs` on the host (or through an SSH tunnel, see Networking).
 
 ### API keys and sessions: Sources → Connections
 
@@ -89,6 +94,7 @@ mirror a missing file, so nothing is deleted meanwhile), pull, put it back, then
 server's checkout, and change no source in the app until the update is done:
 
 ```bash
+grep -c '^VITE_API_URL=.' .env      # 0: the app calls /api through nginx (v9.13 closes the API port to other machines)
 F=backend/insight_core/config/sources.json
 sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FROM sources'   # note the number
 mv "$F" ~/sources.json.keep          # the running code refuses to mirror a missing file
@@ -104,6 +110,8 @@ sudo docker exec insight-db psql -U insight -d insight -Atc 'SELECT count(*) FRO
   `Imported sources.json: added=0 updated=0 skipped=0` when the file was in step with the
   database, as the app's own export is. The other container's start then says it was imported
   before.
+- If the first line prints more than 0, the app's build calls the API's port directly, which v9.13
+  closes to other machines: stop and empty `VITE_API_URL` first (the app then uses `/api`).
 - If `git pull` refuses anyway, put the file back (`mv ~/sources.json.keep "$F"`) and stop:
   nothing has changed.
 - Use your `DB_USER` and `DB_NAME` if they are not `insight`. Keep `~/sources.json.keep` until

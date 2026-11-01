@@ -57,8 +57,10 @@ services:
       # shared by the API and ingestion so both decrypt the same Connections values.
       - insight_secrets:/app/secrets
     command: ["/app/docker/start-backend.sh"]
+    # The API answers only this machine (issue 0071): it has no login and can delete sources.
+    # The app reaches it through the frontend's nginx on the compose network (/api).
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     # The frontend starts once this passes (depends_on below), so an update's downtime is the API's
     # start (issue 0069): checked every second from the start, then every 30 s. The start period
     # leaves migrations time; a failure in it doesn't count. start_interval: Engine 25+, Compose 2.20.2+.
