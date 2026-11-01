@@ -48,6 +48,20 @@ class StripHtmlTests(unittest.TestCase):
         # An escaped tag in HTML is text the author wrote: it survives as text.
         self.assertEqual(strip_html("<p>Use &lt;details&gt; here</p>"), "Use <details> here")
 
+    def test_a_quoted_greater_than_sign_does_not_end_the_tag(self):
+        # Issue 0072: a utility class's ">" left 'a]:hidden">' in front of the stored text.
+        self.assertEqual(strip_html('<h1 class="max-md:[&amp;>a]:hidden"><span>A title</span></h1>'), "A title")
+        self.assertEqual(strip_html("<a title='x > y' href=/p>Read</a>"), "Read")
+        self.assertEqual(strip_html("<!-- it's a > note --><p>Hello, it's me</p>"), "Hello, it's me")
+
+    def test_a_tag_that_cant_be_read_ends_at_its_first_bracket_as_before(self):
+        self.assertEqual(strip_html("<a title=don't>here</a> and 'there'"), "here and 'there'")
+        self.assertEqual(strip_html("1 < 2 and 3 > 2"), "1 2")
+
+    def test_the_content_hash_keeps_its_rule(self):
+        # decode_first is part of every stored hash: the first ">" still ends a tag there.
+        self.assertEqual(strip_html('<h1 class="[&>a]">T</h1>', entities="decode_first"), 'a]">T')
+
     def test_nothing_is_empty(self):
         self.assertEqual(strip_html(None), "")
         self.assertEqual(clean_text(None), "")

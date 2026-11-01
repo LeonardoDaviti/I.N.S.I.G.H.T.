@@ -1,22 +1,31 @@
+import dataclasses
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 import psycopg
 
+import main
+from insight_core.services import registry as services_registry
+from insight_core.tests._asgi import call
 from insight_core.services.source_config_sync_service import IMPORTED_KEY, SourceConfigSyncService
 from insight_core.services.youtube_service import YouTubeService
 from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db, scratch_handle
 
 
 class FakeSourcesService:
-    def __init__(self, sources):
+    def __init__(self, sources, removed=None):
         self.sources = list(sources)
+        self.removed = dict(removed or {})
         self.added = []
         self.updated = []
         self.deleted = []
+
+    def removed_sources(self):
+        return dict(self.removed)
 
     def get_all_sources(self):
         return list(self.sources)
@@ -72,7 +81,7 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
             self.assertEqual(payload["platforms"]["rss"]["sources"][0]["state"], "enabled")
             self.assertEqual(payload["platforms"]["youtube"]["sources"][0]["state"], "disabled")
 
-    def test_an_import_adds_and_updates_and_a_file_missing_sources_deletes_nothing(self):
+    def test_an_import_only_adds_and_a_file_missing_sources_deletes_nothing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "sources.json"
             self._write(config_path, [{"id": "https://new.example/feed.xml", "state": "enabled"},
@@ -86,9 +95,9 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
 
             result = service.import_json()
 
-            self.assertEqual((result["read"], result["added"], result["updated"], result["skipped"]), (True, 1, 1, []))
+            self.assertEqual((result["read"], result["added"], result["removed"], result["skipped"]), (True, 1, 0, []))
             self.assertEqual(fake_sources.added, [("rss", "https://new.example/feed.xml")])
-            self.assertIn(("off-1", False), fake_sources.updated)
+            self.assertEqual(fake_sources.updated, [], "an existing source's on/off is the app's (issue 0072)")
             self.assertEqual(fake_sources.deleted, [])
             self.assertIn("https://kept.example/feed.xml", {s["handle_or_url"] for s in fake_sources.sources})
 
@@ -105,8 +114,24 @@ class SourceConfigSyncServiceTests(unittest.TestCase):
                     config_path.write_text(text, encoding="utf-8")
                 with self.subTest(text=text):
                     result = service.import_json()
-                    self.assertEqual((result["read"], result["added"], result["updated"]), (False, 0, 0))
+                    self.assertEqual((result["read"], result["added"], result["removed"]), (False, 0, 0))
             self.assertEqual((fake_sources.added, fake_sources.updated, fake_sources.deleted), ([], [], []))
+
+    def test_a_removed_source_is_not_added_back_and_a_new_one_is_added_as_the_file_says(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sources.json"
+            self._write(config_path, [{"id": "https://gone.example/feed.xml", "state": "enabled"},
+                                      {"id": "https://new.example/feed.xml", "state": "disabled"}])
+            removed_at = datetime(2026, 10, 30, tzinfo=timezone.utc)
+            fake_sources = FakeSourcesService([], removed={("rss", "https://gone.example/feed.xml"): removed_at})
+            service = SourceConfigSyncService("postgresql:///unused", config_path=config_path)
+            service.sources_service = fake_sources
+
+            result = service.import_json()
+
+            self.assertEqual((result["added"], result["removed"], result["skipped"]), (1, 1, []))
+            self.assertEqual(fake_sources.added, [("rss", "https://new.example/feed.xml")])
+            self.assertEqual(fake_sources.updated, [("rss:https://new.example/feed.xml", False)], "added off, as the file says")
 
     def test_a_bad_entry_or_a_source_added_meanwhile_is_skipped_and_the_rest_imported(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -278,6 +303,82 @@ class ImportOnceDbTests(unittest.TestCase):
         self._write()
         self.assertEqual(self.service.import_once()["added"], 1)
         self.assertEqual(self._count(), 1)
+
+
+@requires_test_db
+class RemovedSourcesDbTests(unittest.TestCase):
+    """Imports only add, and removed sources stay removed (issue 0072, the owner): an old file
+    naming a removed source, and a source the app switched off, changes nothing; adding the
+    source again in the app forgets its removal."""
+
+    def setUp(self):
+        self.url = db_url()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_path = Path(self.tmp.name) / "sources.json"
+        self.removed, self.switched_off, self.kept = scratch_handle(), scratch_handle(), scratch_handle()
+        self._clean()
+        self.addCleanup(self._clean)
+        self.sync = SourceConfigSyncService(self.url, config_path=self.config_path)
+        self.sources = self.sync.sources_service
+        # The routes export to this test's file, never the checkout's sources.json.
+        services = dataclasses.replace(services_registry.build_services(self.url), source_config_sync=self.sync)
+        self.addCleanup(services_registry.use, services_registry.use(services))
+        self.ids = {handle: self.sources.add_source("rss", handle)["source_id"]
+                    for handle in (self.removed, self.switched_off, self.kept)}
+        self.sync.export_db_to_json()
+        self.old_file = self.config_path.read_text(encoding="utf-8")   # all three, all on
+        self.sources.delete_source(self.ids[self.removed])               # Remove in the app
+        self.sources.update_source_status(self.ids[self.switched_off], False)
+
+    def _clean(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            delete_scratch_sources(cur)
+            conn.commit()
+
+    def _state(self):
+        with psycopg.connect(self.url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT handle_or_url, enabled FROM sources WHERE handle_or_url = ANY(%s)",
+                        ([self.removed, self.switched_off, self.kept],))
+            return dict(cur.fetchall())
+
+    def test_removing_remembers_the_address_and_when(self):
+        removed = self.sources.removed_sources()
+        self.assertIn(("rss", self.removed), removed)
+        self.assertNotIn(("rss", self.kept), removed)
+
+    def test_an_old_file_with_a_removed_source_and_a_flipped_switch_changes_nothing(self):
+        before = self._state()
+        self.config_path.write_text(self.old_file, encoding="utf-8")
+
+        result = self.sync.import_json()
+
+        self.assertEqual((result["read"], result["added"], result["removed"], result["skipped"]), (True, 0, 1, []))
+        self.assertEqual(self._state(), before)
+        self.assertEqual(before, {self.switched_off: False, self.kept: True})
+
+    def test_adding_it_again_in_the_app_forgets_the_removal(self):
+        status, _, body = call(main.app, "POST", "/api/sources", json_body={"platform": "rss", "handle_or_url": self.removed})
+        self.assertEqual(status, 200, body)
+        self.assertNotIn(("rss", self.removed), self.sources.removed_sources())
+        # Removed again later, an import keeps it out again.
+        self.sources.delete_source(body["source_id"])
+        self.config_path.write_text(self.old_file, encoding="utf-8")
+        self.assertEqual(self.sync.import_json()["removed"], 1)
+        self.assertNotIn(self.removed, self._state())
+
+    def test_the_route_remembers_a_removal(self):
+        status, _, _ = call(main.app, "DELETE", f"/api/sources/{self.ids[self.kept]}")
+        self.assertEqual(status, 200)
+        self.assertIn(("rss", self.kept), self.sources.removed_sources())
+
+    def test_an_address_a_source_switched_away_from_is_not_added_back(self):
+        new = scratch_handle()
+        self.sync.switch_source(self.ids[self.kept], new)
+        self.config_path.write_text(self.old_file, encoding="utf-8")
+        result = self.sync.import_json()
+        self.assertEqual((result["added"], result["removed"]), (0, 2))
+        self.assertNotIn(self.kept, self._state())
 
 
 class YouTubeServiceTests(unittest.TestCase):

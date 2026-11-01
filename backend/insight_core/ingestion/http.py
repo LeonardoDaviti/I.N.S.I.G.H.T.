@@ -71,12 +71,14 @@ def _retry_after(headers: Any) -> Optional[int]:
 
 @contextlib.contextmanager
 def _classified(action: str, url: str) -> Iterator[None]:
-    """urllib's failures as HttpError ("HTTP <code> while <action> <url>: <body>")."""
+    """urllib's failures as HttpError ("HTTP <code> while <action> <url>: <body>"). A body that
+    is a web page ("<html>…", a proxy's 502 page) is no message: its status line's reason is."""
     try:
         yield
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise HttpError(f"HTTP {exc.code} while {action} {url}: {body[:200]}", status=exc.code,
+        body = exc.read().decode("utf-8", errors="replace").strip()
+        detail = (exc.reason or "") if body.startswith("<") else body[:200]
+        raise HttpError(f"HTTP {exc.code} while {action} {url}: {detail}", status=exc.code,
                         retry_after=_retry_after(exc.headers)) from exc
     except urllib.error.URLError as exc:
         raise HttpError(f"Failed {action} {url}: {exc.reason}",

@@ -5,7 +5,7 @@ Handles all SQL queries for source management.
 import json
 import psycopg
 from psycopg import Cursor
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from insight_core.utils.json_safe import json_safe
 from insight_core.logs.core.logger_config import get_component_logger
@@ -94,23 +94,45 @@ class SourcesRepository:
         cur.execute(query, (platform, handle, in_main_digest))
         row = cur.fetchone()
         source_id = str(row[0])
+        self.forget_removed(cur, platform, handle)   # added again: an import may keep it now
         
         self.logger.info(f"Inserted source: {platform}/{handle} → {source_id}")
         return source_id
     
     def delete_source(self, cur: Cursor, source_id: str) -> bool:
-        """Delete source (cascade deletes posts). A removed source is never suggested again (issue 0050)."""
+        """Delete source (cascade deletes posts). A removed source is never suggested again (issue
+        0050), and an import never adds it back (remember_removed, issue 0072)."""
         StoriesRepository().hide_removed_source(cur, source_id)
-        query = "DELETE FROM sources WHERE id = %s RETURNING id"
+        query = "DELETE FROM sources WHERE id = %s RETURNING platform, handle_or_url"
         cur.execute(query, (source_id,))
         row = cur.fetchone()
-        
+
         if row:
+            self.remember_removed(cur, row[0], row[1])
             self.logger.info(f"Deleted source: {source_id}")
             return True
         else:
             self.logger.warning(f"Source {source_id} not found")
             return False
+
+    @staticmethod
+    def remember_removed(cur: Cursor, platform: str, handle: str) -> None:
+        """An address no source has any more (removed, or switched away from): an import never
+        adds it back (issue 0072). Removed again: the latest time."""
+        cur.execute("""
+            INSERT INTO removed_sources (platform, handle_or_url) VALUES (%s, %s)
+            ON CONFLICT (platform, handle_or_url) DO UPDATE SET removed_at = now()
+        """, (platform, handle))
+
+    @staticmethod
+    def forget_removed(cur: Cursor, platform: str, handle: str) -> None:
+        cur.execute("DELETE FROM removed_sources WHERE platform = %s AND handle_or_url = %s", (platform, handle))
+
+    @staticmethod
+    def removed(cur: Cursor) -> Dict[Tuple[str, str], Any]:
+        """{(platform, handle_or_url): removed_at} of every remembered address."""
+        cur.execute("SELECT platform, handle_or_url, removed_at FROM removed_sources")
+        return {(platform, handle): at for platform, handle, at in cur.fetchall()}
 
     def set_address(self, cur: Cursor, source_id: str, handle: str,
                     page_watch: Optional[Dict[str, Any]]) -> bool:

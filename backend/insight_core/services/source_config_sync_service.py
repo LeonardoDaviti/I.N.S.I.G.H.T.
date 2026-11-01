@@ -2,8 +2,11 @@
 sources.json and the database's sources (issue 0071).
 
 The database is the truth. sources.json is its export, rewritten after each change, and a
-file can be imported: that adds sources and sets their on/off, and never deletes one.
-Removing a source is Remove in the app.
+file can be imported: that only adds the sources the database lacks (issue 0072). It never
+deletes one, never changes an existing source's on/off, and never adds back a source that was
+removed (or an address a source was switched away from): the database remembers those
+(removed_sources), until the source is added again in the app. Removing a source is Remove in
+the app.
 """
 from __future__ import annotations
 
@@ -43,12 +46,13 @@ class SourceConfigSyncService:
         self.logger = get_component_logger("source_config_sync")
 
     def import_json(self) -> Dict[str, Any]:
-        """Add the file's sources the database lacks and set each one's on/off as the file says.
+        """Add the file's sources the database lacks, each on or off as the file says.
 
-        Never deletes. A missing, empty or broken file changes nothing; a bad entry, or a source
-        another process added meanwhile, is skipped with a line in the log. `read` says whether
-        the file could be read at all."""
-        stats: Dict[str, Any] = {"read": False, "added": 0, "updated": 0, "skipped": []}
+        Never deletes, never changes a source the database has, and never adds back a removed
+        one (`removed` counts those). A missing, empty or broken file changes nothing; a bad
+        entry, or a source another process added meanwhile, is skipped with a line in the log.
+        `read` says whether the file could be read at all."""
+        stats: Dict[str, Any] = {"read": False, "added": 0, "removed": 0, "skipped": []}
         try:
             document = json.loads(self.config_path.read_text(encoding="utf-8"))
             platforms = document["platforms"]
@@ -61,28 +65,30 @@ class SourceConfigSyncService:
             self.logger.error("sources.json at %s could not be read (%r): nothing imported", self.config_path, exc)
             return stats
         stats["read"] = True
-        current = {(s["platform"], _handle(s["handle_or_url"])): s for s in self.sources_service.get_all_sources()}
+        current = {(s["platform"], _handle(s["handle_or_url"])) for s in self.sources_service.get_all_sources()}
+        removed = self.sources_service.removed_sources()
 
         for platform, handle_or_url, enabled, in_main_digest in self._flatten_sources(platforms, stats["skipped"]):
-            row = current.get((platform, handle_or_url))
+            key = (platform, handle_or_url)
+            if key in current:
+                continue        # the app's on/off, digest and settings stand
+            if key in removed:
+                stats["removed"] += 1
+                self.logger.info("sources.json import: %s/%s was removed %s; not added back",
+                                 platform, handle_or_url, removed[key].date())
+                continue
             try:
-                if row is None:
-                    # in_main_digest is a creation default only: an existing row's flag is
-                    # never overwritten by an import, so a later change in the app sticks.
-                    created = self.sources_service.add_source(platform, handle_or_url, in_main_digest=in_main_digest)
-                    if not enabled:
-                        self.sources_service.update_source_status(created["source_id"], False)
-                    stats["added"] += 1
-                elif row["enabled"] != enabled:
-                    self.sources_service.update_source_status(row["id"], enabled)
-                    stats["updated"] += 1
+                created = self.sources_service.add_source(platform, handle_or_url, in_main_digest=in_main_digest)
+                if not enabled:
+                    self.sources_service.update_source_status(created["source_id"], False)
+                stats["added"] += 1
             except Exception as exc:  # noqa: BLE001 - one source never stops the rest
                 stats["skipped"].append(f"{platform}/{handle_or_url}: {exc}")
 
         for line in stats["skipped"]:
             self.logger.warning("sources.json import skipped %s", line)
-        self.logger.info("Imported sources.json: added=%s updated=%s skipped=%s",
-                         stats["added"], stats["updated"], len(stats["skipped"]))
+        self.logger.info("Imported sources.json: added=%s removed (not added back)=%s skipped=%s",
+                         stats["added"], stats["removed"], len(stats["skipped"]))
         return stats
 
     def import_once(self) -> Dict[str, Any]:
@@ -91,12 +97,12 @@ class SourceConfigSyncService:
         with db.transaction(self.db_url) as cur:
             if SystemSettingsRepository.get(cur, IMPORTED_KEY):
                 self.logger.info("sources.json was imported before: the database is the truth")
-                return {"read": False, "added": 0, "updated": 0, "skipped": [], "imported_before": True}
+                return {"read": False, "added": 0, "removed": 0, "skipped": [], "imported_before": True}
         stats = self.import_json()
         if stats["read"]:
             with db.transaction(self.db_url) as cur:
                 SystemSettingsRepository.upsert(cur, IMPORTED_KEY, {
-                    "at": datetime.now(timezone.utc).isoformat(), "added": stats["added"], "updated": stats["updated"]})
+                    "at": datetime.now(timezone.utc).isoformat(), "added": stats["added"], "removed": stats["removed"]})
         return stats
 
     def switch_source(self, source_id: str, url: str, page_watch: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -182,7 +188,8 @@ class SourceConfigSyncService:
             "metadata": {
                 "name": "I.N.S.I.G.H.T.",
                 "description": "The sources, exported from the database after each change (import: "
-                               "scripts/sync_sources_json.py json-to-db, which only adds)",
+                               "scripts/sync_sources_json.py json-to-db, which only adds missing sources "
+                               "and never one that was removed)",
             },
             "platforms": {},
         }
