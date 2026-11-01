@@ -91,10 +91,11 @@ After the restart the API catches up in the background while the reader already 
 re-indexes search when the search rule changed, reads the links of posts never read, and runs
 the story job (stories, News, Classics). Sources → Ingestion → Background work shows each. They
 finish by themselves, without a restart: the search refill and the link reading wait for each
-other's rows rather than stopping early. When an update changes the story rules (their version,
-`RULES_VERSION` in `utils/story_rules.py`), the first story run regroups every story, old ones
-too: one full run, about 17 s on the lab's data (the v9.9 rehearsal measured a ~450 MB memory
-peak in the API during a full run).
+other's rows rather than stopping early. When an update changes what the story rules make (their
+stamp, worked out at start from a fixed sample: `utils/stamps.py`), the first story run regroups
+every story, old ones too: one full run, about 17 s on the lab's data (the v9.9 rehearsal measured
+a ~450 MB memory peak in the API during a full run). Discover's addresses, the stored bodies and
+the search index are stamped the same way, and each is made again by itself when its rules change.
 
 ### Version
 

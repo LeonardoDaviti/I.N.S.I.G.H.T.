@@ -6,8 +6,8 @@ once when the backend starts (main.py, in the background):
 2. it marks each source's signature links and links to its own site as boilerplate;
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
    A story that began before the window is frozen. The first run (no `stories` setting yet)
-   groups every post, and so does a run whose rules differ from the setting's (`RULES_VERSION`,
-   issue 0069: a rule change reaches the frozen stories too).
+   groups every post, and so does a run whose rules differ from the setting's (`rules_stamp`,
+   issue 0069: a rule change reaches the frozen stories too; issue 0071: the stamp is derived).
 4. it refreshes News (the names surging in titles join stories, for News only) and Classics
    (issue 0051, services/news_service.py), on the same transaction.
 It is deterministic and idempotent: a second run over the same posts writes nothing. One job at a
@@ -19,6 +19,7 @@ import logging
 import re
 import time
 from collections import Counter, defaultdict
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -27,9 +28,11 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
+from insight_core.utils import stamps
+from insight_core.utils.news_rules import news, surges
 from insight_core.utils.post_fields import REPLY_TO_RE
 from insight_core.utils.post_links import host_of, quoted_tweet, quoted_words, reddit_author, site_of
-from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, RULES_VERSION,
+from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS,
                                            Origin, StoryPost, discover_address, discover_open, discover_place, group,
                                            origin_title, origins)
 from insight_core.utils.url_normalization import normalize_url
@@ -75,12 +78,12 @@ class StoriesService:
             settings = SystemSettingsRepository.get(cur, SETTINGS_KEY)
             previous = (settings or ({}, None))[0] or {}
             # Stories grouped by other rules are all regrouped, the frozen ones too (issue 0069).
-            full = full or settings is None or previous.get("rules") != RULES_VERSION
+            full = full or settings is None or previous.get("rules") != rules_stamp()
             summary = {"computed_at": now.isoformat(), "full": full, "links_filled": filled,
                        **self.regroup(cur, cutoff=None if full else now - STORY_WINDOW),
                        "seconds": round(time.monotonic() - started, 2)}
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {
-                **summary, "rules": RULES_VERSION, "full_at": now.isoformat() if full else previous.get("full_at"),
+                **summary, "rules": rules_stamp(), "full_at": now.isoformat() if full else previous.get("full_at"),
             })
         self.fill_discover_addresses()
         return summary
@@ -308,6 +311,19 @@ class StoriesService:
         with db.transaction(self.db_url) as cur:
             self.repo.hide(cur, [key], "not_interested")
         return {"success": True, "key": key}
+
+
+@lru_cache(maxsize=1)
+def rules_stamp() -> str:
+    """The rules stories are grouped by (issue 0071): a fingerprint of the stories, trees and News the
+    job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post).
+    Any rule change that changes them (story_rules, news_rules, post_links, how a voice is told)
+    changes it; a rename or a move doesn't."""
+    sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
+    posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
+    stories = group(posts)
+    found = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
+    return stamps.fingerprint([stories, found, news(posts, stories, found)])
 
 
 def _first(stories: List[Origin], *, pages: bool = False) -> List[Origin]:

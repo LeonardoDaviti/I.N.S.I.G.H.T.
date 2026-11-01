@@ -49,20 +49,22 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.utils.post_fields import display_title
-from insight_core.utils.post_links import ACCOUNT_NAMESPACES, ARTICLE, REDDIT_AUTHOR
+from insight_core.utils.post_links import REDDIT_AUTHOR
+from insight_core.utils.stamps import ADDRESSES, fingerprint
 from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
-                                            DISCOVER_PLATFORMS, NOT_ACCOUNT, ORIGIN_MIN_VOICES, PLATFORM_POST,
-                                            ROUNDUP_ANCHORS, TWEET, Origin, discover_address, discover_article)
+                                            ORIGIN_MIN_VOICES, ROUNDUP_ANCHORS, Origin, discover_address,
+                                            discover_article)
 
-# Which rules wrote a discover_addresses row. Bump ADDRESS_RULES_VERSION when discover_address,
-# site_of, account_key or discover_article change in a way the constants below don't show.
-ADDRESS_RULES_VERSION = 2
-ADDRESS_RULES = hashlib.sha1(repr((ADDRESS_RULES_VERSION, sorted(DISCOVER_PLATFORMS), sorted(NOT_ACCOUNT),
-                                   sorted(ACCOUNT_NAMESPACES), ARTICLE.pattern, TWEET.pattern,
-                                   PLATFORM_POST.pattern)).encode()).hexdigest()[:12]
+def address_rules() -> str:
+    """Which rules wrote a discover_addresses row (issue 0071): what they make of the sample's addresses
+    (utils/stamps.py), so a change to discover_address, site_of, account_key or discover_article that
+    shows there refills the rows, and a refactor that changes nothing keeps them."""
+    return fingerprint([(url, discover_address(url), discover_article(url)) for url in ADDRESSES])
+
+
+ADDRESS_RULES = address_rules()
 LOCK_KEY = "insight.discover_addresses"
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
-COUNTS_VERSION = 2             # bump when the counting query changes what it returns (2: titles, 0070)
 WORK_MEM = "48MB"
 
 _COUNTS = """
@@ -169,6 +171,11 @@ WHERE strpos(p.content_html, '/status/') > 0 AND (%(since)s::timestamptz IS NULL
 # A home page, as post_links.is_home reads one: a host and at most one segment, no query or fragment.
 HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
+# The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
+_COUNT_RULES = {"author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by", "rules": ADDRESS_RULES, "home": HOME,
+                "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
+                "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
+
 # A website voice is named after the source of its first kept link in post order; asked only for
 # the sites more than one website source shares (the others have one source).
 _SITE_NAMERS = """
@@ -243,10 +250,7 @@ class DiscoverRepository:
         cur.execute(_COUNTS, {
             "ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
             "accounts": [accounts.get(i, "") for i in ids],
-            "author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by",
-            "rules": ADDRESS_RULES, "mirrors": sorted(mirrors), "home": HOME, "roundup_anchors": ROUNDUP_ANCHORS,
-            "min_voices": DISCOVER_MIN_VOICES, "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE,
-            "shown": shown,
+            "mirrors": sorted(mirrors), "shown": shown, **_COUNT_RULES,
         })
         rows = cur.fetchall()
         unknown = int(rows[0][-1])   # on every row, and on the one row with no key
@@ -282,12 +286,13 @@ class DiscoverRepository:
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:
-        """What the counts are counted from: the rules, the last story run (links are read and
-        classics refreshed before it) and `facts`, the facts of the sources with posts (a source
-        with none links nothing). Same stamp, same counts."""
+        """What the counts are counted from: the rules (the counting query as written, issue 0071, and
+        the addresses'), the last story run (links are read and classics refreshed before it) and
+        `facts`, the facts of the sources with posts (a source with none links nothing). Same stamp,
+        same counts."""
         cur.execute("SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories'")
         row = cur.fetchone()
-        what = json.dumps([COUNTS_VERSION, ADDRESS_RULES, row[0] if row else None, facts])
+        what = json.dumps([_COUNTS, _COUNT_RULES, row[0] if row else None, facts])
         return hashlib.sha1(what.encode()).hexdigest()[:16]
 
     @staticmethod

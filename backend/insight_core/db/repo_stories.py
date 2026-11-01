@@ -58,6 +58,18 @@ class SourceFacts:
     def __init__(self, cur: Cursor) -> None:
         cur.execute("SELECT id, platform, handle_or_url, COALESCE(NULLIF(btrim(settings->>'display_name'), ''), handle_or_url) FROM sources")
         rows = cur.fetchall()
+        cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
+        self._read(rows, cur.fetchall())
+
+    @classmethod
+    def of(cls, rows: Iterable[Tuple[Any, ...]], hosts: Iterable[Tuple[Any, str, int]]) -> "SourceFacts":
+        """The facts of these sources ((id, platform, handle, name)) and their posts' hosts ((source, host,
+        posts)), as read from the database: the rules' stamp reads its sample so (utils/stamps.py)."""
+        facts = cls.__new__(cls)
+        facts._read(list(rows), list(hosts))
+        return facts
+
+    def _read(self, rows: List[Tuple[Any, ...]], host_rows: List[Tuple[Any, str, int]]) -> None:
         self.kind = {str(r[0]): source_kind(r[1], r[2]) for r in rows}
         self.name = {str(r[0]): r[3] for r in rows}
         self.account = {str(r[0]): source_account(r[1], r[2]) for r in rows}
@@ -68,9 +80,8 @@ class SourceFacts:
                             if self.kind[str(r[0])] != "saved"}
         self.handle_host = {str(r[0]): publication_of(host_of(r[2] if "://" in (r[2] or "") else "")) for r in rows
                             if self.kind[str(r[0])] != "saved"}
-        cur.execute("SELECT source_id, url_host, count(*) FROM posts WHERE url_host IS NOT NULL GROUP BY 1, 2")
         hosts: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
-        for source_id, host, n in cur.fetchall():
+        for source_id, host, n in host_rows:
             if self.kind.get(str(source_id)) != "saved":
                 hosts[str(source_id)].append((host, int(n)))
         self.site = {source_id: source_site(pairs) for source_id, pairs in hosts.items()}
