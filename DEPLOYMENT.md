@@ -144,7 +144,9 @@ the code layers; npm packages are reinstalled only when `package.json` or `packa
 changes (the build stamp comes after `npm ci`). `./update --refresh` (or `docker compose build --pull`) also pulls
 fresh base images (python, node, nginx), which rebuilds the pip and npm installs: do it now
 and then for security patches, and after changing `requirements.txt` or `package.json`
-(those rebuild their install layer anyway).
+(those rebuild their install layer anyway). `backend/requirements.txt` pins every package to the
+version tested, except `yt-dlp`, which a rebuild of that layer brings fresh; the first update to
+v9.13 rebuilds it once, since the file changed.
 If only environment variables changed: `docker compose up -d --force-recreate`.
 
 After the restart the API catches up in the background while the reader already works: it
@@ -167,10 +169,22 @@ web app has them inlined by Vite, and the Ingestion tab's last line shows both, 
 step" when they differ. A plain `docker compose build` leaves them empty: `dev build`. To stamp
 one by hand, export the three as `./update` does before building.
 
-An older `.env` may still hold `INSIGHT_ANALYSIS`, `VITE_INSIGHT_ANALYSIS`, `GEMINI_*`,
-`GOOGLE_API_KEY` or `INSIGHT_GENERATE_*_BRIEFING` from the analysis version. Nothing reads them
-any more, so they are harmless; delete them when convenient. A Gemini key saved in Connections
-stays in the `credentials` table and is no longer shown.
+### `.env` keys that are safe to remove
+
+Nothing in the code, compose file or scripts reads these any more (checked by name, v9.13), so
+an older `.env` that still holds them works the same without them:
+
+- from the analysis version: `INSIGHT_ANALYSIS`, `VITE_INSIGHT_ANALYSIS`, `GOOGLE_API_KEY`,
+  `GEMINI_MODEL`, `GEMINI_MODEL_FALLBACKS` (any `GEMINI_*`), `INSIGHT_GENERATE_DAILY_BRIEFING`,
+  `INSIGHT_GENERATE_TOPIC_BRIEFING`;
+- older settings: `API_HOST`, `SAFE_INGEST_SKIP_THRESHOLD_HOURS`;
+- gone in v9.13 (issue 0071): `INSIGHT_SYNC_SOURCES_EACH_CYCLE` (no file sync runs) and
+  `INSIGHT_ALLOW_BULK_SOURCE_DELETE` (nothing deletes sources in bulk). `API_WORKERS` is not read
+  either, except that a value other than 1 stops the API's start.
+- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and `SUBSTACK_SID` are read only by `import_env_secrets`
+  (above): remove them once they are in Connections.
+
+A Gemini key saved in Connections stays in the `credentials` table and is no longer shown.
 
 ## Retiring analysis (migration 0027)
 
