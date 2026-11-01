@@ -248,7 +248,7 @@ def _without_address(line: str) -> str:
     address = _TRAILING_ADDRESS_RE.search(line)
     if not address:
         return line
-    words, bare = line[:address.start()].strip(), _bare(address.group(0).split()[0])
+    words, bare = line[:address.start()].rstrip(" ([{«\"'"), _bare(address.group(0).split()[0])
     if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
         return bare
     if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: llama.app")
