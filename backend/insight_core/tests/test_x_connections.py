@@ -291,6 +291,18 @@ class XJobTests(unittest.TestCase):
         ReaderRepository.attach_stories(self.cur, [item])
         self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
 
+    def test_a_thread_of_only_quotes_of_its_first_tweet_is_no_story(self):
+        user = f"pankaj{self.mark}"
+        source = self._x(user)
+        root = self._save(source, user, ID, "Gemini 4 Flash leaks: codenamed Hydrogen")
+        card = (f'<p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n<hr/>\n'
+                f'<blockquote>\n<b>Pankaj Kumar (@{user})</b>\n<p>Gemini 4 Flash leaks</p>\n<footer>\n— <cite>'
+                f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
+        for n in (1, 2):
+            self._save(source, user, ID + n, f"R to @{user}: x.com/{user}/status…", minutes=5 * n, html=card)
+        self._regroup()
+        self.assertIsNone(PostDetailService.story(self.cur, root), "no 'Thread · 1 posts' with nothing under it")
+
 
 class MigrationTests(unittest.TestCase):
     @requires_test_db

@@ -490,8 +490,11 @@ class ReaderRepository:
                 })
             else:
                 story.update(parent)
-        for lead, story in stories.items():
-            ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead]})
+        for lead, story in list(stories.items()):
+            if ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead]}) \
+                    and story["voices"] < 2:
+                del stories[lead]   # nothing left but the post it quotes: no story (issue 0072)
+                continue
             # One account's replies to itself, or its quotes of itself, read as a thread (issue 0066).
             story["thread"] = story["thread"] and len(story["sources"]) == 1
             # A story whose origin is a page outside INSIGHT has no first post.
@@ -501,7 +504,7 @@ class ReaderRepository:
         if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
             followed = ReaderRepository.followed_accounts(cur)
             for lead, found in reposts.items():
-                sources = stories[lead]["sources"]
+                sources = stories[lead]["sources"] if lead in stories else []
                 for author, by in found:
                     for account in (author or "", *by):
                         source = followed.get(x_account(account))
@@ -542,17 +545,19 @@ class ReaderRepository:
             item["story"] = stories.get(item["id"])
 
     @staticmethod
-    def _without_quotes_of_itself(story: Dict[str, Any], quotes: set) -> None:
+    def _without_quotes_of_itself(story: Dict[str, Any], quotes: set) -> bool:
         """A post with nothing of its own that only quotes a post of its story (issue 0072: a reply
-        repeating the thread's first tweet) is no line: what hung from it hangs from its parent."""
+        repeating the thread's first tweet) is no line: what hung from it hangs from its parent.
+        True when that leaves the story no other post."""
         if not quotes:
-            return
+            return False
         parents = {p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}
         for place in (story, *story["posts"]):
             while place["parent_id"] in quotes:
                 place["parent_id"], reason = parents[place["parent_id"]]
                 place["parent_reason"] = place["parent_reason"] if place["parent_reason"] == "thread" else reason
         story["posts"] = [p for p in story["posts"] if p["id"] not in quotes]
+        return not story["posts"]
 
     @staticmethod
     def followed_accounts(cur: Cursor) -> Dict[str, Dict[str, str]]:
