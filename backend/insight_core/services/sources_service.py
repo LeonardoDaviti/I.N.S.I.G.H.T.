@@ -3,7 +3,7 @@ Business logic for source management.
 Handles CRUD operations for sources table.
 """
 import urllib.parse
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 import psycopg
 
@@ -36,6 +36,12 @@ class SourcesService:
             with conn.cursor() as cur:
                 return self.repo.get_all_sources(cur)
     
+    def removed_sources(self) -> Dict[Tuple[str, str], Any]:
+        """{(platform, handle_or_url): removed_at} of the addresses removed (or switched away
+        from) and not added again (issue 0072)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            return self.repo.removed(cur)
+
     def get_source_by_id(self, source_id: str) -> Dict[str, Any] | None:
         """Get a single source by UUID."""
         with db.connection(self.db_url) as conn:
@@ -117,6 +123,10 @@ class SourcesService:
                 if old is None or not self.repo.set_address(cur, source_id, handle, page_watch):
                     raise LookupError(f"Source {source_id} not found")
                 FetchStateRepository().clear_failures(cur, source_id)
+                # The address it left is no source now: an import never adds it back (issue 0072).
+                if old["handle_or_url"] != handle:
+                    self.repo.remember_removed(cur, old["platform"], old["handle_or_url"])
+                self.repo.forget_removed(cur, old["platform"], handle)
         except psycopg.errors.UniqueViolation:
             raise ValueError(f"{handle} is already a source") from None
         self.logger.info(f"Switched source {source_id}: {old['handle_or_url']} -> {handle}")

@@ -1,6 +1,6 @@
 # I.N.S.I.G.H.T. database (Mark IX)
 
-PostgreSQL 15. The schema is the sum of `../db/migrations/0001` to `0055`; this file says what
+PostgreSQL 15. The schema is the sum of `../db/migrations/0001` to `0056`; this file says what
 each table is for. The runtime database is the one `DATABASE_URL` points at.
 
 ## Migrations
@@ -49,7 +49,15 @@ One row per source: the scheduler's memory. Last attempt, success, outcome
 (`healthy|empty|error|unavailable`), trigger, posts fetched, last error,
 `consecutive_failures`, `next_retry_at` (backoff), the last decision and `next_due_at`.
 The source doctor's memory (0032): `doctor_checked_at` and `doctor_finding`
-(`{replacement: {kind, url, title, found, prefix} | null, dismissed}`). Deleted with its source.
+(`{replacement: {kind, url, title, found, prefix, shared, latest} | null, dismissed}`; 0072: a
+replacement at another address has `shared`, how many of its items are the source's own, never 0,
+and `latest`, its latest titles; `server_error` or `working_again` true: nothing to offer). Deleted
+with its source.
+
+### removed_sources
+Removed sources stay removed (0056, issue 0072): per (`platform`, `handle_or_url`), when a source
+at that address was removed in the app, or switched away from (`removed_at`). Importing a file never
+adds such an address back; adding the source in the app deletes its row.
 
 ### source_fetch_validators
 Conditional fetching (0034): per (source, address it reads), the `etag` and `last_modified` its

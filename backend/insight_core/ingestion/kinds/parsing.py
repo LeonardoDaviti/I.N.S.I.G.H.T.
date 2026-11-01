@@ -1044,6 +1044,27 @@ def _page_titles(page: str) -> List[str]:
     return [_title_key(html_lib.unescape(title)) for title in found if title and title.strip()]
 
 
+PICTURE_RUN = 3            # list items in a row, each only a linked picture (a blog's 6-22 upvoters); not measured
+PICTURE_ITEM_RE = re.compile(rf"(?is)<li\b{ATTRS}>\s*<a\b(?P<attrs>{ATTRS})>\s*(?P<img><img\b{ATTRS}>)\s*</a>\s*</li>")
+IMAGE_FILE_RE = re.compile(r"(?i)\.(?:jpe?g|png|gif|webp|avif|svg)$")
+
+
+def _linked_picture(block: str) -> bool:
+    """A list item that is only a picture linking to a page (a person's profile: an upvoter,
+    an author), by shape. Never a picture declared larger than an icon, nor one linking to an
+    image file (a gallery's thumbnail opening its picture)."""
+    match = PICTURE_ITEM_RE.fullmatch(block.strip())
+    if not match:
+        return False
+    href = HREF_RE.search(match.group("attrs"))
+    target = html_lib.unescape(next((v for v in href.groups() if v is not None), "") if href else "").strip()
+    if not target or target.startswith("#") or IMAGE_FILE_RE.search(urllib.parse.urlparse(target).path):
+        return False
+    attrs = _image_attrs(match.group("img"))
+    sizes = [px for px in (_px(attrs.get("width")), _px(attrs.get("height"))) if px is not None]
+    return all(px <= ICON_MAX_PX for px in sizes)
+
+
 def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) -> List[str]:
     """The blocks without the chrome at the article's edges (step 5), the way Readability
     judges unnamed blocks by their links and their length, but only where chrome sits:
@@ -1057,7 +1078,18 @@ def _without_edge_chrome(blocks: List[str], titles: List[str], base_url: str) ->
       between its links (the cards' images and short excerpts): it begins at its first link,
       or the labels just before it, and must hold two links or end on a link or a label, so an
       article's own closing link ("Watch the keynote") stays. Blocks with no letter at the very
-      end ("0%") go."""
+      end ("0%") go.
+    - Anywhere: a run of PICTURE_RUN list items that are each only a picture linking to a page
+      (_linked_picture: an upvoters or authors list) goes."""
+    pictures = [_linked_picture(block) for block in blocks]
+    run = [False] * len(blocks)
+    start = 0
+    for index in range(len(blocks) + 1):
+        if index == len(blocks) or not pictures[index]:
+            if index - start >= PICTURE_RUN:
+                run[start:index] = [True] * (index - start)
+            start = index + 1
+    blocks = [block for block, in_run in zip(blocks, run) if not in_run]
     host = publication_of(host_of(base_url))
     kinds = [_block_kind(block, host) for block in blocks]
     keep = [True] * len(blocks)

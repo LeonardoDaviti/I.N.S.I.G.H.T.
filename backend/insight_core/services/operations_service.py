@@ -270,12 +270,18 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
 def _doctor_fields(state: Optional[FetchStateRow]) -> Dict[str, Any]:
     """The source doctor's finding (issue 0036): when it looked (None: it has not, in this
     failure streak, or the owner dismissed it, or the old address read again: a temporary
-    error, nothing to replace) and the replacement it found
-    ({kind: feed|page_watch, url, title, found, prefix}; None: nothing found)."""
+    error, nothing to replace, or the site answered a server error: no move, issue 0072) and the
+    replacement it found ({kind: feed|page_watch, url, title, found, prefix, shared, latest};
+    None: nothing found)."""
     finding = (state.doctor_finding if state else None) or {}
-    if state is None or state.doctor_checked_at is None or finding.get("dismissed") or finding.get("working_again"):
+    if (state is None or state.doctor_checked_at is None or finding.get("dismissed")
+            or finding.get("working_again") or finding.get("server_error")):
         return {"doctor_looked_at": None, "replacement": None}
-    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": finding.get("replacement")}
+    replacement = finding.get("replacement")
+    # An offer stored before 0072 was never checked against the source's items: not offered.
+    if isinstance(replacement, dict) and "shared" not in replacement:
+        replacement = None
+    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement}
 
 
 def _health_sort_key(row: Dict[str, Any]) -> tuple:

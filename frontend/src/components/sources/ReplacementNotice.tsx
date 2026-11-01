@@ -59,6 +59,14 @@ export default function ReplacementNotice({ row, now, onSwitched }: { row: Sourc
 
   return (
     <Notice tone="warning" title={title} message={`INSIGHT found a replacement: ${replacementLabel(replacement)}`}>
+      {replacement.latest?.length ? (
+        <div className="mt-2 text-[0.8125rem]">
+          <p className="font-semibold text-fg">Its latest posts</p>
+          <ul className="mt-0.5 list-disc pl-5 text-fg-2">
+            {replacement.latest.map((title, index) => <li key={index} className="break-words">{title}</li>)}
+          </ul>
+        </div>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" onClick={() => void act('switch')} disabled={busy !== null} aria-busy={busy === 'switch'}
           title="Keeps this source's name, tracks and posts; the next fetch reads the new address">

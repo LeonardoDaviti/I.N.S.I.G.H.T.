@@ -52,8 +52,10 @@ The database is the truth for your sources (issue 0071). `sources.json` is their
 - Adding, editing and removing a source in the app write the database, then rewrite the file
   (to a temporary file, then renamed over it, so a crash never leaves it cut short).
 - A source is removed only by Remove in the app. Nothing deletes a source because a file lacks it.
-- The first start of a database imports the file once: it adds the sources the database lacks and
-  sets each one's on/off, and never deletes. Later starts don't read it.
+- The first start of a database imports the file once: it adds the sources the database lacks, and
+  never deletes. Later starts don't read it.
+- An import only adds: it never changes a source's on/off and never brings back a source you
+  removed (the database remembers it; adding it again in the app forgets that).
 - To import a file by hand (add-only):
   `docker compose exec backend python insight_core/scripts/sync_sources_json.py json-to-db`.
 - A missing, empty or broken file changes nothing; a bad entry is skipped with a line in the log.

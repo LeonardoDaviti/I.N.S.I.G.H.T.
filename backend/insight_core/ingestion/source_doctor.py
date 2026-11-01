@@ -9,6 +9,10 @@ FAILURES_BEFORE_LOOKING times in a row, or at once on a clear signal: HTTP 404/4
 an answer that does not parse as a feed. At most once a day per source, and not again in a
 streak whose finding the owner dismissed; a fetch that works clears the finding.
 
+A server error (HTTP 5xx) or a timeout is no move (issue 0072): the site is there and failing.
+That is recorded ("server error, not moved"); nothing is looked at and nothing is offered, so an
+offer stored before is replaced (an aggregator's 502 was offered a feed tool's changelog).
+
 First it reads the old address itself: when it reads again (a feed that parses; a followed
 page that still lists articles), the error was temporary. That is recorded ("temporary error,
 working again": no replacement, nothing to suggest) and nothing else is looked at.
@@ -27,6 +31,11 @@ of them; a source at the site's root ("/rss") takes any feed of the site. Then:
   - anything else found (another site, a page to follow, a feed that is flaky, not gone): the
     finding is stored as a suggestion, for the Sources list and sheet to offer;
   - nothing: the finding says so ("Broken: no replacement found").
+A candidate at another address must hold the source's own items (issue 0072): one of its items
+has the address or the title of one of the source's latest stored posts (`shared`). One that
+holds none is never offered nor switched to, so a source with no stored post can be offered
+only its own address read as a page. The finding carries the candidate's latest titles
+(`latest`), which the source sheet shows before Switch.
 Nothing is re-fetched: the next fetch reads the new address, posts match by URL, and an
 archive brings the older ones.
 """
@@ -37,7 +46,7 @@ import logging
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from insight_core.db import database as db
 from insight_core.db.repo_fetch_state import FetchStateRepository, FetchStateRow
@@ -46,6 +55,8 @@ from insight_core.ingestion.http import HttpError, KindHttp
 from insight_core.ingestion.kinds import KindRegistry, page_watch
 from insight_core.ingestion.kinds.parsing import path_segments
 from insight_core.utils.addresses import host_of, publication_of
+from insight_core.utils.titles import title_key
+from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger("insight.ingestion.source_doctor")
 
@@ -53,11 +64,17 @@ DOCTOR_KINDS = ("generic_rss", "page_watch")   # the kinds whose address can mov
 FAILURES_BEFORE_LOOKING = 3
 GONE_STATUSES = (404, 410)
 LOOK_EVERY = timedelta(days=1)
+STORED_ITEMS = 50          # the source's latest stored posts a candidate is compared with; not measured
+LATEST_TITLES = 5          # the candidate's titles shown before Switch (page watching's preview has 5)
 
-Replacement = Dict[str, Any]   # {kind: feed|page_watch, url, title, found, prefix}
+Replacement = Dict[str, Any]   # {kind: feed|page_watch, url, title, found, prefix, shared, latest}
+Item = Tuple[str, str]         # a stored post's (url, title)
 # The finding when the old address reads again: nothing to replace, nothing to suggest.
 WORKING_AGAIN: Dict[str, Any] = {"replacement": None, "dismissed": False, "working_again": True,
                                  "note": "temporary error, working again"}
+# The finding on a server error or a timeout: the site is there; nothing looked at, nothing offered.
+SERVER_ERROR: Dict[str, Any] = {"replacement": None, "dismissed": False, "server_error": True,
+                                "note": "server error, not moved"}
 
 
 class DoctorStore(Protocol):
@@ -65,11 +82,16 @@ class DoctorStore(Protocol):
 
     def switch(self, source_id: str, url: str, page_watch: Optional[Dict[str, Any]]) -> Any: ...
 
+    def items(self, source_id: str) -> List[Item]: ...
+
 
 def failure_signal(error: Optional[BaseException]) -> Optional[str]:
-    """"gone" (HTTP 404/410), "not_feed" (the answer does not parse as a feed), else None."""
+    """"gone" (HTTP 404/410), "server_error" (HTTP 5xx or a timeout), "not_feed" (the answer
+    does not parse as a feed), else None."""
     if isinstance(error, HttpError) and error.status in GONE_STATUSES:
         return "gone"
+    if isinstance(error, HttpError) and (error.timed_out or (error.status or 0) >= 500):
+        return "server_error"
     if isinstance(error, ET.ParseError):
         return "not_feed"
     return None
@@ -111,6 +133,26 @@ def within_section(candidate: str, address: str) -> bool:
     return (urllib.parse.urlparse(candidate).path or "/").startswith(scope)
 
 
+def shared(stored: Sequence[Item], urls: Sequence[str], titles: Sequence[str]) -> int:
+    """How many of a candidate's items are the source's own: the same address, or the same
+    title (utils/titles.title_key), as one of its stored posts; the larger of the two counts."""
+    addresses = {normalize_url(url) for url, _ in stored} - {None}
+    keys = {title_key(title) for _, title in stored} - {""}
+    return max(sum(normalize_url(url) in addresses for url in dict.fromkeys(urls)),
+               sum(title_key(title) in keys for title in dict.fromkeys(titles)))
+
+
+def _evidence(stored: Sequence[Item], urls: Sequence[str], titles: Sequence[str]) -> Dict[str, Any]:
+    return {"shared": shared(stored, urls, titles), "latest": [title for title in titles if title][:LATEST_TITLES]}
+
+
+def _page(url: str, preview: Mapping[str, Any], stored: Sequence[Item]) -> Replacement:
+    items = preview["items"]
+    return {"kind": "page_watch", "url": url, "title": short_address(url), "found": preview["found"],
+            "prefix": preview["prefix"],
+            **_evidence(stored, [item["url"] for item in items], [item["title"] or "" for item in items])}
+
+
 async def reads_again(http: KindHttp, address: str, page_watch_settings: Optional[Mapping[str, Any]]) -> bool:
     """The old address reads now: a feed that parses, or a followed page that lists articles."""
     try:
@@ -125,9 +167,10 @@ async def reads_again(http: KindHttp, address: str, page_watch_settings: Optiona
 
 
 async def find_replacement(http: KindHttp, registry: KindRegistry, address: str, *,
-                           follows_page: bool = False) -> Optional[Replacement]:
+                           follows_page: bool = False, stored: Sequence[Item] = ()) -> Optional[Replacement]:
     """A feed for the address's site (other than the address, within its section), else a page
-    to follow, else None. `follows_page`: the source already follows the address as a page."""
+    to follow, else None; at another address, only one holding the source's own items (`stored`,
+    its latest posts). `follows_page`: the source already follows the address as a page."""
     # The finder on the address reads its first-segment section and home page itself; a
     # deeper section ("/a/b/") needs a search of its own.
     pages: List[str] = [address] + ([section(address)] if len(path_segments(section(address))) >= 2 else [])
@@ -135,10 +178,14 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
     menu: List[str] = []
     for page in pages:
         finding = await find_feeds(http, registry, page)
-        feed = next((f for f in finding.feeds if not _same(f.url, address) and within_section(f.url, address)), None)
-        if feed:
-            return {"kind": "feed", "url": feed.url, "title": feed.title or short_address(feed.url),
-                    "found": None, "prefix": None}
+        for feed in finding.feeds:
+            if _same(feed.url, address) or not within_section(feed.url, address):
+                continue
+            evidence = _evidence(stored, feed.items, feed.titles)
+            if evidence["shared"]:
+                return {"kind": "feed", "url": feed.url, "title": feed.title or short_address(feed.url),
+                        "found": None, "prefix": None, **evidence}
+            logger.info("Source doctor: %s holds none of %s's items", feed.url, address)
         blog_pages += finding.pages
         menu += finding.menu
     # The section's page; for a source at the root that is the address itself: a site whose
@@ -148,10 +195,9 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
     # articles comes before its home page (issue 0041), else a menu link that reads as an
     # article list (issue 0047), as for any source add.
     offered = await page_watch.offers(http, blog_pages, menu) if page_watch.is_home(listing) else []
-    if offered:
-        best = offered[0]
-        return {"kind": "page_watch", "url": best["url"], "title": short_address(best["url"]),
-                "found": best["found"], "prefix": best["prefix"]}
+    for offer in offered:
+        if (candidate := _page(offer["url"], offer, stored))["shared"]:
+            return candidate
     if follows_page and _same(listing, address):
         return None
     try:
@@ -161,8 +207,9 @@ async def find_replacement(http: KindHttp, registry: KindRegistry, address: str,
         return None
     if not preview["items"]:
         return None
-    return {"kind": "page_watch", "url": listing, "title": short_address(listing),
-            "found": preview["found"], "prefix": preview["prefix"]}
+    candidate = _page(listing, preview, stored)
+    # The address itself, read as a page, is the source itself: nothing to prove.
+    return candidate if candidate["shared"] or _same(listing, address) else None
 
 
 class SourceDoctor:
@@ -187,6 +234,10 @@ class SourceDoctor:
         signal, now = failure_signal(error), self.clock()
         if state is None or source.get("platform") != "rss" or not should_look(kind.name, state, signal, now):
             return
+        if signal == "server_error":
+            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=SERVER_ERROR)
+            logger.info("Source doctor: %s: server error, not moved", source.get("handle_or_url"))
+            return
         address = str(source["handle_or_url"])
         settings = source.get("settings") or {}
         name = str(settings.get("display_name") or address)
@@ -196,7 +247,9 @@ class SourceDoctor:
             await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=WORKING_AGAIN)
             logger.info("Source doctor: %s: temporary error, working again (%s)", name, address)
             return
-        replacement = await find_replacement(self.http, self.registry, address, follows_page=followed is not None)
+        stored = await asyncio.to_thread(self.store.items, str(source["id"]))
+        replacement = await find_replacement(self.http, self.registry, address, follows_page=followed is not None,
+                                             stored=stored)
         if (replacement and replacement["kind"] == "feed" and signal == "gone"
                 and publication_of(host_of(replacement["url"])) == publication_of(host_of(address))):
             try:
@@ -233,6 +286,14 @@ class DbDoctorStore:
     def switch(self, source_id: str, url: str, page_watch: Optional[Dict[str, Any]]) -> Any:
         return self._switch(source_id, url, page_watch)
 
+    def items(self, source_id: str) -> List[Item]:
+        """The source's latest STORED_ITEMS posts, (url, title)."""
+        with db.connection(self.db_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT url, coalesce(title, '') FROM posts WHERE source_id = %s"
+                        " ORDER BY coalesce(published_at, fetched_at) DESC NULLS LAST LIMIT %s",
+                        (source_id, STORED_ITEMS))
+            return [(str(url or ""), str(title)) for url, title in cur.fetchall()]
 
-__all__ = ["DbDoctorStore", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
-           "should_look", "within_section"]
+
+__all__ = ["DbDoctorStore", "SERVER_ERROR", "SourceDoctor", "WORKING_AGAIN", "failure_signal", "find_replacement", "reads_again",
+           "shared", "should_look", "within_section"]

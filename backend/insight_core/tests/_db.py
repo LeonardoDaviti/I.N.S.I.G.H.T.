@@ -69,5 +69,6 @@ def insert_scratch_source(cur, *, platform: str = "rss", settings_json: str = "{
 
 
 def delete_scratch_sources(cur) -> None:
-    """Remove leftovers of earlier runs (posts and fetch state cascade)."""
+    """Remove leftovers of earlier runs (posts and fetch state cascade, and their removals)."""
     cur.execute("DELETE FROM sources WHERE handle_or_url LIKE %s", (SCRATCH_PREFIX + "%",))
+    cur.execute("DELETE FROM removed_sources WHERE handle_or_url LIKE %s", (SCRATCH_PREFIX + "%",))

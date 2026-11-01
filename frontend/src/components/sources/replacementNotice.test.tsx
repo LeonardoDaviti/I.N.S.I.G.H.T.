@@ -28,6 +28,13 @@ describe('ReplacementNotice', () => {
     expect(screen.getByText('INSIGHT found a replacement: Arena blog (https://arena.ai/blog/feed.xml)')).toBeInTheDocument();
   });
 
+  it("previews the replacement's latest titles before Switch", () => {
+    setup(broken({ replacement: { ...feed, shared: 2, latest: ['A first post', 'A second post'] } }));
+    expect(screen.getByText('Its latest posts')).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['A first post', 'A second post']);
+    expect(screen.getByRole('button', { name: 'Switch' })).toBeInTheDocument();
+  });
+
   it('offers a page to follow with its article count', () => {
     setup(broken({ replacement: page }));
     expect(screen.getByText('INSIGHT found a replacement: Follow arena.ai/blog: 76 articles')).toBeInTheDocument();

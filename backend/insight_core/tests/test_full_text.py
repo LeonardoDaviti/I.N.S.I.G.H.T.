@@ -479,6 +479,43 @@ class HiddenLinkLabelTests(unittest.TestCase):
             self.assertIn("the report in full", text, shown)
 
 
+def _avatars(count: int, *, size: str = "", href: str = "/user{n}") -> str:
+    """A list of people, each only their picture linking to their page (an upvoters list)."""
+    return "<ul>" + "".join(f'<li class="h-5 w-5 rounded-full" title="user{n}"><a href="{href.format(n=n)}" title="user{n}">'
+                            f'<img class="rounded-full" alt="" src="https://cdn.example/a/{n}.jpg"{size}></a></li>'
+                            for n in range(count)) + "</ul>"
+
+
+HALF = PARAGRAPHS[:PARAGRAPHS.index("<p>Paragraph 6")]
+
+
+class PictureListTests(unittest.TestCase):
+    """Issue 0072: a run of list items, each only a picture linking to a page, is no part of the
+    article (a blog's 6-22 upvoter avatars before its words), by shape, wherever it sits."""
+
+    def _read(self, middle: str, title: str = "A post") -> str:
+        page = (f'<html><head><title>{title} | Blog</title></head><body><article>'
+                f'<h1 class="group max-md:[&amp;>a]:hidden"><a id="a-post" href="#a-post"><span></span></a>'
+                f'<span>{title}</span></h1>{_avatars(6)}{HALF}{middle}{HALF}</article></body></html>')
+        return parsing.extract_article_html(page, base_url="https://blog.example/post")
+
+    def test_the_avatars_go_before_the_words_and_between_them(self):
+        html = self._read(_avatars(16))
+        self.assertNotIn("<img", html)
+        self.assertTrue(parsing.strip_html(html).startswith("Paragraph 0"), "the title heading goes too")
+
+    def test_a_gallery_or_a_large_picture_or_two_people_stay(self):
+        for kept, images in ((_avatars(4, href="/media/{n}.jpg"), 4), (_avatars(4, size=' width="640"'), 4),
+                             (_avatars(2), 2)):
+            with self.subTest(kept=kept[:80]):
+                self.assertEqual(self._read(kept).count("<img"), images)
+
+    def test_a_picture_with_words_is_no_avatar(self):
+        listed = "<ul>" + "".join(f'<li><a href="/p/{n}"><img src="https://cdn.example/{n}.png" alt=""></a> Step {n} of the guide</li>'
+                                  for n in range(4)) + "</ul>"
+        self.assertEqual(self._read(listed).count("<img"), 4)
+
+
 class _StubYouTube:
     pass
 
