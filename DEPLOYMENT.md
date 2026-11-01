@@ -118,7 +118,9 @@ docker compose build
 docker compose up -d --remove-orphans
 ```
 
-`./update` does the same without the dump: `git pull`, build, then `up -d`. The build runs
+`./update` does the same without the dump: `git pull`, build, then `up -d`. Between the build
+and `up -d` it lists the migrations the new code will run at its start, each with its header's
+first line (`migrate.py --pending`, read-only), so one that rewrites rows is seen before it runs. The build runs
 while the old containers keep serving; `up -d` then recreates only the containers whose image
 or config changed, so the site is down only while those containers restart, not for the build.
 The frontend starts again as soon as the API's healthcheck passes, which is checked every second
@@ -245,5 +247,6 @@ Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/a
 - **Run reports `skipped_busy`.** Another all-sources run holds the run lock. It finishes on its
   own; folder and single-source fetches are not blocked by it.
 - **The frontend shows network errors.** Check `docker compose logs backend` and that
-  `http://<host>:${BACKEND_PORT}/health` answers. Leave `VITE_API_URL` empty in Docker so the UI
+  `curl -s localhost:${BACKEND_PORT}/health` on the host answers. It makes one database query:
+  503 `{"status": "unhealthy"}` means the API runs but can't read the database. Leave `VITE_API_URL` empty in Docker so the UI
   uses same-origin `/api` through Nginx.

@@ -16,4 +16,9 @@ if [[ "${1:-}" == "--refresh" ]]; then pull=(--pull); fi
 # that took INSIGHT offline for the whole 1-3 minute build. `up -d` then recreates only the
 # containers whose image or config changed, so the site is down only while they restart.
 sudo --preserve-env=INSIGHT_VERSION,INSIGHT_COMMIT,INSIGHT_COMMIT_DATE docker compose build "${pull[@]}" backend ingestion frontend
+# The migrations the new code runs at its start, listed before they run (issue 0071), so a
+# migration that rewrites rows is seen first. Read-only; a failure to list doesn't stop the update.
+echo "==> migrations"
+sudo docker compose run --rm --no-deps -T backend python insight_core/db/migrate.py --pending \
+  || echo "(could not list the pending migrations)"
 sudo docker compose up -d --remove-orphans

@@ -83,6 +83,24 @@ def apply_one(cur: psycopg.Cursor, path: Path, version: str) -> bool:
     )
     return cur.fetchone() is not None
 
+def pending_migrations(cur: psycopg.Cursor, mig_dir: Path) -> List[Path]:
+    """The migration files this database hasn't applied; on a new database, every one."""
+    cur.execute("SELECT to_regclass('schema_migrations') IS NOT NULL")
+    already = applied_versions(cur) if cur.fetchone()[0] else set()
+    return [p for p in discover_migrations(mig_dir) if p.name not in already]
+
+
+def print_pending(mig_dir: Path) -> None:
+    """--pending (`update` runs it before the start that migrates, issue 0071): each pending
+    migration with its header's first line, on stdout. Changes nothing."""
+    with get_conn() as conn, conn.cursor() as cur:
+        pending = pending_migrations(cur, mig_dir)
+    for path in pending:
+        first = (path.read_text(encoding="utf-8").splitlines() or [""])[0]
+        print("  " + (first.lstrip("- ").strip() if first.startswith("--") else path.name))
+    print(f"{len(pending)} migration(s) will run at the start" if pending else "No migration to run")
+
+
 def main():
     """Entry point: apply any pending migrations automaically"""
     mig_dir = Path(__file__).resolve().parent / "migrations"
@@ -98,6 +116,10 @@ def main():
     except Exception as e:
         logger.exception("Error {e}")
         sys.exit(1)
+
+    if "--pending" in sys.argv[1:]:
+        print_pending(mig_dir)
+        return
 
     try:
         with get_conn() as conn:

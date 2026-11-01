@@ -1275,15 +1275,22 @@ async def telegram_login_cancel():
     return services().credentials.login_cancel()
 
 
+def _ping_database() -> None:
+    with database.connection(services().db_url) as conn:
+        conn.execute("SELECT 1")
+
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for monitoring"""
+    """Healthy when the database answers one quick query through the pool (issue 0071); 503
+    when it doesn't, so the healthcheck and a monitor see an API that can't read."""
     import time
-    return {
-        "status": "healthy",
-        "engine": "DB-backed Archive Engine",
-        "timestamp": str(time.time())
-    }
+    try:
+        await asyncio.to_thread(_ping_database)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Health check: the database did not answer (%s)", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "database": False})
+    return {"status": "healthy", "database": True, "timestamp": str(time.time())}
 
 
 @app.get("/api/version")
