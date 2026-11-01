@@ -19,7 +19,7 @@ import psycopg
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source
-from insight_core.utils.story_rules import Origin, discover_address, discover_article, discover_place, origins
+from insight_core.utils.discover_rules import Origin, discover_address, discover_article, discover_place, origins
 
 NOW = datetime(2026, 10, 31, tzinfo=timezone.utc)
 

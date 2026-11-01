@@ -32,9 +32,10 @@ from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
 from insight_core.utils.post_fields import REPLY_TO_RE
 from insight_core.utils.post_links import host_of, quoted_tweet, quoted_words, reddit_author, site_of
-from insight_core.utils.story_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS,
-                                           Origin, StoryPost, discover_address, discover_open, discover_place, group,
-                                           origin_title, origins)
+from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
+                                              discover_address, discover_open, discover_place, origins)
+from insight_core.utils.story_rules import StoryPost, group
+from insight_core.utils.tree_rules import origin_title
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -261,7 +262,7 @@ class StoriesService:
                 suggestion["follows"] = sorted({p for p in held if p.split("/", 1)[0] == host} - {key})
         # The stories you read that start there first (issue 0065), then a suggestion that holds
         # classics (issue 0051), then most voices, one linking it only in roundups counting half
-        # (issue 0067), then all voices, articles, links, key (story_rules.suggestions).
+        # (issue 0067), then all voices, articles, links, key (discover_rules.suggestions).
         out.sort(key=lambda s: (-s["origins"], s["classics"] == 0, -weight[s["key"]], -s["voices"],
                                 -s["article_count"], -s["link_count"], s["key"]))
         archives = [{
@@ -281,7 +282,7 @@ class StoriesService:
 
     @staticmethod
     def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str]) -> Dict[str, str]:
-        """The places your sources hold (story_rules.discover_place -> a source): the platform
+        """The places your sources hold (discover_rules.discover_place -> a source): the platform
         accounts they follow, and on the sites you follow where stories start, the sections their
         own posts are in (the source with the most posts there)."""
         held = {account: source_id for source_id, account in sorted(sources.platform_accounts().items())}
@@ -320,8 +321,8 @@ class StoriesService:
 def rules_stamp() -> str:
     """The rules stories are grouped by (issue 0071): a fingerprint of the stories, trees and News the
     job makes of the sample (utils/stamps.py), read as a run reads its rows (SourceFacts, _story_post).
-    Any rule change that changes them (story_rules, news_rules, post_links, how a voice is told)
-    changes it; a rename or a move doesn't."""
+    Any rule change that changes them (story_rules, tree_rules, news_rules, post_links, how a voice
+    is told) changes it; a rename or a move doesn't."""
     sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
     posts = [StoriesService._story_post(row, sources) for row in stamps.posts()]
     stories = group(posts)

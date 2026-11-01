@@ -2,22 +2,22 @@
 grouped and counted in one query, so the API never holds the 138k kept links in memory (it did:
 2.6-3.3 s and ~800 MB on the server's data).
 
-It is story_rules.suggestions (the reference, kept as a pure function) in SQL, over every kept link
+It is discover_rules.suggestions (the reference, kept as a pure function) in SQL, over every kept link
 (`post_links`, not boilerplate):
-- an address's key, site and platform (story_rules.discover_address) and whether it reads like an
+- an address's key, site and platform (discover_rules.discover_address) and whether it reads like an
   article (post_links.is_article) depend on the address alone: `discover_addresses` keeps them,
   each worked out once in Python (fill_addresses), by the story job after it reads links, or by
   Discover itself for an address it finds missing;
 - a key is a candidate with 2+ article-like addresses that are 40%+ of its addresses, unless you
-  follow it or hid it (story_rules.discover_open): this needs the addresses only;
+  follow it or hid it (discover_rules.discover_open): this needs the addresses only;
 - only the candidates' links are then read for their voices (StoryPost.voice: `site:<publication>`
   for a website, `reddit:<author>` for a Reddit post whose feed names its author, else
   `source:<source id>`), and a candidate with 3+ voices is kept.
 The query returns only the kept keys: their counts, voices, top articles with the voices linking
 each. Python orders them, names the voices and titles the articles (issue 0070: as a story's
-outside origin is titled, story_rules.origin_title; a stored post by its own title).
+outside origin is titled, tree_rules.origin_title; a stored post by its own title).
 
-Issue 0065: a post on a platform is an article of its account (story_rules.discover_article: a
+Issue 0065: a post on a platform is an article of its account (discover_rules.discover_article: a
 tweet in any form, a Telegram post), and a post of a platform account's source at another
 account's address (a repost) counts as that source's link to it, so discover_addresses also keeps
 the addresses of those sources' posts. Where each story starts (story_origins) and the places
@@ -31,7 +31,7 @@ a story run went from 2.3-2.7 s and a 706 MB jump in the API's memory to 0.42-0.
 with the same list in the same order.
 
 Issue 0067: each voice also says whether it links a key only in roundups (posts of 3+ anchors,
-story_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
+discover_rules.is_roundup), which Discover's order weighs half; the other pages of a host where tweets
 are found (a mirror, `mirrors`) are no key; and the counts are kept between story runs
 (system_settings `discover_counts`): the story job counts them after it fills the addresses, and
 an open reads them while their stamp (the rules, the last story run, the sources with posts) holds.
@@ -49,20 +49,12 @@ from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.utils.post_fields import display_title
+from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
+                                               DISCOVER_MIN_VOICES, ORIGIN_MIN_VOICES, Origin, discover_address,
+                                               discover_article)
 from insight_core.utils.post_links import REDDIT_AUTHOR
-from insight_core.utils.stamps import ADDRESSES, fingerprint
-from insight_core.utils.story_rules import (DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES,
-                                            ORIGIN_MIN_VOICES, ROUNDUP_ANCHORS, Origin, discover_address,
-                                            discover_article)
+from insight_core.utils.story_rules import ROUNDUP_ANCHORS
 
-def address_rules() -> str:
-    """Which rules wrote a discover_addresses row (issue 0071): what they make of the sample's addresses
-    (utils/stamps.py), so a change to discover_address, site_of, account_key or discover_article that
-    shows there refills the rows, and a refactor that changes nothing keeps them."""
-    return fingerprint([(url, discover_address(url), discover_article(url)) for url in ADDRESSES])
-
-
-ADDRESS_RULES = address_rules()
 LOCK_KEY = "insight.discover_addresses"
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
 WORK_MEM = "48MB"
@@ -109,7 +101,7 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses
     FROM reposted r JOIN posts p ON p.id = r.post_id LEFT JOIN src s ON s.id = p.source_id
     WHERE NOT r.unknown AND r.key IN (SELECT key FROM candidate)
 ),
-roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (story_rules.is_roundup): each
+roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (discover_rules.is_roundup): each
     SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
     WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster)
       AND (pl.target_url !~ %(home)s                                        -- a home page no post is at

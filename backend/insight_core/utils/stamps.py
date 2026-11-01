@@ -5,7 +5,7 @@ A stamp is a fingerprint of what the rules make of a fixed sample, kept here: ma
 posts, addresses and bodies, written to exercise every rule (tests/test_stamps.py checks they still
 do), each tuned value with a case at its edge (in at the value, out just past it). A rule change that changes the output on the sample changes the stamp, so the next start makes
 the data again: the stories regroup in full (StoriesService), Discover's addresses refill
-(repo_discover), the stored bodies are repaired again (PostsService). A change with the same output
+(discover_rules), the stored bodies are repaired again (PostsService). A change with the same output
 (a rename, a move, a comment) keeps the stamp, and nothing is redone. Search's vectors are stamped
 the same way in SQL (search_vector_version(), migration 0055).
 
@@ -40,7 +40,7 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
-# ---- addresses: Discover's (story_rules.discover_address, discover_article) --------------------
+# ---- addresses: Discover's (discover_rules.discover_address, discover_article) --------------------
 
 ADDRESSES = (
     # a tweet on any host is its author's; an id too short is no tweet

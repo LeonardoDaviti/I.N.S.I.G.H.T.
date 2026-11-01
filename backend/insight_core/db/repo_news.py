@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from psycopg import Cursor
 
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item
-from insight_core.utils.news_rules import BACKGROUND_SHOWN, Citation, Classic, NewsStory
+from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
+from insight_core.utils.news_rules import NewsStory
 
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"

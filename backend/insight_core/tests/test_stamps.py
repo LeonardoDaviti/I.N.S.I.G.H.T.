@@ -14,13 +14,14 @@ if str(BACKEND_DIR) not in sys.path:
 
 import psycopg
 
-from insight_core.db import repo_discover
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.services import posts_service
 from insight_core.services.stories_service import StoriesService, rules_stamp
 from insight_core.tests._db import db_url, requires_test_db
-from insight_core.utils import post_links, stamps, story_rules
-from insight_core.utils.story_rules import PARENT_REASONS, REASONS, discover_address, group
+from insight_core.utils import discover_rules, post_links, stamps, story_rules, tree_rules
+from insight_core.utils.discover_rules import discover_address
+from insight_core.utils.story_rules import REASONS, group
+from insight_core.utils.tree_rules import PARENT_REASONS
 
 
 def sample_stories():
@@ -29,7 +30,7 @@ def sample_stories():
 
 
 def stamps_now():
-    return (rules_stamp.__wrapped__(), repo_discover.address_rules(), posts_service.stored_bodies_stamp.__wrapped__())
+    return (rules_stamp.__wrapped__(), discover_rules.address_rules(), posts_service.stored_bodies_stamp.__wrapped__())
 
 
 class SampleCoversTheRulesTests(unittest.TestCase):
@@ -62,10 +63,10 @@ class StampsFollowTheRulesTests(unittest.TestCase):
         stories, addresses, bodies = stamps_now()
         # 0068's miss, replayed: a github.io writer's site as before the Public Suffix List's private section
         with mock.patch.object(post_links, "_hosting_suffixes", lambda: frozenset()):
-            self.assertNotEqual(repo_discover.address_rules(), addresses)
+            self.assertNotEqual(discover_rules.address_rules(), addresses)
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         # 0068's other miss: how an outside origin is titled
-        with mock.patch.object(story_rules, "origin_title", lambda url, posts: None):
+        with mock.patch.object(tree_rules, "origin_title", lambda url, posts: None):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)
         with mock.patch.object(story_rules, "SAME_TITLE_MIN_WORDS", 4):
             self.assertNotEqual(rules_stamp.__wrapped__(), stories)

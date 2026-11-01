@@ -30,7 +30,8 @@ from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.news_rules import news, tally
 from insight_core.utils.post_links import site_of
-from insight_core.utils.story_rules import StoryPost, group, origin_title, roles
+from insight_core.utils.story_rules import StoryPost, group, roles
+from insight_core.utils.tree_rules import origin_title
 
 NOON = datetime(2026, 10, 27, 12, 0, 7, tzinfo=timezone.utc)
 ID = 2114444636303364349

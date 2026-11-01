@@ -26,7 +26,8 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, requires_test_db, scratch_handle
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.news_rules import lead
-from insight_core.utils.story_rules import PARENT_REASONS, StoryPost, group
+from insight_core.utils.story_rules import StoryPost, group
+from insight_core.utils.tree_rules import PARENT_REASONS
 
 DAY = datetime(2026, 10, 26, tzinfo=timezone.utc)   # 00:00:00: a date alone
 NOON = DAY + timedelta(hours=12)

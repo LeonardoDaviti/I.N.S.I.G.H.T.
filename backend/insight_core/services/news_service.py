@@ -23,8 +23,8 @@ from insight_core.db import database as db
 from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
-from insight_core.utils.news_rules import (NAME_TITLE_DAYS, NEWS_DAYS, NEWS_RECENT, Citation, classic_order, classics,
-                                          cited_again, lead, news, surges)
+from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
+from insight_core.utils.news_rules import NAME_TITLE_DAYS, NEWS_DAYS, NEWS_RECENT, lead, news, surges
 from insight_core.utils.post_fields import display_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost

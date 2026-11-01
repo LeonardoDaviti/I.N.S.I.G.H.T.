@@ -1,6 +1,6 @@
-"""News and Classics (issue 0051): names in titles, News stories and their score, classics.
-Pure functions over plain data; the story job (services/news_service.py) loads the posts and
-writes what these return.
+"""News (issue 0051): names in titles, News stories and their score. Pure functions over plain
+data; the story job (services/news_service.py) loads the posts and writes what these return.
+Classics are classic_rules.py (issue 0071 split them out of this file).
 
 Ported from the prototype (`plan/research/dedup-prototype/names.py`, `news.py`, `rank.py`,
 `report.py`), the reference the real code reproduces. **Every threshold of 0051 is here, in one
@@ -20,21 +20,17 @@ place**: tuning on the server is a one-line change.
   than the 30 days before (a series a few voices keep saying doesn't). A shorter name whose posts
   a longer one covers is dropped. Titles are compared as plain letters (NFKC) and with a word glued
   to the next line's capital in another script split. arXiv titles are left out.
-- **A classic** is a page linked by 2+ of your voices (not the page's own), with links 180+ days
-  apart: a stored post or an outside page. Reference pages (a path segment like `docs`,
-  `pricing`, `help`) and home pages are not classics.
 """
 from __future__ import annotations
 
 import bisect
 import re
 import unicodedata
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.post_links import bare, is_reference, publication_of, site_of, titled_link_text
 from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -55,10 +51,6 @@ NAME_WAVE_VOICES = 3                # a later burst of 3+ voices new to the name
 NAME_TITLE_DAYS = 32                # the job reads the titles of the last 32 days (a full run: every one)
 NAME_MAX_WORDS = 3
 NAME_SKIP_KINDS = frozenset({"arxiv"})
-CLASSIC_MIN_VOICES = 2
-CLASSIC_MIN_SPREAD = timedelta(days=180)   # measured on the server's data, 2026-10-30: at 30 days most were news with legs
-CLASSIC_CITED_AGAIN = timedelta(days=7)   # cited in the last 7 days: "cited again this week", first
-BACKGROUND_SHOWN = 2
 
 # ---- names in titles ------------------------------------------------------------------------
 
@@ -309,89 +301,4 @@ def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = ()) -> Optio
     return None
 
 
-# ---- Classics -------------------------------------------------------------------------------
-
-
-@dataclass
-class Citation:
-    """One kept link: who linked what, when."""
-
-    voice: str
-    name: str                        # the voice as you know it (a source's name, u/<author>)
-    source_id: str
-    t: datetime
-    target: str                      # normalized address
-    stored: Optional[str] = None     # the stored post it is, if any
-    text: Optional[str] = None       # the link's words
-
-
-@dataclass
-class Classic:
-    target: str
-    post_id: Optional[str]
-    voices: int
-    first_at: datetime               # the stored post's date, else the first link
-    last_at: datetime                # the last link
-    title: Optional[str]
-    citers: List[Dict[str, object]] = field(default_factory=list)   # each voice once, first citation first
-
-    @property
-    def days(self) -> int:
-        return (self.last_at - self.first_at).days
-
-
-_titled = titled_link_text   # moved to post_links (issue 0064: a story's outside origin is titled so too)
-
-
-def classics(citations: Iterable[Citation], stored: Dict[str, Tuple[str, datetime, Optional[str]]]) -> List[Classic]:
-    """The classics among `citations`, most voices first, then cited longest.
-    `stored`: post id -> (its voice, its date, its title) for the stored posts linked."""
-    by_target: Dict[str, List[Citation]] = defaultdict(list)
-    for c in citations:
-        if c.stored is not None and c.stored not in stored:
-            continue
-        by_target[c.target].append(c)
-    out = []
-    for target, cites in by_target.items():
-        host = bare(target).split("/", 1)[0]
-        own = {"site:" + publication_of(host), "site:" + site_of(host)}   # its own publication, or site's
-        post = stored.get(cites[0].stored) if cites[0].stored else None
-        if post is not None:
-            own.add(post[0])
-        elif is_reference(target):
-            continue
-        cites = sorted(cites, key=lambda c: (c.t, c.source_id))
-        counted = [c for c in cites if c.voice not in own]
-        voices = {c.voice for c in counted}
-        if len(voices) < CLASSIC_MIN_VOICES:
-            continue
-        # The spread starts at the stored post's own date, else at the second voice's first link:
-        # one voice's date alone can't make a classic (a page rewritten under an old date, like
-        # Gwern's, dated a 2026 link 2023 on the server's data).
-        firsts = sorted({c.voice: c.t for c in reversed(counted)}.values())
-        first = post[1] if post is not None else firsts[1]
-        last = cites[-1].t
-        if last - first < CLASSIC_MIN_SPREAD:
-            continue
-        citers: Dict[str, Dict[str, object]] = {}
-        for c in counted:
-            entry = citers.setdefault(c.voice, {"voice": c.voice, "name": c.name, "at": c.t.isoformat(), "source_ids": []})
-            if c.source_id not in entry["source_ids"]:   # type: ignore[operator]
-                entry["source_ids"].append(c.source_id)   # type: ignore[union-attr]
-        texts = Counter(c.text for c in cites if _titled(c.text))
-        title = post[2] if post is not None else (texts.most_common(1)[0][0] if texts else None)
-        out.append(Classic(target, cites[0].stored, len(voices), first, last, title, list(citers.values())))
-    return sorted(out, key=lambda c: (-c.voices, -c.days, c.target))
-
-
-def cited_again(classic_last_at: datetime, now: datetime) -> bool:
-    return classic_last_at >= now - CLASSIC_CITED_AGAIN
-
-
-def classic_order(classic_last_at: datetime, voices: int, days: int, target: str, now: datetime) -> Tuple:
-    """Cited again this week first, then most voices, then cited longest. Age never counts against."""
-    return (not cited_again(classic_last_at, now), -voices, -days, target)
-
-
-__all__ = ["names", "surges", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead", "Citation", "Classic",
-           "classics", "is_reference", "cited_again", "classic_order"]
+__all__ = ["names", "surges", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead"]

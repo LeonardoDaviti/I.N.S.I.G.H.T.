@@ -36,7 +36,8 @@ from insight_core.db.repo_reader import (
     _item, _on,
 )
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
-from insight_core.utils.news_rules import NEWS_RECENT, cited_again, lead
+from insight_core.utils.classic_rules import cited_again
+from insight_core.utils.news_rules import NEWS_RECENT, lead
 from insight_core.utils.post_fields import display_title
 
 SearchFilter = Literal["all", "later", "starred", "news", "classics"]   # starred is Keep ("Kept")

@@ -1,5 +1,5 @@
 """Titles everywhere, and one stuck job (issue 0070 C): Discover's articles and stories' outside origins
-are titled by one rule (story_rules.origin_title) with the page's own words when a post quotes them
+are titled by one rule (tree_rules.origin_title) with the page's own words when a post quotes them
 (a quoted tweet's text, a link preview's title), a link post's title and a slug without its leading id;
 a job a restart ended is closed when its process starts again.
 
@@ -26,7 +26,8 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import SCRATCH_PREFIX, db_url, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.post_links import quoted_words
-from insight_core.utils.story_rules import StoryPost, origin_title
+from insight_core.utils.story_rules import StoryPost
+from insight_core.utils.tree_rules import origin_title
 
 NOON = datetime(2026, 10, 27, 12, 0, 7, tzinfo=timezone.utc)
 TWEET = "https://x.com/claudeai/status/2074548242386178258"

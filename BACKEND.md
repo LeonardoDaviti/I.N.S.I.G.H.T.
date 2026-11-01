@@ -14,6 +14,32 @@ The INSIGHT backend follows a layered architecture:
 └─────────────────────────────────────┘
 ```
 
+## Module layout: the rules
+
+Stories, trees, News, Classics and Discover are made by pure rule modules in `insight_core/utils/`
+(plain data in, plain data out, no database). The services load what they read and write what they
+return; the repositories hold the SQL. One job each:
+
+| Module | Its job |
+|---|---|
+| `post_links.py` | the outside links in a post's HTML, and the small facts about an address (site, publication, home page, article, section, account) |
+| `story_rules.py` | the **story**: `StoryPost` (what the rules read of a post), `group` (joins by address, text, title, link, citation, thread, quote), roles, voices |
+| `tree_rules.py` | the **tree**: each post's parent and why, the origin, an outside origin's title (`origin_title`) |
+| `discover_rules.py` | **Discover**: an address's key, site and article (`discover_address`), suggestions (the reference `repo_discover` counts in SQL), where stories start; `ADDRESS_RULES` |
+| `news_rules.py` | **names** in titles and their surges, and **News** stories and their score |
+| `classic_rules.py` | **Classics**: pages your sources keep citing |
+| `stamps.py` | the fixed sample every stamp is computed from (below) |
+
+**Stamps (issue 0071).** Derived data says which rules made it by a stamp computed at start, never
+a number bumped by hand: a fingerprint of what the rules make of the sample in `utils/stamps.py`.
+A rule change that changes the output there makes the data again by itself; a rename or a move
+doesn't. `StoriesService.rules_stamp` (stories, trees, News: a full regroup), `ADDRESS_RULES`
+(Discover's `discover_addresses` rows), `stored_bodies_stamp` (the stored-body repair), and in SQL
+`search_vector_version()` (migration 0055: the search vectors). Discover's kept counts are stamped by
+their query's text. **A new rule adds its case to the sample**, and a tuned value has a case at its
+edge (`tests/test_stamps.py` checks the sample still uses every join and parent reason and every
+way an origin is titled).
+
 ## How to Implement New Features
 
 ### Step-by-Step Process

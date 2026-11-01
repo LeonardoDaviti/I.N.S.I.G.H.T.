@@ -25,8 +25,9 @@ from insight_core.services.news_service import NewsService
 from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
-from insight_core.utils.news_rules import (Citation, classics, is_reference, lead, names, news, score, surges,
-                                          tally)
+from insight_core.utils.classic_rules import Citation, classics
+from insight_core.utils.news_rules import lead, names, news, score, surges, tally
+from insight_core.utils.post_links import is_reference
 from insight_core.utils.story_rules import StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
 

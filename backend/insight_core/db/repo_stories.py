@@ -1,8 +1,8 @@
 """Stories storage (issue 0050): post links, stories, their posts and mentions, Discover's hidden
 suggestions. Every method takes the caller's cursor and never commits.
 
-The rules live in utils/post_links.py and utils/story_rules.py; this file only reads what they
-need and writes what they return, touching only the rows that differ.
+The rules live in utils/post_links.py, story_rules.py, tree_rules.py and discover_rules.py; this
+file only reads what they need and writes what they return, touching only the rows that differ.
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from psycopg import Cursor
 
 from insight_core.utils.post_links import (PLATFORM_SITES, PostLink, account_key, extract_links, host_of, is_article,
                                           publication_of, site_of, source_kind)
-from insight_core.utils.story_rules import (DISCOVER_PLATFORMS, HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS,
-                                           SIGNATURE_SHARE, Story, source_site)
+from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
+from insight_core.utils.story_rules import HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
