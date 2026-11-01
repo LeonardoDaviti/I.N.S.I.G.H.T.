@@ -343,7 +343,9 @@ function FeedItem({
             {excerpt}
           </p>
         ) : null}
-        {item.story ? <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story)} lead={item} now={now} /> : null}
+        {item.story && (storyLine ?? coveredBy(item.story, item.source_id)) ? (
+          <StoryPosts story={item.story} label={storyLine ?? coveredBy(item.story, item.source_id) ?? ''} lead={item} now={now} />
+        ) : null}
       </div>
       {showThumb ? (
         <div className="mt-0.5 hidden aspect-video w-20 shrink-0 overflow-hidden rounded-[0.25rem] border border-line bg-surface sm:block">

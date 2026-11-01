@@ -472,7 +472,8 @@ class ReaderRepository:
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
             if story["first"] is None or rank < story["_first_rank"]:
                 story["first"], story["_first_rank"] = str(post_id), rank
-            if not any(source["id"] == str(source_id) for source in story["sources"]):
+            # Saved is never a voice (issue 0070 A8), so never named (issue 0072).
+            if platform != "saved" and not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
             # A repost's line names its author and who of yours reposted it once (issue 0070).
             repost = repost_of(platform, handle, author, reposted_by)
@@ -515,6 +516,8 @@ class ReaderRepository:
                        COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.source_id,
                        {SORT_KEY} AS at
                 FROM story_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
+                -- A page you saved is never a roundup (issue 0072).
+                AND s.platform <> 'saved'
                 LEFT JOIN LATERAL (
                     SELECT min(pl.position) AS position FROM post_links pl
                     WHERE pl.post_id = m.post_id AND pl.target_url IN (

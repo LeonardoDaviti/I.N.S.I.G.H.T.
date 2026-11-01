@@ -5,7 +5,7 @@ import { useOperationJob } from '../../hooks/useOperations';
 import { asRunReport } from '../../lib/runReport';
 import { plural } from '../../lib/format';
 import { jobLabel } from '../../lib/operationsOverview';
-import { formatJobDuration, jobEvents, jobGlyph, jobSummary, runProgressLine } from '../../lib/jobRuns';
+import { jobDuration, jobEvents, jobGlyph, jobSummary, runProgressLine } from '../../lib/jobRuns';
 import { formatLocalDateTime } from '../../lib/dates';
 import { sourceLabel } from '../../lib/sourceLabel';
 import RunReportSummary from '../ops/RunReportSummary';
@@ -24,7 +24,7 @@ function JobDetail({ job }: { job: JobRun }) {
     ['Status', <StatusGlyph key="s" status={jobGlyph(job.status)} label={job.status} />],
     ['Source', job.source_display_name ? sourceLabel(job.source_display_name) : 'All sources'],
     ['Started', formatLocalDateTime(job.started_at) || '—'],
-    ['Duration', formatJobDuration(job.started_at, job.finished_at) || (job.finished_at ? '—' : 'still running')],
+    ['Duration', jobDuration(job) || (job.finished_at ? '—' : 'still running')],
   ];
   const progress = runProgressLine(job);
   if (progress) facts.push(['Progress', progress]);
@@ -41,7 +41,7 @@ function JobDetail({ job }: { job: JobRun }) {
       {report ? <RunReportSummary report={report} /> : archiveResult ? (
         <p className="text-[0.875rem] tabular-nums text-fg-2">{archiveResult}</p>
       ) : job.message ? (
-        <p className="text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{job.message}</p>
+        <p className="text-[0.875rem] text-fg-2 [overflow-wrap:anywhere]">{jobSummary(job)}</p>
       ) : null}
       {events.length ? (
         <ol aria-label="Events" className="max-h-[18rem] divide-y divide-line overflow-y-auto rounded-md border border-line font-mono text-[0.75rem] leading-5">
@@ -85,7 +85,7 @@ export default function IngestionJobs({ jobs, loading }: { jobs: JobRun[]; loadi
           {jobs.map((job) => {
             const selected = job.id === selectedId;
             const summary = jobSummary(job);
-            const when = [formatLocalDateTime(job.started_at), formatJobDuration(job.started_at, job.finished_at)].filter(Boolean).join(' · ');
+            const when = [formatLocalDateTime(job.started_at), jobDuration(job)].filter(Boolean).join(' · ');
             return (
               <li key={job.id}>
                 <button

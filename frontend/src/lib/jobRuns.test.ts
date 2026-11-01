@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { JobRun } from '../services/api';
-import { formatJobDuration, jobEvents, jobGlyph, jobSummary, runningFetchJob, runProgressLine } from './jobRuns.ts';
+import { formatJobDuration, jobDuration, jobEvents, jobGlyph, jobSummary, runningFetchJob, runProgressLine } from './jobRuns.ts';
 
 test('jobGlyph maps job status to a monochrome glyph', () => {
   assert.equal(jobGlyph('failed'), 'failing');
@@ -55,6 +55,21 @@ test('jobSummary: an ingestion run reads as what it delivered, other jobs keep t
   assert.equal(jobSummary({ ...run, status: 'running', payload: { selector: { kind: 'all' } } }), '2 due, 76 deferred, 0 failed; 9 new posts');
   assert.equal(jobSummary({ id: 'a', status: 'success', job_type: 'archive_source', message: 'Archived 40 posts' } as JobRun), 'Archived 40 posts');
   assert.equal(jobSummary({ id: 'a', status: 'success', job_type: 'archive_source' } as JobRun), null);
+});
+
+test('a job a restart ended names its source and ran until its last event, not the restart (issue 0072)', () => {
+  const job = {
+    id: 'j', status: 'interrupted', job_type: 'ingestion_run', message: 'Fetch source f6d4-1', source_id: 'f6d4-1',
+    source_display_name: 'A Newsletter', started_at: '2026-10-30T21:31:37Z', finished_at: '2026-10-31T22:49:46Z',
+    payload: { events: [
+      { at: '2026-10-30T21:31:45Z', level: 'info', message: 'A Newsletter: 20 new of 20' },
+      { at: '2026-10-31T22:49:46Z', level: 'error', status: 'interrupted', message: 'Interrupted by a restart' },
+    ] },
+  } as unknown as JobRun;
+  assert.equal(jobSummary(job), 'Fetch A Newsletter');
+  assert.equal(jobDuration(job), '8s');
+  assert.equal(jobDuration({ ...job, payload: { events: [] } }), '<1s', 'no event before the restart: it ran no time we know of');
+  assert.equal(jobDuration({ ...job, status: 'success' }), '25h 18m', 'a finished job: start to finish');
 });
 
 test('jobEvents: the per-source lines, without the lines that repeat the summary', () => {

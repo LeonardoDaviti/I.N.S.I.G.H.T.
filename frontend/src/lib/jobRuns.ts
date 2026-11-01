@@ -31,6 +31,15 @@ export function formatJobDuration(startedAt?: string | null, finishedAt?: string
   return formatElapsed((finished.getTime() - started.getTime()) / 1000);
 }
 
+/** How long a job ran: a job a restart ended ran until its last event before that, not until the
+ *  restart closed it a day later (issue 0072). */
+export function jobDuration(job: JobRun): string | null {
+  const events = job.status === 'interrupted' && Array.isArray(job.payload?.events)
+    ? (job.payload.events as Array<Record<string, unknown>>).filter((event) => event.status !== 'interrupted') : [];
+  const last = events.length ? events[events.length - 1].at : null;
+  return formatJobDuration(job.started_at, typeof last === 'string' ? last : job.status === 'interrupted' ? job.started_at : job.finished_at);
+}
+
 /** The jobs that fetch posts; the daily `scheduler_cycle` is not one. */
 const FETCH_JOB_TYPES = new Set(['ingestion_run', 'archive_source']);
 const FAILURE_NOTE_MS = 60 * 60_000;
@@ -65,10 +74,14 @@ export function runProgressLine(job: JobRun): string | null {
   return `${done} of ${total} source${total === 1 ? '' : 's'} · ${newPosts} new post${newPosts === 1 ? '' : 's'}`;
 }
 
-/** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message. */
+/** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message, the
+ *  source it names by its name, not its id ("Fetch SemiAnalysis", issue 0072). */
 export function jobSummary(job: JobRun): string | null {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
-  return report ? summarizeRunReport(report).headline : job.message || null;
+  if (report) return summarizeRunReport(report).headline;
+  const message = job.message || null;
+  return message && job.source_id && job.source_display_name
+    ? message.replace(`source ${job.source_id}`, job.source_display_name).replace(job.source_id, job.source_display_name) : message;
 }
 
 export type JobEvent = { at?: string; level?: string; message?: string };

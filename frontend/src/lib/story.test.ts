@@ -6,6 +6,13 @@ import { citedBy } from './classics.ts';
 
 const story = (names: string[]) => ({ id: 's', voices: names.length, posts: [], sources: names.map((name, i) => ({ id: String(i), name })) });
 
+test('one voice copied by others reads "also shared by", never "covered by 1" (issue 0072)', () => {
+  const forward = { ...story(['seeallochnaya', 'denissexy']), voices: 1 };
+  assert.equal(coveredBy(forward, '0'), 'also shared by denissexy');
+  assert.equal(coveredBy(forward, '1'), 'also shared by seeallochnaya');
+  assert.equal(coveredBy({ ...story(['gordic']), voices: 1 }, '0'), null, 'nothing when no other source shared it');
+});
+
 test('coveredBy names two sources, then counts the rest', () => {
   assert.equal(coveredBy(story(['Anthropic', 'Simon Willison'])), 'covered by 2 · Anthropic, Simon Willison');
   assert.equal(coveredBy(story(['Anthropic', 'Simon Willison', 'https://tg.i-c-a.su/rss/denissexy?limit=50', 'B'])),

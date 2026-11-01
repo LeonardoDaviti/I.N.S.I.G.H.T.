@@ -147,7 +147,7 @@ describe('Sources → ingestion tab', () => {
     const block = await screen.findByRole('region', { name: 'Background work' });
     expect(await within(block).findByText('done')).toBeInTheDocument();
     expect(within(block).getByText('Last run 12m ago, took 5s · next run: after the next fetch run')).toBeInTheDocument();
-    expect(within(block).getByText('5,018 posts grouped · 86 stories · 90 in News · 175 Classics')).toBeInTheDocument();
+    expect(within(block).getByText('5,018 posts grouped · 86 stories · 90 News stories, last 30 days · 175 Classics')).toBeInTheDocument();
     expect(within(block).getByText('up to date')).toBeInTheDocument();
     expect(within(block).getByText('all read')).toBeInTheDocument();
     expect(within(block).queryAllByRole('button')).toEqual([]);
