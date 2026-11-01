@@ -23,7 +23,8 @@ from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.services.operations_service import OperationsService
 from insight_core.services.stories_service import StoriesService
-from insight_core.tests._db import SCRATCH_PREFIX, db_url, insert_scratch_source, requires_test_db
+from insight_core.tests._db import SCRATCH_PREFIX, db_url, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.post_links import quoted_words
 from insight_core.utils.story_rules import StoryPost, origin_title
 
@@ -39,10 +40,11 @@ def preview(url, site, title, description):
             + (f"<b>{title}</b></br>" if title is not None else "") + f'{description}</br><img src="x.jpeg"/></blockquote>')
 
 
-def post(pid, url, *, kind="telegram", text=None, quoted=None, title=None, words=None, links=None, source=None):
-    return StoryPost(id=pid, source_id=source or pid, kind=kind, own_site=f"{pid}.test", t=NOON, url=f"https://{pid}.test/1",
-                     title=title, words=words, links=links or [(url, None)], link_texts={url: text} if text else {},
-                     quoted_words={url: quoted} if quoted else {})
+def post(pid, url, *, kind="telegram", text=None, quoted=None, links=None, source=None, **fields):
+    """A post of its own source linking `url`, with the link's words `text` or its quote `quoted`."""
+    return story_post(pid, source or pid, at=NOON, kind=kind, site=f"{pid}.test", url=f"https://{pid}.test/1",
+                      links=links or [(url, None)], texts={url: text} if text else {},
+                      quoted_words={url: quoted} if quoted else {}, **fields)
 
 
 class QuotedWordsTests(unittest.TestCase):
@@ -130,21 +132,12 @@ class DiscoverTitlesTests(unittest.TestCase):
         self.conn.close()
 
     def _source(self, platform="rss", kind=""):
-        source = insert_scratch_source(self.cur, platform=platform)
-        self.cur.execute("UPDATE sources SET handle_or_url = %s WHERE id = %s",
-                         (f"{SCRATCH_PREFIX}{kind}{uuid.uuid4().hex}", source))
-        return source
+        return insert_source(self.cur, handle=f"{SCRATCH_PREFIX}{kind}{uuid.uuid4().hex}", platform=platform)
 
     def _post(self, source, *, html="", title=None, content=None, url=None, links=()):
         url = url or f"https://p-{self.mark}.test/{uuid.uuid4().hex}"
-        self.cur.execute("INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, "
-                         "published_at, links_scanned_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now()) RETURNING id",
-                         (source, url, url, url.split("/")[2], title, content, html, self.now))
-        post_id = self.cur.fetchone()[0]
-        for position, (target, text) in enumerate(links):
-            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
-                             "VALUES (%s, %s, '', %s, %s)", (post_id, target, position, text))
-        return str(post_id)
+        return str(insert_post(self.cur, source, url, at=self.now, title=title, content=content, html=html,
+                               normalized=url, links=list(links)))
 
     def test_an_article_is_titled_by_a_quote_a_stored_post_or_nothing(self):
         quoted, stored, bare = (f"https://x.com/acct{self.mark}/status/{n}" for n in (1, 2, 3))

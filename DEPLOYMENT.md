@@ -244,9 +244,12 @@ Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/a
 
 ## Tests
 
-- Backend: `./run-tests.sh [module]` builds the image and runs the suite inside it, against the
-  scratch database `insight_test` by default (never the live `insight`). Override with
-  `TEST_DATABASE_URL`. `MIGRATE=1` migrates that database first.
+- Backend: `./run-tests.sh [module]` builds the image and runs the suite inside it. By default
+  each run creates a database of its own (`insight_run_<time>_<pid>_test`), migrates it, and drops it when the run ends, so two runs at once never share rows (never the live `insight`). `TEST_DATABASE_URL` tests against a database
+  of your own instead (its name must end in `_test` for the suites that commit rows), and `MIGRATE=1`
+  migrates it first. `TEST_IMAGE=<tag>` builds and runs that tag instead of `insight-backend:latest`.
+- Test data: `insight_core/tests/_stories.py` is the one factory for the posts and sources tests
+  make (`story_post`, `insert_source`, `insert_post`).
 - Frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
 ## Troubleshooting

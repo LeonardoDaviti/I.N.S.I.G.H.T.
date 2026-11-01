@@ -400,10 +400,12 @@ Run them inside the backend image, never on the host:
 ```bash
 ./run-tests.sh                                        # whole suite
 ./run-tests.sh insight_core.tests.test_feed_routes    # one module
-MIGRATE=1 ./run-tests.sh                              # migrate the test database first
+TEST_DATABASE_URL=postgresql://insight:insight@postgres:5432/mine_test MIGRATE=1 ./run-tests.sh   # a database of yours
 ```
 
-It uses the scratch database `insight_test`, never the live `insight`.
+By default each run creates its own database (`insight_run_<time>_<pid>_test`), migrates it and
+drops it at the end, never the live `insight`. The posts and sources tests make come from one
+factory, `insight_core/tests/_stories.py`.
 
 ### Manual API Testing
 

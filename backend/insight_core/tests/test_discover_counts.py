@@ -28,7 +28,8 @@ from insight_core.db.repo_discover import ADDRESS_RULES, TWEET_HREF, DiscoverRep
 from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.stories_service import DISCOVER_ARTICLES_SHOWN, StoriesService
-from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
+from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
+from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import StoryPost, discover_address, is_roundup, origin_title, suggestions
 
@@ -126,22 +127,12 @@ class DiscoverCountsTests(unittest.TestCase):
     # ---- fixture ----------------------------------------------------------------------------
 
     def _source(self, name, *, platform="rss"):
-        source = insert_scratch_source(self.cur, platform=platform)
-        self.cur.execute("UPDATE sources SET settings = jsonb_build_object('display_name', %s::text) WHERE id = %s",
-                         (name, source))
-        return source
+        return insert_source(self.cur, name, platform=platform)
 
     def _post(self, source, host, links, *, html=""):
         """A post on `host` whose kept links are `links`: (address, words) pairs, in order."""
         url = f"https://{host}/p/{uuid.uuid4().hex}"
-        self.cur.execute(
-            "INSERT INTO posts (source_id, url, normalized_url, url_host, content_html, published_at, links_scanned_at) "
-            "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id", (source, url, url, host, html))
-        post_id = self.cur.fetchone()[0]
-        for position, (target, text) in enumerate(links):
-            self.cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
-                             "VALUES (%s, %s, '', %s, %s)", (post_id, target, position, text))
-        return post_id
+        return insert_post(self.cur, source, url, html=html, host=host, normalized=url, links=list(links))
 
     def _edges(self):
         m = self.mark

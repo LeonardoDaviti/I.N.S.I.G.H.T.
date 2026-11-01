@@ -297,7 +297,7 @@ References:
 
 ## Tests
 
-Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so it defaults to the scratch database `insight_test`, never the live `insight`; override with `TEST_DATABASE_URL`. `MIGRATE=1` applies pending migrations to that database first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
+Run the backend suite inside the image with `./run-tests.sh` (or `./run-tests.sh insight_core.tests.test_ingestion_runner` for one module). Several suites write rows, so each run creates a database of its own (`insight_run_<time>_<pid>_test`), migrates it, and drops it when the run ends, so two runs at once never share rows; never the live `insight`. `TEST_DATABASE_URL` uses a database of your own instead, and `MIGRATE=1` applies pending migrations to it first. The frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
 ## Notes
 
