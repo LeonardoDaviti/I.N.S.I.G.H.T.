@@ -76,7 +76,7 @@ export function runProgressLine(job: JobRun): string | null {
 }
 
 /** A job's one line: what an ingestion run delivered ("9 new posts from 2 sources"), else its message, the
- *  source it names by its name, not its id ("Fetch SemiAnalysis", issue 0072). */
+ *  source it names by its name, not its id ("Fetch <source name>", issue 0072). */
 export function jobSummary(job: JobRun): string | null {
   const report = job.job_type === 'ingestion_run' ? asRunReport(job.payload) : null;
   if (report) return summarizeRunReport(report).headline;

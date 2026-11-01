@@ -305,7 +305,7 @@ class TreeJobTests(unittest.TestCase):
         # Issue 0072: Saved is never a voice (0070 A8), so "covered by" never names it.
         self._terra()
         saved = insert_source(self.cur, "Saved", handle=scratch_handle(), platform="saved", in_main_digest=True)
-        page = self._post(saved, f"https://openai-{self.mark}.test/index/introducing-terra#saved", at=self.now, title="Terra")
+        page = self._post(saved, f"https://openai-{self.mark}.test/index/introducing-terra#saved", at=self.now, title="A saved copy")
         self.cur.execute("UPDATE posts SET normalized_url = %s WHERE id = %s", (f"https://openai-{self.mark}.test/index/introducing-terra", page))
         self.service.regroup(self.cur, cutoff=None)
         item = {"id": self.openai}

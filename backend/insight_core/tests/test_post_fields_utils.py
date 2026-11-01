@@ -253,32 +253,32 @@ class BridgeTitleTests(unittest.TestCase):
 
     def test_a_cut_title_ends_at_the_htmls_line_not_the_texts(self):
         html = ('<a href="https://media.test/1.jpg"><img src="https://media.test/1/thumb.jpeg"/></a><br/><br/>'
-                '<b>Исследователи нашли способ тратить на 15% меньше вычислений без потери качества</b><br><br>'
+                '<b>Учёные показали новый способ обучать модели дешевле без потери качества</b><br><br>'
                 'На конференции, проходящей сейчас, представили метод.')
-        text = "Исследователи нашли способ тратить на 15% меньше вычислений без потери качества На конференции, проходящей сейчас, представили метод."
-        self.assertEqual(display_title("Исследователи нашли способ тратить на 15% меньше вычислений без [...]", text, html),
-                         "Исследователи нашли способ тратить на 15% меньше вычислений без потери качества")
+        text = "Учёные показали новый способ обучать модели дешевле без потери качества На конференции, проходящей сейчас, представили метод."
+        self.assertEqual(display_title("Учёные показали новый способ обучать модели дешевле без [...]", text, html),
+                         "Учёные показали новый способ обучать модели дешевле без потери качества")
 
     def test_a_bold_words_space_is_no_line_end(self):
         text = "Классика: издание (американское кстати) утверждает , что недавно выпущенная модель была дистиллирована"
         self.assertEqual(display_title("Классика: издание (американское кстати) утверждает, что недавно вы [...]", text),
                          text, "not cut at 'утверждает': without the HTML the tag's space stays")
-        html = 'Успех не просто <b>Kimi K3</b>, а новая архитектура.<br><br>Дальше.'
-        self.assertEqual(display_title("Успех не просто Kimi K3, а новая [...]", "Успех не просто Kimi K3 , а новая архитектура. Дальше.", html),
-                         "Успех не просто Kimi K3, а новая архитектура.")
+        html = 'Успех не просто <b>Model Z</b>, а новая архитектура.<br><br>Дальше.'
+        self.assertEqual(display_title("Успех не просто Model Z, а новая [...]", "Успех не просто Model Z , а новая архитектура. Дальше.", html),
+                         "Успех не просто Model Z, а новая архитектура.")
 
     def test_a_cut_title_starts_the_text_whatever_its_spaces(self):
-        html = "Meta* купила Moltbook – вирусную соцсеть для агентов<br><br>Помните, в конце января"
-        self.assertEqual(display_title("Meta* купила Moltbook – вирусную соцсеть для агентовПомните, в конце янва [...]",
-                                       "Meta * купила Moltbook – вирусную соцсеть для агентов Помните, в конце января", html),
-                         "Meta* купила Moltbook – вирусную соцсеть для агентов")
+        html = "Acme* купила Widget – соцсеть для агентов<br><br>Помните, в конце января"
+        self.assertEqual(display_title("Acme* купила Widget – соцсеть для агентовПомните, в конце янва [...]",
+                                       "Acme * купила Widget – соцсеть для агентов Помните, в конце января", html),
+                         "Acme* купила Widget – соцсеть для агентов")
         self.assertEqual(display_title("Расходы перешли в фазу &q [...]", 'Расходы перешли в фазу "роста" и дальше.'),
                          'Расходы перешли в фазу "роста" и дальше.', "a cut inside an HTML code")
 
     def test_a_title_ended_where_no_sentence_ends_is_cut_again(self):
-        text = "Маск признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст."
-        self.assertEqual(display_title("Маск признал провал модели в программировании, т.к.", text),
-                         "Маск признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст.")
+        text = "Автор признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст."
+        self.assertEqual(display_title("Автор признал провал модели в программировании, т.к.", text),
+                         "Автор признал провал модели в программировании, т.к. она уступает конкурентам. Дальше текст.")
         self.assertEqual(display_title("Компания собирается выпускать модель (?", "Компания собирается выпускать модель (?) Дальше."),
                          "Компания собирается выпускать модель (?) Дальше.")
         self.assertEqual(display_title("Модель вышла.", "Модель вышла. Дальше."), "Модель вышла.", "a real end stands")
@@ -300,10 +300,10 @@ class TitleAddressTests(unittest.TestCase):
                          "hub.test/org/Model-1T")
 
     def test_a_name_and_its_subtitle_run_on_up_to_the_label(self):
-        title = "Thinking Inertia\n\nModels Keep Thinking When Told Not To\n\npaper: https://papers.test/abs/1"
-        self.assertEqual(display_title(title, ""), "Thinking Inertia: Models Keep Thinking When Told Not To")
-        wrapped = "Most Current Model\nOrganisms Leak: \nPerplexity Differencing Often Reveals Objectives"
-        self.assertEqual(display_title(wrapped, ""), "Most Current Model Organisms Leak: Perplexity Differencing Often Reveals Objectives",
+        title = "Steady Agents\n\nModels Keep Working When Told To Stop\n\npaper: https://papers.test/abs/1"
+        self.assertEqual(display_title(title, ""), "Steady Agents: Models Keep Working When Told To Stop")
+        wrapped = "A Small Study\nOf Long Titles: \nWhy Feeds Wrap Them Across Lines"
+        self.assertEqual(display_title(wrapped, ""), "A Small Study Of Long Titles: Why Feeds Wrap Them Across Lines",
                          "a title wrapped in lines reads as one")
 
 
@@ -326,8 +326,8 @@ class QuoteCardTests(unittest.TestCase):
         self.assertEqual(display_title("R to @ann: x.com/ann/status…", self.TEXT), "Here is one more output of mine.", "without the HTML too")
 
     def test_the_posts_own_words_end_where_the_quote_begins(self):
-        title, text, _ = reading_text("Mogged...", "Mogged... " + self.TEXT.split(" ", 1)[1], "<p>Mogged...</p>\n" + self.CARD)
-        self.assertEqual(title, "Mogged...", "not run on into the quote's byline")
+        title, text, _ = reading_text("Indeed...", "Indeed... " + self.TEXT.split(" ", 1)[1], "<p>Indeed...</p>\n" + self.CARD)
+        self.assertEqual(title, "Indeed...", "not run on into the quote's byline")
         self.assertNotIn("(@ann)", text)
 
     def test_a_post_with_nothing_of_its_own_only_quotes(self):

@@ -48,7 +48,7 @@ def _glued_first_line(cut: str, content: str | None, whole: bool = False) -> str
     A `whole` title (not cut, issue 0069: "$500Изменения уже действуют.") ends only where the title
     runs on into the next line's first character; a space a tag left in the body ("@user !",
     "ИИ , знают", "« Смит") is not a line's end. Its own spacing is kept. Neither is it in a cut
-    title, nor a space before a lowercase letter (issue 0072: "Kimi K3 , а" was "<b>Kimi K3</b>, а")."""
+    title, nor a space before a lowercase letter (issue 0072: "Model Z , а" was "<b>Model Z</b>, а")."""
     title, body = clean_text(cut), clean_text(content)
     i = j = 0
     while i < len(title) and j < len(body):
@@ -146,8 +146,8 @@ def _html_lines(html: str, ends: re.Pattern = _LINE_END_RE) -> str:
 
 
 def _squashed(text: str | None) -> str:
-    """Text without its whitespace, to tell whether one text starts another (issue 0072: "Meta *" and
-    "Meta*" are one start)."""
+    """Text without its whitespace, to tell whether one text starts another (issue 0072: "X *" and
+    "X*" are one start)."""
     return re.sub(r"\s+", "", clean_text(text))
 
 
@@ -215,7 +215,7 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
 def _run_on(lines: List[str], after_blank: set) -> str:
     """A short unfinished first line run on into the lines after it (issue 0069), up to a label's or an
     address's line ("paper: https://…", issue 0072). A name and its subtitle, each a paragraph
-    ("LIFT", "Layout-In-Future Video Generation…"), read "LIFT: Layout-In-Future…"; a title wrapped in
+    ("NAME", "A Subtitle…"), read "NAME: A Subtitle…"; a title wrapped in
     lines reads as one."""
     out = lines[0]
     for i, line in enumerate(lines[1:], 1):
@@ -242,7 +242,7 @@ def _bare(address: str) -> str:
 
 def _without_address(line: str) -> str:
     """A title without the address it ends in, nor a label that address leaves alone (issue 0072:
-    "Вышла GPT-6.1 Terra https://…" is "Вышла GPT-6.1 Terra"); after a finished sentence, the words that
+    "Вышла новая модель https://…" is "Вышла новая модель"); after a finished sentence, the words that
     only led to it go too ("Thanks! Details are at"), and words that point at it (":", "->") keep it,
     bare. A title left without words is the address, bare."""
     address = _TRAILING_ADDRESS_RE.search(line)
@@ -251,7 +251,7 @@ def _without_address(line: str) -> str:
     words, bare = line[:address.start()].rstrip(" ([{«\"'"), _bare(address.group(0).split()[0])
     if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
         return bare
-    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: llama.app")
+    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: tool.test")
         return f"{words} {bare}"
     ends = [m.end() for m in SENTENCE_END_RE.finditer(words, TITLE_MIN_SENTENCE_CHARS - 1)]
     return words[:ends[-1]] if ends and ends[-1] < len(words) else words

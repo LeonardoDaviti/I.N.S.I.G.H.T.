@@ -776,7 +776,7 @@ interface PostArticleProps {
  * open and reading time). Keyed by the post id, so nothing of another post
  * carries over.
  */
-/** "Read on mistral.ai", or "Read “<the page's title>” on mistral.ai" when it says more than the post's title (issue 0072). */
+/** "Read on example.com", or "Read “<the page's title>” on example.com" when it says more than the post's title (issue 0072). */
 function readOnLabel(link: { url: string; title: string | null }, shown: string): string {
   const site = publicationOf(link.url) || link.url;
   return link.title && link.title !== shown ? `Read “${link.title}” on ${site}` : `Read on ${site}`;

@@ -262,11 +262,11 @@ class XJobTests(unittest.TestCase):
 
     def test_a_replys_quote_of_its_own_thread_is_no_card(self):
         # Issue 0070: pankajkumar_dev's replies each quote the thread's first tweet; it is read once.
-        user = f"pankaj{self.mark}"
+        user = f"ann{self.mark}"
         source = self._x(user)
-        root = self._save(source, user, ID, "Gemini 4 Flash leaks: codenamed Hydrogen")
+        root = self._save(source, user, ID, "Model Y leaks: codenamed Q")
         quote = (f'<p>Its out guys.<br>\n</p><p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n'
-                 f'<hr/>\n<blockquote>\n<b>Pankaj</b>\n<p>Gemini 4 Flash leaks</p>\n<footer>\n— <cite>'
+                 f'<hr/>\n<blockquote>\n<b>Pankaj</b>\n<p>Model Y leaks</p>\n<footer>\n— <cite>'
                  f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
         reply = self._save(source, user, ID + 1, f"R to @{user}: Its out guys.", minutes=5, html=quote)
         self._regroup()
@@ -276,11 +276,11 @@ class XJobTests(unittest.TestCase):
     def test_a_reply_that_only_quotes_its_thread_is_no_line(self):
         # Issue 0072: a reply with nothing of its own, only a quote of the thread's first tweet, is no
         # line in the tree or the thread page; the reply after it hangs from the post before.
-        user = f"pankaj{self.mark}"
+        user = f"ann{self.mark}"
         source = self._x(user)
-        root = self._save(source, user, ID, "GPT-6.1 Terra one more output.")
+        root = self._save(source, user, ID, "Model Z one more output.")
         card = (f'<p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n<hr/>\n'
-                f'<blockquote>\n<b>Pankaj Kumar (@{user})</b>\n<p>GPT-6.1 Terra one more output.</p>\n<footer>\n— <cite>'
+                f'<blockquote>\n<b>Ann Lee (@{user})</b>\n<p>Model Z one more output.</p>\n<footer>\n— <cite>'
                 f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
         only = self._save(source, user, ID + 1, f"R to @{user}: x.com/{user}/status…", minutes=5, html=card)
         after = self._save(source, user, ID + 2, f"R to @{user}: Benchmarks are out", minutes=10)
@@ -292,11 +292,11 @@ class XJobTests(unittest.TestCase):
         self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
 
     def test_a_thread_of_only_quotes_of_its_first_tweet_is_no_story(self):
-        user = f"pankaj{self.mark}"
+        user = f"ann{self.mark}"
         source = self._x(user)
-        root = self._save(source, user, ID, "Gemini 4 Flash leaks: codenamed Hydrogen")
+        root = self._save(source, user, ID, "Model Y leaks: codenamed Q")
         card = (f'<p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n<hr/>\n'
-                f'<blockquote>\n<b>Pankaj Kumar (@{user})</b>\n<p>Gemini 4 Flash leaks</p>\n<footer>\n— <cite>'
+                f'<blockquote>\n<b>Ann Lee (@{user})</b>\n<p>Model Y leaks</p>\n<footer>\n— <cite>'
                 f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
         for n in (1, 2):
             self._save(source, user, ID + n, f"R to @{user}: x.com/{user}/status…", minutes=5 * n, html=card)
