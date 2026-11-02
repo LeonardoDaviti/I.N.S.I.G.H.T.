@@ -19,7 +19,7 @@ from insight_core.services.news_service import NewsService
 from insight_core.utils.media import post_media
 from insight_core.utils.post_links import body_hrefs, quoted_tweet
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import display_title, hnrss_counts, link_post_target, reading_text
+from insight_core.utils.post_fields import hnrss_counts, link_post_target, post_title, reading_text, title_columns
 
 
 # A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
@@ -176,10 +176,11 @@ class PostDetailService:
         if not url:
             return None
         address = normalize_url(url)
-        cur.execute("SELECT id, title, content FROM posts WHERE normalized_url = %s ORDER BY fetched_at, id LIMIT 1", (address,))
+        cur.execute(f"SELECT p.id, {title_columns()} FROM posts p WHERE p.normalized_url = %s ORDER BY p.fetched_at, p.id LIMIT 1",
+                    (address,))
         stored = cur.fetchone()
         origin = (story or {}).get("origin") or {}
-        title = display_title(stored[1], stored[2]) if stored else origin.get("title") if origin.get("url") == address else None
+        title = post_title(*stored[1:]) if stored else origin.get("title") if origin.get("url") == address else None
         return {"url": url, "title": title or None, "post_id": str(stored[0]) if stored else None}
 
     @staticmethod

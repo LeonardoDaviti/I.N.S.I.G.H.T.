@@ -15,7 +15,8 @@ from psycopg import Cursor
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory
-from insight_core.utils.post_fields import quote_only
+from insight_core.utils.post_fields import quote_only, title_columns
+from insight_core.utils.url_normalization import normalize_url
 
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
@@ -188,6 +189,20 @@ class NewsRepository:
             out.append(item)
         return out
 
+    @staticmethod
+    def lines(posts: Sequence[Dict[str, Any]], lead_id: str) -> List[Dict[str, Any]]:
+        """A News story's lines under its row, as News and search's News filter show them (issue 0072 D1):
+        its posts (news_posts' items) but the lead, each its feed row's title. A post that only quotes a
+        post of the story is no line (issue 0072): it was read there."""
+        addresses = {normalize_url(p["url"]) for p in posts} - {None}
+        return [{
+            "id": p["id"], "title": p["title"], "url": p["url"], "source_id": p["source_id"],
+            "source_display_name": p["source_display_name"], "platform": p["platform"],
+            "sort_at": p["sort_at"], "published_at": p["published_at"], "read_at": p["read_at"],
+            "role": p["role"], "repost": p["repost"],   # issue 0070: its line names the author
+            "reposted_by": (p["repost"] or {}).get("by") or None,   # issue 0068
+        } for p in posts if p["id"] != lead_id and p["_quotes"] not in addresses]
+
     # ---- reading Classics -------------------------------------------------------------
 
     @staticmethod
@@ -198,9 +213,9 @@ class NewsRepository:
         cur.execute(
             f"""
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
-                   t.id, t.title, left(t.content, 400), r.read_at, r.later_at
+                   t.id, {title_columns("t")}, r.read_at, r.later_at
             FROM classics c
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             WHERE NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
@@ -212,13 +227,13 @@ class NewsRepository:
             params,
         )
         out: Dict[str, Dict[str, Any]] = {}
-        for url, voices, first_at, last_at, title, citers, post_id, post_title, content, read_at, later_at in cur.fetchall():
+        for url, voices, first_at, last_at, title, citers, post_id, post_title, content, html, read_at, later_at in cur.fetchall():
             if url in out:
                 continue
             out[url] = {"url": url, "voices": int(voices), "first_at": first_at, "last_at": last_at,
                         "days": (last_at - first_at).days, "title": title, "citers": citers,
                         "post_id": str(post_id) if post_id else None, "post_title": post_title, "content": content,
-                        "read_at": read_at, "later_at": later_at}
+                        "html": html, "read_at": read_at, "later_at": later_at}
         return list(out.values())
 
     @staticmethod
@@ -229,11 +244,11 @@ class NewsRepository:
     def background(cur: Cursor, post_id: str) -> List[Dict[str, Any]]:
         """The classics a post links, at most BACKGROUND_SHOWN, most cited first."""
         cur.execute(
-            """
-            SELECT c.target_url, c.voices, c.title, t.id, t.title, left(t.content, 400)
+            f"""
+            SELECT c.target_url, c.voices, c.title, t.id, {title_columns("t")}
             FROM post_links pl
             JOIN classics c ON c.target_url = pl.target_url
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE pl.post_id = %s AND NOT pl.boilerplate AND t.id IS DISTINCT FROM pl.post_id
               AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
@@ -243,7 +258,7 @@ class NewsRepository:
             (post_id, BACKGROUND_SHOWN),
         )
         return [{"url": r[0], "voices": int(r[1]), "title": r[2], "post_id": str(r[3]) if r[3] else None,
-                 "post_title": r[4], "content": r[5]} for r in cur.fetchall()]
+                 "post_title": r[4], "content": r[5], "html": r[6]} for r in cur.fetchall()]
 
     @staticmethod
     def classic_urls(cur: Cursor) -> List[str]:

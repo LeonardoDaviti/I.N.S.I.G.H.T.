@@ -290,6 +290,10 @@ class XJobTests(unittest.TestCase):
         item = {"id": only}
         ReaderRepository.attach_stories(self.cur, [item])
         self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
+        both = [{"id": root}, {"id": only}]   # one page holding both (issue 0072 D1: this raised KeyError)
+        ReaderRepository.attach_stories(self.cur, both)
+        self.assertEqual([p["id"] for p in both[0]["story"]["posts"]], [after])
+        self.assertEqual(both[1]["story"]["parent_id"], root)
 
     def test_a_thread_of_only_quotes_of_its_first_tweet_is_no_story(self):
         user = f"ann{self.mark}"

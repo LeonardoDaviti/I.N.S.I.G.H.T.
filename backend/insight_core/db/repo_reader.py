@@ -42,7 +42,7 @@ from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
-from insight_core.utils.post_fields import REPLY_TO_RE, display_title, hnrss_counts, quote_only, reading_text
+from insight_core.utils.post_fields import TITLE_HTML_CHARS, TITLE_TEXT_CHARS, hnrss_counts, post_title, quote_only, reading_text, title_columns
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -54,7 +54,6 @@ MAX_FEED_LIMIT = 100
 MAX_FEED_GROUPS = 50
 DEFAULT_UNREAD_WINDOW_DAYS: Optional[int] = None   # no window: unread is all-time
 EXCERPT_CHARS = 280
-TITLE_HTML_CHARS = 2000   # the HTML's start, where a title taken from the text ends (issue 0070)
 CHARS_PER_READING_MINUTE = 1100  # about 200 words a minute
 
 SORT_KEY = "COALESCE(p.surfaced_at, p.published_at, p.fetched_at)"
@@ -271,7 +270,7 @@ def repost_of(platform: str | None, handle: str | None, author: str | None,
 
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
 _ITEM_COLUMNS = f"""
-    p.id, p.title, left(p.content, 4000), p.url, p.source_id,
+    p.id, p.title, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
@@ -432,7 +431,7 @@ class ReaderRepository:
             return
         cur.execute(
             f"""
-            SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, 4000), p.url, p.source_id,
+            SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
                    p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS}),
@@ -482,7 +481,7 @@ class ReaderRepository:
             if str(post_id) != str(lead):
                 thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
-                    "id": str(post_id), "title": display_title(REPLY_TO_RE.sub("", title or "") if thread else title, content, html),
+                    "id": str(post_id), "title": post_title(title, content, html),
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
@@ -491,7 +490,7 @@ class ReaderRepository:
             else:
                 story.update(parent)
         for lead, story in list(stories.items()):
-            if ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead]}) \
+            if ReaderRepository._without_quotes_of_itself(story, {i for i, q in quoting.items() if q in addresses[lead] and i != lead}) \
                     and story["voices"] < 2:
                 del stories[lead]   # nothing left but the post it quotes: no story (issue 0072)
                 continue
@@ -515,7 +514,7 @@ class ReaderRepository:
         cur.execute(
             f"""
             SELECT * FROM (
-                SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, p.title, left(p.content, 400),
+                SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, {title_columns()},
                        COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.source_id,
                        {SORT_KEY} AS at
                 FROM story_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
@@ -535,9 +534,9 @@ class ReaderRepository:
             ([story["id"] for story in stories.values()],),
         )
         roundups: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
-        for story_id, post_id, title, content, name, source_id, _ in cur.fetchall():
+        for story_id, post_id, title, content, html, name, source_id, _ in cur.fetchall():
             roundups.setdefault(str(story_id), []).append(
-                (str(source_id), {"id": str(post_id), "title": display_title(title, content), "source_display_name": name}))
+                (str(source_id), {"id": str(post_id), "title": post_title(title, content, html), "source_display_name": name}))
         for story in stories.values():
             voices = {source["id"] for source in story["sources"]}
             story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]

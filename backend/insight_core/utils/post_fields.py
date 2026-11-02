@@ -370,15 +370,39 @@ def body_without_feed_lines(body: str | None) -> str | None:
     return _REDDIT_FOOTER_RE.sub("", body).strip() if _REDDIT_FOOTER_RE.search(body) else body
 
 
+# A title is read from the text's and the HTML's start (issue 0070): every place reads the same start,
+# so a post reads one title everywhere (issue 0072 D1). Neither is measured.
+TITLE_TEXT_CHARS = 4000
+TITLE_HTML_CHARS = 2000
+
+
+def title_columns(p: str = "p") -> str:
+    """The columns post_title reads, in its order, of the posts table aliased `p`."""
+    return f"{p}.title, left({p}.content, {TITLE_TEXT_CHARS}), left({p}.content_html, {TITLE_HTML_CHARS})"
+
+
+def _reading_parts(content: str | None, html: str | None) -> Tuple[str | None, str | None]:
+    """A body's text and HTML as the reader reads them: a feed's own lines and a quote card's marks out,
+    a picture's leading address no text (issue 0072)."""
+    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
+    return (_LEADING_PICTURE_RE.sub("", content) if content else content), html
+
+
+def post_title(title: str | None, content: str | None, html: str | None = None) -> str:
+    """The title of a stored post, the one every place shows it by (issue 0072 D1: the feed, a tree's
+    lines, News, search, Classics, Discover, roundup names, a link's title, the post page). It reads
+    the text's and the HTML's start only (title_columns), so the whole body or its start give one title."""
+    return display_title(title, *_reading_parts(content and content[:TITLE_TEXT_CHARS], html and html[:TITLE_HTML_CHARS]))
+
+
 def reading_text(title: str | None, content: str | None, html: str | None = None
                  ) -> Tuple[str, str | None, str | None]:
-    """(the title the reader shows, the text and the HTML under it): a feed's own lines out (hnrss),
-    and the title out of the body's start when it was taken from it (issue 0070). Where the stored
-    text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
-    ended: `html` may be only the HTML's start."""
-    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
-    content = _LEADING_PICTURE_RE.sub("", content) if content else content   # a picture's address is no text (0072)
-    shown = display_title(title, content, html)
+    """(the title the reader shows, post_title; the text and the HTML under it): a feed's own lines
+    out (hnrss), and the title out of the body's start when it was taken from it (issue 0070). Where
+    the stored text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first
+    line ended."""
+    shown = post_title(title, content, html)
+    content, html = _reading_parts(content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after
 
