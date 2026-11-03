@@ -73,8 +73,11 @@ describe('FeedList', () => {
     });
     const [fresh, oldOne] = await screen.findAllByRole('article');
     const clock = (date: Date) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
-    expect(within(fresh).getByText(clock(new Date(iso(2))))).toBeInTheDocument();
-    expect(within(oldOne).getByText(clock(old))).toBeInTheDocument();
+    // The time column, and below `sm` the meta line, which takes the column's place (issue 0073).
+    const [column, meta] = within(fresh).getAllByText(clock(new Date(iso(2))));
+    expect(column).toHaveClass('max-sm:hidden');
+    expect(meta).toHaveClass('sm:hidden');
+    expect(within(oldOne).getAllByText(clock(old))).toHaveLength(2);
     const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     expect(within(oldOne).queryByText(shortDate)).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+[hd] ago/)).not.toBeInTheDocument();
@@ -122,6 +125,28 @@ describe('FeedList', () => {
     expect(within(started).getByText('40% read')).toHaveClass('sr-only');
     expect(barely.querySelector('[data-reading-progress]')).toBeNull();
     expect(untouched.querySelector('[data-reading-progress]')).toBeNull();
+  });
+
+  it('on a phone the title takes the row: the time joins the meta line, counts, a reading bar and a note take lines of their own (issue 0073)', async () => {
+    const now = new Date();
+    setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
+      feedItem({ id: ID(1), title: 'Anthropic S-1', source_display_name: 'Hacker News', counts: { points: 1675, comments: 1628 },
+        reading_minutes: 4, resume_block: 16, resume_blocks: 40, sort_at: now.toISOString(), published_at: '2025-09-14T00:00:00Z' }),
+      feedItem({ id: ID(2), title: 'Plain post', reading_minutes: 2 }),
+    ])) });
+    const [hn, plain] = await screen.findAllByRole('article');
+    // Below `sm` the row is a grid: the title across it, the actions beside the meta and excerpt lines.
+    expect(hn).toHaveClass('max-sm:grid');
+    expect(hn.querySelector('h3')).toHaveClass('max-sm:col-span-full');
+    expect(within(hn).getByRole('button', { name: 'Mark read' }).parentElement).toHaveClass('max-sm:col-start-2', 'max-sm:row-span-2');
+    const lines = (row: HTMLElement) => Array.from(row.querySelector('h3 + p')!.children)
+      .filter((child) => !child.classList.contains('sr-only')).map((line) => line.textContent);
+    // Source · time · length; then the counts with the length and its bar; then the note. A line never starts on a dot.
+    expect(lines(hn)).toEqual([expect.stringMatching(/^Hacker News·Today, \d\d:\d\d$/), '·1,675 points · 1,628 comments·4 min read·40% read', '·published Sep 14 ’25']);
+    const dots = hn.querySelectorAll('h3 + p [aria-hidden="true"]');
+    expect(Array.from(dots).filter((dot) => dot.textContent === '·').map((dot) => dot.classList.contains('max-sm:hidden')))
+      .toEqual([false, true, false, false, true]);
+    expect(lines(plain)).toEqual([expect.stringMatching(/·[^·]*\d\d:\d\d·2 min read$/)]);
   });
 
   it('a changed page says what changed, a page new to you when it was published (issue 0039)', async () => {
@@ -462,7 +487,10 @@ describe('FeedList', () => {
     expect(within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[1]}`))
       .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
     const [, repost] = screen.getAllByRole('article');
-    expect(repost).toHaveTextContent('steipete↻ from @badlogicgames·');   // the source once (issue 0070)
+    // The source once (issue 0070), the repost's line beside it from `sm` up, under it on a phone (issue 0073).
+    expect(repost.textContent?.match(/steipete/g)).toHaveLength(1);
+    expect(within(repost).getByText('↻ from @badlogicgames')).toHaveClass('sm:order-1');
+    expect(within(repost).getByText('4 min read')).toHaveClass('sm:order-2');
   });
   it('a story names the roundups that mention it, who reposted a tweet, and on a phone a deep line its parent (issue 0068)', async () => {
     const user = userEvent.setup();
