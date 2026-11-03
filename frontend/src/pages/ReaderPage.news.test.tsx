@@ -88,16 +88,16 @@ describe('News (issue 0051)', () => {
     expect(screen.queryByText('4 unread')).not.toBeInTheDocument();
   });
 
-  it('an empty week says what fills it', async () => {
+  it('an empty News says what fills it', async () => {
     render(base({ getNews: vi.fn().mockResolvedValue(feedPage([])) }), '/?view=news');
-    expect(await screen.findByText('No news this week')).toBeInTheDocument();
+    expect(await screen.findByText('No News yet')).toBeInTheDocument();
     expect(screen.getByText('A story shows here when 2 or more of your sources cover it within days.')).toBeInTheDocument();
   });
 
   it('a track opens its own News', async () => {
     const getNews = vi.fn().mockResolvedValue(feedPage([]));
     render(base({ getNews }), `/read/folder/${FOLDER}?view=news`);
-    await screen.findByText('No news this week');
+    await screen.findByText('No News yet');
     expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: `folder:${FOLDER}` }));
   });
 
@@ -130,6 +130,18 @@ describe('News (issue 0051)', () => {
 
 describe('News and Classics on a source page (issue 0077)', () => {
   const SOURCE = '00000000-0000-4000-8000-0000000000a1';
+
+  it('View on a source offers Stream / News / Classics, with no Posts choice', async () => {
+    const user = userEvent.setup();
+    const getNews = vi.fn().mockResolvedValue(feedPage([]));
+    render(base({ getNews }), `/read/source/${SOURCE}`);
+    const view = await screen.findByRole('radiogroup', { name: 'View' });
+    expect(within(view).getAllByRole('radio').map((radio) => radio.textContent)).toEqual(['Stream', 'News', 'Classics']);
+    expect(screen.queryByRole('radiogroup', { name: 'Posts' })).not.toBeInTheDocument();
+    await user.click(within(view).getByRole('radio', { name: 'News' }));
+    expect(await screen.findByText('No News from this source yet')).toBeInTheDocument();
+    expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` }));
+  });
 
   it('a source opens its own News, each row saying its part when the API sends it', async () => {
     const getNews = vi.fn().mockResolvedValue(feedPage([

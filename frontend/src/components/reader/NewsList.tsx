@@ -65,7 +65,7 @@ export default function NewsList({ scope, helpOpen, onHelpOpenChange, onUnreadDe
       view="stream"
       ranked={RANKED}
       // A source alone is never News: it needs another source on the same story.
-      emptyTitle={oneSource ? 'No News from this source yet' : 'No news this week'}
+      emptyTitle={oneSource ? 'No News from this source yet' : 'No News yet'}
       emptyDescription={oneSource
         ? 'News needs 2+ sources on one story.'
         : 'A story shows here when 2 or more of your sources cover it within days.'}

@@ -18,13 +18,15 @@ const FILTERS: ReadonlyArray<{ value: FeedFilter; label: string }> = [
 ];
 /** A source that watches its pages offers its updates as one more Show choice (issue 0039). */
 const UPDATED = { value: 'updated' as const, label: 'Updated' };
-/** News and Classics are views next to the feed (issue 0051), of the Main feed or a track. */
+/** News and Classics are views next to the feed (issue 0051), of the Main feed, a track or one source (0077). */
 const VIEWS: ReadonlyArray<{ value: ReaderView; label: string }> = [
   { value: 'stream', label: 'Stream' },
   { value: 'by_source', label: 'By source' },
   { value: 'news', label: 'News' },
   { value: 'classics', label: 'Classics' },
 ];
+/** One source has nothing to group by source. */
+const SOURCE_VIEWS = VIEWS.filter((option) => option.value !== 'by_source');
 const FLOWS: ReadonlyArray<{ value: ReadingFlow; label: string }> = [
   { value: 'continuous', label: 'Continuous' },
   { value: 'single', label: 'One at a time' },
@@ -46,7 +48,7 @@ export interface FeedToolbarProps {
   /** Below md the title is the button that opens the drawer of the main feed, tracks and sources. */
   onOpenNav: () => void;
   onOpenHelp: () => void;
-  /** One source's posts: no View (nothing to group by source) and no Posts flow choice. */
+  /** One source's posts: View is Stream / News / Classics (nothing to group by source), and no Posts flow choice. */
   oneSource?: boolean;
   /** The "N new posts" pill, when there are any. */
   pill?: ReactNode;
@@ -62,7 +64,7 @@ export interface FeedToolbarProps {
  * and the shortcut help as a labelled text action (fetching is
  * an ingestion job and lives in Sources), then the filter, view and how
  * the post page flows (stored here, read there) as slash-separated words; one
- * source's posts show neither the view nor the flow choice. The
+ * source's view is Stream / News / Classics (issue 0077), with no flow choice. The
  * theme toggle, the wordmark and the app menu live in the top bar only.
  */
 export default function FeedToolbar({
@@ -83,7 +85,7 @@ export default function FeedToolbar({
     >
       <div className="-ml-1 mt-2 flex flex-wrap items-center gap-x-4 gap-y-0">
         {ranked ? null : <SlashChoice label="Show" value={filter} options={updates ? [...FILTERS, UPDATED] : FILTERS} onChange={onFilterChange} />}
-        {oneSource ? null : <SlashChoice label="View" value={view} options={VIEWS} onChange={onViewChange} />}
+        <SlashChoice label="View" value={view} options={oneSource ? SOURCE_VIEWS : VIEWS} onChange={onViewChange} />
         {oneSource || ranked ? null : <SlashChoice label="Posts" value={flow} options={FLOWS} onChange={setFlow} />}
         {pill ? <div className="ml-auto">{pill}</div> : null}
       </div>
