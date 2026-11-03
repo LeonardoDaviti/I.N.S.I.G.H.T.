@@ -336,8 +336,10 @@ def rules_stamp() -> str:
 def in_own_process(job: Callable[..., Any], *args: Any) -> None:
     """Run `job(*args)` in a fresh process and wait for it (issue 0072 A): what the job read goes
     back to the OS when the process ends. A long-lived process keeps it: glibc and Python reuse
-    freed memory but seldom return it, so the API held 612-949 MB after its first start on the lab
-    (41,637 posts) with ~40 MB of it live, and holds ~47 MB when the start's work runs here.
+    freed memory but seldom return it, so the API held 531-547 MB after its first start on a copy
+    of the lab (41,637 posts; ~45 MB of it live) and 184 MB after a plain restart; with the job
+    here, 45 MB after either. A child costs 0.4-0.9 s to start. One killed (out of memory) is
+    logged; its open transaction is rolled back and its lock freed, so the next run recomputes.
     `job` is a module-level function (the child imports it by name). Never raises."""
     try:
         process = multiprocessing.get_context("spawn").Process(target=job, args=args, name=job.__name__, daemon=True)
