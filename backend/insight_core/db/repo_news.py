@@ -135,15 +135,16 @@ class NewsRepository:
 
     @staticmethod
     def titles_saying(cur: Cursor, words: Sequence[str]) -> List[Dict[str, Any]]:
-        """The titled posts whose title may say one of these words: its plain letters (NFKC), lowercase,
-        hold one, or it has an entity (decoded only in Python). More than say them, never fewer."""
+        """The titled posts whose title may say one of these: a name's words, lowercase, joined by "%"
+        (in this order, anything between). Its plain letters (NFKC), lowercase, hold them, or it has an
+        entity (decoded only in Python). More than say them, never fewer."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
             WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
               AND (lower(normalize(p.title, NFKC)) LIKE ANY(%(like)s) OR p.title LIKE '%%&%%;%%')
             """,
-            {"like": ["%" + LIKE_SPECIAL.sub(r"\\\g<0>", w) + "%" for w in words]},
+            {"like": ["%" + "%".join(LIKE_SPECIAL.sub(r"\\\g<0>", part) for part in w.split("%")) + "%" for w in words]},
         )
         return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
 

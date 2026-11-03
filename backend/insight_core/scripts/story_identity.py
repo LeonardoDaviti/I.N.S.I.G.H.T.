@@ -1,6 +1,7 @@
 """The incremental story job equals a full rebuild (issue 0072 A), checked on a scratch copy.
 
     check(db_url, held=30, batches=3)   -> {"same": bool, "tables": {name: {rows, differing, ...}}, "runs": [...]}
+    same_rows(a, b)                     -> the same, for two databases (URLs or connections) already built
     python -m insight_core.scripts.story_identity [held] [batches] [hours]
 
 It changes the database it is given, so only a copy: it refuses the live and the lab's databases.
@@ -58,6 +59,19 @@ def compare(a: Dict[str, Set[str]], b: Dict[str, Set[str]], shown: int = 5) -> D
     return {name: {"rows": len(b[name]), "differing": len(a[name] ^ b[name]),
                    "only_first": sorted(a[name] - b[name])[:shown], "only_second": sorted(b[name] - a[name])[:shown]}
             for name in TABLES}
+
+
+def same_rows(a: Any, b: Any) -> Dict[str, Any]:
+    """Every table the story job derives, compared row by row between two databases (each a URL or an
+    open connection): {"same", "tables"}. Read only."""
+    def read(db: Any) -> Dict[str, Set[str]]:
+        if isinstance(db, str):
+            with psycopg.connect(db) as conn, conn.cursor() as cur:
+                return snapshot(cur)
+        with db.cursor() as cur:
+            return snapshot(cur)
+    tables = compare(read(a), read(b))
+    return {"same": all(t["differing"] == 0 for t in tables.values()), "tables": tables}
 
 
 def in_process(db_url: str) -> Callable[[str, datetime], Dict[str, Any]]:
