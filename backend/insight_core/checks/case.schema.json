@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A judged case (issue 0075 A)",
+  "description": "The cases themselves hold the owner's data and stay in plan/research/lab/cases.json (private). This file is their shape. The examples name no real source.",
+  "type": "object",
+  "required": ["cases"],
+  "properties": {
+    "about": {"type": "string"},
+    "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}}
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["id", "kind", "now"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {
+          "type": "string",
+          "description": "title, reader_text, full_text, same_story, not_same_story, same_post, thread, tree_edge, continues, label, search, discover, voice, not_new, order, date, reader_link; never checked: layout, deploy, ops, source_doctor, mark_x_target"
+        },
+        "now": {"enum": ["pass", "fail"], "description": "The state on main. A case marked pass that fails makes the runner exit 1."},
+        "since": {"type": "string", "description": "The version that set `now`, e.g. 9.14"},
+        "why": {"type": "string", "description": "One line: why it passes, or what it waits for"},
+        "fixed_by": {"type": "string"},
+        "posts": {"type": "array", "description": "The posts as the judge named them (prose allowed); `expect` names them as refs"},
+        "note": {"type": "string", "description": "The judged prose: what was seen, when, with which numbers"},
+        "expect": {"type": "array", "items": {"$ref": "#/$defs/assertion"}, "description": "Absent: the case is listed as not checked, with `why`"}
+      }
+    },
+    "ref": {
+      "description": "A stored post: its address (url, else normalized address), or a source (handle, address or display name) with words of its title. Several posts at one address: all of them (`first: true` in a stories assertion takes the first seen).",
+      "oneOf": [
+        {"type": "string", "examples": ["https://example.org/2026/01/a-post/"]},
+        {"type": "object", "properties": {"url": {"type": "string"}, "source": {"type": "string"}, "title": {"type": "string"}, "first": {"type": "boolean"}},
+         "examples": [{"source": "example_channel", "title": "words of its title"}, {"url": "https://example.org/a", "source": "Example News"}]}
+      ]
+    },
+    "assertion": {
+      "type": "object",
+      "required": ["on"],
+      "description": "One surface (checks/surfaces.py), a path into its answer (checks/paths.py) and one test: equals, not_equals, contains, not_contains, starts_with, matches, not_matches, at_least, at_most, is_null, has_post, lacks_post, count {of, equals|at_least|at_most}. stories takes together/apart (+ via), or roundup + of (+ is).",
+      "properties": {
+        "on": {"enum": ["post", "row", "feed", "news", "origin", "search", "discover", "classic", "stories"]},
+        "post": {"$ref": "#/$defs/ref"},
+        "origin": {"type": "string"},
+        "url": {"type": "string"},
+        "key": {"type": "string"},
+        "query": {"type": "string"},
+        "filter": {"type": "string"},
+        "days": {"type": "integer"},
+        "order": {"type": "string"},
+        "limit": {"type": "integer"},
+        "scope": {"type": "string"},
+        "path": {"type": "string", "examples": ["title", "story.voices", "story.posts[*].title", "len(story.posts)"]},
+        "together": {"type": "array", "items": {"$ref": "#/$defs/ref"}},
+        "apart": {"type": "array", "items": {"$ref": "#/$defs/ref"}},
+        "via": {"type": "string", "description": "a parent_reason one of the posts hangs by: citation, address, copy, quote, thread, time, none"},
+        "roundup": {"$ref": "#/$defs/ref"},
+        "of": {"$ref": "#/$defs/ref"}
+      },
+      "examples": [
+        {"on": "post", "post": "https://example.org/a", "path": "title", "equals": "A title"},
+        {"on": "row", "post": "https://example.org/a", "path": "story.voices", "at_least": 3},
+        {"on": "news", "post": "https://example.org/a", "path": "story", "has_post": ["https://example.org/b"]},
+        {"on": "stories", "together": ["https://example.org/a", {"source": "example_channel", "title": "words"}], "via": "citation"},
+        {"on": "search", "query": "words", "order": "best", "limit": 5, "path": "items", "has_post": "https://example.org/a"},
+        {"on": "discover", "key": "example.org", "path": "voices", "at_least": 3}
+      ]
+    }
+  }
+}
