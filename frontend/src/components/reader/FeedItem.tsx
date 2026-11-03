@@ -31,6 +31,8 @@ function lengthLabel(item: FeedItemData): string | null {
 const STORY_LINE = 'flex min-w-0 items-baseline gap-x-1.5 max-sm:flex-wrap text-[0.8125rem] leading-5 text-fg-3';
 const INDENT = ['', 'pl-2 sm:pl-4', 'pl-2 sm:pl-8'];
 
+const CHEVRON = 'h-3 w-3 shrink-0 max-sm:mt-1';
+
 /** On a phone, a line at the deepest indent names its parent instead (issue 0068): "↳ Mat Duggan". */
 const Under = ({ name }: { name?: string }) =>
   name ? <span className="max-w-[30%] shrink-0 truncate sm:hidden">↳ {sourceLabel(name)}</span> : null;
@@ -52,10 +54,11 @@ function StoryPosts({ story, label, lead, now }: { story: FeedStory; label: stri
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((value) => !value)}
-        className={`-ml-1 inline-flex max-w-full items-center gap-1 rounded-sm px-1 text-[0.8125rem] leading-5 text-fg-3 hover:text-fg-2 coarse:min-h-[44px] ${FOCUS_RING}`}
+        // On a phone the line may take two lines, so its names show (issue 0073).
+        className={`-ml-1 inline-flex max-w-full items-center gap-1 rounded-sm px-1 text-[0.8125rem] leading-5 text-fg-3 hover:text-fg-2 coarse:min-h-[44px] max-sm:items-start max-sm:py-3 max-sm:text-left ${FOCUS_RING}`}
       >
-        {open ? <ChevronDown aria-hidden="true" className="h-3 w-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0" />}
-        <span className="truncate">{label}</span>
+        {open ? <ChevronDown aria-hidden="true" className={CHEVRON} /> : <ChevronRight aria-hidden="true" className={CHEVRON} />}
+        <span className="truncate max-sm:line-clamp-2 max-sm:whitespace-normal">{label}</span>
       </button>
       {open ? (
         <ul id={listId} data-story-posts className="mt-1 mb-1 flex flex-col gap-1 border-l border-line pl-3">

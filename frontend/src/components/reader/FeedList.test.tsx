@@ -482,7 +482,10 @@ describe('FeedList', () => {
       feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
         repost: { by: [], author: 'badlogicgames' } }),
     ])) });
-    await user.click(await screen.findByRole('button', { name: 'Thread · 3 posts' }));
+    const toggle = await screen.findByRole('button', { name: 'Thread · 3 posts' });
+    // On a phone a story's line may take two lines, so the names show (issue 0073).
+    expect(within(toggle).getByText('Thread · 3 posts')).toHaveClass('truncate', 'max-sm:line-clamp-2', 'max-sm:whitespace-normal');
+    await user.click(toggle);
     const list = document.querySelector('[data-story-posts]') as HTMLElement;
     expect(within(list).getAllByRole('listitem').map((li) => `${li.dataset.depth} ${li.textContent?.split('·')[1]}`))
       .toEqual([expect.stringMatching(/^0 pretty joyless now/), expect.stringMatching(/^0 there will remain/)]);
