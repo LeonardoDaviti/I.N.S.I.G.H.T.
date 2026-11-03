@@ -48,7 +48,10 @@ def _links(ctx) -> Dict[str, Any]:
         cur.execute("SELECT id::text, url FROM posts WHERE id = ANY(%s::uuid[])", ([i["id"] for i in items],))
         urls = dict(cur.fetchall())
         for item in items:
-            link = PostDetailService.link(cur, facts[item["id"]]["link"], item.get("story"), urls.get(item["id"]))
+            try:
+                link = PostDetailService.link(cur, facts[item["id"]]["link"], item.get("story"), urls.get(item["id"]))
+            except TypeError:   # before 0072 D4 the post's own address wasn't asked
+                link = PostDetailService.link(cur, facts[item["id"]]["link"], item.get("story"))
             out[item["id"]] = plain(link)
     return out
 
