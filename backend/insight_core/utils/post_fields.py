@@ -199,7 +199,8 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
         blank = not clean_text(raw)
     lines = [words for raw in raws if (words := _words(raw, placeholder))]
     if glued or not lines:
-        return _cut(_without_address(glued or clean_text(stored)), False)
+        whole = clean_text(stored)
+        return _titled(glued or whole, [], False, [whole[len(glued):]] if glued and whole.startswith(glued) else [])
     if raws[0] != lines[0] and _MARK_RE.match(lines[0]) and re.fullmatch(_ADDRESS, raws[0]):
         return _cut(_bare(raws[0]), False)   # a link, then a list of what it is
     line = lines[0] = _MARK_RE.sub("", lines[0])
@@ -209,7 +210,25 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
         line = _run_on(lines, after_blank)
     elif run_on:
         line = " ".join(lines)
-    return _cut(_without_address(line), run_on)
+    after = raws[next(i for i, raw in enumerate(raws) if _words(raw, placeholder)) + 1:]
+    # A tweet's words after its quote card's byline are the quoted tweet's (without_quote_marks).
+    quoted = [w for raw in (content or "").splitlines()[1:] if (w := clean_text(raw))] if _QUOTE_CARD_RE.search(html or "") else []
+    return _titled(line, after, run_on, quoted)
+
+
+def _titled(line: str, rest: List[str], run_on: bool, words_after: List[str]) -> str:
+    """A line as a title (_without_address, _cut). Issue 0072 D2: a short line that leads to an address on
+    the next one (`rest`: "Прочёл:", then the address) reads it, bare, when both fit. A title left an
+    address alone (a label and its address, an address alone) reads `words_after`, the words its own text
+    has after that address: a glued title's sentence after the address it opens on, the words of the
+    tweet it quotes."""
+    title = _without_address(line)
+    joined = f"{title} {_bare(rest[0].split()[0])}" if rest and _TRAILING_ADDRESS_RE.fullmatch(rest[0]) else ""
+    if len(title) < TITLE_MIN_SENTENCE_CHARS and _LEADS_RE.search(title) and not run_on and 0 < len(joined) <= TITLE_MAX_CHARS:
+        return joined
+    if _TRAILING_ADDRESS_RE.fullmatch(title):
+        title = next((_without_address(w.lstrip(". ")) for w in words_after if _words(w)), title)
+    return _cut(title, run_on)
 
 
 def _run_on(lines: List[str], after_blank: set) -> str:
@@ -230,9 +249,14 @@ def _run_on(lines: List[str], after_blank: set) -> str:
 
 # A label and its colon, one to three words (issue 0072: "paper:", "Download:", "📝 Blog:"), alone or
 # before an address: it says what the address is, never what the post is.
-_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2}:"
+_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2} ?:"   # "tweet :" too (issue 0072 D2)
 _LABEL_LINE_RE = re.compile(rf"{_LABEL}(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{{2,}}/\S*))*\s*")
 _TRAILING_ADDRESS_RE = re.compile(r"(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{2,}/\S*))+\s*$")
+# Words a sentence doesn't end on, that lead to what follows (issue 0072 D2: "…are now on", "…done by",
+# "Moved to", "Quoting"): English and Russian prepositions, "here", a colon or an arrow. The address after
+# them is the sentence's object.
+_LEADS_RE = re.compile(r"(?:(?:^|\s)(?i:on|at|by|to|in|from|of|for|with|via|into|onto|about|see|here|quoting|"
+                       r"в|во|на|по|из|от|к|ко|у|с|со|о|об|для|про|через|тут|здесь)|:|->|→|—|-)$")
 
 
 def _bare(address: str) -> str:
@@ -244,17 +268,18 @@ def _without_address(line: str) -> str:
     """A title without the address it ends in, nor a label that address leaves alone (issue 0072:
     "Вышла новая модель https://…" is "Вышла новая модель"); after a finished sentence, the words that
     only led to it go too ("Thanks! Details are at"), and words that point at it (":", "->") keep it,
-    bare. A title left without words is the address, bare."""
+    bare. A title left without words is the address, bare. Issue 0072 D2: an address the words lead to
+    (_LEADS_RE: "…are now on", "Moved to", "Quoting") is the sentence's object: it stays, bare."""
     address = _TRAILING_ADDRESS_RE.search(line)
     if not address:
         return line
     words, bare = line[:address.start()].rstrip(" ([{«\"'"), _bare(address.group(0).split()[0])
     if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
         return bare
-    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: tool.test")
-        return f"{words} {bare}"
     ends = [m.end() for m in SENTENCE_END_RE.finditer(words, TITLE_MIN_SENTENCE_CHARS - 1)]
-    return words[:ends[-1]] if ends and ends[-1] < len(words) else words
+    if ends and ends[-1] < len(words) and not re.search(r"(?::|->|→|—|-)$", words):
+        return words[:ends[-1]]   # "Thanks! Details are at" is "Thanks!"; "website: tool.test" points at it
+    return f"{words} {bare}" if _LEADS_RE.search(words) else words
 
 
 def _cut(line: str, run_on: bool) -> str:

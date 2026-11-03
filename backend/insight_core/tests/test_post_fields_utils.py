@@ -6,7 +6,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_post_target, quote_only,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_post_target, post_title, quote_only,
     reading_text,
 )
 from insight_core.utils.language_detection import detect_language
@@ -305,6 +305,35 @@ class TitleAddressTests(unittest.TestCase):
         wrapped = "A Small Study\nOf Long Titles: \nWhy Feeds Wrap Them Across Lines"
         self.assertEqual(display_title(wrapped, ""), "A Small Study Of Long Titles: Why Feeds Wrap Them Across Lines",
                          "a title wrapped in lines reads as one")
+
+    def test_an_address_the_sentence_leads_to_stays_bare(self):
+        # Issue 0072 D2: a preposition, "Quoting" or a colon leads to the address: it is the sentence's object.
+        for title, shown in [("Quoting https://site.test/security.txt", "Quoting site.test/security.txt"),
+                             ("Moved to https://code.test/org/skills", "Moved to code.test/org/skills"),
+                             ("Transcripts are all done by https://tool.test", "Transcripts are all done by tool.test"),
+                             ("Новые модели теперь на https://hub.test/org", "Новые модели теперь на hub.test/org"),
+                             ("Highlighting the new backend in engine.cpp/core", "Highlighting the new backend in engine.cpp/core")]:
+            self.assertEqual(display_title(title, ""), shown)
+        html = '<br/>Прочёл:<br><a href="https://lab.test/news/x/">https://lab.test/news/x/</a><br><br>Увидел:<br><blockquote>A quote.</blockquote>'
+        self.assertEqual(display_title("Прочёл:https://lab.test/news/x/Увидел:A quote. [...]",
+                                       "Прочёл: https://lab.test/news/x/ Увидел: A quote.", html), "Прочёл: lab.test/news/x",
+                         "a short line that leads to the address on the next line reads it")
+
+    def test_a_label_with_a_space_before_its_colon_is_a_label(self):
+        self.assertEqual(display_title("tweet : https://x.com/lab/status/1?s=20", ""), "x.com/lab/status/1?s=20")
+
+    def test_a_title_left_an_address_reads_the_words_after_it(self):
+        self.assertEqual(display_title("https://papers.test/abs/1We put out our third paper.",
+                                       "https://papers.test/abs/1 We put out our third paper. More soon."),
+                         "We put out our third paper.", "the bridge glued the post's sentence to the address it opens on")
+        card = ('<p>Box: <a href="https://nitter.net/lab/status/2?s=20">nitter.net/lab/status/2…</a></p>\n<hr/>\n<blockquote>\n'
+                '<b>Lab (@lab)</b>\n<p>\n<p>We ran evals on the new model.<br>\nIt is faster.</p>\n</p>\n<footer>\n— <cite>'
+                '<a href="https://nitter.local/lab/status/2#m">https://nitter.local/lab/status/2#m</a>\n</footer>\n</blockquote>')
+        text = "Box: nitter.net/lab/status/2… Lab (@lab) We ran evals on the new model. It is faster. — https://nitter.local/lab/status/2#m"
+        self.assertEqual(post_title("R to @ann: Box: https://x.com/lab/status/2?s=20", text, card), "We ran evals on the new model. It is faster.",
+                         "a label and the tweet it quotes: the quoted words")
+        self.assertEqual(display_title("paper: https://papers.test/abs/2", "paper: papers.test/abs/2"), "papers.test/abs/2",
+                         "nothing after it: the address, bare")
 
 
 class QuoteCardTests(unittest.TestCase):
