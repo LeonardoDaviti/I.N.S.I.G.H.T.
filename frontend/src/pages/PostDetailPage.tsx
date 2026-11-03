@@ -106,7 +106,7 @@ function CoveredBy({ story, post, postId }: { story: FeedStory; post: Post; post
   return (
     <section data-covered-by aria-label="Covered by" className="mt-8 text-[0.8125rem] leading-5 text-fg-3">
       <p>
-        {story.thread ? coveredBy(story) : `Covered by ${story.voices}`}
+        {story.thread || story.voices < 2 ? coveredBy(story, post.source_id) : `Covered by ${story.voices}`}
         {story.first === postId ? ' · this post was first' : null}
       </p>
       <ul className="mt-1 flex flex-col gap-1 border-l border-line pl-3">
@@ -776,9 +776,12 @@ interface PostArticleProps {
  * open and reading time). Keyed by the post id, so nothing of another post
  * carries over.
  */
-/** "Read on example.com", or "Read “<the page's title>” on example.com" when it says more than the post's title (issue 0072). */
-function readOnLabel(link: { url: string; title: string | null }, shown: string): string {
+/** "Read on example.com", or "Read “<the page's title>” on example.com" when it says more than the post's title (issue 0072);
+ *  "Open the picture" and "Watch on reddit.com" for a link post's picture and video (issue 0072 D4). */
+function readOnLabel(link: { url: string; title: string | null; kind?: string }, shown: string): string {
   const site = publicationOf(link.url) || link.url;
+  if (link.kind === 'picture') return 'Open the picture';
+  if (link.kind === 'video') return `Watch on ${site}`;
   return link.title && link.title !== shown ? `Read “${link.title}” on ${site}` : `Read on ${site}`;
 }
 

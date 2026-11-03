@@ -10,8 +10,10 @@ from __future__ import annotations
 import sys
 import unittest
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -290,6 +292,31 @@ class XJobTests(unittest.TestCase):
         item = {"id": only}
         ReaderRepository.attach_stories(self.cur, [item])
         self.assertEqual(item["story"]["parent_id"], root, "opened at itself, the post still has its place")
+        both = [{"id": root}, {"id": only}]   # one page holding both (issue 0072 D1: this raised KeyError)
+        ReaderRepository.attach_stories(self.cur, both)
+        self.assertEqual([p["id"] for p in both[0]["story"]["posts"]], [after])
+        self.assertEqual(both[1]["story"]["parent_id"], root)
+
+    def test_a_thread_posts_quote_of_its_first_tweet_is_no_card_on_its_page(self):
+        # Issue 0072 D4: the opened reply's card repeats the thread's first tweet, which the thread lists below.
+        user = f"ann{self.mark}"
+        source = self._x(user)
+        self._save(source, user, ID, "Model Z benchmarks are out")
+        card = (f'<p>Benchmarks</p>\n<p><a href="https://nitter.net/{user}/status/{ID}?s=20">nitter.net/{user}/status…</a></p>\n<hr/>\n'
+                f'<blockquote>\n<b>Ann Lee (@{user})</b>\n<p>Model Z benchmarks are out</p>\n<footer>\n— <cite>'
+                f'<a href="https://nitter.local/{user}/status/{ID}#m">https://nitter.local/{user}/status/{ID}#m</a>\n</footer>\n</blockquote>')
+        reply = self._save(source, user, ID + 1, f"R to @{user}: Benchmarks", minutes=5, html=card)
+        self._regroup()
+
+        @contextmanager
+        def here(_url):
+            yield self.conn
+        with mock.patch("insight_core.services.post_detail_service.db.connection", here):
+            post = PostDetailService(db_url()).get_post_by_id(reply)
+        self.assertTrue(post["story"]["thread"])
+        self.assertNotIn("<blockquote>", post["content_html"] or "")
+        self.assertEqual(post["title"], "Benchmarks")
+        self.assertEqual(post["content"], "Benchmarks", "its text without the quoted words: the page reads its title once")
 
     def test_a_thread_of_only_quotes_of_its_first_tweet_is_no_story(self):
         user = f"ann{self.mark}"

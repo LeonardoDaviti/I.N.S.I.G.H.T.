@@ -98,7 +98,8 @@ class PostPageTests(unittest.TestCase):
         StoriesService(db_url(), clock=lambda: self.now).regroup(self.cur, cutoff=None)
 
     def _story(self, post_id):
-        return PostDetailService.story(self.cur, post_id)
+        self.cur.execute("SELECT source_id::text FROM posts WHERE id = %s", (post_id,))
+        return PostDetailService.story(self.cur, post_id, self.cur.fetchone()[0])
 
     def test_the_lead_carries_the_feed_rows_story(self):
         self._launch()

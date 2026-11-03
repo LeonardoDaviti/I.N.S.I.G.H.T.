@@ -6,6 +6,7 @@ from __future__ import annotations
 import html as html_lib
 import re
 import unicodedata
+import urllib.parse
 from typing import Any, Dict, List, Tuple
 
 from .addresses import tweet_author
@@ -199,7 +200,8 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
         blank = not clean_text(raw)
     lines = [words for raw in raws if (words := _words(raw, placeholder))]
     if glued or not lines:
-        return _cut(_without_address(glued or clean_text(stored)), False)
+        whole = clean_text(stored)
+        return _titled(glued or whole, [], False, [whole[len(glued):]] if glued and whole.startswith(glued) else [])
     if raws[0] != lines[0] and _MARK_RE.match(lines[0]) and re.fullmatch(_ADDRESS, raws[0]):
         return _cut(_bare(raws[0]), False)   # a link, then a list of what it is
     line = lines[0] = _MARK_RE.sub("", lines[0])
@@ -209,7 +211,25 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
         line = _run_on(lines, after_blank)
     elif run_on:
         line = " ".join(lines)
-    return _cut(_without_address(line), run_on)
+    after = raws[next(i for i, raw in enumerate(raws) if _words(raw, placeholder)) + 1:]
+    # A tweet's words after its quote card's byline are the quoted tweet's (without_quote_marks).
+    quoted = [w for raw in (content or "").splitlines()[1:] if (w := clean_text(raw))] if _QUOTE_CARD_RE.search(html or "") else []
+    return _titled(line, after, run_on, quoted)
+
+
+def _titled(line: str, rest: List[str], run_on: bool, words_after: List[str]) -> str:
+    """A line as a title (_without_address, _cut). Issue 0072 D2: a short line that leads to an address on
+    the next one (`rest`: "Прочёл:", then the address) reads it, bare, when both fit. A title left an
+    address alone (a label and its address, an address alone) reads `words_after`, the words its own text
+    has after that address: a glued title's sentence after the address it opens on, the words of the
+    tweet it quotes."""
+    title = _without_address(line)
+    joined = f"{title} {_bare(rest[0].split()[0])}" if rest and _TRAILING_ADDRESS_RE.fullmatch(rest[0]) else ""
+    if len(title) < TITLE_MIN_SENTENCE_CHARS and _LEADS_RE.search(title) and not run_on and 0 < len(joined) <= TITLE_MAX_CHARS:
+        return joined
+    if _TRAILING_ADDRESS_RE.fullmatch(title):
+        title = next((_without_address(w.lstrip(". ")) for w in words_after if _words(w)), title)
+    return _cut(title, run_on)
 
 
 def _run_on(lines: List[str], after_blank: set) -> str:
@@ -230,9 +250,14 @@ def _run_on(lines: List[str], after_blank: set) -> str:
 
 # A label and its colon, one to three words (issue 0072: "paper:", "Download:", "📝 Blog:"), alone or
 # before an address: it says what the address is, never what the post is.
-_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2}:"
+_LABEL = r"\W*[^\W\d_][\w-]*(?: [\w-]+){0,2} ?:"   # "tweet :" too (issue 0072 D2)
 _LABEL_LINE_RE = re.compile(rf"{_LABEL}(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{{2,}}/\S*))*\s*")
 _TRAILING_ADDRESS_RE = re.compile(r"(?:\s*(?:https?://\S+|(?:[\w-]+\.)+[a-zA-Z]{2,}/\S*))+\s*$")
+# Words a sentence doesn't end on, that lead to what follows (issue 0072 D2: "…are now on", "…done by",
+# "Moved to", "Quoting"): English and Russian prepositions, "here", a colon or an arrow. The address after
+# them is the sentence's object.
+_LEADS_RE = re.compile(r"(?:(?:^|\s)(?i:on|at|by|to|in|from|of|for|with|via|into|onto|about|see|here|quoting|"
+                       r"в|во|на|по|из|от|к|ко|у|с|со|о|об|для|про|через|тут|здесь)|:|->|→|—|-)$")
 
 
 def _bare(address: str) -> str:
@@ -244,17 +269,18 @@ def _without_address(line: str) -> str:
     """A title without the address it ends in, nor a label that address leaves alone (issue 0072:
     "Вышла новая модель https://…" is "Вышла новая модель"); after a finished sentence, the words that
     only led to it go too ("Thanks! Details are at"), and words that point at it (":", "->") keep it,
-    bare. A title left without words is the address, bare."""
+    bare. A title left without words is the address, bare. Issue 0072 D2: an address the words lead to
+    (_LEADS_RE: "…are now on", "Moved to", "Quoting") is the sentence's object: it stays, bare."""
     address = _TRAILING_ADDRESS_RE.search(line)
     if not address:
         return line
     words, bare = line[:address.start()].rstrip(" ([{«\"'"), _bare(address.group(0).split()[0])
     if not _WORD_RE.search(words) or _LABEL_LINE_RE.fullmatch(words):
         return bare
-    if re.search(r"(?::|->|→|—|-)$", words):   # the words point at it ("official website: tool.test")
-        return f"{words} {bare}"
     ends = [m.end() for m in SENTENCE_END_RE.finditer(words, TITLE_MIN_SENTENCE_CHARS - 1)]
-    return words[:ends[-1]] if ends and ends[-1] < len(words) else words
+    if ends and ends[-1] < len(words) and not re.search(r"(?::|->|→|—|-)$", words):
+        return words[:ends[-1]]   # "Thanks! Details are at" is "Thanks!"; "website: tool.test" points at it
+    return f"{words} {bare}" if _LEADS_RE.search(words) else words
 
 
 def _cut(line: str, run_on: bool) -> str:
@@ -344,11 +370,27 @@ _REDDIT_FOOTER_HTML_RE = re.compile(
 _LEADING_PICTURE_RE = re.compile(r"^(?:https?://\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?\s+)+", re.I)
 
 
+# What a link post shares (issue 0072 D4): a picture (an image file's address), a video on Reddit's video
+# host (it plays on the post's thread), else a page.
+_PICTURE_URL_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|avif)(?:[?#]|$)", re.I)
+VIDEO_HOSTS = ("v.redd.it",)
+
+
 def link_post_target(html: str | None) -> str | None:
-    """The page a Reddit link post shares (its footer's `[link]`), when it is not Reddit itself; else None."""
+    """The page a Reddit link post shares (its footer's `[link]`), when it is not a Reddit thread (its own,
+    or a short link to one); Reddit's picture and video hosts count. Else None."""
     match = _REDDIT_FOOTER_HTML_RE.search(html or "")
     url = html_lib.unescape(match.group(1)) if match else ""
-    return url if url.startswith(("http://", "https://")) and "reddit.com" not in url and "redd.it" not in url else None
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    thread = host == "redd.it" or host == "reddit.com" or host.endswith(".reddit.com")
+    return url if url.startswith(("http://", "https://")) and not thread else None
+
+
+def link_kind(url: str) -> str:
+    """"picture", "video" or "page": what a link post's link opens (issue 0072 D4)."""
+    if _PICTURE_URL_RE.search(urllib.parse.urlparse(url).path):
+        return "picture"
+    return "video" if (urllib.parse.urlparse(url).hostname or "").lower() in VIDEO_HOSTS else "page"
 
 
 def hnrss_counts(content: str | None) -> Dict[str, int] | None:
@@ -370,15 +412,39 @@ def body_without_feed_lines(body: str | None) -> str | None:
     return _REDDIT_FOOTER_RE.sub("", body).strip() if _REDDIT_FOOTER_RE.search(body) else body
 
 
+# A title is read from the text's and the HTML's start (issue 0070): every place reads the same start,
+# so a post reads one title everywhere (issue 0072 D1). Neither is measured.
+TITLE_TEXT_CHARS = 4000
+TITLE_HTML_CHARS = 2000
+
+
+def title_columns(p: str = "p") -> str:
+    """The columns post_title reads, in its order, of the posts table aliased `p`."""
+    return f"{p}.title, left({p}.content, {TITLE_TEXT_CHARS}), left({p}.content_html, {TITLE_HTML_CHARS})"
+
+
+def _reading_parts(content: str | None, html: str | None) -> Tuple[str | None, str | None]:
+    """A body's text and HTML as the reader reads them: a feed's own lines and a quote card's marks out,
+    a picture's leading address no text (issue 0072)."""
+    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
+    return (_LEADING_PICTURE_RE.sub("", content) if content else content), html
+
+
+def post_title(title: str | None, content: str | None, html: str | None = None) -> str:
+    """The title of a stored post, the one every place shows it by (issue 0072 D1: the feed, a tree's
+    lines, News, search, Classics, Discover, roundup names, a link's title, the post page). It reads
+    the text's and the HTML's start only (title_columns), so the whole body or its start give one title."""
+    return display_title(title, *_reading_parts(content and content[:TITLE_TEXT_CHARS], html and html[:TITLE_HTML_CHARS]))
+
+
 def reading_text(title: str | None, content: str | None, html: str | None = None
                  ) -> Tuple[str, str | None, str | None]:
-    """(the title the reader shows, the text and the HTML under it): a feed's own lines out (hnrss),
-    and the title out of the body's start when it was taken from it (issue 0070). Where the stored
-    text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first line
-    ended: `html` may be only the HTML's start."""
-    content, html = without_quote_marks(body_without_feed_lines(content), body_without_feed_lines(html))
-    content = _LEADING_PICTURE_RE.sub("", content) if content else content   # a picture's address is no text (0072)
-    shown = display_title(title, content, html)
+    """(the title the reader shows, post_title; the text and the HTML under it): a feed's own lines
+    out (hnrss), and the title out of the body's start when it was taken from it (issue 0070). Where
+    the stored text has lost its line breaks (a tweet's, an RSS body's), its HTML says where the first
+    line ended."""
+    shown = post_title(title, content, html)
+    content, html = _reading_parts(content, html)
     html_after = body_after_title(shown, html, html=True)
     return shown, body_after_title(shown, content, line=html_after != html), html_after
 

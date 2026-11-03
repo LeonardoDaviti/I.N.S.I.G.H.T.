@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from psycopg import Cursor
 
-from insight_core.db.repo_news import _scope_sql as news_scope_sql
+from insight_core.db.repo_news import NewsRepository, _scope_sql as news_scope_sql
 from insight_core.db.repo_reader import (
     _ITEM_COLUMNS, _STORY_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
     _item, _on,
@@ -38,7 +38,7 @@ from insight_core.db.repo_reader import (
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
 from insight_core.utils.classic_rules import cited_again
 from insight_core.utils.news_rules import NEWS_RECENT, lead
-from insight_core.utils.post_fields import display_title
+from insight_core.utils.post_fields import post_title, quote_only, title_columns
 
 SearchFilter = Literal["all", "later", "starred", "news", "classics"]   # starred is Keep ("Kept")
 SearchOrder = Literal["newest", "best"]
@@ -295,30 +295,29 @@ class SearchRepository:
     @staticmethod
     def attach_news(cur: Cursor, items: List[Dict[str, Any]], *, now: datetime) -> None:
         """Give each item its News story, as GET /api/news shapes it: `story` {id, voices, sources
-        (the first report's first, then in the order they covered it), posts: the others, first
-        posted first} and `news` {part, first_at, reports, shares, mentions, score}."""
+        (the first report's first, then in the order they covered it), posts: its lines, built as News
+        builds them (NewsRepository.lines, issue 0072 D1)} and `news` {part, first_at, reports, shares,
+        mentions, score}."""
         if not items:
             return
         cur.execute(
             f"""
-            SELECT np.post_id, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
-                   p.id, p.title, left(p.content, 4000), p.url, p.source_id,
-                   COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
-                   {SORT_KEY}, p.published_at, r.read_at, o.role
+            SELECT {_ITEM_COLUMNS}, np.post_id, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions,
+                   ns.score, o.role
             FROM news_posts np
             JOIN news_stories ns ON ns.id = np.news_id
             JOIN news_posts o ON o.news_id = np.news_id
             JOIN posts p ON p.id = o.post_id
             JOIN sources s ON s.id = p.source_id
-            LEFT JOIN post_reader_state r ON r.post_id = p.id
+            LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             WHERE np.post_id = ANY(%s::uuid[])
             ORDER BY np.post_id, {_STORY_RANK.format(p='p')}
             """,
             ([item["id"] for item in items],),
         )
         stories: Dict[str, Dict[str, Any]] = {}
-        for (shown, news_id, first_at, voices, reports, shares, mentions, score, post_id, title, content, url,
-             source_id, name, platform, sort_at, published_at, read_at, role) in cur.fetchall():
+        for row in cur.fetchall():
+            shown, news_id, first_at, voices, reports, shares, mentions, score, role = row[-9:]
             story = stories.setdefault(str(shown), {
                 "story": {"id": str(news_id), "voices": int(voices), "sources": [], "posts": []},
                 "news": {"part": "recent" if first_at >= now - NEWS_RECENT else "earlier", "first_at": first_at,
@@ -326,11 +325,7 @@ class SearchRepository:
                          "score": float(score)},
                 "all": [],
             })
-            story["all"].append({
-                "id": str(post_id), "title": display_title(title, content), "url": url,
-                "source_id": str(source_id), "source_display_name": name, "platform": platform,
-                "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
-            })
+            story["all"].append({**_item(row[:-9]), "role": role, "_quotes": quote_only(row[21])})
         for item in items:
             found = stories.get(item["id"])
             item["story"], item["news"] = (found["story"], found["news"]) if found else (None, None)
@@ -341,7 +336,7 @@ class SearchRepository:
             for post in sorted(posts, key=lambda p: p["id"] != first_report):   # stable: time order after
                 if not any(s["id"] == post["source_id"] for s in found["story"]["sources"]):
                     found["story"]["sources"].append({"id": post["source_id"], "name": post["source_display_name"]})
-            found["story"]["posts"] = [p for p in posts if p["id"] != item["id"]]
+            found["story"]["posts"] = NewsRepository.lines(posts, item["id"])
 
     def _classics(self, cur: Cursor, query: SearchQuery, *, now: datetime
                   ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
@@ -363,9 +358,9 @@ class SearchRepository:
         cur.execute(
             f"""
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
-                   t.id, t.title, left(t.content, 400), r.read_at, r.later_at
+                   t.id, {title_columns("t")}, r.read_at, r.later_at
             FROM classics c
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             CROSS JOIN LATERAL (SELECT {CLASSIC_VECTOR} AS vector) w
@@ -381,8 +376,8 @@ class SearchRepository:
         )
         rows = cur.fetchall()
         out = []
-        for url, voices, first_at, last_at, title, citers, post_id, post_title, content, read_at, later_at in rows[:query.limit]:
-            shown = display_title(post_title, content) if post_id else title
+        for url, voices, first_at, last_at, title, citers, post_id, stored_title, content, html, read_at, later_at in rows[:query.limit]:
+            shown = post_title(stored_title, content, html) if post_id else title
             out.append({
                 "url": url, "post_id": str(post_id) if post_id else None, "title": shown or None,
                 "voices": int(voices), "days": (last_at - first_at).days, "first_at": first_at, "last_at": last_at,

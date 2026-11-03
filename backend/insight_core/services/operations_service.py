@@ -272,16 +272,18 @@ def _doctor_fields(state: Optional[FetchStateRow]) -> Dict[str, Any]:
     failure streak, or the owner dismissed it, or the old address read again: a temporary
     error, nothing to replace, or the site answered a server error: no move, issue 0072) and the
     replacement it found ({kind: feed|page_watch, url, title, found, prefix, shared, latest};
-    None: nothing found)."""
+    None: nothing found), and `server_error` {status} when it read a server error (issue 0072 D3)."""
     finding = (state.doctor_finding if state else None) or {}
+    # A server error is no move (issue 0072 D3): the sheet says the server is failing, {status} (None: timed out).
+    failing = {"status": finding.get("status")} if state and state.doctor_checked_at and finding.get("server_error") else None
     if (state is None or state.doctor_checked_at is None or finding.get("dismissed")
             or finding.get("working_again") or finding.get("server_error")):
-        return {"doctor_looked_at": None, "replacement": None}
+        return {"doctor_looked_at": None, "replacement": None, "server_error": failing}
     replacement = finding.get("replacement")
     # An offer stored before 0072 was never checked against the source's items: not offered.
     if isinstance(replacement, dict) and "shared" not in replacement:
         replacement = None
-    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement}
+    return {"doctor_looked_at": iso(state.doctor_checked_at), "replacement": replacement, "server_error": None}
 
 
 def _health_sort_key(row: Dict[str, Any]) -> tuple:

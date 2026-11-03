@@ -93,6 +93,10 @@ test('a thread is one item: "Thread · 6 posts", its replies a list in their ord
       sp('t5', 10, 't4', 'thread'), sp('giraffe', 11, 't0', 'quote')],
   };
   assert.equal(coveredBy({ ...thread, posts: thread.posts.slice(0, 5) }), 'Thread · 6 posts');
+  assert.equal(coveredBy({ ...thread, posts: thread.posts.slice(0, 5) }, 'bg'), 'Thread · 6 posts');
+  assert.equal(coveredBy({ ...thread, sources: [{ id: 'bg', name: 'An Author' }], posts: thread.posts.slice(0, 5) }, 'saved'),
+    "An Author's thread · 6 posts",
+    'under a page you saved from it, whose thread it is (issue 0072 D4)');
   assert.deepEqual(lines(storyTree(thread, 't0', at(7))), ['t1', 't2', 't3', 't4', 't5', 'giraffe']);
   const atReply = {
     ...thread, parent_id: 't2', parent_reason: 'thread' as const,

@@ -71,7 +71,7 @@ export interface Post {
   /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
   counts?: Counts | null;
   /** A link post's page (issue 0072): its title when known, and the stored post at it. */
-  link?: { url: string; title: string | null; post_id: string | null } | null;
+  link?: { url: string; title: string | null; post_id: string | null; kind?: 'page' | 'picture' | 'video' } | null;
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }
@@ -556,6 +556,8 @@ export interface SourceHealthRow {
   doctor_looked_at?: string | null;
   /** What it found; null with doctor_looked_at set: nothing. */
   replacement?: SourceReplacement | null;
+  /** The doctor read a server error (issue 0072 D3): not moved, retried; status null when it timed out. */
+  server_error?: { status: number | null } | null;
   /** Source hygiene (issue 0046): its fetches work but nothing new came for 30 days and
    *  more than 3x its usual gap. Never on a broken or disabled source, nor within 90 days of Keep. */
   quiet?: boolean;
