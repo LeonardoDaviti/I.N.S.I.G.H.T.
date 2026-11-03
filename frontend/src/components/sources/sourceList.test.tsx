@@ -234,6 +234,11 @@ describe('the source doctor note (issue 0036)', () => {
     expect(rowFact(healthRow({ ...broken, replacement: null }, now), now)).toBe('Broken: no replacement found');
   });
 
+  it('says a server error is retried, not broken (issue 0072 D3)', () => {
+    const failing = { status: 'backoff' as const, consecutive_failures: 6, doctor_looked_at: null, server_error: { status: 502 } };
+    expect(rowFact(healthRow(failing, now), now)).toBe('Server failing: retrying');
+  });
+
   it('says nothing of the kind before the doctor looked, or for a source that is off', () => {
     expect(brokenNote(healthRow({ status: 'backoff', consecutive_failures: 1 }, now))).toBeNull();
     expect(rowFact(healthRow({ ...broken, replacement: feed, enabled: false }, now), now)).toBe('off');

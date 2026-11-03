@@ -71,6 +71,14 @@ describe('PostDetailPage header', () => {
     expect(await screen.findByRole('link', { name: 'Read “Open weights, today” on models.test' })).toHaveAttribute('href', '/posts/p-9');
   });
 
+  it("a link post's picture opens the picture, its video plays on its page (issue 0072 D4)", async () => {
+    const thread = 'https://www.reddit.com/r/sub/comments/2/the_board_is_set/';
+    render(baseApi(rssPost({ url: thread, content: '', content_html: '', link: { url: 'https://i.pics.test/a.png', title: null, post_id: null, kind: 'picture' } })));
+    expect(await screen.findByRole('link', { name: 'Open the picture ↗' })).toHaveAttribute('href', 'https://i.pics.test/a.png');
+    render(baseApi(rssPost({ url: thread, content: '', content_html: '', link: { url: thread, title: null, post_id: null, kind: 'video' } })));
+    expect(await screen.findByRole('link', { name: 'Watch on reddit.com ↗' })).toHaveAttribute('href', thread);
+  });
+
   it('a post whose HTML field is blank reads its plain text', async () => {
     render(baseApi(rssPost({ content: 'A short summary of the post.', content_html: ' ' })));
     const article = await screen.findByRole('article', { name: 'Post content' });

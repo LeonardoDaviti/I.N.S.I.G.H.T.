@@ -16,10 +16,13 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_reader import ReaderRepository, repost_of
 from insight_core.services.news_service import NewsService
+from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import post_media
 from insight_core.utils.post_links import body_hrefs, quoted_tweet
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import display_title, hnrss_counts, link_post_target, reading_text
+from insight_core.utils.post_fields import (
+    hnrss_counts, link_kind, link_post_target, post_title, quote_only, reading_text, title_columns,
+)
 
 
 # A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
@@ -91,9 +94,9 @@ class PostDetailService:
                 row = cur.fetchone()
                 # The classics this post builds on (issue 0051): at most 2, none without one.
                 background = self.news.background(cur, post_id) if row else []
-                story = self.story(cur, post_id) if row else None
+                story = self.story(cur, post_id, str(row[1])) if row else None
                 internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
-                link = self.link(cur, link_post_target(row[8]), story) if row else None
+                link = self.link(cur, link_post_target(row[8]), story, row[2]) if row else None
 
         if not row:
             return None
@@ -101,8 +104,12 @@ class PostDetailService:
         source_settings = row[23] or {}
         media = post_media(row[9], row[2])
         # The text starts after a title taken from it, without a feed's own lines (hnrss's counts:
-        # the byline says them), issue 0070.
-        title, content, html = reading_text(row[6], row[7], row[8])
+        # the byline says them), issue 0070. A thread's post with words of its own that quotes a post of its
+        # thread is no card: the thread lists it (issue 0072 D4); its title is the one every place shows (D1).
+        quoted = quoted_tweet(row[8]) if story and story["thread"] and not quote_only(row[8]) else None
+        own = without_quote(row[8]) if quoted and quoted in {normalize_url(p["url"]) for p in story["posts"]} else row[8]
+        title, content, html = reading_text(row[6], row[7] if own is row[8] else strip_html(own), own)
+        title = post_title(row[6], row[7], row[8]) if own is not row[8] else title
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -141,14 +148,16 @@ class PostDetailService:
         }
 
     @staticmethod
-    def story(cur: psycopg.Cursor, post_id: str) -> Optional[Dict[str, Any]]:
+    def story(cur: psycopg.Cursor, post_id: str, source_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """The post's story as the feed's lead carries it (issue 0055: the same `story`, from the
-        same query), when it has 2+ voices or is a thread (issue 0066); else None (no story, or
-        copies of one voice)."""
+        same query), when it has 2+ voices, is a thread (issue 0066) or another source shared it (issue
+        0072 D4: "also shared by", as the feed row says); else None (no story, or copies of one voice
+        by its own source)."""
         item: Dict[str, Any] = {"id": str(post_id)}
         ReaderRepository.attach_stories(cur, [item])
         story = item.get("story")
-        if not story or not (story["voices"] >= 2 or story["thread"]):
+        others = story and source_id and any(source["id"] != source_id for source in story["sources"])
+        if not story or not (story["voices"] >= 2 or story["thread"] or others):
             return None
         # A thread's replies read as the post does (issue 0068): each its stored HTML and the
         # links in it to stored posts, rendered by the post page's reader. A reply's quote of a tweet
@@ -170,17 +179,24 @@ class PostDetailService:
         return story
 
     @staticmethod
-    def link(cur: psycopg.Cursor, url: Optional[str], story: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """The page a link post shares (issue 0072): {url, title, post_id}, titled by the stored post at
-        its address (opened here), else by its story's outside origin when it is that page."""
+    def link(cur: psycopg.Cursor, url: Optional[str], story: Optional[Dict[str, Any]],
+             post_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The page a link post shares (issue 0072): {url, title, post_id, kind}, titled by the stored post at
+        its address (opened here), else by its story's outside origin when it is that page. `kind`
+        (issue 0072 D4): a picture opens the picture; a video on Reddit's video host plays on the post's
+        own page (`post_url`)."""
         if not url:
             return None
+        kind = link_kind(url)
+        if kind == "video" and post_url:
+            return {"url": post_url, "title": None, "post_id": None, "kind": kind}
         address = normalize_url(url)
-        cur.execute("SELECT id, title, content FROM posts WHERE normalized_url = %s ORDER BY fetched_at, id LIMIT 1", (address,))
+        cur.execute(f"SELECT p.id, {title_columns()} FROM posts p WHERE p.normalized_url = %s ORDER BY p.fetched_at, p.id LIMIT 1",
+                    (address,))
         stored = cur.fetchone()
         origin = (story or {}).get("origin") or {}
-        title = display_title(stored[1], stored[2]) if stored else origin.get("title") if origin.get("url") == address else None
-        return {"url": url, "title": title or None, "post_id": str(stored[0]) if stored else None}
+        title = post_title(*stored[1:]) if stored else origin.get("title") if origin.get("url") == address else None
+        return {"url": url, "title": title or None, "post_id": str(stored[0]) if stored else None, "kind": kind}
 
     @staticmethod
     def internal_links(cur: psycopg.Cursor, post_id: str, post_url: Optional[str],

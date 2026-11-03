@@ -159,8 +159,9 @@ the story job (stories, News, Classics). Sources → Ingestion → Background wo
 finish by themselves, without a restart: the search refill and the link reading wait for each
 other's rows rather than stopping early. When an update changes what the story rules make (their
 stamp, worked out at start from a fixed sample: `utils/stamps.py`), the first story run regroups
-every story, old ones too: one full run, about 17 s on the lab's data (the v9.9 rehearsal measured
-a ~450 MB memory peak in the API during a full run). Discover's addresses, the stored bodies and
+every story, old ones too: one full run, about 25 s on the lab's data. The start's story work runs
+in a process of its own (issue 0072): on a copy of the lab a first start peaks at ~540 MB, and the
+API holds ~45 MB once it is done (it held 530-550 MB before). Discover's addresses, the stored bodies and
 the search index are stamped the same way, and each is made again by itself when its rules change.
 
 ### Version

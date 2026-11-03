@@ -19,7 +19,8 @@ function replacementLabel(replacement: SourceReplacement): string {
 /**
  * The source doctor's finding on a broken source (issue 0036), in the source sheet: the
  * replacement it found, with Switch (the source keeps its name, tracks and posts) and
- * Dismiss (until the next failure streak), or that it looked and found none.
+ * Dismiss (until the next failure streak), or that it looked and found none. A server error is no
+ * move (issue 0072 D3): the server is failing, and INSIGHT keeps retrying.
  */
 export default function ReplacementNotice({ row, now, onSwitched }: { row: SourceHealthRow; now: Date; onSwitched: () => void }) {
   const api = useApi();
@@ -27,7 +28,13 @@ export default function ReplacementNotice({ row, now, onSwitched }: { row: Sourc
   const [busy, setBusy] = useState<'switch' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const { replacement, doctor_looked_at: lookedAt } = row;
+  const { replacement, doctor_looked_at: lookedAt, server_error: failing } = row;
+  if (failing) {
+    return (
+      <Notice tone="warning" title={`The server is failing${failing.status ? ` (HTTP ${failing.status})` : ''}.`}
+        message="The address hasn't moved; INSIGHT keeps retrying." />
+    );
+  }
   if (!lookedAt || done) return null;
 
   const title = 'This source stopped working.';

@@ -256,8 +256,10 @@ export const STATUS_GLYPH: Record<HealthStatus, Status> = {
   disabled: 'disabled',
 };
 
-/** The source doctor's finding in the list (issue 0036): null when it has not looked. */
-export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at'>): string | null {
+/** The source doctor's finding in the list (issue 0036): null when it has not looked. A server error
+ *  is no move (issue 0072 D3). */
+export function brokenNote(row: Pick<SourceHealthRow, 'replacement' | 'doctor_looked_at' | 'server_error'>): string | null {
+  if (row.server_error) return 'Server failing: retrying';
   if (row.replacement) return 'Broken: replacement found';
   return row.doctor_looked_at ? 'Broken: no replacement found' : null;
 }

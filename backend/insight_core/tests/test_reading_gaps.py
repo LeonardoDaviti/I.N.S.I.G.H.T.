@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import unittest
 import uuid
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -351,6 +352,23 @@ class StoredBodiesTests(unittest.TestCase):
         self.assertEqual(got[rows["labelled"]][2:], (True, True), "its hash follows; the job reads its links again")
         self.assertEqual(got[rows["plain"]][2:], (False, False), "a body without labels is untouched")
         self.assertEqual(PostsRepository.drop_hidden_link_labels(self.cur), 0, "twice over: nothing more")
+
+    def test_the_bodies_are_read_a_batch_at_a_time_and_every_one_is_repaired(self):
+        """Issue 0072: read in batches, not all at once (214 MB of HTML on the lab), and none is missed."""
+        source = insert_scratch_source(self.cur)
+        ids = []
+        for i in range(3):
+            html = f'<p>See <a href="https://x.test/{i}">part {i}<span class="sr-only"> (opens in a new window)</span></a>.</p>'
+            self.cur.execute(
+                """INSERT INTO posts (source_id, url, title, content, content_html, content_hash, links_scanned_at)
+                   VALUES (%s, %s, %s, %s, %s, 'h', now()) RETURNING id""",
+                (source, f"https://x.test/{uuid.uuid4().hex}", f"part {i}", strip_html(html), html))
+            ids.append(str(self.cur.fetchone()[0]))
+        with mock.patch("insight_core.db.repo_posts.BODIES_BATCH", 1):
+            PostsRepository.drop_hidden_link_labels(self.cur)
+        self.cur.execute("SELECT count(*) FROM posts WHERE id = ANY(%s::uuid[]) AND content_html NOT LIKE '%%sr-only%%'",
+                         (ids,))
+        self.assertEqual(self.cur.fetchone()[0], 3, "a batch of one body: all three repaired")
 
 
 @requires_test_db

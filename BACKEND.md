@@ -24,6 +24,7 @@ return; the repositories hold the SQL. One job each:
 |---|---|
 | `addresses.py` | what an address says, one definition each: its **host** (`host_of`), **site** (`site_of`, `same_site`; the feed finder's narrower `blog_site`), **publication** (`publication_of`), whether it is a **tweet** and whose (`is_tweet`, `tweet_author`, `x_account`), the account it is under on a platform (`account_key`) |
 | `post_links.py` | the outside links in a post's HTML, and the small facts the story rules read of an address (home page, article, section, reference page) |
+| `post_fields.py` | the fields computed on save, and the title the reader shows: `post_title(title, content, html)` over `title_columns()` (the text's first 4,000 and the HTML's first 2,000 characters) is the one title every place shows a stored post by (the feed, trees, News, search, Classics, Discover, roundup names, a link's title, the post page: issue 0072 D1) |
 | `titles.py` | what a title is when two are compared (`title_key`: entities, NFKC, case, quotes, spaces; `comparable` keeps the case for names), as SQL's `post_title_key` |
 | `story_rules.py` | the **story**: `StoryPost` (what the rules read of a post), `group` (joins by address, text, title, link, citation, thread, quote), roles, voices |
 | `tree_rules.py` | the **tree**: each post's parent and why, the origin, an outside origin's title (`origin_title`) |
@@ -365,6 +366,12 @@ save lock; it never raises).
   reads directly; at 3 failures in a row, or at once on HTTP 404/410 or an answer that does
   not parse as a feed. At most once a day per source (`source_fetch_state.doctor_checked_at`,
   migration 0032), and not again in a streak whose finding was dismissed.
+- **A server error** (HTTP 5xx, a timeout; issue 0072) is no move: recorded at once as
+  `{server_error: true, status}` ("server error, not moved"), nothing looked at, nothing offered;
+  the health row carries `server_error: {status}` and the sheet says the server is failing and
+  INSIGHT keeps retrying (0072 D3). Migration 0058 rewrote what was stored before: an error text
+  that was a proxy's page as its status line ("HTTP 502 while fetching …: Bad Gateway"), and an
+  offer never checked against the source's items as that finding (on a 5xx) or nothing.
 - **First:** the old address is read again; a feed that parses (a followed page that still
   lists articles) was a temporary error: recorded as `working_again` ("temporary error, working
   again"), nothing suggested, no finding on the health row, nothing else looked at.
@@ -530,7 +537,7 @@ the result when the job finishes.
 | POST | `/api/sources/suggested/hide` | Not interested: the key is never suggested again | `{key}` |
 | GET | `/api/sources/anatomy` | Source anatomy (issue 0054): every source, how it is read and what it gives: `{window_days, generated_at, rows: [{source_id, display_name, address, platform, enabled, kind, full_text, watch_changes, watched_pages, validators, status, interval_hours, next_due_at, last_outcome, last_error, recent, all}]}`, most posts in the window first. Nothing is fetched | |
 | GET | `/api/sources/{source_id}/folders` | The folder ids a source is in | |
-| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary; a row carries the source doctor's `doctor_looked_at` and `replacement` (`{kind: feed\|page_watch, url, title, found, prefix}`, null: none found) | |
+| GET | `/api/sources/health` | Every source's schedule and fetch health, plus a summary; a row carries the source doctor's `doctor_looked_at` and `replacement` (`{kind: feed\|page_watch, url, title, found, prefix}`, null: none found), and `server_error` (`{status}` when it read a server error, issue 0072) | |
 | POST | `/api/sources/{source_id}/fetch-now` | Fetch one source now (202 job) | `{limit?}` |
 | GET | `/api/folders` | Folders and tracks with counts | |
 | POST | `/api/folders` | Create a folder or track | `{name, kind?="folder"\|"track", description?, sort_order?, exclude_from_main_digest?, match_keywords?}` |

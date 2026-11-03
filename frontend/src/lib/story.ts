@@ -115,9 +115,12 @@ export function coveredNames(story: Pick<FeedStory, 'sources' | 'voices'>): stri
 /** "covered by 3 · Anthropic, Simon Willison, +1": the story's voices, its sources named in the order they
  *  covered it; one number in News, the feed row and the post page (issue 0069). "Thread · 6 posts" for one
  *  account's thread (issue 0066). One voice copied or forwarded by other sources reads "also shared by
- *  <source>", the row's own source not named; nothing when no other source shared it (issue 0072). */
+ *  <source>", the row's own source not named; nothing when no other source shared it (issue 0072). A thread
+ *  under another source's row (a page you saved from it) reads "<its author>'s thread · 6 posts" (issue 0072 D4). */
 export function coveredBy(story: FeedStory, selfSourceId?: string): string | null {
-  if (story.thread) return `Thread · ${story.posts.length + 1} posts`;
+  // A thread another source holds (a page you saved from it) names whose it is (issue 0072 D4).
+  const author = story.thread && selfSourceId && story.sources.every((source) => source.id !== selfSourceId) ? story.sources[0] : null;
+  if (story.thread) return `${author ? `${sourceLabel(author.name)}'s thread` : 'Thread'} · ${story.posts.length + 1} posts`;
   if (story.voices < 2) {
     const others = story.sources.filter((source) => source.id !== selfSourceId);
     return others.length ? `also shared by ${coveredNames({ sources: others, voices: others.length })}` : null;
