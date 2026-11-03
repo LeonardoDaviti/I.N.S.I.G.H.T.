@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -94,6 +95,8 @@ class StoryPost:
     # the row is another source's repost, a report voice. Never the row's own source.
     reposters: Tuple[str, ...] = ()
     author_source: Optional[str] = None
+    stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to (0072)
+    date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -129,10 +132,13 @@ class StoryPost:
     def trusted_time(self) -> bool:
         """Its time can order it (issue 0064): a time of day (not a date alone, 00:00:00), not a
         Saved page (the day you saved it), not a watched page updated since its date."""
-        if self.kind == "saved" or self.updated:
-            return False
-        t = self.t.astimezone(timezone.utc) if self.t.tzinfo else self.t
-        return (t.hour, t.minute, t.second, t.microsecond) != (0, 0, 0, 0)
+        return not (self.kind == "saved" or self.updated or self.date_only)
+
+    @property
+    def date_only(self) -> bool:
+        """Its time is a date alone: when that day it was posted is unknown (issue 0072 D). As the post
+        was read (`date_alone`), else told by its time, 00:00:00 UTC."""
+        return self.date_alone if self.date_alone is not None else date_alone(self.t)
 
     @property
     def on_own_site(self) -> bool:
@@ -146,6 +152,12 @@ class StoryPost:
         """A tweet its source's account wrote, and not as a reply to another account (issue 0066)."""
         return bool(self.kind == "x" and self.author and not self.reposted
                     and (self.reply_to is None or self.reply_to.lower() == self.author.lower()))
+
+
+def date_alone(t: datetime) -> bool:
+    """A time that is a date alone, as feeds without a time of day are stored: 00:00:00 UTC."""
+    t = t.astimezone(timezone.utc) if t.tzinfo else t
+    return (t.hour, t.minute, t.second, t.microsecond) == (0, 0, 0, 0)
 
 
 def title_key(title: Optional[str]) -> Optional[str]:
@@ -220,6 +232,7 @@ def address_origins(posts: Iterable[StoryPost]) -> Dict[str, str]:
     return {url: p.id for url, p in out.items()}
 
 
+@lru_cache(maxsize=1 << 15)   # read for each address of each post, in each group of a run
 def _page_key(url: str) -> Optional[Tuple[str, str, Tuple[str, ...]]]:
     """What names a page on its host whatever its section (issue 0070): (host, its last segment, its
     path's numbers and dates), when the last segment is a slug of SLUG_MIN_WORDS+ words of letters
@@ -267,8 +280,36 @@ def threads(posts: Iterable[StoryPost]) -> Dict[str, str]:
     return out
 
 
-def group(posts: Sequence[StoryPost]) -> List[Story]:
+@dataclass
+class Edge:
+    """One connection the rules found (issue 0072 A, stored in `post_edges`): `src` joins `dst` (a post's
+    id, or _PAGE + an outside page's address) by `kind`, a REASONS join, or `mention` (a roundup lists
+    it and is not in its story). `via`: the key both hold (`keys`) when a key made it."""
+    src: str
+    dst: str
+    kind: str
+    via: Optional[str] = None
+
+
+@dataclass
+class Grouping:
+    """What `grouping` finds among some posts: their stories, every connection, each node's group (its
+    root) and each roundup's listed nodes. The incremental job (issue 0072 A) reads the last three to
+    tell which stories a new post can change."""
+    stories: List[Story]
+    edges: List[Edge]
+    root: Dict[str, str]             # node (a post id, or _PAGE + an address) -> its group's root
+    listed: Dict[str, List[str]]     # a roundup -> the nodes it lists after its first
+
+
+def group(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> List[Story]:
     """The stories among `posts` (2+ sources each), first post first, each a tree (issue 0064)."""
+    return grouping(posts, replies=replies).stories
+
+
+def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = None) -> Grouping:
+    """`group`, with what it found on the way. `replies`: each thread reply -> the post it continues,
+    when known (the stored thread edges; `threads(posts)` when None)."""
     posts = sorted(posts, key=_order)
     by_id = {p.id: p for p in posts}
     # A link to an address is a link to its own page when one is stored: the row a link resolves
@@ -302,14 +343,19 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
     uf = _UnionFind()
     why: Dict[str, Set[str]] = defaultdict(set)
     mentioned: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
+    edges: List[Edge] = []
     for p in posts:
         uf.find(p.id)
 
-    def chain(same: Iterable[List[StoryPost]], within: timedelta, reason: str) -> None:
-        for run in same:
+    def join(src: str, dst: str, kind: str, via: Optional[str] = None) -> None:
+        uf.union(src, dst)
+        edges.append(Edge(src, dst, kind, via))
+
+    def chain(same: Dict[str, List[StoryPost]], within: timedelta, reason: str, via: Callable[[str], str]) -> None:
+        for key, run in same.items():
             for a, b in zip(run, run[1:]):
                 if a.source_id != b.source_id and b.t - a.t <= within:
-                    uf.union(a.id, b.id)
+                    join(b.id, a.id, reason, via(key))
                     why[a.id].add(reason)
                     why[b.id].add(reason)
 
@@ -320,13 +366,13 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
             by_text[p.text_key].append(p)
         if p.title_key:
             by_title[p.title_key].append(p)
-    chain(by_text.values(), SAME_TEXT_WITHIN, "text")
-    chain(by_title.values(), SAME_TITLE_WITHIN, "title")
+    chain(by_text, SAME_TEXT_WITHIN, "text", lambda key: "h:" + key)
+    chain(by_title, SAME_TITLE_WITHIN, "title", lambda key: "t:" + key)
     by_url: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in posts:
         if p.url:
             by_url[aliases.get(p.url, p.url)].append(p)
-    chain(by_url.values(), SAME_ADDRESS_WITHIN, "address")
+    chain(by_url, SAME_ADDRESS_WITHIN, "address", lambda url: page_key(url) or "u:" + url)
 
     linkers: Dict[Tuple[str, str], List[StoryPost]] = defaultdict(list)
     every: Dict[str, List[Tuple[str, str]]] = {}     # every anchor of a post: its citations
@@ -355,22 +401,22 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
                 continue   # a stored post outside the posts recomputed
             for p in ps:
                 if p.place != cited.place and abs(p.t - cited.t) <= LINK_WITHIN:
-                    uf.union(p.id, cited.id)
+                    join(p.id, cited.id, "citation")
                     why[p.id].add("citation")
                     why[cited.id].add("citation")
         else:
             near = [p for p in ps if p.t - ps[0].t <= LINK_WITHIN]   # ps is in time order
             if len({p.place for p in near}) >= 2:
                 for p in near:
-                    uf.union(p.id, "U:" + target)
+                    join(p.id, _PAGE + target, "link", "u:" + target)
                     why[p.id].add("link")
     # On X (issue 0066): a thread is one story, and a quote joins the stored tweet it quotes.
-    replies = threads(posts)
-    joins = [(child, parent, "thread") for child, parent in replies.items()]
-    joins += [(child, parent, "quote") for child, parent in quotes.items()
+    replies = threads(posts) if replies is None else {c: p for c, p in replies.items() if c in by_id and p in by_id}
+    joins = [(child, parent, "thread", None) for child, parent in replies.items()]
+    joins += [(child, parent, "quote", "u:" + by_id[child].quoted) for child, parent in quotes.items()
               if abs(by_id[child].t - by_id[parent].t) <= LINK_WITHIN]
-    for child, parent, reason in joins:
-        uf.union(child, parent)
+    for child, parent, reason, via in joins:
+        join(child, parent, reason, via)
         why[child].add(reason)
         why[parent].add(reason)
 
@@ -415,33 +461,80 @@ def group(posts: Sequence[StoryPost]) -> List[Story]:
                                               replies=replies, quotes=quotes))
         node = first[1] if first[0] == "post" else _PAGE + first[1]
         if origins[root] == node and len(pages[root].intersection(mentions)) >= 2:
-            uf.union(pid, node)
+            join(pid, node, "citation" if first[0] == "post" else "link")
             why[pid].add("citation" if first[0] == "post" else "link")
             focused[pid] = [first] + focused[pid][1:]
     members = grouped()
+    roots = {root for root, group_posts in members.items() if is_story(group_posts)}
     mentions_of: Dict[str, Set[str]] = defaultdict(set)
     for (what, target), ps in mentioned.items():
-        node = target if what == "post" else "U:" + target
+        node = target if what == "post" else _PAGE + target
         if what == "post" and target not in by_id or what == "url" and node not in uf.parent:
             continue
         root = uf.find(node)
-        mentions_of[root] |= {pid for pid in ps if uf.find(pid) != root}
+        for pid in sorted(ps):
+            if uf.find(pid) != root:
+                mentions_of[root].add(pid)
+                if root in roots:
+                    edges.append(Edge(pid, node, "mention"))
 
     stories = []
     for root, group_posts in members.items():
-        if not is_story(group_posts):
+        if root not in roots:
             continue
-        first = group_posts[0]
         shape = tree(group_posts, every=every, focused=focused, origin_of=origin_of, replies=replies, quotes=quotes)
+        # A date alone counts as that day's earliest timed post (issue 0072 D); the id is the post
+        # stored first, so a post that joins later, however early it was posted, keeps it (0072 A).
+        times = story_times(group_posts)
+        ordered = sorted(group_posts, key=lambda p: (times[p.id], p.date_only, *_order(p)[1:]))
+        stored = [p for p in ordered if p.stored_at is not None]
         stories.append(Story(
-            id=first.id, first_at=first.t, posts=group_posts, voices=count_voices(group_posts),
-            roles=roles(group_posts),
+            id=min(stored, key=lambda p: (p.stored_at, p.id)).id if stored else ordered[0].id,
+            first_at=times[ordered[0].id], posts=ordered, voices=count_voices(group_posts),
+            roles=roles(ordered),
             reasons={p.id: [r for r in REASONS if r in why[p.id]] for p in group_posts},
             mentions=mentions_of.get(root, set()),
             parents=shape.parents, origin_url=shape.origin_url, origin_title=shape.origin_title,
             origin_linked_by=shape.origin_linked_by,
         ))
-    return sorted(stories, key=lambda s: (s.first_at, s.id))
+    return Grouping(sorted(stories, key=lambda s: (s.first_at, s.id)), edges, {node: uf.find(node) for node in uf.parent},
+                    {pid: [target if what == "post" else _PAGE + target for what, target in points]
+                     for pid, points in listed.items()})
+
+
+def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
+    """Each post's time as its story counts it (issue 0072 D): a date alone (`date_only`) counts as that
+    day's earliest timed post among the story's (`trusted_time`), never its 00:00; with none that
+    day, its date. A story's start, its order ("first") and the News window read it."""
+    earliest: Dict[object, datetime] = {}
+    for p in posts:
+        if p.trusted_time:
+            day = p.t.astimezone(timezone.utc).date()
+            earliest[day] = min(earliest.get(day, p.t), p.t)
+    return {p.id: earliest.get(p.t.astimezone(timezone.utc).date(), p.t) if p.date_only else p.t for p in posts}
+
+
+def page_key(url: str) -> Optional[str]:
+    """`_page_key` as a key (`keys`): "g:" + host, slug and the path's numbers."""
+    key = _page_key(url)
+    return "g:" + "|".join((key[0], key[1], *key[2])) if key else None
+
+
+def keys(post: StoryPost) -> Set[str]:
+    """What a post can join or change another by (issue 0072 A): its text ("h:"), its title ("t:"), its
+    address and the pages it links ("u:"; a home page only when a post is stored at it: no anchor
+    else), and each one's page key ("g:", another path of one page). The incremental job regroups
+    the posts that hold a key a new or changed post holds."""
+    out = set()
+    if post.text_key:
+        out.add("h:" + post.text_key)
+    if post.title_key:
+        out.add("t:" + post.title_key)
+    for url in ([post.url] if post.url else []) + [target for target, stored in post.links if stored or not is_home(target)]:
+        out.add("u:" + url)
+        if page_key(url):
+            out.add(page_key(url))
+    return out
 
 
 def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
@@ -497,5 +590,6 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
     return sites.most_common(1)[0][0] if sites else ""
 
 
-__all__ = ["StoryPost", "Story", "group", "threads", "address_origins", "page_aliases", "roles", "count_voices",
-           "reposter_voice", "source_site", "title_key", "anchors"]
+__all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
+           "address_origins", "page_aliases", "roles", "count_voices", "reposter_voice", "source_site", "title_key",
+           "anchors"]

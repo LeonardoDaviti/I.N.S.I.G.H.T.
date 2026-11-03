@@ -213,7 +213,7 @@ class XJobTests(unittest.TestCase):
     def _regroup(self):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        return self.service.regroup(self.cur, cutoff=None)
+        return self.service.regroup(self.cur)
 
     def test_a_tweet_two_of_your_sources_repost_is_one_row_that_keeps_both(self):
         steipete, akhaliq = self._x(f"steipete{self.mark}"), self._x(f"akhaliq{self.mark}")

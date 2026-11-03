@@ -71,11 +71,15 @@ reposted AS MATERIALIZED (        -- a post of a platform account at another acc
     FROM (SELECT id, source_id, COALESCE(normalized_url, url) AS url FROM posts) p
     JOIN src s ON s.id = p.source_id AND s.account <> ''
     LEFT JOIN discover_addresses d ON d.url = p.url AND d.rules = %(rules)s
-    WHERE d.url IS NULL OR (d.platform AND d.key <> s.account)
+    WHERE (d.url IS NULL OR (d.platform AND d.key <> s.account))
+      AND (%(keys)s::text[] IS NULL OR d.key = ANY(%(keys)s))   -- the keys asked (issue 0072: a story run's)
 ),
 kept_url AS MATERIALIZED (        -- each address a kept link points to, and what Discover reads of it
     SELECT u.url, d.key COLLATE "C" AS key, d.site, d.platform, d.article, d.url IS NULL AS unknown
-    FROM (SELECT target_url COLLATE "C" AS url FROM post_links WHERE NOT boilerplate
+    FROM (SELECT target_url COLLATE "C" AS url FROM post_links WHERE NOT boilerplate AND %(keys)s::text[] IS NULL
+          UNION SELECT a.url COLLATE "C" FROM discover_addresses a      -- the keys asked: their linked addresses
+                WHERE a.key = ANY(%(keys)s) AND a.rules = %(rules)s
+                  AND EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = a.url AND NOT pl.boilerplate)
           UNION SELECT url FROM reposted WHERE NOT unknown) u
     LEFT JOIN discover_addresses d ON d.url = u.url AND d.rules = %(rules)s
 ),
@@ -104,7 +108,8 @@ linked AS MATERIALIZED (          -- the kept links to those keys' addresses
 ),
 roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (discover_rules.is_roundup): each
     SELECT pl.post_id FROM post_links pl JOIN posts p ON p.id = pl.post_id   -- kept link is one, but
-    WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster)
+    WHERE NOT pl.boilerplate      -- (of every post: only the linked ones were read by an index each, no faster;
+      AND (%(keys)s::text[] IS NULL OR pl.post_id IN (SELECT post_id FROM linked))   -- for a few keys, those)
       AND (pl.target_url !~ %(home)s                                        -- a home page no post is at
            OR EXISTS (SELECT 1 FROM posts tp WHERE tp.normalized_url = pl.target_url))
       AND (pl.target_url IS DISTINCT FROM p.normalized_url                  -- and the post itself (the
@@ -198,33 +203,51 @@ WHERE s.voices >= %(min_voices)s AND COALESCE(s.origin_url, p.normalized_url, p.
 
 class DiscoverRepository:
     @staticmethod
-    def fill_addresses(cur: Cursor, post_sources: Iterable[str] = ()) -> int:
+    def fill_addresses(cur: Cursor, post_sources: Iterable[str] = (), urls: Optional[Sequence[str]] = None) -> int:
         """Work out the addresses kept links point to, and the posts of `post_sources` are at (the
         platform accounts' sources: a repost is at its original's address), that discover_addresses
         lacks (or holds by older rules), and drop the rows no kept link and no post points to.
         Returns how many it added. One writer at a time (a transaction lock): a second open waits,
-        then finds nothing to add."""
+        then finds nothing to add. With `urls`, only those addresses (a story run's, issue 0072)."""
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (LOCK_KEY,))
         cur.execute("DELETE FROM discover_addresses WHERE rules <> %s", (ADDRESS_RULES,))
+        only = None if urls is None else sorted(set(urls))
         cur.execute("SELECT url FROM (SELECT target_url AS url FROM post_links WHERE NOT boilerplate "
-                    "UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%s::uuid[])) a "
+                    "AND (%(only)s::text[] IS NULL OR target_url = ANY(%(only)s)) "
+                    "UNION SELECT COALESCE(normalized_url, url) FROM posts WHERE source_id = ANY(%(sources)s::uuid[]) "
+                    "AND (%(only)s::text[] IS NULL OR COALESCE(normalized_url, url) = ANY(%(only)s))) a "
                     "WHERE url IS NOT NULL AND NOT EXISTS (SELECT 1 FROM discover_addresses d WHERE d.url = a.url)",
-                    (sorted(post_sources),))
-        urls = [r[0] for r in cur.fetchall()]
-        if not urls:
+                    {"only": only, "sources": sorted(post_sources)})
+        found = [r[0] for r in cur.fetchall()]
+        if not found:
+            if only is not None:
+                DiscoverRepository._drop_unlinked(cur, only)
             return 0
         with cur.copy("COPY discover_addresses (url, key, site, platform, article, rules) FROM STDIN") as copy:
-            for url in urls:
+            for url in found:
                 key, site, platform = discover_address(url)
                 copy.write_row((url, key, site, platform, discover_article(url), ADDRESS_RULES))
-        cur.execute("DELETE FROM discover_addresses d WHERE NOT EXISTS "
-                    "(SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
-                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE COALESCE(p.normalized_url, p.url) = d.url)")
-        return len(urls)
+        DiscoverRepository._drop_unlinked(cur, only)
+        return len(found)
+
+    @staticmethod
+    def _drop_unlinked(cur: Cursor, urls: Optional[Sequence[str]]) -> None:
+        """Drop the addresses (of `urls`, when given) no kept link and no post points to."""
+        cur.execute("DELETE FROM discover_addresses d WHERE (%(only)s::text[] IS NULL OR d.url = ANY(%(only)s)) "
+                    "AND NOT EXISTS (SELECT 1 FROM post_links pl WHERE pl.target_url = d.url AND NOT pl.boilerplate) "
+                    "AND NOT EXISTS (SELECT 1 FROM posts p WHERE COALESCE(p.normalized_url, p.url) = d.url)",
+                    {"only": None if urls is None else list(urls)})
+
+    @staticmethod
+    def keys_of(cur: Cursor, urls: Sequence[str]) -> Set[str]:
+        """The Discover keys of these addresses."""
+        cur.execute("SELECT DISTINCT key FROM discover_addresses WHERE url = ANY(%s) AND rules = %s AND key IS NOT NULL",
+                    (list(urls), ADDRESS_RULES))
+        return {r[0] for r in cur.fetchall()}
 
     @staticmethod
     def counts(cur: Cursor, *, kinds: Dict[str, str], own_sites: Dict[str, str], accounts: Dict[str, str],
-               mirrors: Iterable[str], shown: int) -> Tuple[List[Dict[str, Any]], int]:
+               mirrors: Iterable[str], shown: int, keys: Optional[Iterable[str]] = None) -> Tuple[List[Dict[str, Any]], int]:
         """The kept suggestions, unordered, those you follow or hid too, and how many linked addresses
         discover_addresses lacks (when any, fill_addresses and ask again: those links were not
         counted). A suggestion: key, voices [(voice, the source naming it; None for a Reddit author)],
@@ -235,7 +258,8 @@ class DiscoverRepository:
         (SourceFacts.publication, issue 0069);
         `accounts`: the platform account of each source that follows one (SourceFacts.platform_accounts),
         whose posts at another account's address are reposts, counted as links to that address;
-        `mirrors`: the hosts where tweets are found (DiscoverRepository.mirrors)."""
+        `mirrors`: the hosts where tweets are found (DiscoverRepository.mirrors);
+        `keys`: only these keys (a story run counts again the keys its posts link, issue 0072)."""
         ids = sorted(kinds)
         # Its hash tables and sorts (~100k addresses) fit in memory with this; the default 4 MB
         # spilled them to disk. For this transaction only.
@@ -243,7 +267,7 @@ class DiscoverRepository:
         cur.execute(_COUNTS, {
             "ids": ids, "kinds": [kinds[i] for i in ids], "sites": [own_sites.get(i, "") for i in ids],
             "accounts": [accounts.get(i, "") for i in ids],
-            "mirrors": sorted(mirrors), "shown": shown, **_COUNT_RULES,
+            "mirrors": sorted(mirrors), "shown": shown, "keys": None if keys is None else sorted(keys), **_COUNT_RULES,
         })
         rows = cur.fetchall()
         unknown = int(rows[0][-1])   # on every row, and on the one row with no key
@@ -252,11 +276,16 @@ class DiscoverRepository:
             "voices": list(voices), "roundups": list(roundups),
             "articles": [(url, list(url_voices)) for url, url_voices in shown_articles],
         } for key, articles, links, classics, voices, roundups, shown_articles, _ in rows if key is not None]
-        site_voices = {v for s in found for v in s["voices"] if v.startswith("site:")}
-        namers = DiscoverRepository._site_namers(cur, kinds, own_sites, site_voices)
-        for s in found:
-            s["voices"] = [(voice, voice_source(voice, namers)) for voice in s["voices"]]
+        DiscoverRepository.name_voices(cur, found, kinds, own_sites)
         return found, unknown
+
+    @staticmethod
+    def name_voices(cur: Cursor, found: List[Dict[str, Any]], kinds: Dict[str, str], own_sites: Dict[str, str]) -> None:
+        """Each suggestion's voices as (voice, the source naming it; voice_source)."""
+        voices = [[v[0] if isinstance(v, (list, tuple)) else v for v in s["voices"]] for s in found]
+        namers = DiscoverRepository._site_namers(cur, kinds, own_sites, {v for vs in voices for v in vs if v.startswith("site:")})
+        for s, vs in zip(found, voices):
+            s["voices"] = [(voice, voice_source(voice, namers)) for voice in vs]
 
     @staticmethod
     def mirrors(cur: Cursor, kept: Optional[Dict[str, Any]]) -> Tuple[List[str], Optional[str]]:
@@ -276,6 +305,12 @@ class DiscoverRepository:
     @staticmethod
     def keep(cur: Cursor, kept: Dict[str, Any]) -> None:
         SystemSettingsRepository.upsert(cur, KEPT_KEY, kept)
+
+    @staticmethod
+    def base(facts: Any) -> str:
+        """What the counts are counted by, a story run aside: the rules and the sources' facts (issue 0072:
+        while it holds, a story run counts again only the keys its posts link)."""
+        return hashlib.sha1(json.dumps([_COUNTS, _COUNT_RULES, facts]).encode()).hexdigest()[:16]
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:

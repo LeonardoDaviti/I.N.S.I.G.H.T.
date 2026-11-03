@@ -112,20 +112,17 @@ class FillsFinishTests(unittest.TestCase):
 
 @requires_test_db
 class RulesVersionTests(unittest.TestCase):
-    """The story job's choice of a full or a windowed run, from the stories setting (its regroup
-    stubbed: what it groups is the other suites')."""
+    """A rule change regroups every post in batches (issue 0072 A), from the stories setting: what it
+    groups is the other suites'."""
 
     def setUp(self):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             kept = SystemSettingsRepository.get(cur, SETTINGS_KEY)
         self.addCleanup(self._restore, kept[0] if kept else None)
         self.service = StoriesService(db_url())
-        self.cutoffs = []
-        for name, value in (("fill_links", lambda: 0), ("fill_discover_addresses", lambda: 0),
-                            ("regroup", lambda cur, cutoff: self.cutoffs.append(cutoff) or {})):
-            patch = mock.patch.object(self.service, name, value)
-            patch.start()
-            self.addCleanup(patch.stop)
+        patch = mock.patch.object(self.service, "fill_links", lambda: 0)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def _restore(self, value):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
@@ -138,20 +135,25 @@ class RulesVersionTests(unittest.TestCase):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             SystemSettingsRepository.upsert(cur, SETTINGS_KEY, value)
 
+    def _kept(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            return SystemSettingsRepository.get(cur, SETTINGS_KEY)[0]
+
     def test_stories_grouped_by_other_rules_are_all_regrouped(self):
         self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": True, "full_at": "2026-10-31T12:44:20+00:00"})
         summary = self.service.recompute()
-        self.assertTrue(summary["full"], "a setting without a rules version: a full run")
-        self.assertEqual(self.cutoffs, [None])
+        self.assertGreater(summary["batches"], 3, "a setting without a rules version: every post, in steps")
+        self.assertEqual(self._kept()["rules"], rules_stamp())
+        self.assertNotIn("rebuild", self._kept(), "done")
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
-            self.assertEqual(SystemSettingsRepository.get(cur, SETTINGS_KEY)[0]["rules"], rules_stamp())
+            cur.execute("SELECT count(*) FROM story_queue WHERE key LIKE 'redo:%%'")
+            self.assertEqual(cur.fetchone()[0], 0, "every post regrouped")
 
-        self.assertFalse(self.service.recompute()["full"], "the same rules: the window only")
-        self.assertIsNotNone(self.cutoffs[-1])
+        self.assertEqual(self.service.recompute().get("posts", 0), 0, "the same rules: nothing to regroup")
 
-        self._setting({"computed_at": "2026-10-31T12:44:20+00:00", "full": False, "rules": "older rules"})
-        self.assertTrue(self.service.recompute()["full"], "other rules: a full run")
-        self.assertEqual(self.cutoffs[-1], None)
+        self._setting({**self._kept(), "rules": "older rules"})
+        self.service.recompute()
+        self.assertEqual(self._kept()["rules"], rules_stamp(), "other rules: every post again")
 
 
 if __name__ == "__main__":

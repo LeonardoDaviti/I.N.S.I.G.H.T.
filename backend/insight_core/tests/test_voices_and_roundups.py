@@ -74,7 +74,7 @@ class PublicationVoicesJobTests(unittest.TestCase):
     def _job(self):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        self.service.regroup(self.cur, cutoff=None)
+        self.service.regroup(self.cur)
 
     def _voices(self, *posts):
         self.cur.execute("SELECT post_id::text, story_id::text, voice FROM story_posts WHERE post_id = ANY(%s::uuid[])",

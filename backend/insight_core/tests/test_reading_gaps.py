@@ -158,7 +158,7 @@ class ReadingGapsJobTests(unittest.TestCase):
     def _regroup(self):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        return self.service.regroup(self.cur, cutoff=None)
+        return self.service.regroup(self.cur)
 
     def _row(self, post_id):
         """The feed row that is the post, or that its story folds it under."""
@@ -244,7 +244,7 @@ class ReadingGapsJobTests(unittest.TestCase):
         story = self._row(t)["story"]
         self.assertEqual(([s["id"] for s in story["sources"]], story["reposted_by"], story["posts"]),
                          ([own, steipete], [by], []), "covered by 2, and who reposted it")
-        self.assertEqual(self.service.regroup(self.cur, cutoff=None)["changed"], 0, "a second run changes nothing")
+        self.assertEqual(self.service.regroup(self.cur)["changed"], 0, "a second run changes nothing")
         self.assertEqual(PostDetailService.story(self.cur, t)["voices"], 2, "the post page shows it")
 
     def test_an_author_reposting_itself_adds_no_voice(self):

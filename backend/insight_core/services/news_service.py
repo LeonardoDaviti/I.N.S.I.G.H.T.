@@ -15,22 +15,25 @@ Main feed is never reordered: News and Classics are views next to it.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 from insight_core.db import database as db
 from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
-from insight_core.utils.news_rules import NAME_TITLES, NEWS_DAYS, NEWS_RECENT, lead, news, surges
+from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, Surge, lead,
+                                          longest, name_surges, names, news, phrases)
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import display_title, post_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", "Earlier this week"
+WORDS = re.compile(r"\w+")
 
 
 class NewsService:
@@ -42,26 +45,102 @@ class NewsService:
 
     # ---- the job ------------------------------------------------------------------------
 
-    def refresh(self, cur: Any, *, posts: Sequence[StoryPost], stories: Sequence[Story], sources: SourceFacts,
-                full: bool) -> Dict[str, Any]:
-        """News over the job's posts (`posts`, grouped into `stories`) and every classic, on the
-        caller's transaction. Returns what it counted and how many rows changed."""
-        since = None if full else self.clock() - NAME_TITLES
-        titled = [
-            StoryPost(id=row["id"], source_id=row["source_id"], kind=sources.kind.get(row["source_id"], "site"),
-                      own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])
-            for row in self.repo.load_titles(cur, since)
-        ]
-        found = surges(titled, self.repo.followed_since(cur))
-        stories_now = news(posts, stories, found)
+    keep = NEWS_KEEP
+
+    def refresh(self, cur: Any, *, posts: Sequence[StoryPost], stories: Sequence[Story],
+                sources: SourceFacts) -> Dict[str, Any]:
+        """News and every classic of a full story run (`posts`, every post, grouped into `stories`), on
+        the caller's transaction: every name's surges, and News for the stories begun in the last
+        NEWS_KEEP and the posts of no story posted in it. Returns what it counted and how many rows changed."""
+        raw = name_surges(self._titled(sources, self.repo.load_titles(cur, None)), self.repo.followed_since(cur))
+        surges_changed = self.repo.write_surges(cur, raw)
+        found = sorted(longest(raw), key=lambda s: (s.at, s.name))
+        since = self.clock() - NEWS_KEEP
+        shown = [s for s in stories if s.first_at >= since]
+        in_story = {p.id for s in stories for p in s.posts}
+        ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
+        stories_now = news([p for p in posts if p.id in ids], shown, found)
         news_changed = self.repo.write_news(cur, stories_now)
         found_classics = classics(*self._citations(cur, sources))
         classics_changed = self.repo.write_classics(cur, found_classics)
-        return {"names": len(found), "news": len(stories_now), "news_changed": news_changed,
-                "classics": len(found_classics), "classics_changed": classics_changed}
+        return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
+                "news_changed": news_changed, "classics": len(found_classics), "classics_changed": classics_changed}
 
-    def _citations(self, cur: Any, sources: SourceFacts):
-        rows = self.repo.citations(cur, reddit=sources.of_kind("reddit"), saved=sources.of_kind("saved"))
+    def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
+               load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
+               urls: Sequence[str], since: datetime, before: Optional[datetime]) -> Dict[str, int]:
+        """News and Classics after an incremental batch (issue 0072 A), on its transaction, as a full run
+        makes them: the names its titles say (`titles`: of the posts saved, changed or removed, as they
+        are and were) judged again; News for the stories it regrouped (`touched`), the posts of the surges
+        that changed, and the stories and posts that left the window or came into it since `before`;
+        Classics for the pages it links or held (`urls`). `posts`/`load`: the batch's StoryPosts."""
+        old = {(s.name, s.at, tuple(s.posts)) for s in longest(self.repo.stored_surges(cur))}
+        surges_changed = self.judge_names(cur, sources, titles)
+        raw = self.repo.stored_surges(cur)
+        found = sorted(longest(raw), key=lambda s: (s.at, s.name))
+        seeds = set(touched) | {p for name, at, ps in old ^ {(s.name, s.at, tuple(s.posts)) for s in found} for p in ps}
+        if before is not None and before != since:
+            lo, hi = min(before, since), max(before, since)
+            seeds |= set(self.repo.window_posts(cur, lo, hi))
+        seeds |= self.repo.news_before(cur, since)
+        surges_of: Dict[str, List[Surge]] = defaultdict(list)
+        for s in found:
+            for pid in s.posts:
+                surges_of[pid].append(s)
+        # The News stories they are in, now and before: their stories, the roundups mentioning those,
+        # the surges they are in, until nothing more joins (news_rules.news).
+        group, frontier, stories = set(seeds), set(seeds), {}
+        while frontier:
+            held = self.repo.stories_of(cur, sorted(frontier), since)
+            stories.update(held)
+            more = self.repo.news_mates(cur, sorted(frontier))
+            more |= {pid for story in held.values() for pid in (*story["posts"], *story["mentions"])}
+            more |= {pid for f in frontier for s in surges_of.get(f, ()) for pid in s.posts}
+            frontier = more - group
+            group |= frontier
+        shown = set(self.repo.window_posts(cur, since, ids=sorted(group)))
+        load(shown)
+        window = [posts[pid] for pid in sorted(shown) if pid in posts]
+        held = [Story(id=sid, first_at=since, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
+                      roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
+        stories_now = news(window, held, found)
+        news_changed = self.repo.write_news(cur, stories_now, post_ids=sorted(group))
+        found_classics = classics(*self._citations(cur, sources, urls))
+        classics_changed = self.repo.write_classics(cur, found_classics, urls)
+        return {"surges_changed": surges_changed, "news_posts": len(group), "news_changed": news_changed,
+                "classics_changed": classics_changed}
+
+    def judge_names(self, cur: Any, sources: SourceFacts, titles: Optional[Sequence[Optional[str]]]) -> int:
+        """The surges of the names these titles say (every name when None) judged again
+        (news_rules.name_surges), from every title that names or says them. Returns rows changed."""
+        followed = self.repo.followed_since(cur)
+        if titles is None:
+            raw = name_surges(self._titled(sources, self.repo.load_titles(cur, None)), followed)
+            return self.repo.write_surges(cur, raw)
+        said = set().union(*(phrases(t) for t in titles if t))
+        if not said:
+            return 0
+        judged = self.repo.named(cur, sorted(said), NAME_MIN_POSTS) | self.repo.surging(cur, sorted(said))
+        if not judged:
+            return 0
+        rows = {r["id"]: r for r in self.repo.titles_saying(cur, sorted({max(WORDS.findall(n), key=len) for n in judged}))}
+        rows.update((r["id"], r) for r in self.repo.titles_of(cur, sorted(self.repo.naming(cur, sorted(judged)) - rows.keys())))
+        raw = name_surges(self._titled(sources, rows.values()), followed, only=judged)
+        return self.repo.write_surges(cur, raw, judged)
+
+    @staticmethod
+    def names_of(post: StoryPost) -> Set[str]:
+        """The names in a post's title, as the name rule reads them (none for arXiv's)."""
+        return names(post.title) if post.title and post.kind not in NAME_SKIP_KINDS else set()
+
+    @staticmethod
+    def _titled(sources: SourceFacts, rows: Iterable[Dict[str, Any]]) -> List[StoryPost]:
+        return [StoryPost(id=row["id"], source_id=row["source_id"], kind=sources.kind.get(row["source_id"], "site"),
+                          own_site=sources.publication(row["source_id"]), t=row["t"], title=row["title"])
+                for row in rows]
+
+    def _citations(self, cur: Any, sources: SourceFacts, targets: Optional[Sequence[str]] = None):
+        rows = self.repo.citations(cur, reddit=sources.of_kind("reddit"), saved=sources.of_kind("saved"), targets=targets)
         authors: Dict[str, Optional[str]] = {}
         out = []
         for row in rows:

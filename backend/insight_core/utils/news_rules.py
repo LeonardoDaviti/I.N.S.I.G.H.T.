@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles
+from insight_core.utils.story_rules import Story, StoryPost, _UnionFind, count_voices, reposter_voice, roles, story_times
 from insight_core.utils.titles import comparable
 
 # ---- the thresholds (issue 0051), tune here -------------------------------------------------
@@ -39,6 +39,8 @@ from insight_core.utils.titles import comparable
 
 NEWS_DAYS = 7                       # News shows the stories whose first post is in the last 7 days ...
 NEWS_RECENT = timedelta(hours=48)   # ... in two parts: "Last 48 hours" and "Earlier this week"; neither measured
+NEWS_KEEP = timedelta(days=30)      # the story job keeps News for the stories begun in the last 30 days (search's
+                                    # "News, last 30 days"); not measured
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
 MENTION_WEIGHT = 0.5                # the prototype's, not measured
@@ -110,7 +112,7 @@ def names(title: Optional[str]) -> Set[str]:
     return out
 
 
-def _phrases(title: Optional[str]) -> Set[str]:
+def phrases(title: Optional[str]) -> Set[str]:
     """Every run of 1 to 3 words of a title, lowercase: where a name is said, in any case."""
     words = _lower(_words(title))
     return {" ".join(words[i:i + n]) for n in range(1, NAME_MAX_WORDS + 1) for i in range(len(words) - n + 1)}
@@ -127,16 +129,25 @@ class Surge:
 def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> List[Surge]:
     """The names that surge among `posts` (their titles), first surge first.
     `followed_since`: when each source was added."""
+    return sorted(longest(name_surges(posts, followed_since)), key=lambda s: (s.at, s.name))
+
+
+def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
+                only: Optional[Set[str]] = None) -> List[Surge]:
+    """Each name's surges among `posts`, before `longest`: a name's depend only on the titles that name
+    or say it, so the story job judges again only the names a new title says (issue 0072 A). With
+    `only`, those names' alone (`posts` holds every title that names or says them)."""
     rows = sorted((p for p in posts if p.title and p.kind not in NAME_SKIP_KINDS), key=lambda p: (p.t, p.id))
     named: Dict[str, List[StoryPost]] = defaultdict(list)
     said: Dict[str, List[StoryPost]] = defaultdict(list)
     for p in rows:
         for name in names(p.title):
-            named[name].append(p)
+            if only is None or name in only:
+                named[name].append(p)
     # Only the phrases that are such a name are kept (issue 0072: every title's held 128 MB on the lab).
     named = {name: uses for name, uses in named.items() if len(uses) >= NAME_MIN_POSTS}
     for p in rows:
-        for phrase in _phrases(p.title) & named.keys():
+        for phrase in phrases(p.title) & named.keys():
             said[phrase].append(p)
     found = []
     for name, uses in named.items():
@@ -167,7 +178,7 @@ def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> L
                 continue   # a series a few voices keep saying ("May 2026"), not a wave
             found.append(Surge(name, start.t, [p.id for p in near], len(before)))
             after = near[-1].t
-    return sorted(longest(found), key=lambda s: (s.at, s.name))
+    return found
 
 
 def longest(found: Sequence[Surge]) -> List[Surge]:
@@ -270,6 +281,9 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
         groups[uf.find(p.id)].append(p)
     out = []
     for group in groups.values():
+        # A date alone counts as that day's earliest timed post (issue 0072 D): its start, its order, the window.
+        times = story_times(group)
+        group = sorted(group, key=lambda p: (times[p.id], p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
         voices = count_voices(group)
@@ -281,7 +295,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
                       for pid in story.mentions} - ids
         reports, shares, mentions = tally(group, post_roles, [by_id[pid] for pid in mentioning if pid in by_id])
         out.append(NewsStory(
-            id=group[0].id, first_at=group[0].t, posts=group, voices=voices, roles=post_roles,
+            id=group[0].id, first_at=times[group[0].id], posts=group, voices=voices, roles=post_roles,
             names={p.id: joined_by[p.id] for p in group if p.id in joined_by},
             reports=reports, shares=shares, mentions=mentions,
         ))
@@ -303,4 +317,4 @@ def lead(posts: Sequence[Tuple[str, str]], origins: Iterable[str] = ()) -> Optio
     return None
 
 
-__all__ = ["names", "surges", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead"]
+__all__ = ["names", "surges", "name_surges", "phrases", "longest", "Surge", "news", "NewsStory", "score", "tally", "lead"]

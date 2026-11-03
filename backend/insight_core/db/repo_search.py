@@ -32,7 +32,7 @@ from psycopg import Cursor
 
 from insight_core.db.repo_news import NewsRepository, _scope_sql as news_scope_sql
 from insight_core.db.repo_reader import (
-    _ITEM_COLUMNS, _STORY_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
+    _ITEM_COLUMNS, _ORDER_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
     _item, _on,
 )
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
@@ -289,7 +289,8 @@ class SearchRepository:
               AND (r.other > r.this
                    OR (r.other = r.this
                        AND ((o.role = 'report' AND sp.role = 'share')
-                            OR (o.role = sp.role AND ({_STORY_RANK.format(p='op')}) < ({_STORY_RANK.format(p='p')}))))))"""
+                            OR (o.role = sp.role AND ({_ORDER_RANK.format(sp='o', p='op')})
+                                                         < ({_ORDER_RANK.format(sp='sp', p='p')}))))))"""
         return sql, [query.q, query.q, *params]
 
     @staticmethod
@@ -311,7 +312,7 @@ class SearchRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             WHERE np.post_id = ANY(%s::uuid[])
-            ORDER BY np.post_id, {_STORY_RANK.format(p='p')}
+            ORDER BY np.post_id, {_ORDER_RANK.format(sp='o', p='p')}
             """,
             ([item["id"] for item in items],),
         )

@@ -63,3 +63,9 @@ test('a run that recorded no counts still reads, and odd numbers stay in range',
   assert.equal(search.word, 're-indexing 0 of 10');
   assert.equal(backgroundWorkBusy(undefined), false);
 });
+
+test('new rules regroup every post in batches: the line says how far, and that the old stories show till then', () => {
+  const [stories] = backgroundWorkLines(work({ stories: { running: false, last_run: { ...RUN, rebuild: { done: 12000, total: 41689 } } } }), NOW);
+  assert.deepEqual([stories.status, stories.word], ['running', 'regrouping every post by new rules, 12,000 of 41,689']);
+  assert.equal(stories.details[0], 'Until it is done the stories made by the old rules are shown');
+});

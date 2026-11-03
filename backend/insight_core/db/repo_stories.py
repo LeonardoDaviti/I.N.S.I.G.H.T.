@@ -6,6 +6,7 @@ file only reads what they need and writes what they return, touching only the ro
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -16,10 +17,13 @@ from psycopg import Cursor
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
-from insight_core.utils.story_rules import HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Story, source_site
+from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
+                                            source_site)
+from insight_core.utils.tree_rules import _PAGE
 from insight_core.utils.url_normalization import normalize_url
 
 LINKS_BATCH = 500
+KEY_CHARS = 500   # a key is kept to its first 500 characters (an index's row limit): two longer ones may share a row, never miss one
 
 
 def source_account(platform: Optional[str], handle: Optional[str]) -> Optional[str]:
@@ -205,24 +209,27 @@ class StoriesRepository:
         return cur.fetchone()[0]
 
     @staticmethod
-    def mark_boilerplate(cur: Cursor, sources: SourceFacts) -> int:
+    def mark_boilerplate(cur: Cursor, sources: SourceFacts, source_ids: Optional[Sequence[str]] = None) -> List[str]:
         """Mark every link that is its source's signature (in SIGNATURE_SHARE of its posts and
         SIGNATURE_MIN_POSTS at least) or points at its source's own site. Returns rows changed. On a
         site of publications (SourceFacts.shared_sites, issue 0070) its own is its publication: a
-        Substack writer linking another cites them. A platform is no source's own site: what is kept
-        of its links there (another tweet, issue 0066) is told by `extract_links`."""
+        Substack writer linking another cites them. Returns the posts whose links changed. A platform is no source's own site: what is kept
+        of its links there (another tweet, issue 0066) is told by `extract_links`. With `source_ids`, only
+        those sources' links (a source's signature counts its own posts only)."""
         own = [(source_id, *((sources.host[source_id], True) if site in sources.shared_sites else (site, False)))
                for source_id, site in sources.site.items()
                if site not in PLATFORM_SITES.get(sources.kind.get(source_id, ""), ())]
         cur.execute(
             """
-            WITH n AS (SELECT source_id, count(*) AS posts FROM posts GROUP BY source_id),
+            WITH n AS (SELECT source_id, count(*) AS posts FROM posts
+                       WHERE %(only)s::uuid[] IS NULL OR source_id = ANY(%(only)s::uuid[]) GROUP BY source_id),
             c AS (SELECT p.source_id, pl.target_url, count(*) AS posts
-                  FROM post_links pl JOIN posts p ON p.id = pl.post_id GROUP BY 1, 2),
-            own AS (SELECT * FROM unnest(%s::uuid[], %s::text[], %s::bool[]) AS o(source_id, own, by_host)),
+                  FROM post_links pl JOIN posts p ON p.id = pl.post_id
+                  WHERE %(only)s::uuid[] IS NULL OR p.source_id = ANY(%(only)s::uuid[]) GROUP BY 1, 2),
+            own AS (SELECT * FROM unnest(%(ids)s::uuid[], %(own)s::text[], %(by_host)s::bool[]) AS o(source_id, own, by_host)),
             want AS (
                 SELECT pl.post_id, pl.target_url,
-                       (c.posts >= %s AND c.posts >= %s * n.posts)
+                       (c.posts >= %(min_posts)s AND c.posts >= %(share)s * n.posts)
                        OR CASE WHEN own.by_host THEN substring(pl.target_url FROM '^[a-z]+://([^/?#:]+)') = own.own
                                ELSE pl.target_site = own.own END AS boilerplate
                 FROM post_links pl
@@ -235,40 +242,40 @@ class StoriesRepository:
             FROM want
             WHERE pl.post_id = want.post_id AND pl.target_url = want.target_url
               AND pl.boilerplate IS DISTINCT FROM COALESCE(want.boilerplate, false)
+            RETURNING pl.post_id
             """,
-            ([o[0] for o in own], [o[1] for o in own], [o[2] for o in own], SIGNATURE_MIN_POSTS, SIGNATURE_SHARE),
+            {"ids": [o[0] for o in own], "own": [o[1] for o in own], "by_host": [o[2] for o in own],
+             "min_posts": SIGNATURE_MIN_POSTS, "share": SIGNATURE_SHARE, "only": None if source_ids is None else list(source_ids)},
         )
-        return cur.rowcount
+        return sorted({str(r[0]) for r in cur.fetchall()})
 
     # ---- the story job ----------------------------------------------------------------
 
     @staticmethod
-    def load_posts(cur: Cursor, sources: SourceFacts, cutoff: Optional[datetime],
+    def load_posts(cur: Cursor, sources: SourceFacts, ids: Optional[Iterable[str]] = None, *,
                    linking: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
-        """The posts the job recomputes: posted since `cutoff` (every post when None), less those in
-        a story that began before it (frozen); with `linking`, only those with a kept link to one of
-        these addresses (Discover's articles, issue 0070). Each with its kept links, in order, and
-        the stored post each link is, if any."""
+        """The posts the job groups: every post, or those of `ids`; with `linking`, only those with a
+        kept link to one of these addresses (Discover's articles, issue 0070). Each with its kept links,
+        in order, and the stored post each link is, if any."""
         cur.execute(
             """
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
                    length(p.content), p.normalized_url,
                    CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END,
-                   COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by
+                   COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at
             FROM posts p
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
-              AND (%(cutoff)s::timestamptz IS NULL OR COALESCE(p.published_at, p.fetched_at) >= %(cutoff)s)
-              AND NOT EXISTS (SELECT 1 FROM story_posts sp JOIN stories st ON st.id = sp.story_id
-                              WHERE sp.post_id = p.id AND st.first_at < %(cutoff)s)
+              AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
               AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
                                                          WHERE NOT boilerplate AND target_url = ANY(%(linking)s)))
             """,
-            {"html": sources.html_sources(), "cutoff": cutoff, "linking": None if linking is None else list(linking)},
+            {"html": sources.html_sources(), "ids": None if ids is None else list(ids),
+             "linking": None if linking is None else list(linking)},
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
              "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "author": r[9],
-             "reposted_by": r[10] or [], "links": [], "link_texts": {}}
+             "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {}}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}
@@ -289,30 +296,32 @@ class StoriesRepository:
         return posts
 
     @staticmethod
-    def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Sequence[str],
-                      cutoff: Optional[datetime]) -> int:
-        """Make the stored stories match `stories`, the stories of `post_ids` (every post posted
-        since `cutoff`, less the frozen): stories begun since `cutoff`, those posts' story rows and
-        the mentions they make. Writes only what differs; returns how many rows changed."""
+    def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Optional[Sequence[str]] = None) -> int:
+        """Make the stored stories of `post_ids` (every post when None) match `stories`, theirs: the
+        stories holding them before and now, their story rows and the mentions of those stories and by
+        those posts. The caller gives whole stories (the incremental job's neighbourhood holds each
+        story a post of it was in). Writes only what differs; returns how many rows changed."""
         changed = 0
         want_posts: Dict[str, Tuple[Any, ...]] = {}
         want_mentions: Set[Tuple[str, str]] = set()
         for story in stories:
-            for post in story.posts:
+            for position, post in enumerate(story.posts):
                 # Its tree (issue 0064): the parent post, else the outside page origin, and why.
                 parent_id, parent_url, reason = story.parents.get(post.id, (None, None, None))
                 want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice,
-                                       parent_id, reason, parent_url)
+                                       parent_id, reason, parent_url, position)
             want_mentions |= {(story.id, pid) for pid in story.mentions}
         want = {story.id: (story.first_at, story.voices, story.origin_url, story.origin_title,
                            story.origin_linked_by if story.origin_url else None) for story in stories}
+        scope = None if post_ids is None else list(post_ids)
 
         cur.execute(
             """
             SELECT id, first_at, voices, origin_url, origin_title, origin_linked_by FROM stories
-            WHERE %s::timestamptz IS NULL OR first_at >= %s
+            WHERE %(ids)s::uuid[] IS NULL OR id = ANY(%(want)s::uuid[])
+               OR id IN (SELECT story_id FROM story_posts WHERE post_id = ANY(%(ids)s::uuid[]))
             """,
-            (cutoff, cutoff),
+            {"ids": scope, "want": list(want)},
         )
         have = {str(r[0]): tuple(r[1:]) for r in cur.fetchall()}
         gone = [sid for sid in have if sid not in want]
@@ -335,12 +344,12 @@ class StoriesRepository:
 
         cur.execute(
             """
-            SELECT post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url
-            FROM story_posts WHERE post_id = ANY(%s::uuid[])
+            SELECT post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url, position
+            FROM story_posts WHERE %(ids)s::uuid[] IS NULL OR post_id = ANY(%(ids)s::uuid[])
             """,
-            (list(post_ids),),
+            {"ids": scope},
         )
-        have_posts = {str(r[0]): (str(r[1]), r[2], list(r[3]), r[4], str(r[5]) if r[5] else None, r[6], r[7])
+        have_posts = {str(r[0]): (str(r[1]), r[2], list(r[3]), r[4], str(r[5]) if r[5] else None, r[6], r[7], r[8])
                       for r in cur.fetchall()}
         drop = [pid for pid in have_posts if pid not in want_posts]
         if drop:
@@ -351,11 +360,12 @@ class StoriesRepository:
             # parent_id references story_posts, checked at commit: a parent may be written after its child.
             cur.executemany(
                 """
-                INSERT INTO story_posts (post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO story_posts (post_id, story_id, role, reasons, voice, parent_id, parent_reason, parent_url, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (post_id) DO UPDATE
                     SET story_id = EXCLUDED.story_id, role = EXCLUDED.role, reasons = EXCLUDED.reasons, voice = EXCLUDED.voice,
-                        parent_id = EXCLUDED.parent_id, parent_reason = EXCLUDED.parent_reason, parent_url = EXCLUDED.parent_url
+                        parent_id = EXCLUDED.parent_id, parent_reason = EXCLUDED.parent_reason, parent_url = EXCLUDED.parent_url,
+                        position = EXCLUDED.position
                 """,
                 rows,
             )
@@ -363,10 +373,10 @@ class StoriesRepository:
 
         cur.execute(
             """
-            SELECT m.story_id, m.post_id FROM story_mentions m JOIN stories st ON st.id = m.story_id
-            WHERE m.post_id = ANY(%s::uuid[]) AND (%s::timestamptz IS NULL OR st.first_at >= %s)
+            SELECT story_id, post_id FROM story_mentions
+            WHERE %(ids)s::uuid[] IS NULL OR post_id = ANY(%(ids)s::uuid[]) OR story_id = ANY(%(stories)s::uuid[])
             """,
-            (list(post_ids), cutoff, cutoff),
+            {"ids": scope, "stories": sorted(set(have) | set(want))},
         )
         have_mentions = {(str(r[0]), str(r[1])) for r in cur.fetchall()}
         for story_id, post_id in have_mentions - want_mentions:
@@ -376,19 +386,226 @@ class StoriesRepository:
         if new:
             cur.executemany("INSERT INTO story_mentions (story_id, post_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", new)
             changed += len(new)
+        return changed
 
-        # A frozen story whose posts went with a removed source is no story any more (one source's
-        # thread, or its quote of itself, is one while it holds two posts: issue 0066). The stories
-        # just written are as the rules say (a tweet your sources reposted is one, issue 0068).
+    # ---- stored connections (issue 0072 A) -----------------------------------------------
+
+    @staticmethod
+    def write_edges(cur: Cursor, edges: Iterable[Edge], *, made_by: str, post_ids: Optional[Sequence[str]] = None,
+                    threads: bool = False, mentioned: Sequence[str] = ()) -> int:
+        """Make the stored edges from `post_ids` (every post when None) exactly `edges`: the thread
+        edges with `threads`, every other kind without (a thread's are kept by its timeline,
+        StoriesService), and the mentions of the nodes `mentioned` (posts, and _PAGE + an address:
+        a roundup mentions a story it is not in). Returns how many rows changed."""
+        want: Dict[Tuple[str, str, str], Tuple[Any, ...]] = {}
+        for e in edges:
+            if (e.kind == "thread") == threads:
+                want[(e.src, e.kind, e.dst)] = (json.dumps({"key": e.via}) if e.via else None, made_by)
         cur.execute(
             """
-            DELETE FROM stories st WHERE NOT st.id = ANY(%s::uuid[])
-              AND (SELECT count(DISTINCT p.source_id) < 2 AND NOT (count(*) >= 2 AND bool_or(sp.reasons && '{thread,quote}'))
-                   FROM story_posts sp JOIN posts p ON p.id = sp.post_id WHERE sp.story_id = st.id)
+            SELECT src_post, kind, COALESCE(dst_post::text, %(page)s || dst_url), evidence::text, made_by FROM post_edges
+            WHERE (kind = 'thread') = %(threads)s AND dst_story IS NULL
+              AND (%(ids)s::uuid[] IS NULL OR src_post IN (SELECT unnest(%(ids)s::uuid[]))
+                   OR kind = 'mention' AND (dst_post IN (SELECT unnest(%(posts)s::uuid[])) OR dst_url = ANY(%(pages)s)))
             """,
-            (list(want),),
+            {"page": _PAGE, "threads": threads, "ids": None if post_ids is None else list(post_ids),
+             "posts": [n for n in mentioned if not n.startswith(_PAGE)],
+             "pages": [n[len(_PAGE):] for n in mentioned if n.startswith(_PAGE)]},
         )
-        return changed + cur.rowcount
+        have = {(str(r[0]), r[1], r[2]): (json.dumps(json.loads(r[3])) if r[3] else None, r[4]) for r in cur.fetchall()}
+        gone = [key for key in have if key not in want]
+        changed = 0
+        if gone:
+            cur.executemany("DELETE FROM post_edges WHERE src_post = %s AND kind = %s AND dst_story IS NULL "
+                            "AND COALESCE(dst_post::text, %s || dst_url) = %s",
+                            [(src, kind, _PAGE, dst) for src, kind, dst in gone])
+            changed += len(gone)
+        rows = [(src, None if dst.startswith(_PAGE) else dst, dst[len(_PAGE):] if dst.startswith(_PAGE) else None,
+                 kind, evidence, made_by)
+                for (src, kind, dst), (evidence, made_by) in want.items() if have.get((src, kind, dst)) != (evidence, made_by)]
+        if rows:
+            cur.executemany(
+                """
+                INSERT INTO post_edges (src_post, dst_post, dst_url, kind, evidence, made_by) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (src_post, kind, COALESCE(dst_post::text, dst_story::text, dst_url))
+                DO UPDATE SET evidence = EXCLUDED.evidence, made_by = EXCLUDED.made_by
+                """,
+                rows,
+            )
+            changed += len(rows)
+        return changed
+
+    @staticmethod
+    def replies(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, str]:
+        """The stored thread edges of these posts: each reply -> the post it continues."""
+        cur.execute("SELECT src_post, dst_post FROM post_edges WHERE kind = 'thread' "
+                    "AND src_post IN (SELECT unnest(%s::uuid[]))", (list(post_ids),))
+        return {str(src): str(dst) for src, dst in cur.fetchall()}
+
+    @staticmethod
+    def edges_of(cur: Cursor, post_ids: Sequence[str], kinds: Sequence[str]) -> List[Edge]:
+        """The stored edges of these kinds from or to these posts."""
+        cur.execute(
+            f"""
+            SELECT src_post::text, COALESCE(dst_post::text, %(page)s || dst_url), kind, evidence->>'key' FROM post_edges
+            WHERE kind = ANY(%(kinds)s) AND dst_story IS NULL
+              AND (src_post IN (SELECT unnest(%(ids)s::uuid[])) OR dst_post IN (SELECT unnest(%(ids)s::uuid[])))
+            """,
+            {"page": _PAGE, "kinds": list(kinds), "ids": list(post_ids)},
+        )
+        return [Edge(*row) for row in cur.fetchall()]
+
+    @staticmethod
+    def pages_linked(cur: Cursor, post_ids: Sequence[str]) -> Set[str]:
+        """The outside pages these posts are joined through (their stored link edges)."""
+        cur.execute("SELECT DISTINCT dst_url FROM post_edges WHERE kind = 'link' AND src_post IN (SELECT unnest(%s::uuid[]))",
+                    (list(post_ids),))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def linking(cur: Cursor, urls: Sequence[str]) -> Set[str]:
+        """The posts with a stored link edge to these outside pages (a story joined through them)."""
+        cur.execute("SELECT DISTINCT src_post::text FROM post_edges WHERE kind = 'link' AND dst_url = ANY(%s)", (list(urls),))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def write_keys(cur: Cursor, keys: Dict[str, Set[str]]) -> int:
+        """These posts' keys become exactly `keys` (story_rules.keys, and News' names). Returns rows changed."""
+        cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[])", (list(keys),))
+        have = {(pid, key) for pid, key in cur.fetchall()}
+        want = {(pid, key[:KEY_CHARS]) for pid, ks in keys.items() for key in ks}
+        gone, new = sorted(have - want), sorted(want - have)
+        if gone:
+            cur.executemany("DELETE FROM story_keys WHERE post_id = %s AND key = %s", gone)
+        if new:
+            with cur.copy("COPY story_keys (post_id, key) FROM STDIN") as copy:
+                for row in new:
+                    copy.write_row(row)
+        return len(gone) + len(new)
+
+    @staticmethod
+    def stored_keys(cur: Cursor, post_ids: Sequence[str]) -> Dict[str, Set[str]]:
+        cur.execute("SELECT post_id::text, key FROM story_keys WHERE post_id = ANY(%s::uuid[])", (list(post_ids),))
+        out: Dict[str, Set[str]] = defaultdict(set)
+        for pid, key in cur.fetchall():
+            out[pid].add(key)
+        return out
+
+    @staticmethod
+    def holders(cur: Cursor, keys: Iterable[str]) -> Set[str]:
+        """The posts holding any of these keys: by story_keys, and for an address ("u:") every post
+        linking it too (a link to a home page is a key only once a post is stored there)."""
+        keys = sorted({key[:KEY_CHARS] for key in keys})
+        cur.execute(
+            """
+            SELECT post_id::text FROM story_keys WHERE key = ANY(%(keys)s)
+            UNION SELECT post_id::text FROM post_links WHERE NOT boilerplate AND target_url = ANY(%(urls)s)
+            """,
+            {"keys": keys, "urls": [key[2:] for key in keys if key.startswith("u:")]},
+        )
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def at_addresses(cur: Cursor, urls: Sequence[str]) -> Set[str]:
+        """The posts stored at these addresses."""
+        cur.execute("SELECT id::text FROM posts WHERE normalized_url = ANY(%s)", (list(urls),))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def count_posts(cur: Cursor) -> int:
+        cur.execute("SELECT count(*) FROM posts")
+        return int(cur.fetchone()[0])
+
+    @staticmethod
+    def counts(cur: Cursor) -> Dict[str, int]:
+        """How many stories, News stories and classics are stored (a run's summary)."""
+        cur.execute("SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM news_stories), (SELECT count(*) FROM classics)")
+        stories, news, classics = cur.fetchone()
+        return {"stories": int(stories), "news": int(news), "classics": int(classics)}
+
+    @staticmethod
+    def story_mates(cur: Cursor, post_ids: Iterable[str]) -> Set[str]:
+        """These posts and every post of the stories they are in."""
+        ids = sorted(set(post_ids))
+        cur.execute("SELECT o.post_id::text FROM story_posts sp JOIN story_posts o ON o.story_id = sp.story_id "
+                    "WHERE sp.post_id = ANY(%s::uuid[])", (ids,))
+        return set(ids) | {r[0] for r in cur.fetchall()}
+
+    # ---- the queue (issue 0072 A: migration 0059's triggers write it) ---------------------
+
+    @staticmethod
+    def take_queue(cur: Cursor, limit: int, *, redo: bool = False) -> List[Tuple[str, Any]]:
+        """Up to `limit` queued changes, removed from the queue: (key, what it was). With `redo`, a
+        rule change's posts (redo:<id>) once no saved or changed post is waiting."""
+        cur.execute(
+            """
+            DELETE FROM story_queue WHERE key IN (
+                SELECT key FROM story_queue WHERE (key LIKE 'redo:%%') = %s ORDER BY queued_at, key LIMIT %s
+                FOR UPDATE SKIP LOCKED)
+            RETURNING key, was
+            """,
+            (redo, limit),
+        )
+        return cur.fetchall()
+
+    @staticmethod
+    def queued(cur: Cursor) -> Dict[str, int]:
+        cur.execute("SELECT count(*) FILTER (WHERE key LIKE 'redo:%%'), count(*) FILTER (WHERE key NOT LIKE 'redo:%%') "
+                    "FROM story_queue")
+        redo, changed = cur.fetchone()
+        return {"redo": int(redo), "changed": int(changed)}
+
+    @staticmethod
+    def take_keys(cur: Cursor, keys: Sequence[str]) -> None:
+        """These queued changes are being regrouped: off the queue."""
+        cur.execute("DELETE FROM story_queue WHERE key = ANY(%s)", (list(keys),))
+
+    @staticmethod
+    def queue_posts(cur: Cursor, source_ids: Sequence[str], accounts: Sequence[str]) -> None:
+        """Queue the posts of these sources, and the X posts by or reposted by these accounts
+        (addresses.x_account: x.com/<name>)."""
+        names = [a.split("/", 1)[1] for a in accounts if a.startswith("x.com/")]
+        cur.execute(
+            """
+            INSERT INTO story_queue (key)
+            SELECT 'post:' || id FROM posts
+            WHERE source_id = ANY(%(sources)s::uuid[])
+               OR lower(author) = ANY(%(names)s)
+               OR EXISTS (SELECT 1 FROM unnest(reposted_by) r WHERE lower(r) = ANY(%(names)s))
+            ON CONFLICT DO NOTHING
+            """,
+            {"sources": list(source_ids), "names": names},
+        )
+
+    @staticmethod
+    def done(cur: Cursor, post_ids: Iterable[str]) -> None:
+        """A rule change's posts regrouped: off the queue."""
+        cur.execute("DELETE FROM story_queue WHERE key = ANY(%s)", (["redo:" + pid for pid in post_ids],))
+
+    @staticmethod
+    def redo_every_post(cur: Cursor) -> int:
+        """Queue every post for a rule change (redo:<id>), the changes already queued staying."""
+        cur.execute("DELETE FROM story_queue WHERE key LIKE 'redo:%%'")
+        cur.execute("INSERT INTO story_queue (key) SELECT 'redo:' || id FROM posts ON CONFLICT DO NOTHING")
+        return cur.rowcount
+
+    @staticmethod
+    def clear_queue(cur: Cursor) -> None:
+        cur.execute("DELETE FROM story_queue")
+
+    @staticmethod
+    def timeline(cur: Cursor, source_id: str, start: datetime, end: datetime) -> List[str]:
+        """The posts of a source posted between `start` and `end`."""
+        cur.execute("SELECT id::text FROM posts WHERE source_id = %s "
+                    "AND COALESCE(published_at, fetched_at) BETWEEN %s AND %s", (source_id, start, end))
+        return [r[0] for r in cur.fetchall()]
+
+    @staticmethod
+    def post_ids(cur: Cursor, after: Optional[str], limit: int) -> List[str]:
+        """Every post's id in order, `limit` at a time after `after`."""
+        cur.execute("SELECT id::text FROM posts WHERE %s::uuid IS NULL OR id > %s::uuid ORDER BY id LIMIT %s",
+                    (after, after, limit))
+        return [r[0] for r in cur.fetchall()]
 
     # ---- Discover (its counts: repo_discover.py) -----------------------------------------
 

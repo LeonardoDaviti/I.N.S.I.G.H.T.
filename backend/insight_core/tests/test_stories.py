@@ -277,9 +277,10 @@ class StoryJobTests(unittest.TestCase):
         return f'<p><a href="{url}">{text}</a></p>'
 
     def _job(self, *, full=True):
+        """A full run (and the setting that says so), or the incremental job after one."""
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        return self.service.regroup(self.cur, cutoff=None if full else self.now - timedelta(days=30))
+        return self.service.full_on(self.cur) if full else self.service.update(self.cur)
 
     def _story_of(self, post_id):
         self.cur.execute("SELECT story_id, role, reasons FROM story_posts WHERE post_id = %s", (post_id,))
@@ -298,6 +299,7 @@ class StoryJobTests(unittest.TestCase):
                                   content_hash="same-" + self.mark)
         self.take, _ = self._post(self.simon, site="simon", hours_ago=3, title="My notes on the new model",
                                   html=self._link(page))
+        self.cur.execute("UPDATE posts SET created_at = created_at - interval '1 hour' WHERE id = %s", (self.lab,))
         self._job()
 
     def test_the_saver_reads_the_links_of_what_it_saved(self):
@@ -344,7 +346,7 @@ class StoryJobTests(unittest.TestCase):
     def test_stories_roles_and_reasons(self):
         self._launch()
         story = self._story_of(self.lab)
-        self.assertEqual(story, (self.lab, "report", ["text", "link"]), "keyed by its first post")
+        self.assertEqual(story, (self.lab, "report", ["text", "link"]), "keyed by its post stored first")
         self.assertEqual(self._story_of(self.copy), (self.lab, "share", ["text", "link"]))
         self.assertEqual(self._story_of(self.take), (self.lab, "report", ["link"]))
         self.cur.execute("SELECT voices FROM stories WHERE id = %s", (self.lab,))
@@ -356,23 +358,23 @@ class StoryJobTests(unittest.TestCase):
         before = self.cur.fetchall()
         again = self._job()
         self.assertEqual((again["changed"], again["boilerplate_changed"]), (0, 0))
-        windowed = self._job(full=False)
-        self.assertEqual((windowed["changed"], windowed["boilerplate_changed"]), (0, 0))
+        self.assertEqual(self._job(full=False), {}, "the incremental job after it finds nothing to do")
         self.cur.execute("SELECT * FROM story_posts WHERE story_id = %s ORDER BY post_id", (self.lab,))
         self.assertEqual(self.cur.fetchall(), before)
 
-    def test_an_old_story_is_frozen(self):
+    def test_an_old_story_is_regrouped_too(self):
+        # Issue 0072 A: no window and no frozen stories; a change to a month-old post regroups its story.
         old = self._source("Old")
         other = self._source("Other")
         title = f"An old story told twice {self.mark}"
         a, _ = self._post(old, site="old", hours_ago=24 * 40, title=title)
         b, _ = self._post(other, site="other", hours_ago=24 * 39, title=title)
         self._job()
+        self.assertIsNotNone(self._story_of(b))
         self.cur.execute("UPDATE posts SET title = 'Something else entirely now' WHERE id = %s", (b,))
-        self.assertEqual(self._job(full=False)["changed"], 0, "a story begun before the window is not recomputed")
-        self.assertEqual(self._story_of(b)[0], a)
-        self._job()
-        self.assertIsNone(self._story_of(b), "a full run regroups it")
+        self.assertGreater(self._job(full=False)["changed"], 0)
+        self.assertIsNone(self._story_of(b))
+        self.assertEqual(self._job()["changed"], 0, "as a full run makes it")
 
     # ---- the feed ---------------------------------------------------------------------------
 
@@ -507,7 +509,7 @@ def _killed() -> None:
 
 def _killed_in_the_job(url: str) -> None:
     """The story job, killed while it holds its lock, before it writes anything."""
-    with mock.patch.object(StoriesService, "regroup", lambda *args, **kwargs: _killed()):
+    with mock.patch.object(StoriesService, "step", lambda *args, **kwargs: _killed()):
         recompute_job(url)
 
 
@@ -577,11 +579,9 @@ class KilledJobTests(unittest.TestCase):
                 time.sleep(0.1)
             else:
                 self.fail("the killed job's lock is still held")
-        service = StoriesService(db_url())
-        with mock.patch.object(service, "regroup", lambda cur, cutoff: {}), \
-                mock.patch.object(service, "fill_discover_addresses", lambda: 0):
-            self.assertTrue(service.recompute()["full"], "the next run: in full, as the killed one would have")
+        StoriesService(db_url()).recompute()   # the next run: the rule change's rebuild, as the killed one would have
         self.assertEqual(self._setting()[0]["rules"], rules_stamp())
+        self.assertNotIn("rebuild", self._setting()[0], "done")
 
 
 if __name__ == "__main__":

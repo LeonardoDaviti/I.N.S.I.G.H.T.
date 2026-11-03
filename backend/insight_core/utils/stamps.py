@@ -141,10 +141,12 @@ def _reddit(user: str) -> str:
 def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Optional[str], *,
           links: Sequence[Tuple[str, Optional[str]]] = (), texts: Optional[Dict[str, str]] = None,
           html: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0, author: Optional[str] = None,
-          reposted_by: Sequence[str] = (), updated: bool = False) -> Dict[str, Any]:
+          reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None) -> Dict[str, Any]:
+    """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when."""
     return {"id": pid, "source_id": source, "t": at, "title": title, "content_hash": content_hash or "h-" + pid,
             "text_chars": chars or 400, "url": url, "html": html, "updated": updated, "author": author,
-            "reposted_by": list(reposted_by), "links": list(links), "link_texts": dict(texts or {})}
+            "reposted_by": list(reposted_by), "links": list(links), "link_texts": dict(texts or {}),
+            "stored_at": stored or at + timedelta(hours=1)}
 
 
 def _at(hours: float, minutes: int = 0) -> datetime:
@@ -208,6 +210,10 @@ def posts() -> List[Dict[str, Any]]:
           links=[("https://blog.alpha.example/2026/03/alpha-update", "h1")], author="fan_z", html="<p>update</p>"),
         p("h6", "s-x1", _at(80, 11), "The migration guide is good", "https://x.com/writer_x/status/1900000000000000060",
           links=[(L8, None)], author="writer_x", html="<p>guide</p>"),
+        # A date alone counts as that day's earliest timed post of its story, never 00:00 (issue 0072 D)
+        p("h7", "s-gamma", datetime(2026, 3, 5, tzinfo=timezone.utc), "Notes on the March update",
+          "https://gamma.example/research/notes-on-the-march-update",
+          links=[("https://blog.alpha.example/2026/03/alpha-update", "h1")]),
         # On X: a thread, a repost held by another source (its author a voice), a quote, a reposter
         p("t1", "s-x1", _at(90), "Thread on evaluation methods, part one of the series", TWEET, author="writer_x",
           reposted_by=["fan_z"], html="<p>Thread on evaluation methods</p>"),
@@ -229,8 +235,10 @@ def posts() -> List[Dict[str, Any]]:
           content_hash="h-same-text", chars=120),
         p("j3", "s-tg1", _at(104), "Short one", "https://t.me/sample_channel/150", content_hash="h-short", chars=119, html="<p>s</p>"),
         p("j4", "s-tg2", _at(104, 30), "Short two", "https://t.me/other_channel/250", content_hash="h-short", chars=119, html="<p>s</p>"),
-        # The same title of 5+ words, styled letters as plain (NFKC), within 7 days; not 8 days on
-        p("k1", "s-beta", _at(110), "A Field Guide To Small Language Models", "https://beta.example/field-guide"),
+        # The same title of 5+ words, styled letters as plain (NFKC), within 7 days; not 8 days on. The
+        # first was stored after the second (a late fetch): the story keeps the second's id (issue 0072 A).
+        p("k1", "s-beta", _at(110), "A Field Guide To Small Language Models", "https://beta.example/field-guide",
+          stored=_at(114)),
         p("k2", "s-gamma", _at(112), "𝐀 𝐅𝐢𝐞𝐥𝐝 𝐆𝐮𝐢𝐝𝐞 𝐓𝐨 𝐒𝐦𝐚𝐥𝐥 𝐋𝐚𝐧𝐠𝐮𝐚𝐠𝐞 𝐌𝐨𝐝𝐞𝐥𝐬", "https://gamma.example/research/field-guide"),
         p("k3", "s-alpha", _at(112 + 7 * 24), "A Field Guide To Small Language Models", "https://blog.alpha.example/field-guide"),
         p("k4", "s-tg1", _at(112 + 14 * 24, 1), "A Field Guide To Small Language Models", "https://t.me/sample_channel/160",

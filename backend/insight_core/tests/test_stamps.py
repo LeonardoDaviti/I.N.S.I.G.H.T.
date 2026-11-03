@@ -40,6 +40,15 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         self.assertEqual({parent[2] for s in stories for parent in s.parents.values()} - {None}, set(PARENT_REASONS))
         self.assertTrue(any(s.mentions for s in stories), "a roundup mentions a story")
 
+    def test_a_date_alone_and_a_late_fetch(self):
+        # Issue 0072: a date alone counts as that day's earliest timed post; a story keeps the id of its
+        # post stored first.
+        stories = {p.id: s for s in sample_stories() for p in s.posts}
+        update = stories["h7"]
+        self.assertEqual(update.first_at, stamps._at(80), "the day's first timed post, not 00:00")
+        self.assertEqual(update.posts[0].id, "h1")
+        self.assertEqual(stories["k1"].id, "k2", "the post stored first, not the first posted")
+
     def test_each_way_an_outside_origin_is_titled(self):
         titles = {s.origin_url: s.origin_title for s in sample_stories() if s.origin_url}
         self.assertEqual(titles[stamps.L4], "Fast Tokenizer Ships", "the page's own words, quoted")

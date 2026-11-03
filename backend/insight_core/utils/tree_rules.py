@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
+from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple
@@ -186,11 +187,12 @@ _SLUG_ID = re.compile(r"^(?:\d{5,}|(?:19|20)\d\d[-_]\d\d(?:[-_]\d\d)?)(?:[-_+]|$
 _TOKENS = re.compile(r"\w+", re.U)
 
 
-def _slug_words(url: str) -> List[str]:
+@lru_cache(maxsize=1 << 15)   # an address's own words: read for each post linking it, in each group of a run
+def _slug_words(url: str) -> Tuple[str, ...]:
     """The words of an address's last path segment (its slug), its extension and a leading id aside."""
     _, _, rest = bare(url).partition("/")
     slug = unquote(re.split(r"[?#]", rest, maxsplit=1)[0].rstrip("/").rsplit("/", 1)[-1])
-    return [w for w in _SLUG.split(_SLUG_ID.sub("", re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I))) if w]
+    return tuple(w for w in _SLUG.split(_SLUG_ID.sub("", re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I))) if w)
 
 
 def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:

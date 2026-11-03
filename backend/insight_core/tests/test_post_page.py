@@ -95,7 +95,7 @@ class PostPageTests(unittest.TestCase):
         self.take = self._post(self.simon, site="simon", hours_ago=3, title="My notes on the new model", html=link)
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        StoriesService(db_url(), clock=lambda: self.now).regroup(self.cur, cutoff=None)
+        StoriesService(db_url(), clock=lambda: self.now).regroup(self.cur)
 
     def _story(self, post_id):
         self.cur.execute("SELECT source_id::text FROM posts WHERE id = %s", (post_id,))
