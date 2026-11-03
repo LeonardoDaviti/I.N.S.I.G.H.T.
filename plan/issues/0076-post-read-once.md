@@ -63,6 +63,44 @@ Status: **spec (draft)** for v9.16, the stability release (no new features), wri
 ## Prepare in v9.15 (small, optional)
 The incremental story job reads a post's fields through one function, so v9.16 changes their source without touching the job's logic.
 
+## Measured (2026-11-04, a copy of the lab, 41,637 posts; details private in `plan/research/0076-measure/`)
+1. **Pages and the story job disagree on 43% of titles** (17,975 posts), and **the story job's title key changes for 16,887 (40.6%)**.
+   - By kind: X 89%, Telegram 61%, Reddit 11%, sites 2%.
+   - Causes:
+     - X: the raw key keeps the `RT by @` and `R to @` handles and the whole tweet;
+     - Telegram: the glued second line and the cut body;
+     - sites and Reddit: double-encoded entities, non-breaking spaces, and the 120-character cut.
+   - **Expect step 2 to move many title joins.** Its diff (0075) must be read by hand, by kind.
+2. **Storage: cut points win.**
+   - The row without the body is 22 MB (4.4% of `posts`, 509 MB).
+   - With cut points it is 27.6 MB (5.4%).
+   - A cleaned copy only where it differs is 59 MB (11.6%), and always 279 MB (55%, over budget).
+   - 60.5% of posts need no cut at all.
+   - Cut points can't express 3,415 text bodies and 317 HTML ones, from two causes:
+     - entity decoding in Telegram's plain text;
+     - the X quote byline replaced by a line break.
+
+     Two flags (`decode_entities`, `cut_leaves_break`) cover nearly all of them (about 23 MB, estimated). The rest are stored as a copy.
+   - **Decided by the numbers:** cut points plus the two flags, with a copy only where neither expresses it.
+3. **Dates:**
+   - 3,298 posts are date-only today: all of YouTube, 38 site feeds that are always midnight, and 636 posts in 22 mixed feeds.
+   - At most 21 are real midnight posts.
+   - **Precision is decided per item at ingestion, not per source** (some feeds are 40–97% midnight).
+   - **Missed today:** 6 sources (376 posts) put 80%+ of their posts on one fixed non-midnight hour (dates read in the site's timezone), and these count as exact.
+     - Rule: a source whose times sit 80%+ on one hour is date-only for those posts.
+     - Measure it again on the fresh server copy before adopting.
+   - **68 undated posts** (59 with made-up backlog times) count as exact in `trusted_time`; `published_precision = none` fixes that.
+4. **Telegram needs the HTML:**
+   - 83.5% of Telegram posts have line breaks only in the HTML;
+   - without it, 1,752 titles and 3,280 bodies change.
+   - The parser reads both. The warning "line breaks recovered from HTML" is expected on about 1.75k titles and 3.3k bodies.
+5. **Call sites:**
+   - `post_title` is called at 9 read-time sites (reader, post page, News, search, Discover); `reading_text`, `quote_only`, `hnrss_counts`, `link_post_target` and `quoted_tweet` at 11 more.
+   - The story job duplicates the raw title, the reply prefix, `quoted_tweet`, `reddit_author`, its own word count for link posts, and the raw `content_hash` (`stories_service._story_post`).
+   - `_story_post` also feeds Discover's article titles, so it moves with the rest.
+   - The 0075 tooling (`checks/compat.py`) imports the parsers on purpose and is exempt from the import guard.
+6. **A display bug found, fixed in this issue:** the glued-first-line rule cuts a title at a number written two ways ("…145GB models…" against the article's "145 GB" shows as "…145"). Fix it in the one parser, then count it over every site and HN post (0075's diff).
+
 ## Done when
 - `realdata-check.sh` passes: the cases, the invariants no worse, step 1's diff 0, and step 2's diff reviewed.
 - The import guard test is in.
