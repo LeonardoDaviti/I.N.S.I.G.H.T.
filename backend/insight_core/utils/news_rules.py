@@ -37,10 +37,13 @@ from insight_core.utils.titles import comparable
 # Each says whether it was measured (issue 0071). "The prototype's": the value of
 # plan/research/dedup-prototype, checked as a whole (0051: 19 of 20 surges real), not one by one.
 
-NEWS_DAYS = 7                       # News shows the stories whose first post is in the last 7 days ...
-NEWS_RECENT = timedelta(hours=48)   # ... in two parts: "Last 48 hours" and "Earlier this week"; neither measured
-NEWS_KEEP = timedelta(days=30)      # the story job keeps News for the stories begun in the last 30 days (search's
-                                    # "News, last 30 days"); not measured
+NEWS_DAYS = 30                      # News shows the stories whose first post is in the last 30 days (the owner,
+                                    # issue 0077) ...
+NEWS_RECENT = timedelta(hours=48)   # ... the API's part "recent" the last 48 hours (the reader splits the rest by
+                                    # week); neither measured
+NEWS_KEEP = timedelta(days=30)      # the story job writes News for the stories begun in the last 30 days (search's
+                                    # "News, last 30 days"); the rows before stay (issue 0077); not measured
+SCOPE_ROLES = ("origin", "report", "share", "mention")   # a source's part in a News row, strongest first (0077)
 NEWS_MIN_VOICES = 2                 # the prototype's, not measured
 SHARE_WEIGHT = 0.5                  # the prototype's, not measured
 MENTION_WEIGHT = 0.5                # the prototype's, not measured

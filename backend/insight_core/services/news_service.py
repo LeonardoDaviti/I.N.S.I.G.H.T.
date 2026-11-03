@@ -4,7 +4,8 @@ Both are measured from your own sources, with no AI and no reading history:
 - **News:** several independent sources cover the same thing within days. The story job finds the
   names surging in titles (over the last 32 days of titles) and joins 0050's stories by them, for
   News only, then scores each story (utils/news_rules.py). GET /api/news reads the stories whose
-  first post is in the last 7 days.
+  first post is in the last 30 days. Every News row is kept (issue 0077): a run rewrites its own
+  window only.
 - **Classics:** your sources keep linking the same page over months. The story job aggregates the
   kept post links into `classics`; GET /api/classics reads them, cited again this week first.
 - **Background:** a post that links a classic says so (at most 2, in the post's detail).
@@ -25,14 +26,14 @@ from insight_core.db.repo_news import NewsRepository
 from insight_core.db.repo_reader import FeedScope, ReaderRepository
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
-from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, Surge, lead,
-                                          longest, name_surges, names, news, phrases)
+from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
+                                          Surge, lead, longest, name_surges, names, news, phrases)
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import post_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
 
-PARTS = ("recent", "earlier")    # "Last 48 hours", "Earlier this week"
+PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week, issue 0077)
 WORDS = re.compile(r"\w+")
 
 
@@ -51,7 +52,8 @@ class NewsService:
                 sources: SourceFacts) -> Dict[str, Any]:
         """News and every classic of a full story run (`posts`, every post, grouped into `stories`), on
         the caller's transaction: every name's surges, and News for the stories begun in the last
-        NEWS_KEEP and the posts of no story posted in it. Returns what it counted and how many rows changed."""
+        NEWS_KEEP and the posts of no story posted in it; the rows begun before it are kept (issue 0077,
+        `write_news`). Returns what it counted, how many rows changed and how many News rows it removed."""
         raw = name_surges(self._titled(sources, self.repo.load_titles(cur, None)), self.repo.followed_since(cur))
         surges_changed = self.repo.write_surges(cur, raw)
         found = sorted(longest(raw), key=lambda s: (s.at, s.name))
@@ -60,11 +62,12 @@ class NewsService:
         in_story = {p.id for s in stories for p in s.posts}
         ids = {p.id for s in shown for p in s.posts} | {p.id for p in posts if p.id not in in_story and p.t >= since}
         stories_now = news([p for p in posts if p.id in ids], shown, found)
-        news_changed = self.repo.write_news(cur, stories_now)
+        news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since)
         found_classics = classics(*self._citations(cur, sources))
         classics_changed = self.repo.write_classics(cur, found_classics)
         return {"names": len(found), "surges_changed": surges_changed, "news": len(stories_now),
-                "news_changed": news_changed, "classics": len(found_classics), "classics_changed": classics_changed}
+                "news_changed": news_changed, "news_removed": news_removed, "classics": len(found_classics),
+                "classics_changed": classics_changed}
 
     def update(self, cur: Any, *, sources: SourceFacts, posts: Dict[str, StoryPost],
                load: Callable[[Iterable[str]], None], touched: Set[str], titles: Sequence[Optional[str]],
@@ -82,7 +85,6 @@ class NewsService:
         if before is not None and before != since:
             lo, hi = min(before, since), max(before, since)
             seeds |= set(self.repo.window_posts(cur, lo, hi))
-        seeds |= self.repo.news_before(cur, since)
         surges_of: Dict[str, List[Surge]] = defaultdict(list)
         for s in found:
             for pid in s.posts:
@@ -104,11 +106,11 @@ class NewsService:
         held = [Story(id=sid, first_at=since, posts=[posts[pid] for pid in story["posts"] if pid in posts], voices=0,
                       roles={}, reasons={}, mentions=story["mentions"]) for sid, story in sorted(stories.items())]
         stories_now = news(window, held, found)
-        news_changed = self.repo.write_news(cur, stories_now, post_ids=sorted(group))
+        news_changed, news_removed = self.repo.write_news(cur, stories_now, since=since, post_ids=sorted(group))
         found_classics = classics(*self._citations(cur, sources, urls))
         classics_changed = self.repo.write_classics(cur, found_classics, urls)
         return {"surges_changed": surges_changed, "news_posts": len(group), "news_changed": news_changed,
-                "classics_changed": classics_changed}
+                "news_removed": news_removed, "classics_changed": classics_changed}
 
     def judge_names(self, cur: Any, sources: SourceFacts, titles: Optional[Sequence[Optional[str]]]) -> int:
         """The surges of the names these titles say (every name when None) judged again
@@ -165,17 +167,21 @@ class NewsService:
     # ---- News ---------------------------------------------------------------------------
 
     def news(self, scope: str | None = None) -> Dict[str, Any]:
-        """The News of a scope (the Main feed or a track): the stories with 2+ voices begun in the
-        last NEWS_DAYS, with a post from the scope's sources (the score counts every source), in
-        two parts ("recent": the last 48 hours; "earlier"), each by score, then the newest.
-        Each item is its story's lead as a feed row, with `story` (who covered it, its other
-        posts) and `news` {part, reports, shares, mentions, score}."""
+        """The News of a scope (the Main feed, a track or one source): the stories with 2+ voices
+        begun in the last NEWS_DAYS, with a post from the scope's sources (the score counts every
+        source), in two parts ("recent": the last 48 hours; "earlier"), each by score, then the
+        newest. Each item is its story's lead as a feed row, with `story` (who covered it, its other
+        posts) and `news` {part, first_at, reports, shares, mentions, score}. On one source (issue
+        0077) also the stories a roundup of it mentions, and `news.scope_role`: its part, the
+        strongest of its posts' (`SCOPE_ROLES`): origin (its post is the row's origin), report,
+        share, else mention."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.news_on(cur, scope)
 
     def news_on(self, cur: Any, scope: str | None = None) -> Dict[str, Any]:
         """`news` on the caller's cursor."""
         feed_scope = FeedScope.parse(scope)
+        one_source = feed_scope.kind == "source"
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS))
         followed = ReaderRepository.followed_accounts(cur) if any(row["repost"] for row in rows) else {}
@@ -208,6 +214,11 @@ class NewsService:
                 "first_at": head["_first_at"], "reports": head["_reports"], "shares": head["_shares"],
                 "mentions": head["_mentions"], "score": head["_score"],
             }
+            if one_source:
+                origin = origins[0] if origins else None
+                item["news"]["scope_role"] = min(
+                    (("origin" if p["id"] == origin else p["role"]) for p in shown),
+                    key=SCOPE_ROLES.index, default="mention")
             items.append(item)
         items.sort(key=lambda i: (PARTS.index(i["news"]["part"]), -i["news"]["score"],
                                   -i["news"]["first_at"].timestamp(), i["id"]))
@@ -219,7 +230,8 @@ class NewsService:
         """The classics a source of the scope cited and you did not hide: cited again this week
         first (`cited_again`), then most voices, then cited longest. Each {url, post_id (the stored
         post, when it is one), title, voices, days, first_at, last_at, cited_again, citers [{name,
-        at}] (each voice once, first citation first), read_at, later_at}."""
+        at}] (each voice once, first citation first), read_at, later_at}. On one source (issue 0077)
+        also its own posts that are classics, and `scope_role`: origin (its own post), else report."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.classics_on(cur, scope)
 
@@ -238,6 +250,8 @@ class NewsService:
                 "citers": [{"name": c["name"], "at": c["at"]} for c in row["citers"]],
                 "read_at": row["read_at"], "later_at": row["later_at"],
             })
+            if feed_scope.kind == "source":   # issue 0077: the source's own page, else a page it cites
+                out[-1]["scope_role"] = "origin" if row["own"] else "report"
         return {"success": True, "classics": out}
 
     def hide(self, url: str) -> Dict[str, Any]:
