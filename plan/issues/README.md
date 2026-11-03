@@ -107,4 +107,4 @@ list the files to look at. The finished analysis plans are in `plan/archive/`.
 Still open from the old backend `FUTURES.md` (the rest is built or obsolete):
 
 - Post versioning: keep a post's earlier text when its source edits it.
-- Retention: a policy for old posts (soft delete, then purge).
+- Retention: none. INSIGHT keeps every post and everything derived from it (News, stories, Classics); owner, 2026-11-04: "keep everything is priority". Only operational logs (job_runs, 30 days) are pruned.
