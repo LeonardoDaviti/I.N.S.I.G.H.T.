@@ -93,6 +93,8 @@ class PostPageTests(unittest.TestCase):
         self.copy = self._post(self.channel, site="channel", hours_ago=4, content=LONG, html=link,
                                content_hash="same-" + self.mark)
         self.take = self._post(self.simon, site="simon", hours_ago=3, title="My notes on the new model", html=link)
+        # Stored first (issue 0072 A: a story keeps the id of its post stored first).
+        self.cur.execute("UPDATE posts SET created_at = created_at - interval '1 hour' WHERE id = %s", (self.lab,))
         while StoriesRepository().fill_missing_links(self.cur):
             pass
         StoriesService(db_url(), clock=lambda: self.now).regroup(self.cur)

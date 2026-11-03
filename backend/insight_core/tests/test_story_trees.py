@@ -324,7 +324,8 @@ class TreeJobTests(unittest.TestCase):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
         self.service.regroup(self.cur)
-        self.cur.execute("SELECT origin_url, origin_title, origin_linked_by FROM stories WHERE id = %s", (pa,))
+        self.cur.execute("SELECT origin_url, origin_title, origin_linked_by FROM stories st JOIN story_posts sp ON sp.story_id = st.id "
+                         "WHERE sp.post_id = %s", (pa,))
         self.assertEqual(self.cur.fetchone(), (page, "Claude Fable 5 and Mythos 5", 2))
         self.cur.execute("SELECT parent_id, parent_reason, parent_url FROM story_posts WHERE post_id = %s", (pb,))
         self.assertEqual(self.cur.fetchone(), (None, "citation", page))

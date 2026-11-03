@@ -329,7 +329,7 @@ class StoriesService:
         counts["keys_changed"] = self.repo.write_keys(cur, {pid: self._keys(posts[pid]) for pid in scope})
         if rebuilding:
             self.repo.done(cur, scope)
-        urls = {k[2:] for k in touched if k.startswith("u:")}
+        urls = {k[2:] for k in touched if k.startswith(("u:", "l:"))}
         # A post stored at an address another links can make that one a roundup or not: its pages too.
         own = {posts[s].url for s in seeds if posts[s].url}
         urls |= {t for p in posts.values() if any(target in own for target, _ in p.links) for t, _ in p.links}
@@ -436,10 +436,12 @@ class StoriesService:
 
     def _keys(self, post: StoryPost) -> Set[str]:
         """A post's stored keys: what it joins by (story_rules.keys), its address's page key ("a:": the
-        posts at another path of it), and the names in its title (News: "n:")."""
+        posts at another path of it), the names in its title (News: "n:"), and the home pages it links
+        ("l:": no join, but Classics and Discover count them)."""
         out = keys(post)
         if post.url and page_key(post.url):
             out.add("a:" + page_key(post.url)[2:])
+        out |= {"l:" + target for target, _ in post.links if "u:" + target not in out}
         return out | {"n:" + name for name in self.news.names_of(post)}
 
     @staticmethod

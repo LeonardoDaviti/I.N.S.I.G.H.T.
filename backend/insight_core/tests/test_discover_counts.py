@@ -225,6 +225,8 @@ class DiscoverCountsTests(unittest.TestCase):
     def test_the_story_job_fills_them_after_reading_links(self):
         self._edges()
         self.cur.execute("DELETE FROM discover_addresses WHERE url LIKE %s", (f"%{self.mark}%",))
+        # Rows deleted by hand are no post's change: the next full count (no kept counts) fills them (0072 A).
+        self.cur.execute("DELETE FROM system_settings WHERE key = 'discover_counts'")
         self.conn.commit()
         StoriesService(db_url()).recompute()
         self.cur.execute("SELECT count(*) FROM discover_addresses WHERE url LIKE %s", (f"%{self.mark}%",))
