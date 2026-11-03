@@ -88,6 +88,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft); after the incremental job |
 | [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | spec (v9.15) |
 | [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | spec (v9.16) |
+| [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | spec (v9.16) |
 
 ## Analysis archive
 
