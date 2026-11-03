@@ -258,6 +258,20 @@ class OneTitleEverywhereTests(unittest.TestCase):
         seen["post page"] = reading_text(self.TITLE, self.TEXT, self.HTML)[0]
         self.assertEqual(seen, dict.fromkeys(seen, "A new model is out today"))
 
+    def test_a_post_another_source_shared_has_its_story_on_its_page(self):
+        # Issue 0072 D4: one voice, copied by another source, reads "also shared by" on the post page too.
+        post = self._post(self._source("telegram"), title="A model doubles its limits", content="")
+        copy = self._post(self._source("telegram"), minutes=-5, title="A model doubles its limits", content="")
+        self._story(post, copy)
+        self.cur.execute("UPDATE stories SET voices = 1 WHERE id = %s", (post,))
+        self.cur.execute("SELECT source_id::text FROM posts WHERE id = %s", (post,))
+        story = PostDetailService.story(self.cur, post, self.cur.fetchone()[0])
+        self.assertEqual([p["id"] for p in story["posts"]], [copy])
+        alone = self._post(self._source(), title="Only here", content="")
+        self._story(alone)
+        self.cur.execute("SELECT source_id::text FROM posts WHERE id = %s", (alone,))
+        self.assertIsNone(PostDetailService.story(self.cur, alone, self.cur.fetchone()[0]), "no other source: no story")
+
     def test_searchs_news_lines_are_news_lines(self):
         user = f"ann{self.mark}"
         tweet = f"https://x.com/{user}/status/2115097309847630047"

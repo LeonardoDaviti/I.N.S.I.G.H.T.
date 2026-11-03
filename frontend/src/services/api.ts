@@ -71,7 +71,7 @@ export interface Post {
   /** A Hacker News item's points and comments, from hnrss's lines (issue 0070); null when none. */
   counts?: Counts | null;
   /** A link post's page (issue 0072): its title when known, and the stored post at it. */
-  link?: { url: string; title: string | null; post_id: string | null } | null;
+  link?: { url: string; title: string | null; post_id: string | null; kind?: 'page' | 'picture' | 'video' } | null;
 }
 /** A tweet the row's source reposted (issue 0066): the other accounts of yours that reposted it (issue 0070), and its author. */
 export interface Repost { by: string[]; author: string; }

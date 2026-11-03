@@ -6,7 +6,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from insight_core.utils.post_fields import (
-    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_post_target, post_title, quote_only,
+    body_after_title, body_without_feed_lines, build_post_fields, display_title, hnrss_counts, link_kind, link_post_target, post_title, quote_only,
     reading_text,
 )
 from insight_core.utils.language_detection import detect_language
@@ -379,6 +379,14 @@ class RedditFooterTests(unittest.TestCase):
         self.assertEqual(body_without_feed_lines("&#32; submitted by &#32; /u/someone [link] &#32; [comments]"), "")
         self.assertEqual(link_post_target(html), "https://models.test/news/open")
         self.assertIsNone(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=self.THREAD))), "a text post links itself")
+
+    def test_a_picture_or_a_video_is_said_so(self):
+        # Issue 0072 D4: Reddit's picture and video hosts are what the post shares; a short link is a thread.
+        for link, kind in [("https://i.redd.it/a1b2.png", "picture"), ("https://i.pics.test/c3.jpeg?x=1", "picture"),
+                           ("https://v.redd.it/d4e5", "video"), ("https://models.test/news/open", "page")]:
+            self.assertEqual(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link=link))), link)
+            self.assertEqual(link_kind(link), kind, link)
+        self.assertIsNone(link_post_target(self.THUMB.format(own="", footer=self.FOOTER.format(link="https://redd.it/1abc"))))
 
     def test_a_posts_own_words_stay(self):
         html = self.THUMB.format(own='<div class="md"><p>i hope it is real</p></div>', footer=self.FOOTER.format(link=self.THREAD))

@@ -6,6 +6,7 @@ from __future__ import annotations
 import html as html_lib
 import re
 import unicodedata
+import urllib.parse
 from typing import Any, Dict, List, Tuple
 
 from .addresses import tweet_author
@@ -369,11 +370,27 @@ _REDDIT_FOOTER_HTML_RE = re.compile(
 _LEADING_PICTURE_RE = re.compile(r"^(?:https?://\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?\s+)+", re.I)
 
 
+# What a link post shares (issue 0072 D4): a picture (an image file's address), a video on Reddit's video
+# host (it plays on the post's thread), else a page.
+_PICTURE_URL_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|avif)(?:[?#]|$)", re.I)
+VIDEO_HOSTS = ("v.redd.it",)
+
+
 def link_post_target(html: str | None) -> str | None:
-    """The page a Reddit link post shares (its footer's `[link]`), when it is not Reddit itself; else None."""
+    """The page a Reddit link post shares (its footer's `[link]`), when it is not a Reddit thread (its own,
+    or a short link to one); Reddit's picture and video hosts count. Else None."""
     match = _REDDIT_FOOTER_HTML_RE.search(html or "")
     url = html_lib.unescape(match.group(1)) if match else ""
-    return url if url.startswith(("http://", "https://")) and "reddit.com" not in url and "redd.it" not in url else None
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    thread = host == "redd.it" or host == "reddit.com" or host.endswith(".reddit.com")
+    return url if url.startswith(("http://", "https://")) and not thread else None
+
+
+def link_kind(url: str) -> str:
+    """"picture", "video" or "page": what a link post's link opens (issue 0072 D4)."""
+    if _PICTURE_URL_RE.search(urllib.parse.urlparse(url).path):
+        return "picture"
+    return "video" if (urllib.parse.urlparse(url).hostname or "").lower() in VIDEO_HOSTS else "page"
 
 
 def hnrss_counts(content: str | None) -> Dict[str, int] | None:

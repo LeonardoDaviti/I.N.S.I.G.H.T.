@@ -453,7 +453,7 @@ describe('FeedList', () => {
       posts: [reply(2, 'pretty joyless now. guess i switch to gardening.', ID(1)), reply(3, 'there will remain some niche holdouts', ID(2))],
     };
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
-      feedItem({ id: ID(1), title: 'software is dead. sad.', source_display_name: 'badlogicgames', story: thread }),
+      feedItem({ id: ID(1), title: 'software is dead. sad.', source_id: 'bg', source_display_name: 'badlogicgames', story: thread }),
       feedItem({ id: ID(5), title: 'how i work with agents in 2026.', source_display_name: 'steipete',
         repost: { by: [], author: 'badlogicgames' } }),
     ])) });
