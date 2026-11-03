@@ -195,10 +195,13 @@ class NewsRepository:
         return {r[0] for r in cur.fetchall()}
 
     @staticmethod
-    def naming(cur: Cursor, names: Sequence[str]) -> Set[str]:
-        """The posts whose title names one of these names."""
-        cur.execute("SELECT post_id FROM story_keys WHERE key = ANY(%s)", (["n:" + n for n in names],))
-        return {str(r[0]) for r in cur.fetchall()}
+    def naming(cur: Cursor, names: Sequence[str]) -> Dict[str, Set[str]]:
+        """Each of these names -> the posts whose title names it (story_keys' "n:" keys)."""
+        cur.execute("SELECT substr(key, 3), post_id FROM story_keys WHERE key = ANY(%s)", (["n:" + n for n in names],))
+        out: Dict[str, Set[str]] = {}
+        for name, pid in cur.fetchall():
+            out.setdefault(name, set()).add(str(pid))
+        return out
 
     @staticmethod
     def news_mates(cur: Cursor, post_ids: Sequence[str]) -> Set[str]:

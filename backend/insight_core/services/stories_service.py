@@ -311,14 +311,21 @@ class StoriesService:
         stories = [s for s in found.stories if s.posts[0].id in scope]
         counts: Counter = Counter(batches=1, posts=len(scope), seeds=len(seeds), rounds=len(self.rounds),
                                   context=self.rounds[-1][2])   # what the rules read around the scope
-        counts["changed"] = self.repo.write_stories(cur, stories, post_ids=sorted(scope))
-        # The scope's connections, and the mentions of its nodes (now and before) by roundups outside it.
         roots = {found.root[pid] for pid in scope if pid in found.root}
         nodes = {node for node, root in found.root.items() if root in roots} | scope
+        # A roundup of the scope mentions the stories outside it as they are stored (they are unchanged).
+        outside = {n for pid, listed in found.listed.items() if pid in scope for n in listed if n not in nodes}
+        held = self.repo.stories_holding(cur, sorted(outside))
+        mentions = [Edge(pid, n, "mention") for pid, listed in found.listed.items() if pid in scope
+                    for n in dict.fromkeys(listed) if n in held]
+        counts["changed"] = self.repo.write_stories(cur, stories, post_ids=sorted(scope),
+                                                    mentions={(held[e.dst], e.src) for e in mentions})
+        # The scope's connections, and the mentions of its nodes (now and before) by roundups outside it.
         nodes |= {_PAGE + url for url in self.repo.pages_linked(cur, sorted(scope))}
         counts["edges_changed"] = self.repo.write_edges(
-            cur, [e for e in found.edges if e.src in scope or e.kind == "mention" and e.dst in nodes], made_by=stamp,
-            post_ids=sorted(scope), mentioned=sorted(nodes))
+            cur, [e for e in found.edges if e.dst in nodes and (e.src in scope or e.kind == "mention")
+                  or e.src in scope and e.kind != "mention"] + mentions,
+            made_by=stamp, post_ids=sorted(scope), mentioned=sorted(nodes))
         counts["keys_changed"] = self.repo.write_keys(cur, {pid: self._keys(posts[pid]) for pid in scope})
         if rebuilding:
             self.repo.done(cur, scope)
@@ -376,6 +383,7 @@ class StoriesService:
         keyed: Set[str] = set()      # each post's keys, links and thread edges are read once
         linked: Set[str] = set()
         threaded: Set[str] = set()
+        found, grouped = None, -1
         while True:
             load(scope)
             stored = self.repo.stored_keys(cur, sorted(scope - keyed))
@@ -390,7 +398,8 @@ class StoriesService:
             load(context)
             replies.update(self.repo.replies(cur, sorted(context - threaded)))
             threaded |= context
-            found = grouping([posts[pid] for pid in context], replies=replies)
+            if len(context) != grouped:   # the same posts read: the same grouping
+                found, grouped = grouping([posts[pid] for pid in context], replies=replies), len(context)
             grows = self._grows(cur, posts, found, scope, near - scope, held)
             self.rounds.append((len(scope), len(near), len(context)))
             if not grows:
@@ -410,11 +419,11 @@ class StoriesService:
         roots = {found.root[pid] for pid in scope if pid in found.root}
         grows = {node for node, root in found.root.items() if root in roots and not node.startswith(_PAGE)} - scope
         pages = {node[len(_PAGE):] for node, root in found.root.items() if root in roots and node.startswith(_PAGE)}
-        # A roundup's listed nodes are its stories' (its mentions; a platform roundup's membership);
-        # a platform roundup near the scope that lists one of its stories may join it.
+        # A platform roundup may be a member of the one story it lists (story_rules): of the scope, the
+        # stories it lists are read; near the scope, it joins when it lists one of the scope's stories.
         for pid, nodes in found.listed.items():
-            if pid in scope or (pid in near and posts[pid].kind in PLATFORM_KINDS
-                                and any(found.root.get(n) in roots for n in nodes)):
+            if posts[pid].kind in PLATFORM_KINDS and (pid in scope or pid in near
+                                                      and any(found.root.get(n) in roots for n in nodes)):
                 grows |= {pid} | {n for n in nodes if not n.startswith(_PAGE)}
                 pages |= {n[len(_PAGE):] for n in nodes if n.startswith(_PAGE)}
         # A post near the scope whose connection through a key the scope holds is not the stored one.
@@ -522,7 +531,9 @@ class StoriesService:
         if urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"]:
             keys = DiscoverRepository.keys_of(cur, urls)
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, **ask)
-            StoriesService._title_articles(cur, sources, found)
+            # An article's title changes only with the posts at it or linking it: those of the run's addresses.
+            titled = {a[0]: a[2] for s in kept["found"] for a in s["articles"] if a[0] not in set(urls)}
+            StoriesService._title_articles(cur, sources, found, titled)
             found += [s for s in kept["found"] if s["key"] not in keys]
             DiscoverRepository.name_voices(cur, found, ask["kinds"], ask["own_sites"])   # a site's namer may move
         else:
@@ -537,12 +548,15 @@ class StoriesService:
         return kept
 
     @staticmethod
-    def _title_articles(cur: Any, sources: SourceFacts, found: List[Dict[str, Any]]) -> None:
+    def _title_articles(cur: Any, sources: SourceFacts, found: List[Dict[str, Any]],
+                        titled: Optional[Dict[str, Optional[str]]] = None) -> None:
         """Each shown article's title (issue 0070): a stored post's own, as the reader shows it, else
         by the evidence a story's outside origin is titled by (origin_title), from every post linking it,
         in time order as a story's are (issue 0071: link words written two ways as often are a tie the
-        first one wins, and the database returns rows in any order)."""
-        urls = sorted({url for s in found for url, _ in s["articles"]})
+        first one wins, and the database returns rows in any order). `titled`: the titles kept, which
+        hold (an incremental run's addresses aside)."""
+        titled = titled or {}
+        urls = sorted({url for s in found for url, _ in s["articles"] if url not in titled})
         linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
         rows = StoriesRepository.load_posts(cur, sources, linking=urls) if urls else []
         for row in sorted(rows, key=lambda row: (row["t"], row["id"])):
@@ -551,7 +565,8 @@ class StoriesService:
                 linking[target][post.id] = post
         stored = DiscoverRepository.stored_titles(cur, urls)
         for s in found:
-            s["articles"] = [(url, voices, stored.get(url) or origin_title(url, list(linking[url].values())))
+            s["articles"] = [(url, voices, titled[url] if url in titled else
+                              stored.get(url) or origin_title(url, list(linking[url].values())))
                              for url, voices in s["articles"]]
 
     def discover(self) -> Dict[str, Any]:

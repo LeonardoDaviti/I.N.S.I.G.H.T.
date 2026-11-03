@@ -210,7 +210,8 @@ class DiscoverRepository:
         Returns how many it added. One writer at a time (a transaction lock): a second open waits,
         then finds nothing to add. With `urls`, only those addresses (a story run's, issue 0072)."""
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (LOCK_KEY,))
-        cur.execute("DELETE FROM discover_addresses WHERE rules <> %s", (ADDRESS_RULES,))
+        if urls is None:   # a story run's addresses are counted only while the rules hold (StoriesService._counted)
+            cur.execute("DELETE FROM discover_addresses WHERE rules <> %s", (ADDRESS_RULES,))
         only = None if urls is None else sorted(set(urls))
         cur.execute("SELECT url FROM (SELECT target_url AS url FROM post_links WHERE NOT boilerplate "
                     "AND (%(only)s::text[] IS NULL OR target_url = ANY(%(only)s)) "

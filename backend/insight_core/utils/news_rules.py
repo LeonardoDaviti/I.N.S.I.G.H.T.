@@ -133,17 +133,24 @@ def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> L
 
 
 def name_surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime],
-                only: Optional[Set[str]] = None) -> List[Surge]:
+                only: Optional[Set[str]] = None, named_by: Optional[Dict[str, Set[str]]] = None) -> List[Surge]:
     """Each name's surges among `posts`, before `longest`: a name's depend only on the titles that name
     or say it, so the story job judges again only the names a new title says (issue 0072 A). With
-    `only`, those names' alone (`posts` holds every title that names or says them)."""
+    `only`, those names' alone (`posts` holds every title that names or says them); `named_by`: each of
+    those names -> the posts that name it, as their stored keys say (`names` is read again otherwise)."""
     rows = sorted((p for p in posts if p.title and p.kind not in NAME_SKIP_KINDS), key=lambda p: (p.t, p.id))
     named: Dict[str, List[StoryPost]] = defaultdict(list)
     said: Dict[str, List[StoryPost]] = defaultdict(list)
-    for p in rows:
-        for name in names(p.title):
-            if only is None or name in only:
-                named[name].append(p)
+    if named_by is not None:
+        for p in rows:
+            for name in only or ():
+                if p.id in named_by.get(name, ()):
+                    named[name].append(p)
+    else:
+        for p in rows:
+            for name in names(p.title):
+                if only is None or name in only:
+                    named[name].append(p)
     # Only the phrases that are such a name are kept (issue 0072: every title's held 128 MB on the lab).
     named = {name: uses for name, uses in named.items() if len(uses) >= NAME_MIN_POSTS}
     for p in rows:

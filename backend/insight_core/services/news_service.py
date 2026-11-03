@@ -124,8 +124,9 @@ class NewsService:
         if not judged:
             return 0
         rows = {r["id"]: r for r in self.repo.titles_saying(cur, sorted({"%".join(WORDS.findall(n)) for n in judged}))}
-        rows.update((r["id"], r) for r in self.repo.titles_of(cur, sorted(self.repo.naming(cur, sorted(judged)) - rows.keys())))
-        raw = name_surges(self._titled(sources, rows.values()), followed, only=judged)
+        named_by = self.repo.naming(cur, sorted(judged))
+        rows.update((r["id"], r) for r in self.repo.titles_of(cur, sorted(set().union(*named_by.values()) - rows.keys())))
+        raw = name_surges(self._titled(sources, rows.values()), followed, only=judged, named_by=named_by)
         return self.repo.write_surges(cur, raw, judged)
 
     @staticmethod

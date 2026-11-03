@@ -296,10 +296,12 @@ class StoriesRepository:
         return posts
 
     @staticmethod
-    def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Optional[Sequence[str]] = None) -> int:
+    def write_stories(cur: Cursor, stories: Sequence[Story], *, post_ids: Optional[Sequence[str]] = None,
+                      mentions: Iterable[Tuple[str, str]] = ()) -> int:
         """Make the stored stories of `post_ids` (every post when None) match `stories`, theirs: the
         stories holding them before and now, their story rows and the mentions of those stories and by
-        those posts. The caller gives whole stories (the incremental job's neighbourhood holds each
+        those posts (`mentions`: (story, post) of stories not given, by those posts). The caller gives whole
+        stories (the incremental job's neighbourhood holds each
         story a post of it was in). Writes only what differs; returns how many rows changed."""
         changed = 0
         want_posts: Dict[str, Tuple[Any, ...]] = {}
@@ -311,6 +313,7 @@ class StoriesRepository:
                 want_posts[post.id] = (story.id, story.roles[post.id], story.reasons[post.id], post.voice,
                                        parent_id, reason, parent_url, position)
             want_mentions |= {(story.id, pid) for pid in story.mentions}
+        want_mentions |= set(mentions)
         want = {story.id: (story.first_at, story.voices, story.origin_url, story.origin_title,
                            story.origin_linked_by if story.origin_url else None) for story in stories}
         scope = None if post_ids is None else list(post_ids)
@@ -454,6 +457,22 @@ class StoriesRepository:
             {"page": _PAGE, "kinds": list(kinds), "ids": list(post_ids)},
         )
         return [Edge(*row) for row in cur.fetchall()]
+
+    @staticmethod
+    def stories_holding(cur: Cursor, nodes: Sequence[str]) -> Dict[str, str]:
+        """The stored story each node is in: a post's, and a page's (the story its link edges join)."""
+        posts = [n for n in nodes if not n.startswith(_PAGE)]
+        pages = [n[len(_PAGE):] for n in nodes if n.startswith(_PAGE)]
+        cur.execute(
+            """
+            SELECT post_id::text, story_id::text FROM story_posts WHERE post_id IN (SELECT unnest(%(posts)s::uuid[]))
+            UNION
+            SELECT DISTINCT %(page)s || e.dst_url, sp.story_id::text FROM post_edges e JOIN story_posts sp ON sp.post_id = e.src_post
+            WHERE e.kind = 'link' AND e.dst_url = ANY(%(pages)s)
+            """,
+            {"posts": posts, "pages": pages, "page": _PAGE},
+        )
+        return dict(cur.fetchall())
 
     @staticmethod
     def pages_linked(cur: Cursor, post_ids: Sequence[str]) -> Set[str]:
