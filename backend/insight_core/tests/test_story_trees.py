@@ -293,10 +293,9 @@ class TreeJobTests(unittest.TestCase):
         [row] = [i for i in items if i["id"] in (self.openai, self.hn, self.ds, self.simon)]
         self.assertEqual(row["id"], self.openai, "the origin, though HN's row was seen first")
         story = row["story"]
-        # Issue 0072 D: its date alone counts as the day's first timed post, Hacker News' at 02:00, after
-        # it: the origin leads, but is not said to be first.
+        # Issue 0072 D: its date alone counts as the day's first timed post, Hacker News' at 02:00: as early.
         self.assertEqual((story["first"], story["parent_id"], story["parent_reason"], story["origin"]),
-                         (None, None, None, None))
+                         (self.openai, None, None, None))
         self.assertEqual({p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}, {
             self.hn: (self.openai, "address"), self.ds: (self.openai, "citation"), self.simon: (self.openai, "citation"),
         })

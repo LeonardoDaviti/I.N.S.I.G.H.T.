@@ -290,7 +290,7 @@ def news(posts: Sequence[StoryPost], stories: Sequence[Story], found: Sequence[S
     for group in groups.values():
         # A date alone counts as that day's earliest timed post (issue 0072 D): its start, its order, the window.
         times = story_times(group)
-        group = sorted(group, key=lambda p: (times[p.id], p.date_only, p.id))
+        group = sorted(group, key=lambda p: (times[p.id], not p.date_only, p.id))
         if len(group) < 2 and not group[0].other_sources:   # one tweet your sources pushed is one (issue 0068)
             continue
         voices = count_voices(group)

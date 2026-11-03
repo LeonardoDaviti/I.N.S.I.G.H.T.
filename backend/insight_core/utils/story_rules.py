@@ -486,7 +486,7 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
         # A date alone counts as that day's earliest timed post (issue 0072 D); the id is the post
         # stored first, so a post that joins later, however early it was posted, keeps it (0072 A).
         times = story_times(group_posts)
-        ordered = sorted(group_posts, key=lambda p: (times[p.id], p.date_only, *_order(p)[1:]))
+        ordered = sorted(group_posts, key=lambda p: (times[p.id], not p.date_only, *_order(p)[1:]))
         stored = [p for p in ordered if p.stored_at is not None]
         stories.append(Story(
             id=min(stored, key=lambda p: (p.stored_at, p.id)).id if stored else ordered[0].id,
@@ -504,8 +504,8 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
 
 def story_times(posts: Sequence[StoryPost]) -> Dict[str, datetime]:
     """Each post's time as its story counts it (issue 0072 D): a date alone (`date_only`) counts as that
-    day's earliest timed post among the story's (`trusted_time`), never its 00:00; with none that
-    day, its date. A story's start, its order ("first") and the News window read it."""
+    day's earliest timed post among the story's (`trusted_time`), never its 00:00 (at that time it comes
+    first: it is as early as that post, and is said first); with none that day, its date. A story's start, its order ("first") and the News window read it."""
     earliest: Dict[object, datetime] = {}
     for p in posts:
         if p.trusted_time:

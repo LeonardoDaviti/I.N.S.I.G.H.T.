@@ -42,7 +42,7 @@ class DateAloneTests(unittest.TestCase):
         later = post("tweet", "s3", hours=14.4, links=page)
         [story] = group([day_only, timed, later])
         self.assertEqual(story.first_at, DAY + timedelta(hours=14.2), "its start: the day's first timed post")
-        self.assertEqual([p.id for p in story.posts], ["reddit", "blog", "tweet"], "after it at a tie, never first")
+        self.assertEqual([p.id for p in story.posts], ["blog", "reddit", "tweet"], "as early as it: first at the tie")
         self.assertEqual(story_times([day_only])["blog"], DAY, "with no timed post that day: its date")
 
     def test_a_timed_midnight_is_still_a_date_alone_unless_read_so(self):

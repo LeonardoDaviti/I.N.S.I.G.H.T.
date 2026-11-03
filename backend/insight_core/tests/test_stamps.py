@@ -46,7 +46,7 @@ class SampleCoversTheRulesTests(unittest.TestCase):
         stories = {p.id: s for s in sample_stories() for p in s.posts}
         update = stories["h7"]
         self.assertEqual(update.first_at, stamps._at(80), "the day's first timed post, not 00:00")
-        self.assertEqual(update.posts[0].id, "h1")
+        self.assertEqual([p.id for p in update.posts[:2]], ["h7", "h1"], "as early as it, first at the tie")
         self.assertEqual(stories["k1"].id, "k2", "the post stored first, not the first posted")
 
     def test_each_way_an_outside_origin_is_titled(self):
