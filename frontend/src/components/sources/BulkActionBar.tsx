@@ -48,7 +48,7 @@ export default function BulkActionBar({
     <div
       role="region"
       aria-label="Selected sources"
-      className="material fixed inset-x-0 bottom-4 z-40 mx-auto flex w-max max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-1 rounded-lg border border-line-strong px-2 py-1.5 text-[0.8125rem] shadow-overlay motion-safe:animate-[pop-in_160ms_cubic-bezier(0.23,1,0.32,1)]"
+      className="material fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 mx-auto flex w-max max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-1 rounded-lg border border-line-strong px-2 py-1.5 text-[0.8125rem] shadow-overlay motion-safe:animate-[pop-in_160ms_cubic-bezier(0.23,1,0.32,1)]"
     >
       <span className="px-2 font-semibold tabular-nums text-fg" aria-live="polite">{formatCount(count)} selected</span>
       <Button variant="ghost" size="sm" disabled={busy} onClick={() => onEnable(true)}>Enable</Button>

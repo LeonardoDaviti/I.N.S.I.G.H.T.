@@ -34,6 +34,9 @@ export default function Toaster() {
       theme={theme === 'theme-dark' ? 'dark' : 'light'}
       position="bottom-right"
       style={MONO_VARS}
+      // Above a phone's home bar (issue 0073): sonner's own offsets, plus the safe area (0 elsewhere).
+      offset={{ bottom: 'calc(24px + env(safe-area-inset-bottom))', right: 'calc(24px + env(safe-area-inset-right))' }}
+      mobileOffset={{ bottom: 'calc(16px + env(safe-area-inset-bottom))' }}
       toastOptions={{ style: { fontSize: '0.875rem' } }}
     />
   );
