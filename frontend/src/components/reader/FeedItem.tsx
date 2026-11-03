@@ -246,8 +246,9 @@ function FeedItem({
   const lengthPart = length ? (
     <>
       <Dot wide={showSource || Boolean(item.repost || item.counts)} phone={!barLine || Boolean(item.repost || item.counts)} className="sm:order-2" />
-      {/* On a narrow phone's line it may give way too, rather than run under the actions (issue 0073). */}
-      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap max-sm:min-w-0 max-sm:shrink sm:order-2">
+      {/* On a phone a long source name gives way first; beside a short one the length may, rather than
+          run under the actions (issue 0073). */}
+      <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap sm:order-2 ${showSource && source.length > 12 ? '' : 'max-sm:min-w-0 max-sm:shrink'}`}>
         {item.duration_seconds ? <PlayCircle aria-hidden="true" className="h-3 w-3 shrink-0" /> : null}
         <span className="truncate">{length}</span>
       </span>
