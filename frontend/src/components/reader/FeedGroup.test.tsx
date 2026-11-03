@@ -68,6 +68,7 @@ describe('FeedGroup', () => {
     data.items[0] = { ...data.items[0], sort_at: old.toISOString(), published_at: old.toISOString() };
     renderGroup(data);
     const shortDate = old.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    expect(within(screen.getByRole('article')).getByText(shortDate)).toBeInTheDocument();
+    // The date column, and on a phone the meta line, where the column goes (issue 0073).
+    expect(within(screen.getByRole('article')).getAllByText(shortDate)).toHaveLength(2);
   });
 });

@@ -68,7 +68,8 @@ export default function TopBar({ onOpenSwitcher }: { onOpenSwitcher: () => void 
     <header
       data-scrolled={scrolled || undefined}
       className={cn(
-        'material sticky top-0 z-40 h-[var(--topbar-h)] border-b',
+        // Its height includes the notch, and its bar sits under it (issue 0073).
+        'material sticky top-0 z-40 h-[var(--topbar-h)] border-b pt-[env(safe-area-inset-top)]',
         scrolled ? 'border-line' : 'border-transparent',
       )}
     >

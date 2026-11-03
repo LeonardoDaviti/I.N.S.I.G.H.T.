@@ -112,7 +112,8 @@
     --dur-popover: 150ms;
     --dur-dialog: 200ms;
     --dur-sheet: 260ms;
-    --topbar-h: 3.5rem;
+    /* index.html draws edge to edge (viewport-fit=cover): the top bar grows by the notch (issue 0073). */
+    --topbar-h: calc(3.5rem + env(safe-area-inset-top));
 
     /* Mark VIII aliases: every legacy variable resolves to a monochrome token. */
     --background-primary: rgb(var(--bg));
@@ -166,6 +167,9 @@
     text-rendering: optimizeLegibility;
     /* Ease the dark↔light brightness jump (apple §14). */
     transition: background-color 200ms ease, color 200ms ease;
+    /* Nothing under a phone's notch or rounded corners in landscape (issue 0073); 0 elsewhere. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 
   /* Balance suits short UI headings. Long reading headings (the post title, article
