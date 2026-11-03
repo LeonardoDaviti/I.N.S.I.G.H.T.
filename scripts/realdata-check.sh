@@ -21,7 +21,7 @@
 # scratch copies' names: <db>_check_a / <db>_check_b), PG (postgresql://insight:insight@postgres:5432),
 # NETWORK (insight_insight-network).
 #
-# Each version's code runs over its own scratch copy (pg_restore of the dump, then a template copy), in a
+# Each version's code runs over its own scratch copy (one pg_restore of the dump, then a file copy of it), in a
 # container of its own, both at once. Nothing is fetched or downloaded. The report (it names the owner's
 # posts) goes to $OUT/<head>-<date>.md, private; its path goes in the merge notes. Exit 1: don't merge.
 set -euo pipefail
@@ -47,8 +47,10 @@ done
 
 PG="${PG:-postgresql://insight:insight@postgres:5432}"
 NETWORK="${NETWORK:-insight_insight-network}"
-CASES="${CASES:-$ROOT/plan/research/lab/cases.json}"
-OUT="${OUT:-$ROOT/plan/research/lab/checks}"
+# plan/research/ is private and lives in the main checkout only (a worktree has none): read it there.
+MAIN_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
+CASES="${CASES:-$MAIN_ROOT/plan/research/lab/cases.json}"
+OUT="${OUT:-$MAIN_ROOT/plan/research/lab/checks}"
 SCRATCH_A="${SCRATCH_A:-${DB}_check_a}"
 SCRATCH_B="${SCRATCH_B:-${DB}_check_b}"
 for name in "$SCRATCH_A" "$SCRATCH_B"; do
@@ -73,12 +75,12 @@ say() { echo "==> $(date +%H:%M:%S) $*"; }
 psql_admin() { docker run --rm --network "$NETWORK" "$IMAGE" psql -q -At "$PG/postgres" -c "$1"; }
 
 cleanup() {
-  docker rm -f "$RUN_ID-base" "$RUN_ID-head" >/dev/null 2>&1 || true
+  docker rm -f "$RUN_ID-base" "$RUN_ID-head" "$RUN_ID-dump" "$RUN_ID-report" "$RUN_ID-restore" >/dev/null 2>&1 || true   # by name only
   if [ "$KEEP" != "1" ] && [ "$TITLES_ONLY" != "1" ]; then
     psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" >/dev/null 2>&1 || true
     psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B" >/dev/null 2>&1 || true
   fi
-  rm -rf "$WORK"
+  rm -rf "$WORK" || echo "left $WORK (remove it by hand)" >&2
 }
 trap cleanup EXIT
 
@@ -101,7 +103,7 @@ if [ -f "$CASES" ]; then cp "$CASES" "$WORK/cases.json"; fi
 
 run_side() {   # run_side <side> <db> [env…]
   local side="$1" db="$2"; shift 2
-  docker run --rm --name "$RUN_ID-$side" --network "$NETWORK" -v "$WORK/trees/$side/backend:/app:ro" -v "$WORK:/work" \
+  docker run --rm --name "$RUN_ID-$side" --network "$NETWORK" -v "$WORK/trees/$side/backend:/app:ro" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" \
     -w "/work/$side" -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 -e CASES=/work/cases.json "$@" \
     "$IMAGE" sh /app/insight_core/checks/side.sh "$PG/$db" "$side" "$NOW"
 }
@@ -114,16 +116,18 @@ if [ "$TITLES_ONLY" = "1" ]; then
 else
   # ---- scratch copies: one dump, one restore, one template copy --------------------------------
   say "dump $DB (read-only)"
-  docker run --rm --network "$NETWORK" -v "$WORK:/work" "$IMAGE" pg_dump -Fc -Z1 -f /work/copy.dump "$PG/$DB"
+  docker run --rm --name "$RUN_ID-dump" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" pg_dump -Fc -Z1 -f /work/copy.dump "$PG/$DB"
+  # One restore (its index builds are most of the time), then a file copy of it: no second WAL-logged load.
   say "restore into $SCRATCH_A"
   psql_admin "DROP DATABASE IF EXISTS $SCRATCH_A" ; psql_admin "DROP DATABASE IF EXISTS $SCRATCH_B"
   psql_admin "CREATE DATABASE $SCRATCH_A"
-  docker run --rm --network "$NETWORK" -v "$WORK:/work" "$IMAGE" \
+  docker run --rm --name "$RUN_ID-restore" --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" "$IMAGE" \
     pg_restore -j 8 --no-owner --no-privileges -d "$PG/$SCRATCH_A" /work/copy.dump 2> "$WORK/restore.log" || true
-  grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error && { echo "restore failed" >&2; exit 2; } || true
+  grep -v -e transaction_timeout -e "errors ignored" -e "^Command was" "$WORK/restore.log" | grep -i error \
+    && { echo "restore failed" >&2; exit 2; } || true
+  say "copy $SCRATCH_A to $SCRATCH_B (file copy)"
+  psql_admin "CREATE DATABASE $SCRATCH_B TEMPLATE $SCRATCH_A STRATEGY FILE_COPY"
   rm -f "$WORK/copy.dump"
-  say "copy $SCRATCH_A to $SCRATCH_B"
-  psql_admin "CREATE DATABASE $SCRATCH_B TEMPLATE $SCRATCH_A"
 
   say "both versions at once: migrate, full story job, snapshot, invariants, cases, job checks"
   run_side base "$SCRATCH_A" > "$WORK/base.log" 2>&1 &
@@ -138,7 +142,7 @@ fi
 say "report"
 ALLOW_ARGS=(); [ ${#ALLOW[@]} -gt 0 ] && ALLOW_ARGS=(--allow "${ALLOW[@]}")
 set +e
-docker run --rm --network "$NETWORK" -v "$WORK/trees/head/backend:/app:ro" -v "$WORK:/work" -w /work -e PYTHONPATH=/app \
+docker run --rm --name "$RUN_ID-report" --network "$NETWORK" -v "$WORK/trees/head/backend:/app:ro" --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$WORK:/work" -w /work -e PYTHONPATH=/app \
   -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python -m insight_core.checks.report --work /work --out /work/report.md \
   --label-base "$BASE" --label-head "$HEAD_LABEL" --copy "$DB" "${ALLOW_ARGS[@]}"
 verdict=$?

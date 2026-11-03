@@ -89,7 +89,8 @@ def build(work: str, *, labels=("main", "branch"), copy: str = "", allowed: Dict
                 problems.append(f"invariant {name} rose {bc} -> {hc}")
         elif bc is not None and bc >= 0 and hc < bc:
             verdict = "fell"
-        lines.append(f"| `{name}` {h.get('what') or b.get('what', '')} | {bc if bc is not None else '-'} | {hc if hc is not None else '-'} | {h.get('of', '')} | {verdict} |")
+        shown = lambda c: "-" if c is None else "n/a" if c < 0 else c   # noqa: E731
+        lines.append(f"| `{name}` {h.get('what') or b.get('what', '')} | {shown(bc)} | {shown(hc)} | {h.get('of') or ''} | {verdict} |")
     lines += ["", f"Examples ({labels[1]}, up to 5 each):"]
     for name, h in fh.items():
         if h.get("count"):
