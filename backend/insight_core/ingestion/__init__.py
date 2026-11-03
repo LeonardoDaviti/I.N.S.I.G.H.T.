@@ -12,6 +12,7 @@ layer or the services through this file.
 """
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Optional
 
 from insight_core.ingestion.types import (
@@ -57,7 +58,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
     from insight_core.services.posts_service import PostsService
     from insight_core.services.source_config_sync_service import SourceConfigSyncService
     from insight_core.services.sources_service import SourcesService
-    from insight_core.services.stories_service import StoriesService
+    from insight_core.services.stories_service import in_own_process, recompute_job
     from insight_core.services.youtube_service import YouTubeService
 
     db_url = db_url or os.getenv("DATABASE_URL") or ensure_database()
@@ -85,7 +86,7 @@ def default_runner(db_url: Optional[str] = None) -> "IngestionRunner":
             store=DbDoctorStore(db_url, switch=SourceConfigSyncService(db_url).switch_source),
         ),
         watch=DbPageWatchStore(db_url),
-        stories=StoriesService(db_url).recompute_safely,
+        stories=partial(in_own_process, recompute_job, db_url),   # the API and ingestion keep none of its rows
     )
 
 

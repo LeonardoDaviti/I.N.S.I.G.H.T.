@@ -133,12 +133,13 @@ def surges(posts: Sequence[StoryPost], followed_since: Dict[str, datetime]) -> L
     for p in rows:
         for name in names(p.title):
             named[name].append(p)
-        for phrase in _phrases(p.title):
+    # Only the phrases that are such a name are kept (issue 0072: every title's held 128 MB on the lab).
+    named = {name: uses for name, uses in named.items() if len(uses) >= NAME_MIN_POSTS}
+    for p in rows:
+        for phrase in _phrases(p.title) & named.keys():
             said[phrase].append(p)
     found = []
     for name, uses in named.items():
-        if len(uses) < NAME_MIN_POSTS:
-            continue
         every = said[name]           # in time order, as `rows`
         times = [p.t for p in every]
         after = None                 # the last post of its last surge: a later burst is judged after it
