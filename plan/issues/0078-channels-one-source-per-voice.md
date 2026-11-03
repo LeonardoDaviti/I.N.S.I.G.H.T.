@@ -22,7 +22,7 @@ Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled: discu
   - and from other signals ensembled: the same name, the same posts appearing on two channels;
   - never from a list of known sites.
   - A suggestion ("These 3 sources look like one voice: join them?") is shown, never applied alone.
-- **Adding a channel to a group** goes through the feed finder and page watching (the source-adding rule: the feed finder and page watching), like any source.
+- **Adding a channel to a group** goes through the feed finder and page watching, like any source (the source-adding rule).
 
 ## What it changes in reading
 - A group is **one voice** in stories, News and Discover. One person's blog and tweet are one voice, not two.
