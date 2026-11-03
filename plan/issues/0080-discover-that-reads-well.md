@@ -102,6 +102,42 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
 - The labels (4) on the first 60.
 - Discover's answer time with the stored tests.
 
+## Measured (2026-11-04, a copy of the lab and the server's saved answer; details private in `plan/research/0080-measure/`)
+What the numbers change in the decisions above. Where they differ, **this section wins**.
+1. **Names:**
+   - 88 of 247 lab sources are named by their feed address (importer, no display name); 62 sources on the server.
+   - No feed or site title is stored, so the fallback is the host.
+   - The screen already makes address names readable (`frontend/src/lib/sourceLabel.ts`), so the addresses show in API answers, not on Discover's screen. The fix belongs in the backend's one name, built in 18 places today.
+   - **Changed:**
+     - the host fallback keeps the owner when the address is a multi-owner host (`newsletter.example/author`, `~user`, an author feed);
+     - it drops feed-only subdomains (`feed.`);
+     - two sources that would share a host keep their sections (`example.com/news` and `example.com/research`).
+2. **Titles:**
+   - 37% of article lines show a bare address and 37% a title rebuilt from the address.
+   - Without reading page titles, 75% of all lines (87% of site lines) would show no title, so **reading the page title once, for the first page's articles, is required, not optional.**
+   - An X line has its stored tweet only ~15% of the time, so otherwise it reads "a post by @account", never a status address.
+3. **Platforms:**
+   - **The rule:** a host is a platform when it has 50+ owner segments (or 15+ with none above 20% of the pages), and 2+ owners are each linked by 2+ voices. Numbers, dates, ids and language codes aren't owners; a 70%+ prefix (`/r/`) moves to the next segment.
+   - **Results:** it finds 10 of 1,313 hosts, including two nobody named. It is debatable on a contributor-network magazine and a store.
+   - **Added:**
+     - the owner may sit at the third segment (a blog platform's company blogs);
+     - a link from a source to its own page on a platform doesn't count (a creators' platform suggested from its own creators);
+     - a host whose addresses hold paper ids and no owner (a preprint server) is a **paper source**, not a site: its papers stay in Classics and stories, and it is never a suggestion.
+   - `DISCOVER_PLATFORMS` stays for video and Telegram, whose addresses the rule can't read.
+4. **References:**
+   - The data argues against "decide by what the links are": undated, re-linked pages are mostly ordinary blogs (44 hits, 0 references), and help and docs pages are linked in bursts like news.
+   - **Changed:** references are found by the address's shape, i.e. a `help.`, `support.`, `docs.` or `developer.` host, or a `/docs`, `/help` or `/support` path. That is a shape rule, not a site list. It finds all 10 seen.
+   - **Changed:** government sites are not references (they publish dated press releases); they stay suggestions.
+5. **Followed sites suggested again:** 5 on the server and 6 on the lab, all coming in through where stories start.
+   - When no section qualifies, the code suggests the whole followed host. Instead, it goes to "missing from a source you follow".
+   - **Bug:** an aggregator's most common post host counts as a site you follow (`SourceFacts.followed()`: a link aggregator's posts make a large tech company's site "followed"). That hides the site from link-based suggestions and labels its section "of a site you follow".
+   - Fix: a source that isn't the publisher of its posts' addresses (`NOT_PUBLISHERS`, aggregators and Saved) follows no site by them.
+6. **Ranking:**
+   - **Proposed:** score = 3·ln(1+origins) + 2·ln(1+classics) + 1.5·ln(1+opened) + ln(1+voices) + a recency bonus, after platforms, references and followed sites are removed.
+   - The first 30 hold 7–8 X accounts.
+   - Origins and classics carry it; recency is nearly flat and opens are sparse.
+   - 7 of the server's first-page sites refuse plain readers, so the follow test's labels decide their place (they sink).
+
 ## Not in this issue
 - Reading walled or JavaScript-only sites (0081).
 - Mark X's "same voice" (0078 channels).
