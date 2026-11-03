@@ -55,3 +55,18 @@ Status: **spec** for v9.16, decided by the owner 2026-11-04. It ships next to 00
 ## Not in this issue
 - New News rules; Mark X's events.
 - Classics' own window.
+
+## Built
+### F, the reader (branch `issue-0077-reader`, 2026-11-04)
+- **Parts by week** (`lib/news.ts` `newsPart`, `inNewsParts`):
+  - "Last 48 hours" is still the API's `part === 'recent'`;
+  - "This week" is a story begun since Monday (local time);
+  - each earlier week is "Week of 12 Oct" (its Monday; another year adds the year).
+  - The reader groups the rows by part, newest part first, and keeps the API's order (score) inside each part, so it works before and after K whatever order K sends across parts.
+- **One source's page** (`ReaderPage`): `?view=news` and `?view=classics` now open the source's News and Classics (`GET /api/news?scope=source:<id>`, the classics equivalent); `?view=by_source` stays its stream.
+  - Moving to a source from the rail while in News or Classics keeps that view (the rail already carried `view`).
+- **The source's part**: a News row's line starts with "Started it", "Covered", "Shared" or "Mentioned" when the row carries `news.scope_role`; a classic's line does the same from `classic.scope_role`. Typed optional in `lib/news.ts` (`ScopedNews`) and `lib/classics.ts` (`ScopedClassic`), not in `services/api.ts` (0072 A holds it). Absent or unknown: nothing shown.
+- **Empty**: a source with no News says "No News from this source yet" / "News needs 2+ sources on one story."; with no Classics, "No Classics from this source yet". No action, no error.
+- **Not done in F, needs a file outside F's list**: the toolbar's View choice. `FeedToolbar.tsx` hides View on one source (`oneSource ? null : …`), so the page has no Stream / News / Classics choice on screen yet; it needs View on one source with By source left out.
+- **Checks**: node tests 216 pass, vitest 694 pass (49 files), `tsc` clean, eslint clean on the touched files. Bundle: the feed route 0.93% over the baseline (main 0.92%), the post route 0.63% (main 0.62%).
+- **Left for K**: `scope_role` on source-scoped rows; `NEWS_DAYS = 30` (until then the earliest week parts stay empty); paging past the first page (NewsList still loads one page); the main News empty line still says "No news this week".
