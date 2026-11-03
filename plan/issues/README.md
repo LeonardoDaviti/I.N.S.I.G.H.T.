@@ -89,6 +89,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | spec (v9.15) |
 | [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | spec (v9.16) |
 | [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | spec (v9.16) |
+| [0078](0078-channels-one-source-per-voice.md) | Channels: one source for one company, person or blog, made of its channels | idea (future) |
 
 ## Analysis archive
 
