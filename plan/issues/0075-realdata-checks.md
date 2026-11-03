@@ -83,10 +83,11 @@ Status: **spec (draft)** for v9.15, written 2026-11-03 by the Mark X session on 
 - The report's path goes in the merge notes.
 - It runs locally, because real data can't go to CI.
 
-**How builds merge (the owner's call, proposed):**
+**How builds merge (approved by the owner, 2026-11-03):**
 - **One area at a time.** The story job is v9.15's area; the post parse (0076) is v9.16's.
 - **Parallel slices list the files they touch,** and two slices don't share a file. The story is D4's Discover names, deferred because the file belonged to the memory work.
 - **A move that should change nothing ships separately** from a change in behaviour, and its diff must be 0.
+- **Nothing merges into main unless `scripts/realdata-check.sh` passes** on the lab copy, with its report in the merge notes.
 
 ## Done when
 - On main, every case marked `pass` passes, and the runner lists the kinds it doesn't check.
