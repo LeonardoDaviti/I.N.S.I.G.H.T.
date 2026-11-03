@@ -493,7 +493,7 @@ describe('FeedList', () => {
     // The source once (issue 0070), the repost's line beside it from `sm` up, under it on a phone (issue 0073).
     expect(repost.textContent?.match(/steipete/g)).toHaveLength(1);
     expect(within(repost).getByText('↻ from @badlogicgames')).toHaveClass('sm:order-1');
-    expect(within(repost).getByText('4 min read')).toHaveClass('sm:order-2');
+    expect(within(repost).getByText('4 min read').parentElement).toHaveClass('sm:order-2');
   });
   it('a story names the roundups that mention it, who reposted a tweet, and on a phone a deep line its parent (issue 0068)', async () => {
     const user = userEvent.setup();
