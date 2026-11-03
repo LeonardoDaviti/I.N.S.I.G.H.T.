@@ -1,7 +1,8 @@
 """One story, many sources (issue 0050): the story job and Discover.
 
 The story job runs after each fetch run that saved posts (IngestionRunner's `stories` port) and
-once when the backend starts (main.py, in the background):
+once when the backend starts (main.py, in the background), each time in a process of its own
+(in_own_process, issue 0072):
 1. it reads the links of every post never read (the posts stored before 0050), 500 a transaction;
 2. it marks each source's signature links and links to its own site as boilerplate;
 3. it groups the posts of the last 30 days (STORY_WINDOW) into stories and writes what changed.
@@ -16,6 +17,7 @@ time (an advisory lock); a job that finds one running skips. No AI, no fetch.
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import re
 import time
 from collections import Counter, defaultdict
@@ -329,6 +331,28 @@ def rules_stamp() -> str:
     stories = group(posts)
     found = surges(posts, {s[0]: s[4] for s in stamps.SOURCES})
     return stamps.fingerprint([stories, found, news(posts, stories, found)])
+
+
+def in_own_process(job: Callable[..., Any], *args: Any) -> None:
+    """Run `job(*args)` in a fresh process and wait for it (issue 0072 A): what the job read goes
+    back to the OS when the process ends. A long-lived process keeps it: glibc and Python reuse
+    freed memory but seldom return it, so the API held 612-949 MB after its first start on the lab
+    (41,637 posts) with ~40 MB of it live, and holds ~47 MB when the start's work runs here.
+    `job` is a module-level function (the child imports it by name). Never raises."""
+    try:
+        process = multiprocessing.get_context("spawn").Process(target=job, args=args, name=job.__name__, daemon=True)
+        process.start()
+        process.join()
+        if process.exitcode:
+            logger.error("Stories: %s ended with exit code %s", job.__name__, process.exitcode)
+    except Exception:  # noqa: BLE001 - derived; the next run recomputes it
+        logger.exception("Stories: %s could not run in its own process", job.__name__)
+
+
+def recompute_job(db_url: str) -> None:
+    """The story job after a fetch run, in its own process (in_own_process)."""
+    logging.basicConfig(level=logging.INFO)
+    StoriesService(db_url).recompute_safely()
 
 
 def _first(stories: List[Origin], *, pages: bool = False) -> List[Origin]:

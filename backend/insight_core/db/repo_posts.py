@@ -65,6 +65,9 @@ def _transaction_is_poisoned(conn) -> bool:
 BACKLOG_KEY = "_backlog"
 # A page first seen this long after its date is new to you: it sorts at when it was first seen.
 NEW_TO_YOU_AFTER = "2 days"
+# The stored bodies the repair reads at a time (drop_hidden_link_labels): ~15 MB of HTML on the lab.
+# Not tuned; any batch far below the 2,958 bodies bounds the peak.
+BODIES_BATCH = 200
 # Issue 0058: known news is not new. A page one of your other sources linked before it was first
 # seen already reached you (0050's post_links, target_url normalized as posts.normalized_url):
 # it keeps its date. p is the page; migration 0043 clears what was surfaced before with the
@@ -957,17 +960,21 @@ class PostsRepository:
         """Take the screen-reader labels inside links (0063's rule, parsing._without_hidden_link_labels)
         out of the bodies stored before the reader dropped them (issue 0068), from the stored HTML
         only: nothing is fetched. The plain text follows when it is that HTML's text; the hash
-        follows, and the next story job reads the post's links again. Returns how many changed."""
+        follows, and the next story job reads the post's links again. Returns how many changed.
+        The bodies are read a batch at a time (issue 0072: all at once, 2,958 of them, 214 MB on the
+        lab, took the API to 796 MB)."""
         from insight_core.ingestion.kinds.parsing import HIDDEN_HINT_RE, _without_hidden_link_labels, strip_html
 
-        cur.execute("SELECT id, title, content, content_html FROM posts WHERE content_html ~* %s",
-                    (HIDDEN_HINT_RE.pattern.removeprefix("(?i)"),))
         rows = []
-        for post_id, title, content, html in cur.fetchall():
-            new = _without_hidden_link_labels(html)
-            if new != html:
-                text = strip_html(new) if content == strip_html(html) else content
-                rows.append((new, text, hash_post_content(title, text, new), str(post_id)))
+        with cur.connection.cursor(name="hidden_link_labels") as read:
+            read.itersize = BODIES_BATCH
+            read.execute("SELECT id, title, content, content_html FROM posts WHERE content_html ~* %s",
+                         (HIDDEN_HINT_RE.pattern.removeprefix("(?i)"),))
+            for post_id, title, content, html in read:
+                new = _without_hidden_link_labels(html)
+                if new != html:
+                    text = strip_html(new) if content == strip_html(html) else content
+                    rows.append((new, text, hash_post_content(title, text, new), str(post_id)))
         cur.executemany(
             """UPDATE posts SET content_html = %s, content = %s, content_hash = %s, links_scanned_at = NULL,
                    updated_at = now() WHERE id = %s::uuid""",

@@ -40,6 +40,7 @@ from insight_core.services.operations_service import (
     sources_failing,
 )
 from insight_core.services.registry import services
+from insight_core.services.stories_service import in_own_process
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,8 +59,9 @@ def fill_search_vectors() -> None:
 
 
 def recompute_stories() -> None:
-    """The posts stored before stories (issue 0050) get their links and stories, in the background.
-    First the stored bodies catch up with the reader's rules (issue 0068), so the job reads their links."""
+    """The posts stored before stories (issue 0050) get their links and stories, in the background,
+    in a process of its own (issue 0072: the API keeps none of what they read). First the stored
+    bodies catch up with the reader's rules (issue 0068), so the job reads their links."""
     try:
         changed = services().posts.catch_up_stored_bodies()
         if changed:
@@ -79,7 +81,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Jobs: could not close the jobs a restart interrupted")
     threading.Thread(target=fill_search_vectors, name="search-fill", daemon=True).start()
-    threading.Thread(target=recompute_stories, name="stories", daemon=True).start()
+    threading.Thread(target=in_own_process, args=(recompute_stories,), name="stories", daemon=True).start()
     yield
     database.close_all()
 

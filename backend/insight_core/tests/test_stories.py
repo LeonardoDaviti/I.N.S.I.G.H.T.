@@ -7,23 +7,31 @@ included, and nothing of it is kept). Assertions are scoped to the test's own ro
 """
 from __future__ import annotations
 
+import asyncio
+import os
+import signal
 import sys
+import tempfile
+import time
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
+from unittest import mock
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+from insight_core.db.repo_operations import SystemSettingsRepository
 from insight_core.db.repo_posts import PostDraft, PostsRepository
 from insight_core.db.repo_reader import FeedQuery, FeedScope, ReaderRepository, FeedCursor
 from insight_core.db.repo_sources import SourcesRepository
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository, source_account
-from insight_core.services.stories_service import StoriesService
+from insight_core.services.stories_service import (LOCK_KEY, SETTINGS_KEY, StoriesService, in_own_process,
+                                                     recompute_job, rules_stamp)
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.addresses import account_key, site_of
@@ -482,6 +490,98 @@ class DiscoverServiceTests(unittest.TestCase):
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             insert_scratch_source(cur)   # a source added: the list is computed again
         self.assertIsNot(service.discover(), first)
+
+
+def _write_pid(path: str) -> None:
+    """A job for in_own_process (module-level: the child imports it by name)."""
+    Path(path).write_text(str(os.getpid()))
+
+
+def _die() -> None:
+    raise SystemExit(3)
+
+
+def _killed() -> None:
+    os.kill(os.getpid(), signal.SIGKILL)   # as the out-of-memory killer ends a process
+
+
+def _killed_in_the_job(url: str) -> None:
+    """The story job, killed while it holds its lock, before it writes anything."""
+    with mock.patch.object(StoriesService, "regroup", lambda *args, **kwargs: _killed()):
+        recompute_job(url)
+
+
+class OwnProcessTests(unittest.TestCase):
+    """The story job runs in a process of its own (issue 0072), so the API and ingestion keep none
+    of what it read."""
+
+    def test_the_job_runs_in_another_process_and_is_waited_for(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "pid")
+            in_own_process(_write_pid, path)
+            self.assertNotEqual(int(Path(path).read_text()), os.getpid(), "done, by another process")
+
+    def test_a_job_that_dies_is_logged_never_raised(self):
+        with self.assertLogs("insight_core.services.stories_service", "ERROR") as logs:
+            in_own_process(_die)
+        self.assertIn("exit code 3", logs.output[0])
+
+    def test_a_job_killed_is_logged_never_raised(self):
+        with self.assertLogs("insight_core.services.stories_service", "ERROR") as logs:
+            in_own_process(_killed)
+        self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
+
+    def test_the_story_job_after_a_fetch_run_runs_in_its_own_process(self):
+        from insight_core.ingestion import default_runner
+
+        async def build():   # the runner's gates belong to a running loop
+            return default_runner(url)
+
+        url = "postgresql://insight:insight@nowhere.invalid:5432/none"
+        port = asyncio.run(build()).stories
+        self.assertEqual((port.func, port.args), (in_own_process, (recompute_job, url)))
+
+
+@requires_test_db
+class KilledJobTests(unittest.TestCase):
+    """A story job killed in its process (out of memory, issue 0072) writes nothing and holds
+    nothing: the next run recomputes."""
+
+    def _setting(self):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            return SystemSettingsRepository.get(cur, SETTINGS_KEY)
+
+    def setUp(self):
+        kept = self._setting()
+        self.addCleanup(self._restore, kept[0] if kept else None)
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            SystemSettingsRepository.upsert(cur, SETTINGS_KEY, {"rules": "older rules"})
+
+    def _restore(self, value):
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            if value is None:
+                cur.execute("DELETE FROM system_settings WHERE key = %s", (SETTINGS_KEY,))
+            else:
+                SystemSettingsRepository.upsert(cur, SETTINGS_KEY, value)
+
+    def test_the_next_run_recomputes(self):
+        with self.assertLogs("insight_core.services.stories_service", "ERROR") as logs:
+            in_own_process(_killed_in_the_job, db_url())
+        self.assertIn(f"exit code {-signal.SIGKILL}", logs.output[0])
+        self.assertEqual(self._setting()[0], {"rules": "older rules"}, "nothing written")
+        with psycopg.connect(db_url(), autocommit=True) as conn:   # the server ends the killed session
+            for _ in range(50):
+                if conn.execute("SELECT pg_try_advisory_lock(hashtext(%s))", (LOCK_KEY,)).fetchone()[0]:
+                    conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (LOCK_KEY,))
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("the killed job's lock is still held")
+        service = StoriesService(db_url())
+        with mock.patch.object(service, "regroup", lambda cur, cutoff: {}), \
+                mock.patch.object(service, "fill_discover_addresses", lambda: 0):
+            self.assertTrue(service.recompute()["full"], "the next run: in full, as the killed one would have")
+        self.assertEqual(self._setting()[0]["rules"], rules_stamp())
 
 
 if __name__ == "__main__":
