@@ -282,6 +282,43 @@ Vite serves on `http://localhost:5173` (bound to all interfaces) and proxies `/a
   make (`story_post`, `insert_source`, `insert_post`).
 - Frontend: `cd frontend && npm run typecheck && npm test && npm run build`.
 
+## Before a merge: the real-data check (issue 0075)
+
+Nothing merges into main unless this passes on the lab copy. It runs locally, never in CI: real data
+can't leave the machine.
+
+```bash
+scripts/realdata-check.sh insight_lab                     # this checkout's working tree against main
+scripts/realdata-check.sh --head <branch> insight_lab     # a committed branch instead
+scripts/realdata-check.sh --titles-only --base <a> --head <b> <copy>   # two commits' titles over one copy, no story job
+```
+
+- **What it does:**
+  - It `pg_dump`s the copy once (only reading it) and restores two scratch copies, `<db>_check_a` and `<db>_check_b`. You can set their names with `SCRATCH_A`/`SCRATCH_B`; a name must end in `_check_a/_b`, `_<nnnn>a/b` or `_test`.
+  - Main's code runs on one copy and the branch's on the other, both at once. Each runs in a container from the newest local `insight-backend:lab-*` image (`--image` picks another) with its code mounted. Nothing is built, pulled or fetched.
+- **Each side runs these steps:**
+  1. the migrations;
+  2. a full story job, on the copy's own clock (its last fetch; `--now` sets another);
+  3. a snapshot of everything the code derives;
+  4. the invariants;
+  5. the judged cases;
+  6. a second full rebuild, to check identity;
+  7. the incremental job's own identity check (`--identity module:function`). A version without it reads "not measured".
+- **The report** names the owner's posts, so it is private. It goes to `plan/research/lab/checks/<branch>-<date>.md`, with the JSON beside it. Put its path in the merge notes.
+- **It fails (exit 1) when:**
+  - a case marked `pass` fails;
+  - an invariant's count rose above main's and no `--allow name=reason` names a reason the spec gives;
+  - a step produced nothing.
+- **The pieces run alone too:**
+  - `python -m insight_core.scripts.check_cases --db <dsn> --cases <file>`;
+  - `python -m insight_core.scripts.check_invariants --db <dsn> [--baseline main.json]`;
+  - `python -m insight_core.checks.diff --before a.json --after b.json`;
+  - `python -m insight_core.checks.table_rows --a <dsn> --b <dsn>`, the story tables of two copies row by row. A no-op move must show 0.
+
+  The case format is `backend/insight_core/checks/case.schema.json`. The cases themselves are in `plan/research/lab/cases.json`, which is private.
+- **Read-only:** the checks open every connection read-only. The story job only ever writes a scratch copy, and refuses any other name.
+- **Cleanup:** the script removes only containers it named and the scratch copies it made (`--keep` keeps the copies).
+
 ## Troubleshooting
 
 - **Feed is stale ("last fetch N days ago").** Check that the scheduler runs:
