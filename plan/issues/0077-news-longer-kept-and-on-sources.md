@@ -69,4 +69,4 @@ Status: **spec** for v9.16, decided by the owner 2026-11-04. It ships next to 00
 - **Empty**: a source with no News says "No News from this source yet" / "News needs 2+ sources on one story."; with no Classics, "No Classics from this source yet". No action, no error. The Main feed's and a track's empty News now says "No News yet" (true at 30 days, not only a week).
 - **Checks**: node tests 216 pass, vitest 695 pass (49 files), `tsc` clean, eslint clean on the touched files. Bundle: the feed route 172,774 B gzip, 0.95% over the baseline (main 0.92%); the post route 312,769 B, 0.64% (main 0.62%).
 - **Left for K**: `scope_role` on source-scoped rows; `NEWS_DAYS = 30` (until then the earliest week parts stay empty); paging past the first page (NewsList still loads one page).
-- **Left for the design docs**: `src/design/docs/pages/reader.md` still describes News as the Main feed's and tracks' 7 days in two parts with "No news this week".
+- **Design docs**: `src/design/docs/pages/reader.md` updated at the merge (week parts, one source, the empty lines).
