@@ -157,11 +157,19 @@ After the restart the API catches up in the background while the reader already 
 re-indexes search when the search rule changed, reads the links of posts never read, and runs
 the story job (stories, News, Classics). Sources → Ingestion → Background work shows each. They
 finish by themselves, without a restart: the search refill and the link reading wait for each
-other's rows rather than stopping early. When an update changes what the story rules make (their
-stamp, worked out at start from a fixed sample: `utils/stamps.py`), the first story run regroups
-every story, old ones too: one full run, about 25 s on the lab's data. The start's story work runs
-in a process of its own (issue 0072): on a copy of the lab a first start peaks at ~540 MB, and the
-API holds ~45 MB once it is done (it held 530-550 MB before). Discover's addresses, the stored bodies and
+other's rows rather than stopping early. After each fetch run the story job regroups only what the
+new posts touch (issue 0072 A: on a copy of the lab, 30 new posts take about 1 s of CPU and ~75 MB).
+When an update changes what the story rules make (their stamp, worked out at start from a fixed
+sample: `utils/stamps.py`), the story job regroups every post in batches in the background, old
+stories too, while the reader shows the stories of the old rules until each batch replaces them;
+Background work says "regrouping every post by new rules, X of Y". On the lab's data that took
+~23 min and peaked at ~210 MB on a busy machine. **The first start after v9.15's migration 0059 is
+such a rebuild**, and three things change once with it: story ids (a story keeps the id of its post
+stored first), a date alone counts as that day's first timed post of its story, and News keeps the
+last 30 days even after a full run. A full rebuild at once is still there by hand:
+`docker compose exec backend python -m insight_core.services.stories_service full` (~30 s CPU,
+~520 MB). The start's story work runs in a process of its own (issue 0072): on a copy of the lab a
+first start peaks at ~540 MB, and the API holds ~45 MB once it is done (it held 530-550 MB before). Discover's addresses, the stored bodies and
 the search index are stamped the same way, and each is made again by itself when its rules change.
 
 ### Version
