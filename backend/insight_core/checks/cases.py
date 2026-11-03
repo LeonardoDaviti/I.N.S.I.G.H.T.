@@ -150,7 +150,8 @@ def run_case(ctx: Context, case: Dict[str, Any]) -> Result:
         except refs.RefError as e:
             held, seen = False, f"error: {e}"
         except Exception as e:   # noqa: BLE001 - a case that can't be asked is reported, never fatal
-            ctx.cur.connection.rollback()
+            if ctx.cur is not None and not ctx.cur.connection.autocommit:
+                ctx.cur.connection.rollback()
             return Result(case, "error", [f"{type(e).__name__}: {e}"])
         ok &= held
         details.append(("ok   " if held else "FAIL ") + seen)

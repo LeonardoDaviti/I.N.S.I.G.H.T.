@@ -146,9 +146,9 @@ class InvariantPatternTests(unittest.TestCase):
 
     def test_a_word_that_led_to_an_address_that_went(self):
         run = self.run_on(["The notes are at"], text="The notes are at https://a.test/notes and more")
-        self.assertEqual(invariants._title_ends_on_lead_word(run)[0], ["p0"])
+        self.assertEqual(invariants._title_ends_on_lead(run)[0], ["p0"])
         run = self.run_on(["Where it came from"], text="Where it came from. A story.")
-        self.assertEqual(invariants._title_ends_on_lead_word(run)[0], [], "no address after it")
+        self.assertEqual(invariants._title_ends_on_lead(run)[0], [], "no address after it")
 
     def test_a_rise_fails_unless_its_reason_is_named(self):
         found = [invariants.Found("title.over_300", "titles", "", 4, 10), invariants.Found("story.empty", "stories", "", 0, 10),
@@ -252,6 +252,7 @@ class RefsAndStoriesTests(unittest.TestCase):
         self.b = str(insert_post(self.cur, self.other, f"https://b-{mark}.test/two", title="Second post"))
         self.c = str(insert_post(self.cur, self.other, f"https://b-{mark}.test/three", title="Third post"))
         self.mark = mark
+        self.cur.execute("UPDATE posts SET fetched_at = now() - interval '1 hour' WHERE id = %s", (self.b,))   # seen first
         for sid, posts in ((self.a, [self.a, self.b]), (self.c, [self.c])):
             self.cur.execute("INSERT INTO stories (id, first_at, voices) VALUES (%s, now(), %s)", (sid, len(posts)))
             for pid in posts:
