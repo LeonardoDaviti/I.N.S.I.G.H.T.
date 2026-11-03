@@ -68,3 +68,36 @@
   - docs and Built.
 - **Incident:** the agent's cleanup removed `insight-lab-api`, because it matched containers by image. I recreated it the same day (same image `lab-6a8bf29`, compose `MALLOC_*` env, 247 sources before and after). Clean up by container name, never by image.
 - **Kept to continue:** the image tag `insight-backend:check-0075` and `/tmp/0075/`. Remove both afterwards.
+
+## Update: the incremental job paused cleanly (2026-11-03)
+- **Committed** as WIP on `issue-0072-incremental`: `8148b77` and `93fa8d8`, already rebased onto the rewritten main (24d9c4b), with no `plan/research/` in them.
+- **Built:**
+  - migration 0059 (`post_edges` keyed for several stories per post, `story_keys`, a queue filled by triggers, per-name surges, story positions);
+  - the incremental run;
+  - stable story ids (the post stored first);
+  - a full rebuild in batches on a rule change;
+  - the date-only rule;
+  - one post-fields record builder (`_story_post`, for 0076);
+  - `scripts/story_identity.py` (`check`, `same_rows`);
+  - 13 new tests.
+- **Measured (load 11–30):**
+  - incremental runs: 30 posts 26 s / 183 MB, 300 posts 35–46 s / 188 MB, 3,000 posts 117 s / 208 MB;
+  - against today's windowed run, 8.3 s / 295 MB: **memory is lower, time is worse**, mostly database waits;
+  - the speed fixes made since aren't re-measured.
+- **Equality:** identical at 30 posts. At 300 and 3,000 only 1–2 `post_edges` mention rows differed; that's fixed, but not re-run.
+- **Date-only rule:**
+  - same stories, mentions, classics and News rows;
+  - 972 story ids change once;
+  - 77 false "first" removed;
+  - Terra stays its full window;
+  - HN's S-1 no longer says "first".
+  - **Owner's call:** Mistral's row is still led by the Hugging Face post. A "first story's origin leads a News row" rule would change 8 of 93 rows.
+- **Left:**
+  - re-run equality at all sizes;
+  - the speed work and its tables;
+  - the full suite and the bundle;
+  - docs and Built;
+  - `cases.json`;
+  - the `news_service.py:77` fix.
+- **Kept:** the scratch DBs `insight_lab_inc` (with leftover `identity_held_*` tables; see the handoff for the reset), `insight_lab_old` and `insight_inc_test`.
+- **Private notes:** `plan/research/incremental/HANDOFF.md`, copied from its worktree.
