@@ -1,6 +1,6 @@
 # 0080 — Discover that reads well: tested suggestions, real names and titles, owners not platforms
 
-Status: **spec (draft)**, written 2026-11-04 from a read of the server's Discover (owner: "does very bad discovering"). Planned for v9.17, after 0076 and 0077. It starts after 0072 A merges, because that branch holds `stories_service`'s Discover code. Builds on 0050, 0060, 0065 and 0067.
+Status: **spec, decided** (owner, 2026-11-04: "80 everything recommended"), written 2026-11-04 from a read of the server's Discover (owner: "does very bad discovering"). Planned for v9.17, after 0076 and 0077. It starts after 0072 A merges, because that branch holds `stories_service`'s Discover code. Builds on 0050, 0060, 0065 and 0067.
 
 **Constraints:** no real source names in this file or fixtures; measure on a copy of the lab and on a fresh server copy; nothing merges unless `scripts/realdata-check.sh` passes.
 
@@ -40,7 +40,7 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
    - The reader review covers stories, News and the feed more than Discover.
    - 0075's invariants check Discover's titles against the feed's, not whether a name or title is an address.
 
-## Decided (proposed: the owner decides)
+## Decided (owner, 2026-11-04: every recommendation, including the first page of about 30 and the follow test's requests)
 1. **One name for a source, everywhere.**
    - A source's display name is its own name, else its feed's or site's title, else its host (`example.com`), and never an address.
    - It's one function, used by the feed, stories, News, Classics, Discover and source health (the class of 0072 D1's titles).
@@ -63,7 +63,7 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
      - **Feed found**;
      - **Page watching**;
      - **Headlines only** (a paywall, or no feed and a walled page);
-     - **Blocks readers** (401 or 403 on every way, 0081);
+     - **Blocks readers** (401 or 403 on every way of reading the finder knows);
    - "Blocks readers" and "Headlines only" sink below every followable suggestion and say so;
    - this changes Discover's "fetches nothing" rule: a few small requests, only for what's shown, never repeated within 30 days.
 5. **References aren't sources.**
@@ -82,6 +82,11 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
    - the rest behind "More";
    - X accounts stay (owner, 0067: "sorted by impact, priority and sourced by") and are ranked by the same signals, not apart;
    - an X account's lines show its stored tweet's text, never a status address.
+
+8. **A source's health says what failed, and waits as long as the error deserves** (moved here from 0081, owner 2026-11-04; the case: a feed service answering 502 put a source into a 6-day wait):
+   - a 5xx is the other server's trouble, so retry within hours, never days;
+   - the health text names the site, not "the server": "example.org is failing (HTTP 502): its own server didn't answer, usually temporary."
+   - Files: the fetch backoff and the health text (ingestion and source health), not Discover's. This is its own slice.
 
 ## Invariants added to 0075's check (each on every suggestion of the copy)
 - No source name, voice name or article title is an address.

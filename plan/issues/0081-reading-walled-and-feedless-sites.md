@@ -29,7 +29,7 @@ From the 2026-11-04 test of Discover's top sites: 10 of 60 refuse plain readers 
    - each post says "Headlines only: open the original to read";
    - the source's health says why, so it is never shown as a broken source.
 4. **A public archived copy as a fallback, for a page that has gone** (404 or 410), never for a paywalled one: the Internet Archive's copy, when one exists, linked as "archived copy".
-5. **Backoff that fits the error (from a feed service failing with 502, 2026-11-03):**
+5. **Backoff that fits the error** (the 5xx wait and the health text moved to 0080 item 8, owner 2026-11-04; what's left here is for walls and moves):
    - a 5xx is the other server's trouble, so retry within hours, not days;
    - a 401 or 403 is a wall, so try the next way of reading (1 → 2 → 3), not the same request again;
    - a 404 or 410 means the source has moved, so repair it (the feed finder).

@@ -1,6 +1,6 @@
 # 0078 — Channels: one source for one company, person or blog, made of its channels
 
-Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled: discuss and decide before speccing.
+Status: **on hold** (owner, 2026-11-04: "skip channels for now"). Filed the same day. Not in the plan until the owner brings it back.
 
 ## The owner's words
 "For future channels feature, which is done for each source and automatically combines all channels and sources for a single company/person/blog into single source and gives us control over sub-sources of that mega-source which is just combination of different channels."

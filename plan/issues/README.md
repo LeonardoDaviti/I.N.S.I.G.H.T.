@@ -89,9 +89,9 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | built (v9.15), not merged |
 | [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | spec (v9.16) |
 | [0077](0077-news-longer-kept-and-on-sources.md) | News: a longer view, every row kept, News and Classics on a source's page | spec (v9.16) |
-| [0078](0078-channels-one-source-per-voice.md) | Channels: one source for one company, person or blog, made of its channels | idea (future) |
+| [0078](0078-channels-one-source-per-voice.md) | Channels: one source for one company, person or blog, made of its channels | on hold (owner) |
 | [0079](0079-export-everything-from-the-web.md) | Export everything from the web: one click for a full database dump (and the sources list) | idea (future) |
-| [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | spec (draft, v9.17) |
+| [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | spec, decided (v9.17) |
 | [0081](0081-reading-walled-and-feedless-sites.md) | Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that is all | on hold (owner) |
 
 ## Analysis archive

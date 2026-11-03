@@ -1,6 +1,6 @@
 # 0079 — Export everything from the web: one click for a full database dump
 
-Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled.
+Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled. Secrets and access decided by the owner the same day (below).
 
 ## The owner's words
 "Please add button to export whole database as we are doing with data pgdump on the web as well, because I don't like to everytime go in server and dump everything, single click should be enough."
@@ -28,8 +28,8 @@ Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled.
      - (a) include them and say so before the click;
      - (b) leave the credentials tables out (`--exclude-table-data`) and have them re-entered after a restore;
      - (c) offer both.
-   - Recommended: (b) by default, with (a) as a checkbox that says what it includes.
-2. **Who can click it:**
+   - **Decided (owner, 2026-11-04):** (b) by default: the logins are left out. A checkbox, "Include stored logins", adds them, and says what that includes.
+2. **Who can click it** (decided, owner 2026-11-04: a confirmation is enough while INSIGHT runs on the owner's private network; an access rule comes before any hosted or shared use):
    - INSIGHT has no login today; the server is reachable on the owner's private network;
    - a full dump is everything the app knows, so the button needs at least a confirmation, and an access rule once a hosted tier or sharing exists.
 3. **Where `pg_dump` runs:**
