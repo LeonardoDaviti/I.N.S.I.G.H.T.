@@ -28,7 +28,7 @@ from insight_core.utils.classic_rules import Citation, cited_again, classic_orde
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, Surge, lead,
                                           longest, name_surges, names, news, phrases)
 from insight_core.utils.addresses import x_account
-from insight_core.utils.post_fields import display_title, post_title
+from insight_core.utils.post_fields import post_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
 
@@ -154,7 +154,7 @@ class NewsService:
         stored = {}
         for row in self.repo.stored_posts(cur, sorted({c.stored for c in out if c.stored})):
             stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"],
-                                 display_title(row["title"], row["content"]))
+                                 post_title(row["title"], row["content"], row["html"]))   # as every place (0072 D1)
         return out, stored
 
     @staticmethod

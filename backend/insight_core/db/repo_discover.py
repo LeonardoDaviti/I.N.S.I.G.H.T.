@@ -308,10 +308,11 @@ class DiscoverRepository:
         SystemSettingsRepository.upsert(cur, KEPT_KEY, kept)
 
     @staticmethod
-    def base(facts: Any) -> str:
-        """What the counts are counted by, a story run aside: the rules and the sources' facts (issue 0072:
-        while it holds, a story run counts again only the keys its posts link)."""
-        return hashlib.sha1(json.dumps([_COUNTS, _COUNT_RULES, facts]).encode()).hexdigest()[:16]
+    def base() -> str:
+        """What the counts are counted by, a story run aside: the rules (issue 0072: while they hold, a story
+        run counts again only the keys its posts link; a source whose facts change has its posts queued, so
+        the keys they link are among those)."""
+        return hashlib.sha1(json.dumps([_COUNTS, _COUNT_RULES]).encode()).hexdigest()[:16]
 
     @staticmethod
     def stamp(cur: Cursor, facts: Any) -> str:

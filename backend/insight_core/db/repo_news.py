@@ -252,9 +252,9 @@ class NewsRepository:
 
     @staticmethod
     def stored_posts(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
-        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, p.title, p.content FROM posts p WHERE p.id = ANY(%s::uuid[])",
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, {title_columns()} FROM posts p WHERE p.id = ANY(%s::uuid[])",
                     (list(ids),))
-        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content": r[4]}
+        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content": r[4], "html": r[5]}
                 for r in cur.fetchall()]
 
     @staticmethod

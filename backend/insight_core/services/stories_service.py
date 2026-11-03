@@ -516,14 +516,15 @@ class StoriesService:
     def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None) -> Dict[str, Any]:
         """Discover's counts by links (issue 0062), grouped and counted in the database: the kept ones
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
-        counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules,
-        the sources and the mirrors hold, only the keys of those addresses are counted again.
+        counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules and the
+        mirrors hold, only the keys of those addresses are counted again (a source whose facts change has
+        its posts queued, so the addresses they link are a run's too).
         {stamp, base, found (DiscoverRepository.counts, by key), mirrors, scanned_to}."""
         accounts = sources.platform_accounts()
         ask = dict(kinds=sources.kind, own_sites={i: sources.publication(i) for i in sources.kind}, accounts=accounts,
                    shown=DISCOVER_ARTICLES_SHOWN)
         facts = sorted((i, sources.kind[i], ask["own_sites"][i], accounts.get(i, "")) for i in sources.site)
-        stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base(facts)
+        stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base()
         kept = DiscoverRepository.kept(cur)
         if kept and kept["stamp"] == stamp:
             return kept
