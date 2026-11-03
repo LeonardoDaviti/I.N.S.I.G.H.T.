@@ -316,6 +316,7 @@ class StoriesService:
         # A roundup of the scope mentions the stories outside it as they are stored (they are unchanged).
         outside = {n for pid, listed in found.listed.items() if pid in scope for n in listed if n not in nodes}
         held = self.repo.stories_holding(cur, sorted(outside))
+        mentioned = self.repo.mentioned_by(cur, sorted(scope))   # the stories its roundups mentioned before
         mentions = [Edge(pid, n, "mention") for pid, listed in found.listed.items() if pid in scope
                     for n in dict.fromkeys(listed) if n in held]
         counts["changed"] = self.repo.write_stories(cur, stories, post_ids=sorted(scope),
@@ -333,7 +334,10 @@ class StoriesService:
         # A post stored at an address another links can make that one a roundup or not: its pages too.
         own = {posts[s].url for s in seeds if posts[s].url}
         urls |= {t for p in posts.values() if any(target in own for target, _ in p.links) for t, _ in p.links}
-        counts.update(self.news.update(cur, sources=sources, posts=posts, load=load, touched=scope, titles=titles,
+        # News regroups the scope's stories, and those a roundup of it mentions (their mentions count in News).
+        mentioned |= self.repo.story_mates(cur, [n for n in held if not n.startswith(_PAGE)])
+        mentioned |= self.repo.story_mates(cur, self.repo.linking(cur, sorted(n[len(_PAGE):] for n in held if n.startswith(_PAGE))))
+        counts.update(self.news.update(cur, sources=sources, posts=posts, load=load, touched=scope | mentioned, titles=titles,
                                        urls=sorted(urls), since=since,
                                        before=datetime.fromisoformat(previous["news_since"])
                                        if previous.get("news_since") else None))

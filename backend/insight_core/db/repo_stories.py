@@ -459,6 +459,13 @@ class StoriesRepository:
         return [Edge(*row) for row in cur.fetchall()]
 
     @staticmethod
+    def mentioned_by(cur: Cursor, post_ids: Sequence[str]) -> Set[str]:
+        """The posts of the stories these posts mention (story_mentions)."""
+        cur.execute("SELECT sp.post_id::text FROM story_mentions m JOIN story_posts sp ON sp.story_id = m.story_id "
+                    "WHERE m.post_id IN (SELECT unnest(%s::uuid[]))", (list(post_ids),))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
     def stories_holding(cur: Cursor, nodes: Sequence[str]) -> Dict[str, str]:
         """The stored story each node is in: a post's, and a page's (the story its link edges join)."""
         posts = [n for n in nodes if not n.startswith(_PAGE)]
