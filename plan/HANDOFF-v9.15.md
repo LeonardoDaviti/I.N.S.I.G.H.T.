@@ -54,3 +54,17 @@
 - The lab and server copies are read-only for agents.
 - Never touch the live `insight` DB or the server.
 - Keep the local `sources.json`, which is untracked, through merges.
+
+## Update: 0075 stopped cleanly (2026-11-03)
+- **Committed** on `issue-0075-realdata-checks`: A (940a771), B (5464084), C (dea32cc), and E as WIP (facf13f: `scripts/realdata-check.sh`, `checks/side.sh`, `checks/report.py`, tests). E's script and tests haven't been run yet.
+- **On main:**
+  - 90 cases: 60 pass, 14 fail (as marked), 16 not checked; no `pass` case fails. The cases run takes 32 s and the invariants 36 s.
+  - The private `cases.json` now has machine `expect`s (backup: `cases.before-0075.json`).
+  - Baseline: `title.places.classics_stored` 1,780; date-only marked first 44 of 1,400; text repeating its title 2,361; and others. All are in `plan/research/realdata-checks/HANDOFF.md`.
+- **Left:**
+  - run `realdata-check.sh` end to end and time it (≤10 min);
+  - replay 0072 D2 (`--titles-only --base 80f262d --head 39f13ba`, expecting ~56 changed titles);
+  - run the tests and the full suite;
+  - docs and Built.
+- **Incident:** the agent's cleanup removed `insight-lab-api`, because it matched containers by image. I recreated it the same day (same image `lab-6a8bf29`, compose `MALLOC_*` env, 247 sources before and after). Clean up by container name, never by image.
+- **Kept to continue:** the image tag `insight-backend:check-0075` and `/tmp/0075/`. Remove both afterwards.
