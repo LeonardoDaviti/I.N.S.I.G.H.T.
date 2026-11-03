@@ -64,7 +64,7 @@ beforeEach(() => {
 });
 
 describe('News (issue 0051)', () => {
-  it('View offers News and Classics next to the feed; News shows the week in two parts, its score in words', async () => {
+  it('View offers News and Classics next to the feed; News shows its parts, its score in words', async () => {
     const user = userEvent.setup();
     const getNews = vi.fn().mockResolvedValue(feedPage([
       story(ID(1), 'Meta Connect 2026 recap', { reports: 4, shares: 1, mentions: 1, score: 5 }, ['Road to VR', 'UploadVR', 'The Verge', 'Simon']),
@@ -80,7 +80,7 @@ describe('News (issue 0051)', () => {
     expect(within(feed).getAllByRole('article').map((row) => within(row).getByRole('heading').textContent))
       .toEqual(['Meta Connect 2026 recap', 'Snap Specs launch']);
     expect(screen.getByText('Last 48 hours')).toBeInTheDocument();
-    expect(screen.getByText('Earlier this week')).toBeInTheDocument();
+    expect(screen.getByText('This week')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /4 sources \(1 share\) · in 1 roundup · Road to VR, UploadVR, \+2/ })).toBeInTheDocument();
     // News is not the unread feed: no Show, no Posts, no unread count.
     expect(screen.queryByRole('radiogroup', { name: 'Show' })).not.toBeInTheDocument();
@@ -101,6 +101,21 @@ describe('News (issue 0051)', () => {
     expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: `folder:${FOLDER}` }));
   });
 
+  it('earlier weeks get a part each, every part in the API order (issue 0077)', async () => {
+    const weeksAgo = (n: number) => new Date(Date.now() - n * 7 * 24 * 60 * 60 * 1000).toISOString();
+    // As the API sends them: by score across the 30 days.
+    render(base({ getNews: vi.fn().mockResolvedValue(feedPage([
+      story(ID(1), 'Old and big', { part: 'earlier', first_at: weeksAgo(3), score: 9 }, ['A', 'B']),
+      story(ID(2), 'New', {}, ['A', 'B']),
+      story(ID(3), 'Old and small', { part: 'earlier', first_at: weeksAgo(3), score: 2 }, ['A', 'B']),
+    ])) }), '/?view=news');
+    const feed = await screen.findByRole('feed', { name: 'News' });
+    expect(within(feed).getAllByRole('article').map((row) => within(row).getByRole('heading').textContent))
+      .toEqual(['New', 'Old and big', 'Old and small']);
+    expect(screen.getByText('Last 48 hours')).toBeInTheDocument();
+    expect(screen.getAllByText(/^Week of \d+ \w+/)).toHaveLength(1);
+  });
+
   it('opening a story reads it as the feed does, on its own (no feed context)', async () => {
     const user = userEvent.setup();
     const setPostsRead = vi.fn().mockResolvedValue({ success: true, updated: 1, ids: [ID(1)] });
@@ -110,6 +125,51 @@ describe('News (issue 0051)', () => {
     expect(link).toHaveAttribute('href', `/posts/${ID(1)}`);
     await user.click(link);
     await waitFor(() => expect(setPostsRead).toHaveBeenCalledWith([ID(1)], true, { keepLater: true }));
+  });
+});
+
+describe('News and Classics on a source page (issue 0077)', () => {
+  const SOURCE = '00000000-0000-4000-8000-0000000000a1';
+
+  it('a source opens its own News, each row saying its part when the API sends it', async () => {
+    const getNews = vi.fn().mockResolvedValue(feedPage([
+      story(ID(1), 'A launch', { scope_role: 'origin' } as Partial<NewsScore>, ['Source A', 'Source B']),
+      story(ID(2), 'A recap', {}, ['Source A', 'Source B']),
+    ]));
+    render(base({ getNews }), `/read/source/${SOURCE}?view=news`);
+    await screen.findByRole('feed', { name: 'News' });
+    expect(getNews).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` }));
+    expect(screen.getByRole('button', { name: /^Started it · 2 sources · Source A, Source B/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^2 sources · Source A, Source B/ })).toBeInTheDocument();
+  });
+
+  it('a source with no News says why, quietly', async () => {
+    render(base({ getNews: vi.fn().mockResolvedValue(feedPage([])) }), `/read/source/${SOURCE}?view=news`);
+    expect(await screen.findByText('No News from this source yet')).toBeInTheDocument();
+    expect(screen.getByText('News needs 2+ sources on one story.')).toBeInTheDocument();
+  });
+
+  it('a source opens its own Classics, saying its part; none is a quiet line', async () => {
+    const getClassics = vi.fn().mockResolvedValue({ success: true, classics: [
+      { ...classic({ citers: [{ name: 'Source A', at: '2025-08-12T12:00:00Z' }] }), scope_role: 'report' },
+    ] });
+    render(base({ getClassics }), `/read/source/${SOURCE}?view=classics`);
+    const list = await screen.findByRole('list', { name: 'Classics' });
+    expect(within(list).getByRole('listitem')).toHaveTextContent('Covered · Source A, Aug 2025');
+    expect(getClassics).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` }));
+  });
+
+  it('a source with no Classics says so quietly', async () => {
+    render(base({ getClassics: vi.fn().mockResolvedValue({ success: true, classics: [] }) }), `/read/source/${SOURCE}?view=classics`);
+    expect(await screen.findByText('No Classics from this source yet')).toBeInTheDocument();
+  });
+
+  it('By source on one source is its stream', async () => {
+    const getFeed = vi.fn().mockResolvedValue(feedPage([feedItem({ id: ID(9) })]));
+    const getFeedGroups = vi.fn();
+    render(base({ getFeed, getFeedGroups }), `/read/source/${SOURCE}?view=by_source`);
+    await waitFor(() => expect(getFeed).toHaveBeenCalledWith(expect.objectContaining({ scope: `source:${SOURCE}` })));
+    expect(getFeedGroups).not.toHaveBeenCalled();
   });
 });
 

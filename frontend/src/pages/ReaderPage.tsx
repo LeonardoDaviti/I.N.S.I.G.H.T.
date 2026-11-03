@@ -112,11 +112,11 @@ function Reader({ scope }: { scope: string }) {
   const queryClient = useQueryClient();
   const rawFilter = params.get('filter');
   const filter: FeedFilter = isFeedFilter(rawFilter) ? rawFilter : 'unread';
-  // One source has nothing to group by source, so it is always a stream; News and Classics
-  // (issue 0051) are views of the Main feed or a track.
+  // One source has nothing to group by source; its News and Classics are its stories and the
+  // classics it cites (issue 0077), as on the Main feed or a track (0051).
   const oneSource = scope.startsWith('source:');
   const rawView = params.get('view');
-  const readerView: ReaderView = !oneSource && isReaderView(rawView) ? rawView : 'stream';
+  const readerView: ReaderView = isReaderView(rawView) && !(oneSource && rawView === 'by_source') ? rawView : 'stream';
   const ranked = readerView === 'news' || readerView === 'classics';
   const view: FeedView = readerView === 'by_source' ? 'by_source' : 'stream';
   const dataName = import.meta.env.DEV ? params.get('data') : null;
