@@ -1,6 +1,6 @@
 # 0081 — Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that's all there is
 
-Status: **draft for the future** (owner, 2026-11-04: "we can't scrape everything? why? you can find solution for that"). Not scheduled: after 0076. Needs 0080's follow test to know which sites to try.
+Status: **on hold** (owner, 2026-11-04: "we are not doing 0081 rn, skip it"). Drafted on the owner's question "we can't scrape everything? why? you can find solution for that". Not in the plan until the owner brings it back. Needs 0080's follow test to know which sites to try.
 
 **Constraints:** download nothing until the owner says (a browser image is a large download); generalize, so no lists of sites; measure on the lab and on the server's sources; never break a paywall or a login.
 
