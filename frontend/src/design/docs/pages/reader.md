@@ -69,7 +69,8 @@ The home of INSIGHT (P1): the posts to read, newest first, scoped to everything,
 - Counts use `formatCount` (`1,284`) and never truncate; the scope title truncates, its count does not.
 - A deleted source with posts has no rail row; its posts stay in the main feed.
 - 320px: the toolbar's count moves under the title; actions are 44px.
-- Below `sm` (decision 043): only the title row sticks (about 60px under the top bar, was 220 with Show, View and Posts); a meta line never cuts the source below 12 characters, a repost's line and a page's note going to a second line; a story line's title has its own line.
+- Below `sm` (decision 043): only the title row sticks (about 60px under the top bar, was 220 with Show, View and Posts); a story line's title has its own line.
+- Below `sm` (decision 045) a row is a grid: the title across it (about 346px at 390, 316 at 360), then the meta lines and the excerpt beside the two actions (44px on touch, vertically centred), then the story's line and its open tree across the row. The time column is hidden and its time joins the first meta line, `Simon Willison · 11:09 · 1 min read` (`Oct 27` where the row has no day header). A repost's `↻ from @…`, a Hacker News item's `1,675 points · 1,628 comments` and a started post's length with its bar take a second line, a page's `published …` or `updated …` a third; no line starts on a dot. The source has no 12-character floor there (its line holds only the time and the length); a long name is cut before the length is, and beside a short one the length may cut rather than run under the actions. A story's line may take two lines, left-aligned, so News's and covered-by's names show (`▸ 8 sources (1 share) · in 1 roundup · Anthropic,` / `Simon Willison, +6`). From `sm` up the row is unchanged: the meta line keeps its order (source, repost, counts, length, bar, note) through `sm:order-*`.
 
 ## A11y & motion
 

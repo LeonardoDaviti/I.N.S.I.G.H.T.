@@ -130,7 +130,7 @@ describe('FeedList', () => {
   it('on a phone the title takes the row: the time joins the meta line, counts, a reading bar and a note take lines of their own (issue 0073)', async () => {
     const now = new Date();
     setup({ getFeed: vi.fn().mockResolvedValue(feedPage([
-      feedItem({ id: ID(1), title: 'Anthropic S-1', source_display_name: 'Hacker News', counts: { points: 1675, comments: 1628 },
+      feedItem({ id: ID(1), title: 'A front-page story', source_display_name: 'Hacker News', counts: { points: 1675, comments: 1628 },
         reading_minutes: 4, resume_block: 16, resume_blocks: 40, sort_at: now.toISOString(), published_at: '2025-09-14T00:00:00Z' }),
       feedItem({ id: ID(2), title: 'Plain post', reading_minutes: 2 }),
     ])) });
