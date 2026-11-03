@@ -556,6 +556,8 @@ export interface SourceHealthRow {
   doctor_looked_at?: string | null;
   /** What it found; null with doctor_looked_at set: nothing. */
   replacement?: SourceReplacement | null;
+  /** The doctor read a server error (issue 0072 D3): not moved, retried; status null when it timed out. */
+  server_error?: { status: number | null } | null;
   /** Source hygiene (issue 0046): its fetches work but nothing new came for 30 days and
    *  more than 3x its usual gap. Never on a broken or disabled source, nor within 90 days of Keep. */
   quiet?: boolean;

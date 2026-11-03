@@ -10,8 +10,9 @@ an answer that does not parse as a feed. At most once a day per source, and not 
 streak whose finding the owner dismissed; a fetch that works clears the finding.
 
 A server error (HTTP 5xx) or a timeout is no move (issue 0072): the site is there and failing.
-That is recorded ("server error, not moved"); nothing is looked at and nothing is offered, so an
-offer stored before is replaced (an aggregator's 502 was offered a feed tool's changelog).
+That is recorded ("server error, not moved", with its HTTP status: the source sheet says the server
+is failing and INSIGHT keeps retrying, issue 0072 D3); nothing is looked at and nothing is offered,
+so an offer stored before is replaced (an aggregator's 502 was offered a feed tool's changelog).
 
 First it reads the old address itself: when it reads again (a feed that parses; a followed
 page that still lists articles), the error was temporary. That is recorded ("temporary error,
@@ -73,6 +74,7 @@ Item = Tuple[str, str]         # a stored post's (url, title)
 WORKING_AGAIN: Dict[str, Any] = {"replacement": None, "dismissed": False, "working_again": True,
                                  "note": "temporary error, working again"}
 # The finding on a server error or a timeout: the site is there; nothing looked at, nothing offered.
+# Recorded with the error's `status` (None for a timeout).
 SERVER_ERROR: Dict[str, Any] = {"replacement": None, "dismissed": False, "server_error": True,
                                 "note": "server error, not moved"}
 
@@ -235,8 +237,11 @@ class SourceDoctor:
         if state is None or source.get("platform") != "rss" or not should_look(kind.name, state, signal, now):
             return
         if signal == "server_error":
-            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now, finding=SERVER_ERROR)
-            logger.info("Source doctor: %s: server error, not moved", source.get("handle_or_url"))
+            status = getattr(error, "status", None)
+            await asyncio.to_thread(self.store.record, str(source["id"]), checked_at=now,
+                                    finding={**SERVER_ERROR, "status": status})
+            logger.info("Source doctor: %s: server error (%s), not moved; retrying", source.get("handle_or_url"),
+                        f"HTTP {status}" if status else "timed out")
             return
         address = str(source["handle_or_url"])
         settings = source.get("settings") or {}

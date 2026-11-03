@@ -321,7 +321,7 @@ class NeverOfferedTests(unittest.TestCase):
         for error in (BAD_GATEWAY, FLAKY, HttpError("Timed out fetching x", timed_out=True)):
             store, http, progress = self._hn(error)
             self.assertEqual((store.switches, progress.events, http.requests), ([], [], []), error)
-            self.assertEqual(store.records, [("s1", NOW, SERVER_ERROR)])
+            self.assertEqual(store.records, [("s1", NOW, {**SERVER_ERROR, "status": error.status})])
 
     def test_the_same_case_once_it_is_gone_still_offers_nothing(self):
         # Even gone, the changelog holds none of the source's items.
@@ -331,9 +331,36 @@ class NeverOfferedTests(unittest.TestCase):
 
     def test_a_server_error_hides_an_offer_stored_before(self):
         row = health_row({"id": "s1", "platform": "rss", "handle_or_url": self.HN, "enabled": True, "settings": {},
-                          "state": state(6, doctor_checked_at=NOW, doctor_finding=SERVER_ERROR)},
+                          "state": state(6, doctor_checked_at=NOW, doctor_finding={**SERVER_ERROR, "status": 502})},
                          generic(), Availability(True, False), NOW)
         self.assertEqual((row["doctor_looked_at"], row["replacement"]), (None, None))
+        self.assertEqual(row["server_error"], {"status": 502}, "the sheet says the server is failing (issue 0072 D3)")
+
+    @requires_test_db
+    def test_0058_rewrites_what_was_stored_before_the_check(self):
+        # Issue 0072 D3: a stored proxy page becomes its status line; a pre-C1 offer is removed, a
+        # server error's becoming C1's finding.
+        sql = (Path(__file__).resolve().parents[1] / "db/migrations/0058_doctor_findings_before_0072.sql").read_text()
+        before = {"dismissed": False, "replacement": {"kind": "feed", "url": self.CHANGELOG, "title": "Feed tool updates",
+                                                      "found": None, "prefix": None}}
+        page_502 = f"HTTP 502 while fetching {self.HN}: <html>\n<head><title>502 Bad Gateway</title></head>\n<body></body></html>"
+        page_404 = f"HTTP 404 while fetching {OLD}: <!DOCTYPE html>\n<html><head></head><body><h1>404 Not Found</h1></body></html>"
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            ids = [insert_scratch_source(cur) for _ in range(3)]
+            for source_id, error, finding in [(ids[0], page_502, before), (ids[1], page_404, before),
+                                              (ids[2], "HTTP 500 while fetching x: oops", None)]:
+                cur.execute("INSERT INTO source_fetch_state (source_id, last_error, doctor_checked_at, doctor_finding)"
+                            " VALUES (%s, %s, %s, %s)", (source_id, error, NOW, json.dumps(finding) if finding else None))
+            for _ in range(2):   # a second run changes nothing more
+                cur.execute(sql)
+            cur.execute("SELECT last_error, doctor_checked_at, doctor_finding FROM source_fetch_state"
+                        " WHERE source_id = ANY(%s::uuid[]) ORDER BY array_position(%s::uuid[], source_id)", (ids, ids))
+            rows = cur.fetchall()
+            conn.rollback()
+        self.assertEqual(rows[0], (f"HTTP 502 while fetching {self.HN}: Bad Gateway", NOW,
+                                   {**SERVER_ERROR, "status": 502}))
+        self.assertEqual(rows[1], (f"HTTP 404 while fetching {OLD}: Not Found", None, None), "the doctor looks again")
+        self.assertEqual(rows[2], ("HTTP 500 while fetching x: oops", NOW, None), "anything else as it was")
 
     def test_an_offer_stored_before_the_check_is_not_offered(self):
         # The stored finding as the old code wrote it: {replacement: {url: the changelog, ...}}, no `shared`.
