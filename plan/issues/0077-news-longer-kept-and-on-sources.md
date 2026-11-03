@@ -55,3 +55,18 @@ Status: **spec** for v9.16, decided by the owner 2026-11-04. It ships next to 00
 ## Not in this issue
 - New News rules; Mark X's events.
 - Classics' own window.
+
+## Built
+### F, the reader (branch `issue-0077-reader`, 2026-11-04)
+- **Parts by week** (`lib/news.ts` `newsPart`, `inNewsParts`):
+  - "Last 48 hours" is still the API's `part === 'recent'`;
+  - "This week" is a story begun since Monday (local time);
+  - each earlier week is "Week of 12 Oct" (its Monday; another year adds the year).
+  - The reader groups the rows by part, newest part first, and keeps the API's order (score) inside each part, so it works before and after K whatever order K sends across parts.
+- **One source's page** (`ReaderPage`, `FeedToolbar`, the latter approved for F by the coordinator): View is Stream / News / Classics (By source left out, no Posts choice), opening the source's News and Classics (`GET /api/news?scope=source:<id>`, the classics equivalent); `?view=by_source` stays its stream.
+  - Moving to a source from the rail while in News or Classics keeps that view (the rail already carried `view`).
+- **The source's part**: a News row's line starts with "Started it", "Covered", "Shared" or "Mentioned" when the row carries `news.scope_role`; a classic's line does the same from `classic.scope_role`. Typed optional in `lib/news.ts` (`ScopedNews`) and `lib/classics.ts` (`ScopedClassic`), not in `services/api.ts` (0072 A holds it). Absent or unknown: nothing shown.
+- **Empty**: a source with no News says "No News from this source yet" / "News needs 2+ sources on one story."; with no Classics, "No Classics from this source yet". No action, no error. The Main feed's and a track's empty News now says "No News yet" (true at 30 days, not only a week).
+- **Checks**: node tests 216 pass, vitest 695 pass (49 files), `tsc` clean, eslint clean on the touched files. Bundle: the feed route 172,774 B gzip, 0.95% over the baseline (main 0.92%); the post route 312,769 B, 0.64% (main 0.62%).
+- **Left for K**: `scope_role` on source-scoped rows; `NEWS_DAYS = 30` (until then the earliest week parts stay empty); paging past the first page (NewsList still loads one page).
+- **Left for the design docs**: `src/design/docs/pages/reader.md` still describes News as the Main feed's and tracks' 7 days in two parts with "No news this week".

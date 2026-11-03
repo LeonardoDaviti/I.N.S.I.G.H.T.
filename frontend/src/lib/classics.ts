@@ -1,6 +1,12 @@
 import type { BackgroundClassic, Classic } from '../services/api';
 import { bareAddress } from './addresses.ts';
 import { sourceLabel } from './sourceLabel.ts';
+import type { ScopeRole } from './news.ts';
+
+export { scopeRoleWords } from './news.ts';
+
+/** A classic on a source's page (issue 0077): the source's part, optional until the API sends it (0077 K). */
+export type ScopedClassic = Classic & { scope_role?: ScopeRole | null };
 
 // Classics (issue 0051): kept apart from lib/story.ts, which the feed row (the reader's initial
 // JS) imports; these are only read by the Classics view and the post page.

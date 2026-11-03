@@ -9,7 +9,7 @@ import type { Classic, ClassicsResponse, SearchOrder } from '../../services/api'
 import { UNREAD_COUNTS_KEY } from '../../hooks/useFeed';
 import { errorMessage } from '../../lib/apiError';
 import { postHref } from '../../lib/feedContext';
-import { citedBy, classicTitle } from '../../lib/classics';
+import { citedBy, classicTitle, scopeRoleWords, type ScopedClassic } from '../../lib/classics';
 import { sourceLabelList } from '../../lib/sourceLabel';
 import { EmptyState, ErrorState, LoadingState, FOCUS_RING, PRESS_FEEDBACK, type EmptyStateAction } from '../states';
 
@@ -38,12 +38,14 @@ const SEARCH_LIMIT = 100;
  * Cited again this week says so first.
  */
 function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
-  classic: Classic; busy: boolean;
+  classic: ScopedClassic; busy: boolean;
   onRead: (c: Classic) => void; onLater: (c: Classic) => void; onHide: (c: Classic) => void;
 }) {
   const title = classicTitle(classic);
   const read = Boolean(classic.read_at);
   const later = Boolean(classic.later_at);
+  // On a source's page (issue 0077): the source's part, when the API sends it.
+  const role = scopeRoleWords(classic);
   const titleClass = `rounded-sm text-left underline-offset-4 hover:underline hover:decoration-fg-3 focus-visible:underline ${FOCUS_RING}`;
   return (
     <li data-classic className="reader-row group flex items-start gap-3 rounded-md border border-line py-2 pl-3 pr-1.5 hover:border-line-strong sm:gap-4 sm:pl-4">
@@ -58,6 +60,7 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
           )}
         </h3>
         <p className="min-w-0 truncate text-[0.8125rem] leading-5 text-fg-3 tabular-nums">
+          {role ? <span className="text-fg-2">{role} · </span> : null}
           {classic.cited_again ? <span className="text-fg">cited again this week · </span> : null}
           <span title={sourceLabelList(classic.citers.map((c) => c.name))}>{citedBy(classic)}</span>
         </p>
@@ -84,7 +87,8 @@ function ClassicRow({ classic, busy, onRead, onLater, onHide }: {
 
 /**
  * View classics (issue 0051): the pages 2 or more of your sources keep linking, 30 days apart
- * or more, of the Main feed or a track. Cited again this week first, then most of your sources,
+ * or more, of the Main feed, a track or one source (the classics it cites, issue 0077, each saying
+ * the source's part when the API sends it). Cited again this week first, then most of your sources,
  * then cited longest; a page's age never counts against it. Nothing is fetched until you read
  * an outside page or put it in Later: then it is saved (Save any page) and reads like any post.
  * Hide is "I know it" and "not for me" in one: a hidden classic never comes back.
@@ -178,6 +182,14 @@ export default function ClassicsList({ scope, search }: { scope: string; search?
         title={`No classics match “${search.q}”`}
         description="Classics are searched by their title and their address."
         action={search.emptyAction}
+      />
+    );
+  }
+  if (!classics.length && scope.startsWith('source:')) {
+    return (
+      <EmptyState
+        title="No Classics from this source yet"
+        description="A page it links is a classic once 2+ of your sources link it, 30 days apart or more."
       />
     );
   }
