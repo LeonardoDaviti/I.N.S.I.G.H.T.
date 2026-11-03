@@ -1,4 +1,4 @@
-# 0072 — A post in several stories: membership is an edge, not glue
+# 0074 — A post in several stories: membership is an edge, not glue
 
 Status: **spec (draft, 2026-11-01)**, for v9.14 together with the incremental story job (0071 points there). Owner, 2026-11-01: "if it touches multiple stories, it should touch them. that's the whole complexity of the news, they are nonlinear and multiconnectable." It is the step from tree (0064) to graph (0004, Mark X). Real-data examples stay in `plan/research/` (private); this file uses neutral names.
 

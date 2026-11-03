@@ -84,8 +84,10 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0070](0070-v9.12-names-joins-reading.md) | v9.12: names that surge, joins that hold, rows that read right | spec (v9.12); A, B and C built, not deployed (A9 measured, not built) |
 | [0071](0071-v9.13-safe-data-simpler-code.md) | v9.13: your sources can't be lost, versions keep themselves, one rule for each thing | built, not deployed (v9.13) |
 | [0072](0072-v9.14-light-api-rows-that-read.md) | v9.14: a light API, rows that read right, a doctor that checks | spec (v9.14); A (memory), B, C, D1–D4 built, not deployed; A (incremental job, stored connections, date-only starts) to do |
-| [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built (branch `issue-0073-phone`), not merged, not deployed; a WebKit / iPhone check of the safe areas left open |
-| [0072](0072-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft), for v9.14 |
+| [0073](0073-phone-rows-full-width.md) | Phones: the title gets the row's full width | built, not deployed |
+| [0074](0074-a-post-in-several-stories.md) | A post in several stories: membership is an edge, not glue | spec (draft); after the incremental job |
+| [0075](0075-realdata-checks.md) | Real-data checks on every change: the cases run, the rules hold on every post, every change shows its diff | spec (v9.15) |
+| [0076](0076-post-read-once.md) | A post is read once, when it is saved: one stored structure every page and the story job read | spec (v9.16) |
 
 ## Analysis archive
 
