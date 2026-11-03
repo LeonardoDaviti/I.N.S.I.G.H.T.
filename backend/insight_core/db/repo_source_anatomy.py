@@ -47,14 +47,15 @@ class SourceAnatomyRepository:
     @staticmethod
     def stories(cur: Cursor, since: datetime) -> Counts:
         """(stories, stories recent, first, first recent): the stories its posts are in (0050), and
-        how many it leads: a story's lead is its first report, else its first share, as the feed
-        ranks them (repo_reader._STORY_RANK). Recent by the source's own post."""
+        how many it leads: a story's lead is its first report, else its first share, in the story's
+        order (repo_reader._ORDER_RANK). Recent by the source's own post."""
         cur.execute(
             f"""
             WITH leads AS (
                 SELECT DISTINCT ON (sp.story_id) sp.post_id
                 FROM story_posts sp JOIN posts p ON p.id = sp.post_id
-                ORDER BY sp.story_id, (sp.role = 'report') DESC, COALESCE(p.published_at, p.fetched_at), p.id
+                ORDER BY sp.story_id, (sp.role = 'report') DESC, COALESCE(sp.position, 0),
+                         COALESCE(p.published_at, p.fetched_at), p.id
             )
             SELECT p.source_id, count(DISTINCT sp.story_id), count(DISTINCT sp.story_id) FILTER (WHERE {RECENT}),
                    count(l.post_id), count(l.post_id) FILTER (WHERE {RECENT})

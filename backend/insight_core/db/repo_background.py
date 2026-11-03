@@ -2,8 +2,9 @@
 jobs already record. Read only; nothing here starts, stops or tunes a job (owner, 2026-10-31:
 checkable, not controllable).
 
-- Stories: the story job's last summary (the `stories` system setting, StoriesService.recompute)
-  and whether a run holds the job's lock now (an advisory lock: pg_locks).
+- Stories: the story job's last summary (the `stories` system setting, StoriesService.recompute),
+  a rule change's progress through every post (`rebuild`: done of total, issue 0072 A), and whether
+  a run holds the job's lock now (an advisory lock: pg_locks).
 - Search index: the posts whose vector is missing or made by an older rule (0042's
   search_version, ReaderService.fill_search_vectors) of all posts.
 - Links: the posts whose links were never read (posts.links_scanned_at, filled by the story job,
@@ -38,6 +39,9 @@ def background_work(cur: Cursor, *, stories_key: str, stories_lock: str) -> Dict
     last: Optional[Dict[str, Any]] = None
     if isinstance(summary, dict) and summary.get("computed_at"):
         last = {field: summary.get(field) for field in SUMMARY_FIELDS}
+        rebuild = summary.get("rebuild")   # new rules regroup every post in batches (issue 0072 A)
+        last["rebuild"] = {"done": int(rebuild.get("done") or 0), "total": int(rebuild.get("total") or 0)} \
+            if isinstance(rebuild, dict) else None
     return {
         "stories": {"running": bool(running), "last_run": last},
         "search": {"total": int(posts), "pending": int(unindexed)},

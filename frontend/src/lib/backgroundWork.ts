@@ -21,13 +21,14 @@ export interface BackgroundLine {
   details: string[];
 }
 
-/** "5,018 posts grouped · 86 stories · 90 News stories, last 30 days · 175 Classics": the counts the run recorded.
- *  News's count is every News story of the posts it grouped, not this week's that News lists (issue 0072). */
+/** "38 posts grouped · 1,820 stories · 90 News stories, last 30 days · 175 Classics": the counts the run recorded.
+ *  A run regroups only what new posts touch (issue 0072 A); the stories are all of them. News's count is every
+ *  News story it keeps, the last 30 days, not this week's that News lists. */
 export function storiesRunCounts(run: StoriesRunSummary): string {
   const parts: string[] = [];
   if (typeof run.posts === 'number') parts.push(`${plural(run.posts, 'post')} grouped`);
   if (typeof run.stories === 'number') parts.push(plural(run.stories, 'story', 'stories'));
-  if (typeof run.news === 'number') parts.push(`${plural(run.news, 'News story', 'News stories')}, ${run.full ? 'all time' : 'last 30 days'}`);
+  if (typeof run.news === 'number') parts.push(`${plural(run.news, 'News story', 'News stories')}, last 30 days`);
   if (typeof run.classics === 'number') parts.push(plural(run.classics, 'Classic'));
   return parts.join(' · ');
 }
@@ -41,6 +42,13 @@ function lastRun(run: StoriesRunSummary, now: Date): string {
 function storiesLine(stories: BackgroundWorkResponse['stories'], now: Date): BackgroundLine {
   const run = stories.last_run;
   const base = { key: 'stories' as const, label: 'Stories' };
+  if (run?.rebuild) {   // new rules regroup every post in batches (issue 0072 A); the old stories are shown till then
+    const { done, total } = run.rebuild;
+    return {
+      ...base, status: 'running', word: `regrouping every post by new rules, ${formatCount(Math.min(done, total))} of ${formatCount(total)}`,
+      details: ['Until it is done the stories made by the old rules are shown', lastRun(run, now)],
+    };
+  }
   if (stories.running) {
     return { ...base, status: 'running', word: 'building stories, News and Classics now', details: run ? [lastRun(run, now)] : [] };
   }
@@ -76,5 +84,5 @@ export function backgroundWorkLines(work: BackgroundWorkResponse, now: Date): Ba
 /** Something runs now: the block refreshes often while it does. */
 export function backgroundWorkBusy(work: BackgroundWorkResponse | undefined): boolean {
   if (!work) return false;
-  return work.stories.running || work.search.pending > 0 || work.links.pending > 0;
+  return work.stories.running || Boolean(work.stories.last_run?.rebuild) || work.search.pending > 0 || work.links.pending > 0;
 }

@@ -87,6 +87,9 @@ _EVERY_SOURCE_FILTERS = ("later", "history")
 
 # A story's posts, first posted first (its lead: the first report shown, else the first share).
 _STORY_RANK = "COALESCE({p}.published_at, {p}.fetched_at), {p}.id"
+# A story post's place in its story's order (issue 0072 D: a date alone counts as that day's earliest
+# timed post), then the time: compares two posts of one story ({sp}: story_posts' or news_posts' row).
+_ORDER_RANK = "COALESCE({sp}.position, 0), " + _STORY_RANK
 # Where a story post sits in its tree (issue 0064), the lead's first test: 0 the origin (no parent
 # and no reason: also every post before the job has drawn the tree), 1 a post citing the story's
 # outside page origin, 2 the rest.
@@ -403,15 +406,17 @@ class ReaderRepository:
               AND ({_TREE_RANK.format(sp='o')} < {_TREE_RANK.format(sp='sp')}
                    OR ({_TREE_RANK.format(sp='o')} = {_TREE_RANK.format(sp='sp')}
                        AND ((o.role = 'report' AND sp.role = 'share')
-                            OR (o.role = sp.role AND ({_STORY_RANK.format(p='op')}) < ({_STORY_RANK.format(p='p')}))))))"""
+                            OR (o.role = sp.role AND ({_ORDER_RANK.format(sp='o', p='op')})
+                                                         < ({_ORDER_RANK.format(sp='sp', p='p')}))))))"""
         return sql, [*params, *filter_params, *bounds_params]
 
     @staticmethod
     def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
         """Give each item that leads a story its `story` (else None): {id, voices, first (its origin
         post, issue 0064; before the tree is drawn its first report, else its first share: issue
-        0055), sources: [{id, name}] in the order they covered it, posts: the story's other posts,
-        first posted first}. The post page (0055) asks it too.
+        0055; None when another post of the story came before it, issue 0072 D), sources: [{id, name}]
+        in the order they covered it, posts: the story's other posts, in the story's order}. The post
+        page (0055) asks it too.
 
         The tree (issue 0064): each post has `parent_id` (a post of the story) and `parent_reason`
         (address, citation, copy, time, none); the origin has neither. A post with a reason and no
@@ -435,7 +440,7 @@ class ReaderRepository:
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
                    p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS}),
-                   COALESCE(p.normalized_url, p.url)
+                   COALESCE(p.normalized_url, p.url), o.position
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -443,7 +448,7 @@ class ReaderRepository:
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state r ON r.post_id = p.id
             WHERE sp.post_id = ANY(%s::uuid[])
-            ORDER BY sp.post_id, {_STORY_RANK.format(p='p')}
+            ORDER BY sp.post_id, {_ORDER_RANK.format(sp='o', p='p')}
             """,
             ([item["id"] for item in items],),
         )
@@ -453,7 +458,7 @@ class ReaderRepository:
         quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet (issue 0072)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author, handle, html, address) in cur.fetchall():
+             origin_linked_by, reposted_by, author, handle, html, address, position) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -470,7 +475,7 @@ class ReaderRepository:
             # The origin post first (issue 0064); before the tree is drawn, the first report.
             rank = (0 if parent_reason is None else 1, 0 if role == "report" else 1)
             if story["first"] is None or rank < story["_first_rank"]:
-                story["first"], story["_first_rank"] = str(post_id), rank
+                story["first"], story["_first_rank"], story["_first_position"] = str(post_id), rank, position
             # Saved is never a voice (issue 0070 A8), so never named (issue 0072).
             if platform != "saved" and not any(source["id"] == str(source_id) for source in story["sources"]):
                 story["sources"].append({"id": str(source_id), "name": name})
@@ -499,7 +504,10 @@ class ReaderRepository:
             # A story whose origin is a page outside INSIGHT has no first post.
             if story["origin"] is not None and story["_first_rank"][0] != 0:
                 story["first"] = None
-            del story["_first_rank"]
+            # "First" only when it is (issue 0072 D): the origin a post of the story came before is no first.
+            if story["_first_position"]:
+                story["first"] = None
+            del story["_first_rank"], story["_first_position"]
         if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
             followed = ReaderRepository.followed_accounts(cur)
             for lead, found in reposts.items():

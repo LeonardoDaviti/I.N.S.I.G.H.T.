@@ -7,17 +7,19 @@ The rules live in utils/news_rules.py; this file reads what they need, writes wh
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
 
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
-from insight_core.utils.news_rules import NewsStory
+from insight_core.utils.news_rules import NewsStory, Surge
 from insight_core.utils.post_fields import quote_only, title_columns
 from insight_core.utils.url_normalization import normalize_url
 
+LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
 # A post's date as the story rules read it (published, else fetched).
 POST_TIME = "COALESCE(p.published_at, p.fetched_at)"
 
@@ -55,12 +57,22 @@ class NewsRepository:
     # ---- the job: News ----------------------------------------------------------------
 
     @staticmethod
-    def write_news(cur: Cursor, stories: Sequence[NewsStory]) -> int:
-        """Make the stored News exactly `stories` (the job's window). Returns how many rows changed."""
+    def write_news(cur: Cursor, stories: Sequence[NewsStory], *, post_ids: Optional[Sequence[str]] = None) -> int:
+        """Make the stored News of `post_ids` (every post when None) exactly `stories`, theirs: the News
+        stories holding them before and now, and their rows. Returns how many rows changed."""
         changed = 0
         want = {s.id: (s.first_at, s.voices, s.reports, s.shares, s.mentions, round(s.score, 2)) for s in stories}
-        want_posts = {p.id: (s.id, s.roles[p.id], p.voice, s.names.get(p.id)) for s in stories for p in s.posts}
-        cur.execute("SELECT id, first_at, voices, reports, shares, mentions, score FROM news_stories")
+        want_posts = {p.id: (s.id, s.roles[p.id], p.voice, s.names.get(p.id), position)
+                      for s in stories for position, p in enumerate(s.posts)}
+        scope = None if post_ids is None else list(post_ids)
+        cur.execute(
+            """
+            SELECT id, first_at, voices, reports, shares, mentions, score FROM news_stories
+            WHERE %(ids)s::uuid[] IS NULL OR id = ANY(%(want)s::uuid[])
+               OR id IN (SELECT news_id FROM news_posts WHERE post_id = ANY(%(ids)s::uuid[]))
+            """,
+            {"ids": scope, "want": list(want)},
+        )
         have = {str(r[0]): (r[1], r[2], r[3], r[4], r[5], round(float(r[6]), 2)) for r in cur.fetchall()}
         gone = [sid for sid in have if sid not in want]
         if gone:
@@ -79,8 +91,9 @@ class NewsRepository:
                 rows,
             )
             changed += len(rows)
-        cur.execute("SELECT post_id, news_id, role, voice, name FROM news_posts")
-        have_posts = {str(r[0]): (str(r[1]), r[2], r[3], r[4]) for r in cur.fetchall()}
+        cur.execute("SELECT post_id, news_id, role, voice, name, position FROM news_posts "
+                    "WHERE %(ids)s::uuid[] IS NULL OR post_id = ANY(%(ids)s::uuid[])", {"ids": scope})
+        have_posts = {str(r[0]): (str(r[1]), r[2], r[3], r[4], r[5]) for r in cur.fetchall()}
         drop = [pid for pid in have_posts if pid not in want_posts]
         if drop:
             cur.execute("DELETE FROM news_posts WHERE post_id = ANY(%s::uuid[])", (drop,))
@@ -89,21 +102,137 @@ class NewsRepository:
         if rows:
             cur.executemany(
                 """
-                INSERT INTO news_posts (post_id, news_id, role, voice, name) VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO news_posts (post_id, news_id, role, voice, name, position) VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (post_id) DO UPDATE SET news_id = EXCLUDED.news_id, role = EXCLUDED.role,
-                    voice = EXCLUDED.voice, name = EXCLUDED.name
+                    voice = EXCLUDED.voice, name = EXCLUDED.name, position = EXCLUDED.position
                 """,
                 rows,
             )
             changed += len(rows)
         return changed
 
+    @staticmethod
+    def stored_surges(cur: Cursor) -> List[Surge]:
+        """Every name's surges as the job keeps them (news_rules.name_surges, issue 0072 A)."""
+        cur.execute("SELECT name, at, posts, usual FROM news_surges")
+        return [Surge(name, at, [str(p) for p in posts], usual) for name, at, posts, usual in cur.fetchall()]
+
+    @staticmethod
+    def write_surges(cur: Cursor, found: Sequence[Surge], names: Optional[Set[str]] = None) -> int:
+        """The surges of `names` (every name when None) become exactly `found`. Returns rows changed."""
+        want = {(s.name, s.at): (s.posts, s.usual) for s in found}
+        cur.execute("SELECT name, at, posts, usual FROM news_surges WHERE %(names)s::text[] IS NULL OR name = ANY(%(names)s)",
+                    {"names": None if names is None else sorted(names)})
+        have = {(r[0], r[1]): ([str(p) for p in r[2]], r[3]) for r in cur.fetchall()}
+        gone = [key for key in have if key not in want]
+        if gone:
+            cur.executemany("DELETE FROM news_surges WHERE name = %s AND at = %s", gone)
+        rows = [(name, at, posts, usual) for (name, at), (posts, usual) in want.items() if have.get((name, at)) != (posts, usual)]
+        if rows:
+            cur.executemany("INSERT INTO news_surges (name, at, posts, usual) VALUES (%s, %s, %s::uuid[], %s) "
+                            "ON CONFLICT (name, at) DO UPDATE SET posts = EXCLUDED.posts, usual = EXCLUDED.usual", rows)
+        return len(gone) + len(rows)
+
+    @staticmethod
+    def titles_saying(cur: Cursor, words: Sequence[str]) -> List[Dict[str, Any]]:
+        """The titled posts whose title may say one of these: a name's words, lowercase, joined by "%"
+        (in this order, anything between). Its plain letters (NFKC), lowercase, hold them, or it has an
+        entity (decoded only in Python). More than say them, never fewer."""
+        cur.execute(
+            f"""
+            SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
+            WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
+              AND (lower(normalize(p.title, NFKC)) LIKE ANY(%(like)s) OR p.title LIKE '%%&%%;%%')
+            """,
+            {"like": ["%" + "%".join(LIKE_SPECIAL.sub(r"\\\g<0>", part) for part in w.split("%")) + "%" for w in words]},
+        )
+        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
+
+    @staticmethod
+    def titles_of(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p WHERE p.id = ANY(%s::uuid[]) "
+                    f"AND p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL", (list(ids),))
+        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
+
+    @staticmethod
+    def window_posts(cur: Cursor, since: datetime, until: Optional[datetime] = None,
+                     ids: Optional[Sequence[str]] = None) -> List[str]:
+        """The posts News reads (issue 0072 A): those of the stories begun since `since`, and those in no
+        story posted since; with `until`, only those of the stories begun, or posted, before it; with
+        `ids`, only these."""
+        cur.execute(
+            f"""
+            SELECT sp.post_id FROM story_posts sp JOIN stories st ON st.id = sp.story_id
+            WHERE st.first_at >= %(since)s AND (%(until)s::timestamptz IS NULL OR st.first_at < %(until)s)
+              AND (%(ids)s::uuid[] IS NULL OR sp.post_id = ANY(%(ids)s::uuid[]))
+            UNION ALL
+            SELECT p.id FROM posts p WHERE {POST_TIME} >= %(since)s AND (%(until)s::timestamptz IS NULL OR {POST_TIME} < %(until)s)
+              AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
+              AND NOT EXISTS (SELECT 1 FROM story_posts sp WHERE sp.post_id = p.id)
+            """,
+            {"since": since, "until": until, "ids": None if ids is None else list(ids)},
+        )
+        return [str(r[0]) for r in cur.fetchall()]
+
+    @staticmethod
+    def news_before(cur: Cursor, since: datetime) -> Set[str]:
+        """The posts of the stored News stories begun before `since` (they leave News)."""
+        cur.execute("SELECT np.post_id FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id WHERE ns.first_at < %s",
+                    (since,))
+        return {str(r[0]) for r in cur.fetchall()}
+
+    @staticmethod
+    def named(cur: Cursor, phrases: Sequence[str], at_least: int) -> Set[str]:
+        """The phrases that are a name in `at_least` titles (story_keys' "n:" keys)."""
+        cur.execute("SELECT substr(key, 3) FROM story_keys WHERE key = ANY(%s) GROUP BY key HAVING count(*) >= %s",
+                    (["n:" + p for p in phrases], at_least))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def surging(cur: Cursor, phrases: Sequence[str]) -> Set[str]:
+        """The phrases that are a name with surges kept."""
+        cur.execute("SELECT DISTINCT name FROM news_surges WHERE name = ANY(%s)", (list(phrases),))
+        return {r[0] for r in cur.fetchall()}
+
+    @staticmethod
+    def naming(cur: Cursor, names: Sequence[str]) -> Dict[str, Set[str]]:
+        """Each of these names -> the posts whose title names it (story_keys' "n:" keys)."""
+        cur.execute("SELECT substr(key, 3), post_id FROM story_keys WHERE key = ANY(%s)", (["n:" + n for n in names],))
+        out: Dict[str, Set[str]] = {}
+        for name, pid in cur.fetchall():
+            out.setdefault(name, set()).add(str(pid))
+        return out
+
+    @staticmethod
+    def news_mates(cur: Cursor, post_ids: Sequence[str]) -> Set[str]:
+        """The posts of the News stories these posts are in."""
+        cur.execute("SELECT o.post_id FROM news_posts np JOIN news_posts o ON o.news_id = np.news_id "
+                    "WHERE np.post_id = ANY(%s::uuid[])", (list(post_ids),))
+        return {str(r[0]) for r in cur.fetchall()}
+
+    @staticmethod
+    def stories_of(cur: Cursor, post_ids: Sequence[str], since: datetime) -> Dict[str, Dict[str, Any]]:
+        """The stories begun since `since` holding these posts: id -> {posts: their ids, mentions: the
+        roundups that mention it}."""
+        cur.execute(
+            """
+            SELECT st.id, array_agg(DISTINCT o.post_id),
+                   COALESCE((SELECT array_agg(m.post_id) FROM story_mentions m WHERE m.story_id = st.id), '{}')
+            FROM story_posts sp JOIN stories st ON st.id = sp.story_id JOIN story_posts o ON o.story_id = st.id
+            WHERE sp.post_id = ANY(%s::uuid[]) AND st.first_at >= %s GROUP BY st.id
+            """,
+            (list(post_ids), since),
+        )
+        return {str(r[0]): {"posts": [str(p) for p in r[1]], "mentions": {str(p) for p in r[2]}} for r in cur.fetchall()}
+
     # ---- the job: Classics ------------------------------------------------------------
 
     @staticmethod
-    def citations(cur: Cursor, *, reddit: Sequence[str], saved: Sequence[str]) -> List[Dict[str, Any]]:
-        """Every kept link, with the stored post it is, if any; a Reddit post's HTML (its author).
-        Not the links of the pages you saved (`saved`: the Saved source): a saved page is no voice."""
+    def citations(cur: Cursor, *, reddit: Sequence[str], saved: Sequence[str],
+                  targets: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+        """Every kept link (to `targets`, when given), with the stored post it is, if any; a Reddit
+        post's HTML (its author). Not the links of the pages you saved (`saved`: the Saved source): a
+        saved page is no voice."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, pl.target_url, pl.link_text, t.id,
@@ -113,25 +242,28 @@ class NewsRepository:
             LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE NOT pl.boilerplate AND {POST_TIME} IS NOT NULL AND NOT (p.source_id = ANY(%(saved)s::uuid[]))
+              AND (%(targets)s::text[] IS NULL OR pl.target_url = ANY(%(targets)s))
             ORDER BY p.id, pl.position
             """,
-            {"reddit": list(reddit), "saved": list(saved)},
+            {"reddit": list(reddit), "saved": list(saved), "targets": None if targets is None else list(targets)},
         )
         return [{"post_id": str(r[0]), "source_id": str(r[1]), "t": r[2], "target": r[3], "text": r[4],
                  "stored": str(r[5]) if r[5] else None, "html": r[6]} for r in cur.fetchall()]
 
     @staticmethod
     def stored_posts(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
-        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, p.title, p.content FROM posts p WHERE p.id = ANY(%s::uuid[])",
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, {title_columns()} FROM posts p WHERE p.id = ANY(%s::uuid[])",
                     (list(ids),))
-        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content": r[4]}
+        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content": r[4], "html": r[5]}
                 for r in cur.fetchall()]
 
     @staticmethod
-    def write_classics(cur: Cursor, found: Sequence[Classic]) -> int:
-        """Make the stored classics exactly `found`. Returns how many rows changed."""
+    def write_classics(cur: Cursor, found: Sequence[Classic], targets: Optional[Sequence[str]] = None) -> int:
+        """Make the stored classics (of `targets`, when given) exactly `found`. Returns how many rows changed."""
         want = {c.target: (c.post_id, c.voices, c.first_at, c.last_at, c.title, c.citers) for c in found}
-        cur.execute("SELECT target_url, post_id, voices, first_at, last_at, title, citers FROM classics")
+        cur.execute("SELECT target_url, post_id, voices, first_at, last_at, title, citers FROM classics "
+                    "WHERE %(targets)s::text[] IS NULL OR target_url = ANY(%(targets)s)",
+                    {"targets": None if targets is None else list(targets)})
         have = {r[0]: (str(r[1]) if r[1] else None, r[2], r[3], r[4], r[5], r[6]) for r in cur.fetchall()}
         changed = 0
         gone = [t for t in have if t not in want]
@@ -174,7 +306,7 @@ class NewsRepository:
             WHERE ns.first_at >= %s
               AND EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
                           WHERE o.news_id = ns.id AND {scope_sql})
-            ORDER BY ns.id, COALESCE(p.published_at, p.fetched_at), p.id
+            ORDER BY ns.id, np.position NULLS LAST, COALESCE(p.published_at, p.fetched_at), p.id
             """,
             [*params, since, *params],
         )

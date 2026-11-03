@@ -250,7 +250,7 @@ class JobCase(unittest.TestCase):
     def job(self):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        self.service.regroup(self.cur, cutoff=None)
+        self.service.regroup(self.cur)
 
     def stories(self, *posts):
         self.cur.execute("SELECT post_id::text, story_id::text, role, parent_id::text, parent_reason, parent_url"

@@ -620,12 +620,14 @@ export interface StoriesRunSummary {
   computed_at: string;
   seconds?: number | null;
   full?: boolean | null;
-  /** The posts it grouped: the last 30 days, every post on a full run. */
+  /** The posts it regrouped: those new posts touch (issue 0072 A), every post on a full run. */
   posts?: number | null;
   stories?: number | null;
   news?: number | null;
   classics?: number | null;
   links_filled?: number | null;
+  /** New rules regroup every post in batches (issue 0072 A): how many are done. */
+  rebuild?: { done: number; total: number } | null;
 }
 
 /** Of `total` posts, `pending` still to do. */

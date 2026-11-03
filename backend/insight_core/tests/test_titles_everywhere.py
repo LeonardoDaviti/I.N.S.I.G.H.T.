@@ -256,6 +256,8 @@ class OneTitleEverywhereTests(unittest.TestCase):
         seen["discover article"] = DiscoverRepository.stored_titles(self.cur, [url])[url]
         seen["a link's title"] = PostDetailService.link(self.cur, url, None)["title"]
         seen["post page"] = reading_text(self.TITLE, self.TEXT, self.HTML)[0]
+        _, stored = news._citations(self.cur, sources, [url])   # the title a classic of it is stored with
+        seen["a classic's stored title"] = stored[post][2]
         self.assertEqual(seen, dict.fromkeys(seen, "A new model is out today"))
 
     def test_a_post_another_source_shared_has_its_story_on_its_page(self):

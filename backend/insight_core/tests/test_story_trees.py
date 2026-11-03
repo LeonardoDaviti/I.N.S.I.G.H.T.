@@ -270,7 +270,7 @@ class TreeJobTests(unittest.TestCase):
         self.simon = self._post(sw, f"https://simon-{self.mark}.test/terra", at=day + timedelta(hours=5), title="GPT-6.1 Terra notes", html=link)
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        return self.service.regroup(self.cur, cutoff=None)
+        return self.service.regroup(self.cur)
 
     def _rows(self):
         self.cur.execute("SELECT post_id, parent_id, parent_reason, parent_url, reasons FROM story_posts WHERE post_id = ANY(%s::uuid[])",
@@ -285,7 +285,7 @@ class TreeJobTests(unittest.TestCase):
             self.ds: (self.openai, "citation", None), self.simon: (self.openai, "citation", None),
         })
         self.assertIn("address", rows[self.hn][3])
-        self.assertEqual(self.service.regroup(self.cur, cutoff=None)["changed"], 0, "a second run changes nothing")
+        self.assertEqual(self.service.regroup(self.cur)["changed"], 0, "a second run changes nothing")
 
     def test_the_origin_leads_the_row_and_the_post_page_has_the_tree(self):
         self._terra()
@@ -293,6 +293,7 @@ class TreeJobTests(unittest.TestCase):
         [row] = [i for i in items if i["id"] in (self.openai, self.hn, self.ds, self.simon)]
         self.assertEqual(row["id"], self.openai, "the origin, though HN's row was seen first")
         story = row["story"]
+        # Issue 0072 D: its date alone counts as the day's first timed post, Hacker News' at 02:00: as early.
         self.assertEqual((story["first"], story["parent_id"], story["parent_reason"], story["origin"]),
                          (self.openai, None, None, None))
         self.assertEqual({p["id"]: (p["parent_id"], p["parent_reason"]) for p in story["posts"]}, {
@@ -307,7 +308,7 @@ class TreeJobTests(unittest.TestCase):
         saved = insert_source(self.cur, "Saved", handle=scratch_handle(), platform="saved", in_main_digest=True)
         page = self._post(saved, f"https://openai-{self.mark}.test/index/introducing-terra#saved", at=self.now, title="A saved copy")
         self.cur.execute("UPDATE posts SET normalized_url = %s WHERE id = %s", (f"https://openai-{self.mark}.test/index/introducing-terra", page))
-        self.service.regroup(self.cur, cutoff=None)
+        self.service.regroup(self.cur)
         item = {"id": self.openai}
         ReaderRepository.attach_stories(self.cur, [item])
         self.assertIn(page, [p["id"] for p in item["story"]["posts"]], "the saved page is in the story")
@@ -321,8 +322,9 @@ class TreeJobTests(unittest.TestCase):
         pb = self._post(b, f"https://b-{self.mark}.test/1", at=self.now - timedelta(hours=2), title="Fable 5", html=link)
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        self.service.regroup(self.cur, cutoff=None)
-        self.cur.execute("SELECT origin_url, origin_title, origin_linked_by FROM stories WHERE id = %s", (pa,))
+        self.service.regroup(self.cur)
+        self.cur.execute("SELECT origin_url, origin_title, origin_linked_by FROM stories st JOIN story_posts sp ON sp.story_id = st.id "
+                         "WHERE sp.post_id = %s", (pa,))
         self.assertEqual(self.cur.fetchone(), (page, "Claude Fable 5 and Mythos 5", 2))
         self.cur.execute("SELECT parent_id, parent_reason, parent_url FROM story_posts WHERE post_id = %s", (pb,))
         self.assertEqual(self.cur.fetchone(), (None, "citation", page))

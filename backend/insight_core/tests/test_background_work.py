@@ -55,7 +55,7 @@ class BackgroundWorkTests(unittest.TestCase):
         SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, SUMMARY)
         self.assertEqual(work(self.cur)["stories"], {"running": False, "last_run": {
             "computed_at": SUMMARY["computed_at"], "seconds": 4.77, "full": False, "posts": 5018, "stories": 86,
-            "news": 90, "classics": 175, "links_filled": 0}})
+            "news": 90, "classics": 175, "links_filled": 0, "rebuild": None}})
 
     def test_stories_running_while_a_run_holds_the_lock(self):
         SystemSettingsRepository.upsert(self.cur, SETTINGS_KEY, SUMMARY)

@@ -26,7 +26,7 @@ return; the repositories hold the SQL. One job each:
 | `post_links.py` | the outside links in a post's HTML, and the small facts the story rules read of an address (home page, article, section, reference page) |
 | `post_fields.py` | the fields computed on save, and the title the reader shows: `post_title(title, content, html)` over `title_columns()` (the text's first 4,000 and the HTML's first 2,000 characters) is the one title every place shows a stored post by (the feed, trees, News, search, Classics, Discover, roundup names, a link's title, the post page: issue 0072 D1) |
 | `titles.py` | what a title is when two are compared (`title_key`: entities, NFKC, case, quotes, spaces; `comparable` keeps the case for names), as SQL's `post_title_key` |
-| `story_rules.py` | the **story**: `StoryPost` (what the rules read of a post), `group` (joins by address, text, title, link, citation, thread, quote), roles, voices |
+| `story_rules.py` | the **story**: `StoryPost` (what the rules read of a post), `group` / `grouping` (joins by address, text, title, link, citation, thread, quote, each an `Edge`), roles, voices, a story's times (`story_times`: a date alone counts as that day's first timed post) and id (its post stored first), and the keys a post joins by (`keys`) |
 | `tree_rules.py` | the **tree**: each post's parent and why, the origin, an outside origin's title (`origin_title`) |
 | `discover_rules.py` | **Discover**: an address's key, site and article (`discover_address`), suggestions (the reference `repo_discover` counts in SQL), where stories start; `ADDRESS_RULES` |
 | `news_rules.py` | **names** in titles and their surges, and **News** stories and their score |
@@ -36,12 +36,48 @@ return; the repositories hold the SQL. One job each:
 **Stamps (issue 0071).** Derived data says which rules made it by a stamp computed at start, never
 a number bumped by hand: a fingerprint of what the rules make of the sample in `utils/stamps.py`.
 A rule change that changes the output there makes the data again by itself; a rename or a move
-doesn't. `StoriesService.rules_stamp` (stories, trees, News: a full regroup), `ADDRESS_RULES`
+doesn't. `StoriesService.rules_stamp` (stories, trees, News, their edges and keys: every post regrouped, in batches), `ADDRESS_RULES`
 (Discover's `discover_addresses` rows), `stored_bodies_stamp` (the stored-body repair), and in SQL
 `search_vector_version()` (migration 0055: the search vectors). Discover's kept counts are stamped by
 their query's text. **A new rule adds its case to the sample**, and a tuned value has a case at its
 edge (`tests/test_stamps.py` checks the sample still uses every join and parent reason and every
 way an origin is titled).
+
+## The incremental story job (issue 0072 A)
+
+The story job (`services/stories_service.py`) regroups only what new or changed posts touch, and a
+full rebuild (`recompute(full=True)`, `regroup`) over the same posts makes the same rows: the oracle,
+checked by `scripts/story_identity.py` (`check(db_url)`; on a scratch copy only).
+- **What a run reads first:** migration 0059's triggers queue each post saved, changed or removed
+  (`story_queue`: `post:`, `gone:` with what it was). A batch takes up to `STORY_BATCH` of them.
+- **What it stores between runs:** `story_keys`, each post's keys (`story_rules.keys`: its text `h:`,
+  title `t:`, address and the pages it links `u:`, their page keys `g:`; its address's page key `a:`;
+  the names in its title `n:`), and `post_edges`, every connection the rules made (`story_rules.Edge`:
+  a join with the key it went through, a thread reply, a roundup's mention). Stories are the groups
+  the edges make; a thread's edges are kept by its timeline (`_threads`: the posts within a day of
+  a change, read from that source's posts within two).
+- **What a batch regroups (`_neighbourhood`):** the seeds, the posts linking an address a seed is or
+  was at (its own page may have moved), and the stories they are in. Then, until nothing is added:
+  the rules group the scope with every post holding one of its keys and the posts at the addresses
+  those link (the context a full run would read for them), and the scope takes in every group that
+  holds a post of it, every post near it whose connection through such a key differs from the stored
+  one (a chain of copies, a page's first linker), the stories a roundup of it lists, a platform
+  roundup that lists one of its stories, with each of their old stories. A join merges groups; a
+  split falls out of regrouping the whole old story. Only rows that differ are written.
+- **A story's id** is its post stored first (`posts.created_at`), so a post that joins later keeps it,
+  however early it was posted; a merge keeps the earlier stored one's.
+- **News** keeps the stories begun in the last 30 days (`NEWS_KEEP`) and the posts of no story posted
+  in them. A batch judges again only the names its titles say (`news_surges` keeps each name's
+  surges: `news_rules.name_surges`), then regroups the News stories of the posts it regrouped, of the
+  surges that changed, and of what crossed the window since the last run.
+- **Classics** are recounted for the pages the batch's posts link or are at; **Discover** for the keys
+  of those addresses (`DiscoverRepository.counts(keys=...)`), the rest of its kept counts kept.
+- **A rule change** (another `rules_stamp`) regroups every post in steps, each its own transaction:
+  every post's keys, each X source's threads, every name's surges, then every post queued (`redo:`)
+  and worked off in batches. The rows of the old rules are served until each batch replaces them;
+  Background work shows how far it is (`rebuild`).
+- **Every field the job reads of a post** comes from `StoriesService._story_post` (the row
+  `load_posts` reads, and its source's facts).
 
 ## How to Implement New Features
 

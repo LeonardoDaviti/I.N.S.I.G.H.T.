@@ -247,7 +247,7 @@ class NewsJobTests(unittest.TestCase):
     def _job(self):
         while StoriesRepository().fill_missing_links(self.cur):
             pass
-        return self.service.regroup(self.cur, cutoff=None)
+        return self.service.regroup(self.cur)
 
     def _link(self, url, text="read"):
         return f'<p><a href="{url}">{text}</a></p>'

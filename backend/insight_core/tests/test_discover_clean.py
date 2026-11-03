@@ -138,6 +138,7 @@ class DiscoverCleanTests(unittest.TestCase):
         voices = [self._voice(n) for n in range(3)]
         for voice in voices:
             self._post(voice, self._pages("kept"))
+        self.cur.execute("DELETE FROM system_settings WHERE key = %s", (KEPT_KEY,))   # other suites' rows, counted afresh
         self.conn.commit()
         StoriesService(db_url()).recompute()
         self.cur.execute("SELECT value FROM system_settings WHERE key = %s", (KEPT_KEY,))
