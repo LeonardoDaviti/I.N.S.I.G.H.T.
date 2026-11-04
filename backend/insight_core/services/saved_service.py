@@ -30,7 +30,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from insight_core.db import database as db
-from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.db.repo_posts import PostsRepository
 from insight_core.ingestion.feed_finder import FeedFinding, find_feeds
 from insight_core.ingestion.http import HttpError, KindHttp
@@ -199,7 +198,6 @@ class SavedService:
         feed sorts it (surfaced_at)."""
         with db.transaction(self.db_url) as cur:
             post_id, _ = self.posts.upsert_post(cur, post, source_id)
-            PostPartsRepository.write(cur, [str(post_id)])   # read once, when it is saved (issue 0076)
             if sorts_at is not None:
                 cur.execute("UPDATE posts SET surfaced_at = %s WHERE id = %s::uuid", (sorts_at, post_id))
         return str(post_id)

@@ -142,11 +142,16 @@ def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Option
           links: Sequence[Tuple[str, Optional[str]]] = (), texts: Optional[Dict[str, str]] = None,
           html: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0, author: Optional[str] = None,
           reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None) -> Dict[str, Any]:
-    """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when."""
+    """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when, with
+    its parts as the parser reads them (issue 0076; `html` only on the platforms, as load_posts reads them)."""
+    from insight_core.utils.post_parser import parse   # the parser's stamp reads this module
+    parts = parse(title, None, html, url)
     return {"id": pid, "source_id": source, "t": at, "title": title, "content_hash": content_hash or "h-" + pid,
             "text_chars": chars or 400, "url": url, "html": html, "updated": updated, "author": author,
             "reposted_by": list(reposted_by), "links": list(links), "link_texts": dict(texts or {}),
-            "stored_at": stored or at + timedelta(hours=1)}
+            "stored_at": stored or at + timedelta(hours=1),
+            "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
+            "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words}
 
 
 def _at(hours: float, minutes: int = 0) -> datetime:

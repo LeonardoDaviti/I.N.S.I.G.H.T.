@@ -257,7 +257,8 @@ class ReadingGapsJobTests(unittest.TestCase):
         # Read by the job: the author's own source is never a reposter, whatever reposted_by holds.
         other, third = self._x(f"akhaliq{self.mark}"), self._x(f"third{self.mark}")
         row = {"id": t, "source_id": third, "t": self.now, "title": "x", "content_hash": None, "text_chars": 0,
-               "html": None, "url": f"https://x.com/{author}/status/{ID}", "updated": False, "author": author,
+               "html": None, "shown_title": "x", "reply_to": None, "quoted": None, "quoted_words": {}, "poster": None, "words": 0,
+               "url": f"https://x.com/{author}/status/{ID}", "updated": False, "author": author,
                "links": [], "link_texts": {}, "reposted_by": [author, f"akhaliq{self.mark}", f"third{self.mark}"]}
         self.assertEqual(StoriesService._story_post(row, SourceFacts(self.cur)).reposters, (other,))
 

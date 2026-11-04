@@ -52,7 +52,6 @@ from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, ORIGIN_MIN_VOICES, Origin, discover_address,
                                                discover_article)
-from insight_core.utils.post_links import REDDIT_AUTHOR
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS
 from insight_core.utils.url_normalization import TWEET_SHAPE
 
@@ -117,10 +116,9 @@ roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (disc
                        ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1))           -- at its address)
     GROUP BY pl.post_id HAVING count(*) >= %(roundup_anchors)s
 ),
-author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it, lowercase as Python's
-    SELECT p.id, lower(substring(p.content_html FROM %(author_re)s) COLLATE "und-x-icu") AS author
-    FROM posts p WHERE p.id IN (SELECT post_id FROM linked WHERE kind = 'reddit')
-      AND strpos(p.content_html, %(author_mark)s) > 0
+author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it (post_parts, issue 0076)
+    SELECT pp.post_id AS id, pp.author FROM post_parts pp
+    WHERE pp.post_id IN (SELECT post_id FROM linked WHERE kind = 'reddit') AND pp.author IS NOT NULL
 ),
 link AS MATERIALIZED (            -- with their voices (StoryPost.voice), and whether a roundup linked it
     SELECT l.key, l.url, l.article, l.post_id,
@@ -170,7 +168,7 @@ WHERE strpos(p.content_html, '/status/') > 0 AND (%(since)s::timestamptz IS NULL
 HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
 # The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
-_COUNT_RULES = {"author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by", "rules": ADDRESS_RULES, "home": HOME,
+_COUNT_RULES = {"rules": ADDRESS_RULES, "home": HOME,
                 "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
                 "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
 

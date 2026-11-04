@@ -18,6 +18,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import psycopg
 
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.db.repo_reader import FeedCursor, FeedQuery, FeedScope, ReaderRepository
 from insight_core.tests._db import db_url, insert_scratch_source, requires_db
 
@@ -63,7 +64,9 @@ class ReaderRepositoryTests(unittest.TestCase):
             (source_id, f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}", sort_at, title,
              content, json.dumps(metadata or {}), json.dumps(media_urls or [])),
         )
-        return str(self.cur.fetchone()[0])
+        post_id = str(self.cur.fetchone()[0])
+        PostPartsRepository.write(self.cur, [post_id])   # as a save parses it (issue 0076)
+        return post_id
 
     def _posts(self, source_id: str, n: int, *, start: datetime | None = None) -> list[str]:
         """n posts, newest first, one minute apart."""

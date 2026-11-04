@@ -60,10 +60,11 @@ def _row(post_id: Any, parts: Any, digest: str, stamp: str) -> Tuple[Any, ...]:
 
 class PostPartsRepository:
     @staticmethod
-    def write(cur: Cursor, ids: Iterable[str]) -> int:
-        """Parse these stored posts and write the rows that changed (a new post's always). Returns how many.
-        A post the parser can't read is logged and keeps its raw title and bodies, so it isn't tried
-        again until its stamp changes."""
+    def write(cur: Cursor, ids: Iterable[str], *, again: bool = False) -> int:
+        """Parse those of these stored posts that have no parts (a change to their raw columns dropped
+        them: migration 0060), or with `again` every one (a new parser), and write the rows that changed.
+        Returns how many. A post the parser can't read is logged and keeps its raw title and bodies, so
+        it isn't tried again until its stamp changes."""
         from insight_core.utils.post_parser import Parts, parse, parse_stamp
 
         ids = list(ids)
@@ -71,7 +72,8 @@ class PostPartsRepository:
             return 0
         stamp = parse_stamp()
         cur.execute("""SELECT p.id, p.title, p.content, p.content_html, p.url, pp.digest
-                       FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id WHERE p.id = ANY(%s::uuid[])""", (ids,))
+                       FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
+                       WHERE p.id = ANY(%s::uuid[]) AND (%s OR pp.post_id IS NULL)""", (ids, again))
         rows = []
         for post_id, title, content, html, url, old in cur.fetchall():
             try:
@@ -85,6 +87,16 @@ class PostPartsRepository:
         if rows:
             cur.executemany(_UPSERT, rows)
         return len(rows)
+
+    @staticmethod
+    def write_missing(cur: Cursor, ids: Optional[Iterable[str]] = None) -> int:
+        """Parse those of these posts (None: every post) that have no parts yet (the story job reads its
+        posts' parts; the catch-up before it leaves none, but a post saved meanwhile may have none)."""
+        cur.execute("SELECT p.id FROM posts p WHERE (%s::uuid[] IS NULL OR p.id = ANY(%s::uuid[])) "
+                    "AND NOT EXISTS (SELECT 1 FROM post_parts pp WHERE pp.post_id = p.id)",
+                    (None if ids is None else list(ids),) * 2)
+        missing = [str(r[0]) for r in cur.fetchall()]
+        return sum(PostPartsRepository.write(cur, missing[k:k + BATCH]) for k in range(0, len(missing), BATCH))
 
     @staticmethod
     def unparsed(cur: Cursor, limit: int) -> List[str]:
@@ -121,7 +133,7 @@ def catch_up(db_url: str) -> Dict[str, int]:
             cur.execute("SELECT id FROM posts WHERE %(after)s::uuid IS NULL OR id > %(after)s::uuid ORDER BY id LIMIT %(n)s",
                         {"after": after, "n": BATCH})
             ids = [str(r[0]) for r in cur.fetchall()]
-            written += PostPartsRepository.write(cur, ids)
+            written += PostPartsRepository.write(cur, ids, again=True)
             parsed += len(ids)
             after = ids[-1] if ids else after
             done = len(ids) < BATCH

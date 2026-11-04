@@ -380,6 +380,8 @@ class PostsRepository:
                     if not other_form and row is None:
                         cur.execute(query, params)
                         row = cur.fetchone()
+                    if row is not None:
+                        PostPartsRepository.write(cur, [str(row[0])])   # read once, when it is saved (issue 0076)
             except psycopg.errors.UniqueViolation as exc:
                 # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
                 # can reach here is the uncovered index. Anything else is unexpected and must
@@ -551,6 +553,8 @@ class PostsRepository:
             with self._savepoint(cur, "insight_upsert_resolve"):
                 cur.execute(statement, resolved)
                 row = cur.fetchone()
+                if row is not None:
+                    PostPartsRepository.write(cur, [str(row[0])])
         except psycopg.errors.UniqueViolation:
             # Only the url-writing branches can land here, and only if another writer took
             # that url or external_id in the meantime. Replaying converges: the next lookup
@@ -759,13 +763,12 @@ class PostsRepository:
         before (0058: LINKED_BEFORE_SQL; only other posts' links count, so reading this post's
         own links first changes nothing); a watched post keeps its text's hash and
         comes back when it changed meaningfully. Issue 0050: its outside links are read from what
-        was stored. Issue 0076: it is parsed (post_parts). In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
+        was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
         failure here is logged and costs neither the post nor the batch. Returns whether the post
         came back."""
         try:
             with self._savepoint(cur, "insight_after_save"):
                 self.stories.save_post_links(cur, post_id)
-                PostPartsRepository.write(cur, [post_id])   # read once, when it is saved (issue 0076)
                 if surface and was_inserted:
                     cur.execute(
                         f"""UPDATE posts p SET surfaced_at = p.fetched_at
