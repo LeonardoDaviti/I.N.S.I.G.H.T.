@@ -232,6 +232,8 @@ export interface FeedGroupsPage { success: true; groups: FeedGroup[]; next_curso
 export interface ReadStateResult { success: true; updated: number; ids: string[]; }
 export interface UnreadCounts {
   total: number; by_source: Record<string, number>; by_folder: Record<string, number>;
+  /** Each source's newest unread post, as By source orders its groups (issue 0088): the rail's order. */
+  newest_unread?: Record<string, string | null>;
   /** Every post in Later and its reading time in minutes (issue 0022). */
   later?: { count: number; minutes: number };
 }
@@ -563,7 +565,7 @@ export interface SourceHealthRow {
   /** What it found; null with doctor_looked_at set: nothing. */
   replacement?: SourceReplacement | null;
   /** The doctor read a server error (issue 0072 D3): not moved, retried; status null when it timed out;
-   *  site: whose server ("example.org", issue 0086), '' when the address has no host. */
+   *  site: whose server ("example.org", issue 0088), '' when the address has no host. */
   server_error?: { status: number | null; site?: string } | null;
   /** Source hygiene (issue 0046): its fetches work but nothing new came for 30 days and
    *  more than 3x its usual gap. Never on a broken or disabled source, nor within 90 days of Keep. */

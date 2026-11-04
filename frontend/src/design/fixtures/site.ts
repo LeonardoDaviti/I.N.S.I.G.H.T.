@@ -112,12 +112,14 @@ function markWords(text: string, words: string[]): FeedItem['snippet'] {
 }
 
 export function unreadCounts(site: Site): UnreadCounts {
-  const counts: UnreadCounts = { total: 0, by_source: {}, by_folder: {} };
+  const counts: UnreadCounts = { total: 0, by_source: {}, newest_unread: {}, by_folder: {} };
   const foldersOf = new Map(site.health.map((row) => [row.source_id, row.folders.map((folder) => folder.id)]));
   for (const item of site.items) {
     if (item.read_at !== null) continue;
     counts.total += 1;
     counts.by_source[item.source_id] = (counts.by_source[item.source_id] ?? 0) + 1;
+    const newest = counts.newest_unread![item.source_id];
+    if (!newest || item.sort_at > newest) counts.newest_unread![item.source_id] = item.sort_at;
     for (const id of foldersOf.get(item.source_id) ?? []) counts.by_folder[id] = (counts.by_folder[id] ?? 0) + 1;
   }
   return counts;
