@@ -1076,9 +1076,9 @@ describe('SourcesConfig deep links', () => {
   it('Discover shows a page at a time, its follow tests, its references, untitled lines by site, and an archive under way (issue 0080)', async () => {
     const base = {
       url: 'https://feeds.example', voices: 3, article_count: 2, link_count: 2, classics: 0, origins: 0,
-      voice_names: ['Simon Willison'],
-      articles: [{ url: 'https://feeds.example/blog/a-long-slug-here', title: null, linked_by: ['Simon Willison'] },
-                 { url: 'https://x.com/SomeOne/status/2111872584338018562', title: null, linked_by: ['Simon Willison'] }],
+      voice_names: ['Voice A'],
+      articles: [{ url: 'https://feeds.example/blog/a-long-slug-here', title: null, linked_by: ['Voice A'] },
+                 { url: 'https://x.com/SomeOne/status/2111872584338018562', title: null, linked_by: ['Voice A'] }],
     };
     const firstPage = {
       success: true, total: 3, more: true,

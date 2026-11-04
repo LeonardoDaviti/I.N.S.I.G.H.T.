@@ -79,16 +79,16 @@ class OriginsTests(unittest.TestCase):
         self.assertEqual(discover_place("https://simonwillison.net/2026/Oct/23/x"), "simonwillison.net", "a date is no section")
 
     def test_a_followed_site_with_no_main_section_is_not_suggested_whole(self):
-        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("Qwen", "unsloth", "deepseek-ai") for n in range(3)]
+        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("OrgOne", "org-two", "org3") for n in range(3)]
         found = origins(roots, followed={"hub.example"}, held={"hub.example/blog": "s-hub"})
         self.assertFalse(found.suggest, "issue 0080: the whole followed host was suggested")
         self.assertEqual({k: len(v) for k, v in found.missing.items()}, {"s-hub": 9})
 
     def test_on_a_platform_the_data_finds_the_owners_are_suggested(self):
-        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("Qwen", "unsloth", "deepseek-ai") for n in range(3)]
+        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("OrgOne", "org-two", "org3") for n in range(3)]
         found = origins(roots, followed={"hub.example"}, held={"hub.example/blog": "s-hub"}, platforms={"hub.example": ()})
         self.assertEqual({k: len(v) for k, v in found.suggest.items()},
-                         {"hub.example/qwen": 3, "hub.example/unsloth": 3, "hub.example/deepseek-ai": 3})
+                         {"hub.example/orgone": 3, "hub.example/org-two": 3, "hub.example/org3": 3})
 
     def test_a_reference_page_is_only_listed(self):
         roots = [root("https://help.tool.example/articles/1-how"), root("https://tool.example/docs/setup")]
