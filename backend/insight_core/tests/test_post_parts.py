@@ -89,6 +89,10 @@ class ParserTests(unittest.TestCase):
         glued = "Лимиты выросли за $500Изменения уже действуют."
         self.assertEqual(pf.post_title(glued, "Лимиты выросли за $500 Изменения уже действуют.",
                                        "<p>Лимиты выросли за $500<br>Изменения уже действуют.</p>"), "Лимиты выросли за $500")
+        # The text's space falls between two emoji the HTML keeps on one line: the title ends with its line.
+        self.assertEqual(pf.post_title("До запуска минута, как говорится 🌌🗿UPD.", "До запуска минута, как говорится 🌌 🗿 UPD. Всё хорошо.",
+                                       "<p>До запуска минута, как говорится <i>🌌</i><i>🗿</i><br><br>UPD. Всё хорошо.</p>"),
+                         "До запуска минута, как говорится 🌌🗿")
 
     def test_where_the_title_came_from(self):
         self.assertEqual(parse(*stamps.PARSED[0]).title_from, "feed field")

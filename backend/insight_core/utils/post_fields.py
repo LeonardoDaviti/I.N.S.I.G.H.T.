@@ -194,7 +194,7 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     # Issue 0076: a whole title ends where the body's first line did only if its HTML ends a line there too
     # (the bridge glued two lines); "145GB" against the text's "145 GB" is one word written two ways.
     if glued and cut == stored and html and not _ends_a_line(html, glued):
-        glued = None
+        glued = _html_line_head(html, clean_text(stored))   # where the HTML ends the line, if it's a start of it
     text = (lines_html or (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content)) if from_body else stored
     raws, after_blank, blank = [], set(), False   # a line that opens a paragraph (issue 0072)
     for raw in (text or "").splitlines():
@@ -233,6 +233,22 @@ def _ends_a_line(html: str, head: str) -> bool:
         if not want.startswith(seen):
             return not seen.startswith(want)   # past the head inside one line: no line end there
     return True
+
+
+def _html_line_head(html: str, title: str) -> str | None:
+    """The start of `title` that the HTML's first line with text is (two words at least), when the title
+    runs on past it: where the bridge glued the next line on. None when the HTML's line is no start of it."""
+    want = _squashed(title)
+    line = next((line for line in _html_lines(html).splitlines() if _squashed(line)), "")
+    seen = _squashed(line)
+    if not seen or len(seen) >= len(want) or not want.startswith(seen) or len(_WORD_RE.findall(line)) < 2:
+        return None
+    count = 0
+    for i, ch in enumerate(title):
+        count += not ch.isspace()
+        if count == len(seen):
+            return title[:i + 1]
+    return None
 
 
 # A quote tweet whose own words are a short reaction ("no! really?!", an emoji alone) is about what it
