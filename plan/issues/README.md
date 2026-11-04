@@ -93,7 +93,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0079](0079-export-everything-from-the-web.md) | Export everything from the web: one click for a full database dump (and the sources list) | idea (future) |
 | [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | spec, decided (v9.17) |
 | [0081](0081-reading-walled-and-feedless-sites.md) | Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that is all | on hold (owner) |
-| [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | spec (v9.16) |
+| [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, not merged (v9.16) |
 
 ## Analysis archive
 
