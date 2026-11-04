@@ -101,6 +101,10 @@ The incremental story job reads a post's fields through one function, so v9.16 c
    - The 0075 tooling (`checks/compat.py`) imports the parsers on purpose and is exempt from the import guard.
 6. **A display bug found, fixed in this issue:** the glued-first-line rule cuts a title at a number written two ways ("…145GB models…" against the article's "145 GB" shows as "…145"). Fix it in the one parser, then count it over every site and HN post (0075's diff).
 
+7. **From the v9.15 reader review (2026-11-04), fixed by the one parser:**
+   - a reaction tweet's title ("no! really?!", an emoji alone) leads News: a quote tweet whose own words are a short reaction takes the quoted tweet's title (`title_from: quoted words`);
+   - an account's self-quoting reply shows its quoted tweet twice on the account's page (71 posts on the lab): the quote card of a tweet the stream already shows right above is folded.
+
 ## Done when
 - `realdata-check.sh` passes: the cases, the invariants no worse, step 1's diff 0, and step 2's diff reviewed.
 - The import guard test is in.

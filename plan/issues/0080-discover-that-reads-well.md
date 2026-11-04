@@ -88,6 +88,11 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
    - the health text names the site, not "the server": "example.org is failing (HTTP 502): its own server didn't answer, usually temporary."
    - Files: the fetch backoff and the health text (ingestion and source health), not Discover's. This is its own slice.
 
+9. **From the v9.15 reader review (2026-11-04):**
+   - Discover sends 1.96 MB per open and draws all 1,070 suggestions at once: the first page's answer carries only that page;
+   - Reddit authors inflate "linked by N of your sources": count followed sources there, as 0067's wording says;
+   - the Saved source counts as a source on 5 suggestions: it never does.
+
 ## Invariants added to 0075's check (each on every suggestion of the copy)
 - No source name, voice name or article title is an address.
 - No article title is its address's slug in title case.
