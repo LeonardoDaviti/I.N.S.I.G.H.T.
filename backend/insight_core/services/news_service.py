@@ -29,8 +29,6 @@ from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
                                           Surge, lead, longest, name_surges, names, news, phrases)
-from insight_core.utils.post_fields import post_title
-from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
 
 PARTS = ("recent", "earlier")    # "Last 48 hours", the rest (the reader splits it by week, issue 0077)
@@ -148,15 +146,14 @@ class NewsService:
         out = []
         for row in rows:
             if row["post_id"] not in authors:
-                authors[row["post_id"]] = reddit_author(row["html"]) if row["html"] else None
+                authors[row["post_id"]] = row["author"]
             voice = self._voice(sources, row["source_id"], authors[row["post_id"]])
             out.append(Citation(voice=voice, name=sources.voice_name(voice, row["source_id"]),
                                 source_id=row["source_id"], t=row["t"], target=row["target"], stored=row["stored"],
                                 text=row["text"]))
         stored = {}
         for row in self.repo.stored_posts(cur, sorted({c.stored for c in out if c.stored})):
-            stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"],
-                                 post_title(row["title"], row["content"], row["html"]))   # as every place (0072 D1)
+            stored[row["id"]] = (self._voice(sources, row["source_id"], None), row["t"], row["title"])   # as every place (0072 D1)
         return out, stored
 
     @staticmethod
@@ -237,7 +234,7 @@ class NewsService:
         rows = self.repo.classics(cur, feed_scope)
         out = []
         for row in sorted(rows, key=lambda r: classic_order(r["last_at"], r["voices"], r["days"], r["url"], now)):
-            title = post_title(row["post_title"], row["content"], row["html"]) if row["post_id"] else row["title"]
+            title = row["post_title"] if row["post_id"] else row["title"]
             out.append({
                 "url": row["url"], "post_id": row["post_id"], "title": title or None, "voices": row["voices"],
                 "days": row["days"], "first_at": row["first_at"], "last_at": row["last_at"],
@@ -262,7 +259,7 @@ class NewsService:
         """The classics a post links, on the caller's cursor: [{url, post_id, title, voices}]."""
         return [{
             "url": row["url"], "post_id": row["post_id"], "voices": row["voices"],
-            "title": (post_title(row["post_title"], row["content"], row["html"]) if row["post_id"] else row["title"]) or None,
+            "title": (row["post_title"] if row["post_id"] else row["title"]) or None,
         } for row in self.repo.background(cur, post_id)]
 
     def classic_urls(self, cur: Any) -> List[str]:

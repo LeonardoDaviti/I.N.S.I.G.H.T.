@@ -1,5 +1,7 @@
 """The app's functions the checks call, imported so an older checkout still runs them (issue 0075:
-realdata-check.sh copies this package into main's tree, or a past commit's, to snapshot it)."""
+realdata-check.sh copies this package into main's tree, or a past commit's, to snapshot it). A version
+that stores each post's parts (issue 0076) is read from them, as its pages read it; the parsers are
+imported here on purpose (the import guard of tests/test_post_parts.py exempts this file)."""
 from __future__ import annotations
 
 from typing import Callable, Optional, Tuple
@@ -41,6 +43,16 @@ def link_target_function() -> Optional[Callable[[Optional[str]], Optional[str]]]
     try:
         from insight_core.utils.post_fields import link_post_target
         return link_post_target
+    except ImportError:
+        return None
+
+
+def stored_parts():
+    """(BODY_COLUMNS, body) when this version reads each post's stored parts (issue 0076: post_parts, as
+    every page reads them), else None: the checks read what the pages read."""
+    try:
+        from insight_core.db.repo_post_parts import BODY_COLUMNS, body
+        return BODY_COLUMNS, body
     except ImportError:
         return None
 
