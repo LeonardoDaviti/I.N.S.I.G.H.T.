@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -149,6 +149,25 @@ class InvariantPatternTests(unittest.TestCase):
         self.assertEqual(invariants._title_ends_on_lead(run)[0], ["p0"])
         run = self.run_on(["Where it came from"], text="Where it came from. A story.")
         self.assertEqual(invariants._title_ends_on_lead(run)[0], [], "no address after it")
+
+    def test_discovers_lines_and_first_page(self):
+        """Issue 0080: no title or name is an address, no title is the slug, 30 at most, each tested."""
+        run = invariants.Run("postgresql://unused/none", None, NOW)
+        tested = {"label": "feed", "at": (NOW - timedelta(days=2)).isoformat()}
+        old = {"label": "feed", "at": (NOW - timedelta(days=40)).isoformat()}
+        page = [{"key": f"s{k}.test", "voices": 3, "voice_names": ["A", "https://feed.test/rss"], "follow_test": tested,
+                 "articles": [{"url": f"https://s{k}.test/2026/10/ai-jobs-white-collar", "title": "Ai jobs white collar",
+                               "linked_by": ["A"]},
+                              {"url": f"https://s{k}.test/x", "title": "s.test/x", "linked_by": ["A"]},
+                              {"url": f"https://s{k}.test/y", "title": "Node.js release notes", "linked_by": ["A"]}]}
+                for k in range(31)]
+        page[0] = {**page[0], "follow_test": old}
+        run._discover_memo = {False: {"suggestions": page}, True: {"suggestions": page}}
+        self.assertEqual(len(invariants._discover_title_address(run)[0]), 31)
+        self.assertEqual(len(invariants._discover_title_slug(run)[0]), 31)
+        self.assertEqual(invariants._discover_name_address(run)[0][:1], ["s0.test https://feed.test/rss"])
+        self.assertEqual(invariants._discover_first_page(run)[0], ["s30.test"])
+        self.assertEqual(invariants._discover_untested(run)[0], ["s0.test"])
 
     def test_a_rise_fails_unless_its_reason_is_named(self):
         found = [invariants.Found("title.over_300", "titles", "", 4, 10), invariants.Found("story.empty", "stories", "", 0, 10),

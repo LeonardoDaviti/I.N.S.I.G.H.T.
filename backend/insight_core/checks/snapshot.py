@@ -95,7 +95,8 @@ def _discover(ctx) -> Dict[str, Any]:
     clock = lambda: ctx["now"]   # noqa: E731
     answer = plain(StoriesService(ctx["db_url"], clock=clock, news=NewsService(ctx["db_url"], clock=clock)).discover())
     return {"suggestions": [{"key": s["key"], "voices": s.get("voices"), "origins": s.get("origins"),
-                             "articles": s.get("article_count"), "names": s.get("voice_names", [])}
+                             "articles": s.get("article_count"), "names": s.get("voice_names", []),
+                             "titles": [a.get("title") for a in s.get("articles", [])[:3]]}
                             for s in answer.get("suggestions", [])],
             "archives": [{"name": a.get("name"), "origins": a.get("origins")} for a in answer.get("archives", [])]}
 

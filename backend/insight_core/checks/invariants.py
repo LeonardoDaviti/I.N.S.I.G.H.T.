@@ -276,6 +276,102 @@ def _label_news_voices(run: Run):
     return out, len(answer["items"])
 
 
+# ---- Discover (issue 0080) -------------------------------------------------------------------------
+# Its own reading of an address, a slug and a followed host, apart from discover_rules'.
+DISCOVER_FIRST_PAGE = 30
+DISCOVER_TEST_DAYS = 30
+_WHOLE_ADDRESS_RE = re.compile(rf"^\s*{_ADDRESS}\s*…?$")
+_SLUG_SPLIT_RE = re.compile(r"[-_+]+")
+
+
+def _discover(run: Run, first: bool) -> List[Dict[str, Any]]:
+    """Discover's suggestions as the service answers: every one, or its first page (a version without
+    pages answers every one at once, which is its first page)."""
+    memo = run.__dict__.setdefault("_discover_memo", {})
+    if first not in memo:
+        from insight_core.services.news_service import NewsService
+        from insight_core.services.stories_service import StoriesService
+        service = StoriesService(run.db_url, clock=lambda: run.now, news=NewsService(run.db_url, clock=lambda: run.now))
+        try:
+            answer = service.discover(limit=DISCOVER_FIRST_PAGE) if first else service.discover()
+        except TypeError:   # before 0080: no pages
+            answer = service.discover()
+        memo[first] = plain(answer)
+    return memo[first].get("suggestions", [])
+
+
+def _is_address(text: Optional[str]) -> bool:
+    return bool(text) and bool(_WHOLE_ADDRESS_RE.match(text))
+
+
+def _slug_text(url: str) -> Optional[str]:
+    """An address's last path segment in title case, as a title rebuilt from it reads."""
+    path = re.split(r"[?#]", url.split("://", 1)[-1], maxsplit=1)[0].rstrip("/")
+    if "/" not in path:
+        return None
+    words = [w for w in _SLUG_SPLIT_RE.split(re.sub(r"\.[a-z]{2,5}$", "", path.rsplit("/", 1)[1], flags=re.I)) if w]
+    if sum(1 for w in words if w.isalpha()) < 3:
+        return None
+    text = " ".join(words)
+    return text[0].upper() + text[1:]
+
+
+def _discover_title_address(run: Run):
+    lines = [(s["key"], a) for s in _discover(run, False) for a in s.get("articles", [])]
+    return sorted({f"{key} {a['url']}" for key, a in lines if _is_address(a.get("title"))}), len(lines)
+
+
+def _discover_name_address(run: Run):
+    """Its names that are an address (the source's feed address: one name for a source is 0080 decision 1)."""
+    out, seen = set(), 0
+    for s in _discover(run, False):
+        for name in [*s.get("voice_names", []), *(n for a in s.get("articles", []) for n in a.get("linked_by", []))]:
+            seen += 1
+            if _is_address(name):
+                out.add(f"{s['key']} {name}")
+    return sorted(out), seen
+
+
+def _discover_title_slug(run: Run):
+    lines = [(s["key"], a) for s in _discover(run, False) for a in s.get("articles", [])]
+    out = {f"{key} {a['url']}" for key, a in lines
+           if a.get("title") and (slug := _slug_text(a["url"])) and a["title"].casefold() == slug.casefold()}
+    return sorted(out), len(lines)
+
+
+def _discover_followed_host(run: Run):
+    """A suggestion that is a host one of your sources' own addresses is on (or a host of its site)."""
+    run.cur.execute("SELECT handle_or_url FROM sources WHERE handle_or_url ~ '^https?://' AND platform <> 'saved'")
+    hosts = {re.sub(r"^www\.", "", h.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()) for (h,) in run.cur.fetchall()}
+    hosts = {h for h in hosts if h.count(".") >= 1}
+    keys = [s["key"] for s in _discover(run, False) if "/" not in s["key"]]
+    out = [k for k in keys if any(k == h or k.endswith("." + h) or h.endswith("." + k) for h in hosts)]
+    return sorted(out), len(keys)
+
+
+def _discover_first_page(run: Run):
+    """Over DISCOVER_FIRST_PAGE on the first page, and those that say no reason (no story, classic or source)."""
+    page = _discover(run, True)
+    over = [s["key"] for s in page[DISCOVER_FIRST_PAGE:]]
+    silent = [s["key"] for s in page if not (s.get("origins") or s.get("classics") or s.get("voices"))]
+    return sorted(set(over + silent)), len(page)
+
+
+def _discover_untested(run: Run):
+    """A first-page suggestion with no follow test, or one older than DISCOVER_TEST_DAYS."""
+    from datetime import datetime
+    out = []
+    for s in _discover(run, True):
+        test = s.get("follow_test") or {}
+        try:
+            fresh = run.now - datetime.fromisoformat(test["at"]) <= timedelta(days=DISCOVER_TEST_DAYS)
+        except (KeyError, TypeError, ValueError):
+            fresh = False
+        if not fresh:
+            out.append(s["key"])
+    return sorted(out), len(_discover(run, True))
+
+
 @dataclass
 class Invariant:
     name: str
@@ -303,6 +399,12 @@ INVARIANTS: List[Invariant] = [
     Invariant("story.empty", "stories", "a story with no posts", _story_empty),
     Invariant("label.story_voices", "labels", "a row's count isn't its names (one a voice)", _label_story_voices),
     Invariant("label.news_voices", "labels", "a News row's count isn't its names (one a voice)", _label_news_voices),
+    Invariant("discover.title_address", "discover", "an article line's title is an address", _discover_title_address),
+    Invariant("discover.name_address", "discover", "a source or voice name is an address (one name for a source: 0080 decision 1)", _discover_name_address),
+    Invariant("discover.title_slug", "discover", "an article line's title is its address's slug in title case", _discover_title_slug),
+    Invariant("discover.followed_host", "discover", "a suggestion is a host one of your sources is on", _discover_followed_host),
+    Invariant("discover.first_page", "discover", "the first page holds over 30, or one that says no reason", _discover_first_page),
+    Invariant("discover.untested", "discover", "a first-page suggestion with no follow test in 30 days", _discover_untested),
 ]
 
 
