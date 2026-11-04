@@ -261,9 +261,9 @@ def _story_empty(run: Run):
 
 
 def _label_story_voices(run: Run):
-    """A row's count ("covered by N", story.voices) isn't its names (story.sources, one a voice, issue
-    0082): the label and the list beside it disagree."""
-    out = [sid for sid, st in run.stories.items() if st["voices"] != len(st.get("sources") or [])]
+    """A row's count ("covered by N", story.voices, 2+) isn't its names (story.sources, one a voice, issue
+    0082): the label and the list beside it disagree. One voice shows no count ("also shared by")."""
+    out = [sid for sid, st in run.stories.items() if st["voices"] >= 2 and st["voices"] != len(st.get("sources") or [])]
     return out, len(run.stories)
 
 

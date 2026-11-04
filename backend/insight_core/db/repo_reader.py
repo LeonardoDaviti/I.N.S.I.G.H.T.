@@ -278,7 +278,8 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
     posts as the reader reads them, in the order to name them: each {source_id, name, platform,
     handle, voice (story_posts.voice), content_hash, text_chars, author, reposted_by}. Who else of
     yours wrote or reposted a tweet is read as the story job reads it (StoriesService._story_post);
-    `followed` (followed_accounts) is asked only when a post may hold one."""
+    `followed` (followed_accounts) is asked only when a post may hold one. A story of one voice has no
+    count ("also shared by", 0072): its names are that voice's sources (voice_sources)."""
     shaped = []
     for p in posts:
         kind = source_kind(p["platform"], p["handle"])
@@ -292,7 +293,8 @@ def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[st
         shaped.append({"source_id": p["source_id"], "name": p["name"], "kind": kind, "others": others,
                        "voice": p["voice"] or "source:" + p["source_id"],
                        "text_key": text_key(p["content_hash"], p["text_chars"] or 0)})
-    return named_voices(shaped)
+    voices = named_voices(shaped)
+    return voice_sources(voices) if len(voices) == 1 else voices
 
 
 def voiced(row: Sequence[Any], voice: Optional[str], content_hash: Optional[str]) -> Dict[str, Any]:
@@ -301,10 +303,10 @@ def voiced(row: Sequence[Any], voice: Optional[str], content_hash: Optional[str]
             "content_hash": content_hash, "text_chars": row[11], "author": row[18], "reposted_by": row[19]}
 
 
-def voice_sources(voices: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+def voice_sources(voices: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every source of a story's voices (story_voices), each once: who said it, copied or reposted it."""
-    out: List[Dict[str, str]] = []
-    for s in (s for v in voices for s in ({"id": v["id"], "name": v.get("place") or v["name"]}, *v["with"])):
+    out: List[Dict[str, Any]] = []
+    for s in (s for v in voices for s in ({"id": v["id"], "name": v.get("place") or v["name"]}, *v.get("with", ()))):
         if all(o["id"] != s["id"] for o in out):
             out.append(s)
     return out

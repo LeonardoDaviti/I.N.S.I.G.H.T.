@@ -169,7 +169,8 @@ export interface FeedStory {
   /** Its origin post (issue 0064; before the tree is drawn, its first report, else its first share); null when the origin is a page outside INSIGHT. */
   first?: string | null;
   /** Its voices named, one a voice (issue 0082: `voices` is these and "+N"): a Reddit author `u/name` with
-   *  `place` its subreddit, a publication's copies once; `with` the voice's other sources (a copy's, a reposter's). */
+   *  `place` its subreddit, a publication's copies once; `with` the voice's other sources (a copy's, a reposter's).
+   *  A story of one voice lists that voice's sources instead ("also shared by", issue 0072). */
   sources: StoryVoice[];
   posts: StoryPost[];
   /** The origin when it is a page outside INSIGHT 2+ of the story's posts link (issue 0064). */

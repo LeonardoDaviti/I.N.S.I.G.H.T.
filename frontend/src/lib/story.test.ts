@@ -28,10 +28,6 @@ test('the names are the voices counted: a Reddit author in its subreddit, a copy
   ];
   assert.equal(coveredBy({ id: 's', voices: 3, posts: [], sources: voices }), 'covered by 3 · u/alice, u/bob in r/sub, +1');
   assert.equal(coveredBy({ id: 's', voices: 2, posts: [], sources: voices.slice(1) }), 'covered by 2 · u/bob in r/sub, Blog One');
-  // One voice, copied by another source: who else shared it is the voice's other source.
-  const copied = { id: 's', voices: 1, posts: [], sources: voices.slice(2) };
-  assert.equal(coveredBy(copied, 'b'), 'also shared by Blog One Feed');
-  assert.equal(coveredBy(copied, 'b2'), 'also shared by Blog One');
 });
 
 test('suggestionReason says how many of your sources link it, who, and how many articles', () => {

@@ -214,6 +214,17 @@ class NamedVoicesTests(unittest.TestCase):
         self.assertEqual([[s["id"] for s in v["with"]] for v in named], [[], [], ["s2"], ["tg2"]])
         self.assertEqual(len(named), count_voices(posts), "the count is the names")
 
+    def test_one_voice_lists_its_sources(self):
+        """No count shows for one voice ("also shared by", 0072): its names are who said and shared it."""
+        from insight_core.db.repo_reader import story_voices
+        row = {"platform": "telegram", "handle": "https://t.me/s/a", "content_hash": "h", "text_chars": 200,
+               "author": None, "reposted_by": None, "voice": None}
+        forward = [{**row, "source_id": "tg1", "name": "Channel A"}, {**row, "source_id": "tg2", "name": "Channel B"}]
+        self.assertEqual(story_voices(forward, dict), [{"id": "tg1", "name": "Channel A"}, {"id": "tg2", "name": "Channel B"}])
+        other = {**row, "source_id": "s3", "name": "Blog Three", "content_hash": None, "platform": "rss", "handle": "https://three.test/feed"}
+        self.assertEqual([(v["name"], [w["id"] for w in v["with"]]) for v in story_voices([*forward, other], dict)],
+                         [("Channel A", ["tg2"]), ("Blog Three", [])])
+
     def test_a_followed_author_of_a_reposted_tweet_is_a_voice(self):
         repost = post("a", "x2", kind="x", author="accounta", reposted=True, author_source="x1")
         named = self._named([repost], {"a": ["x1"]})

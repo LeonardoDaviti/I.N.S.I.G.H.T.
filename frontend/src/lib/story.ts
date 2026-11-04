@@ -125,9 +125,7 @@ export function coveredBy(story: FeedStory, selfSourceId?: string): string | nul
   const author = story.thread && selfSourceId && story.sources.every((source) => source.id !== selfSourceId) ? story.sources[0] : null;
   if (story.thread) return `${author ? `${sourceLabel(author.name)}'s thread` : 'Thread'} · ${story.posts.length + 1} posts`;
   if (story.voices < 2) {
-    // Every source of its one voice (each once, as sent): who said it, copied or reposted it (issue 0082).
-    const others = story.sources.flatMap((voice) => [{ id: voice.id, name: voice.place ?? voice.name }, ...voice.with ?? []])
-      .filter((source) => source.id !== selfSourceId);
+    const others = story.sources.filter((source) => source.id !== selfSourceId);
     return others.length ? `also shared by ${coveredNames({ sources: others, voices: others.length })}` : null;
   }
   return `covered by ${story.voices} · ${coveredNames(story)}`;
