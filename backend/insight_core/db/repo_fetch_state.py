@@ -385,7 +385,8 @@ class FetchStateRepository:
         its newest page reads (`page_reads`: the metadata.page_read of its PAGE_READS_IN_HEALTH
         newest page-read posts, newest first), how many of its posts were opened
         (`opened_posts`, OPENED_POST_SQL), when the owner last kept it (`tidy_kept_at`, issue
-        0046) and fetch state.
+        0046), whether its newest only_paid post was stored as a teaser (`paid_preview`, issue
+        0084) and fetch state.
 
         For GET /api/sources/health: feed each row to cadence_stats(row, row["state"]).
         `settings` is merged with the platform defaults exactly as the runner's source
@@ -422,6 +423,9 @@ class FetchStateRepository:
                    (SELECT count(*) FROM posts p
                      WHERE p.source_id = s.id AND {OPENED_POST_SQL}) AS opened_posts,
                    s.tidy_kept_at,
+                   (SELECT (p.metadata ->> 'paywalled')::boolean FROM posts p
+                     WHERE p.source_id = s.id AND p.metadata ->> 'audience' = 'only_paid'
+                     ORDER BY p.fetched_at DESC LIMIT 1) AS paid_preview,
                    {state_columns}
             FROM sources s
             LEFT JOIN source_fetch_state st ON st.source_id = s.id
@@ -433,7 +437,7 @@ class FetchStateRepository:
         defaults = SourcesRepository("")
         rows: List[Dict[str, Any]] = []
         for r in cur.fetchall():
-            state_values = r[18:]
+            state_values = r[19:]
             rows.append(
                 {
                     "id": str(r[0]),
@@ -456,6 +460,8 @@ class FetchStateRepository:
                     # Source hygiene (issue 0046): posts opened, and the owner's last Keep.
                     "opened_posts": int(r[16] or 0),
                     "tidy_kept_at": r[17],
+                    # Its newest only_paid post came as a teaser (issue 0084): True, False or None.
+                    "paid_preview": r[18],
                     "state": _row(state_values) if state_values[0] is not None else None,
                 }
             )
