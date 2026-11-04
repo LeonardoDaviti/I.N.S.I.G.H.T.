@@ -175,8 +175,8 @@ the search index are stamped the same way, and each is made again by itself when
 **The first start after v9.16's migrations 0060–0063 (issue 0076, a post is read once) parses every
 stored post once**, before the story job, in the job's own process: each post's title, lead, shown
 body (as cut points), quote and footer go into `post_parts`, which every page reads from then on. On a
-copy of the lab (41,637 posts, machine load 8–12 on 32 cores, two runs back to back): 260–261 s, a peak
-of 145–159 MB in that process, 90–130 MB of WAL, and a 29.6 MB table (5.6% of `posts`). The API process
+copy of the lab (41,637 posts, machine load 8–27 on 32 cores, three runs): 246–261 s, a peak of
+145–164 MB in that process, 90–165 MB of WAL, and a 33 MB table (6.2% of `posts`). The API process
 itself stays at ~70 MB (56 MB the container, after the job). Until a post is parsed the pages show its
 stored title and text (the newest posts are parsed first). Then the story job regroups every post in
 batches, as after 0059 (the stories now read the title the pages show, so the rules' stamp changed):
