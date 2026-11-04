@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .addresses import tweet_author
 from .content_fingerprints import clean_text, strip_html
+from .post_fields import (REPOST_BY_RE, TRAILING_ELLIPSIS_RE, _squashed)
 from .post_fields import (REPLY_TO_RE, TITLE_HTML_CHARS, TITLE_TEXT_CHARS, display_title, hnrss_counts, link_kind,
                           link_post_target, post_title, quote_only, reaction_title, reading_text)
 from .post_links import quoted_tweet, quoted_words, reddit_author
@@ -97,6 +98,7 @@ class Parts:
     quote_only: Optional[str] = None    # ... when it has nothing of its own
     folds_into: Optional[str] = None    # ... and it is its own account's: no row of its own (issue 0076)
     subject: Optional[str] = None       # a short reaction's quoted words, "<Name>: <title>": News's lead title
+    opening: Optional[str] = None       # the text's start its stored title covered, when more than the title
     folded: Optional[Dict[str, Any]] = None   # a quote's post without the card (the post page, a thread's reply)
     counts: Optional[Dict[str, int]] = None   # hnrss's points and comments, with the shown text's length
     link_target: Optional[str] = None   # the page a link post shares
@@ -120,6 +122,21 @@ def _title_from(title: Optional[str], shown_title: str) -> str:
     if stored and squash(stored).startswith(squash(shown_title)):
         return "feed field"
     return "linked page" if re.fullmatch(r"[\w.-]+\.[a-z]{2,}(?:/\S*)?", shown_title) else "first line"
+
+
+def _opening(title: Optional[str], content: Optional[str], shown_title: str) -> Optional[str]:
+    """The text's start as long as its stored title, when that title is the text's start (a bridge's: the
+    post's first characters, its lines glued) and says more than the title shown; spaced as the text is."""
+    stored = TRAILING_ELLIPSIS_RE.sub("", REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip()))).strip()
+    want, text = _squashed(stored), clean_text(content)
+    if not want or len(want) <= len(_squashed(shown_title.rstrip("…"))) or not _squashed(text).startswith(want):
+        return None
+    count = 0
+    for i, ch in enumerate(text):
+        count += not ch.isspace()
+        if count == len(want):
+            return text[:i + 1]
+    return None
 
 
 def parse(title: Optional[str], content: Optional[str], html: Optional[str], url: Optional[str] = None) -> Parts:
@@ -148,7 +165,8 @@ def parse(title: Optional[str], content: Optional[str], html: Optional[str], url
     return Parts(
         title=shown_title, title_from=title_from, lead=clean_text(row_text)[:LEAD_CHARS],
         text=body_of(content, text), html=body_of(html, body),
-        quoted=quoted, quote_only=only, folds_into=folds, subject=reaction_title(html_head), folded=folded,
+        quoted=quoted, quote_only=only, folds_into=folds, subject=reaction_title(html_head),
+        opening=_opening(title, text_head, shown_title), folded=folded,
         counts={**counts, "chars": len(row_text or "")} if counts else None,
         link_target=target, link_kind=link_kind(target) if target else None,
         reply_to=reply.group(1) if reply else None, author=reddit_author(html),

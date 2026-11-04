@@ -94,6 +94,18 @@ class ParserTests(unittest.TestCase):
                                        "<p>До запуска минута, как говорится <i>🌌</i><i>🗿</i><br><br>UPD. Всё хорошо.</p>"),
                          "До запуска минута, как говорится 🌌🗿")
 
+    def test_a_bridge_posts_opening_joins_its_copies(self):
+        from insight_core.db.repo_stories import SourceFacts
+        from insight_core.services.stories_service import StoriesService
+        from insight_core.utils.story_rules import grouping
+        rows = {r["id"]: r for r in stamps.posts()}
+        self.assertEqual(rows["j8"]["shown_title"], "Стрим про инференс")
+        self.assertEqual(rows["j8"]["opening"], "Стрим про инференс В среду в 18:00 выходим в эфир с автором")
+        self.assertIsNone(parse(*stamps.PARSED[0]).opening, "a feed's title is no opening")
+        sources = SourceFacts.of((s[:4] for s in stamps.SOURCES), stamps.HOSTS)
+        found = grouping([StoriesService._story_post(rows[i], sources) for i in ("j8", "j9")])
+        self.assertEqual(len(found.stories), 1, "one story")
+
     def test_where_the_title_came_from(self):
         self.assertEqual(parse(*stamps.PARSED[0]).title_from, "feed field")
         placeholder = parse(*stamps.PARSED[2])

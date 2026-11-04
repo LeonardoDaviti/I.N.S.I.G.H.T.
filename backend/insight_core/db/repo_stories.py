@@ -267,7 +267,7 @@ class StoriesRepository:
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
                    length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
                    COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
-                   pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words,
+                   pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
                    CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END
             FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
@@ -283,7 +283,8 @@ class StoriesRepository:
              "text_chars": r[5] or 0, "url": r[6], "updated": r[8], "author": r[9],
              "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {},
              "shown_title": r[12], "reply_to": r[13], "quoted": r[14], "quoted_words": (r[15] or {}) if r[7] else {},
-             "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "precision": r[18]}
+             "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "opening": r[18],
+             "precision": r[19]}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}

@@ -456,7 +456,7 @@ class StoriesService:
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
             # Issue 0076: one post for everyone, the title every page shows (its stored one until parsed).
-            t=row["t"], title=row["title"] if row["shown_title"] is None else row["shown_title"],
+            t=row["t"], title=row["title"] if row["shown_title"] is None else row["shown_title"], opening=row.get("opening"),
             content_hash=row["content_hash"], text_chars=row["text_chars"],
             words=row["words"] if kind in LINK_POST_KINDS else None,
             author=row["poster"] if kind == "reddit" else row["author"],

@@ -43,7 +43,7 @@ def body(raw: Optional[str], columns: Sequence[Any]) -> Optional[str]:
 
 _COLUMNS = ("post_id", "title", "title_from", "lead", "text_cut", "text_decode_entities", "text_cut_leaves_break",
             "text_copy", "html_cut", "html_decode_entities", "html_cut_leaves_break", "html_copy", "quoted",
-            "quote_only", "folds_into", "subject", "folded", "counts", "link_target", "link_kind", "reply_to", "author", "words",
+            "quote_only", "folds_into", "subject", "opening", "folded", "counts", "link_target", "link_kind", "reply_to", "author", "words",
             "quoted_words", "warnings", "parse_stamp", "digest")
 _UPSERT = (f"INSERT INTO post_parts ({', '.join(_COLUMNS)}) VALUES ({', '.join(['%s'] * len(_COLUMNS))}) "
            f"ON CONFLICT (post_id) DO UPDATE SET {', '.join(f'{c} = EXCLUDED.{c}' for c in _COLUMNS[1:])}, parsed_at = now()")
@@ -54,7 +54,7 @@ def _row(post_id: Any, parts: Any, digest: str, stamp: str) -> Tuple[Any, ...]:
     return (post_id, parts.title, parts.title_from, parts.lead,
             parts.text.cut, parts.text.decode_entities, parts.text.cut_leaves_break, parts.text.copy,
             parts.html.cut, parts.html.decode_entities, parts.html.cut_leaves_break, parts.html.copy,
-            parts.quoted, parts.quote_only, parts.folds_into, parts.subject, jsonb(parts.folded), jsonb(parts.counts), parts.link_target, parts.link_kind,
+            parts.quoted, parts.quote_only, parts.folds_into, parts.subject, parts.opening, jsonb(parts.folded), jsonb(parts.counts), parts.link_target, parts.link_kind,
             parts.reply_to, parts.author, parts.words, jsonb(parts.quoted_words), parts.warnings or None, stamp, digest)
 
 

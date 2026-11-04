@@ -99,11 +99,12 @@ def tree(posts: Sequence[StoryPost], *, every: Dict[str, List[Tuple[str, str]]],
                 edges.append((p.id, _PAGE + target, "quote" if target == p.quoted else "citation"))
                 about[_PAGE + target].add(p.voice)
     # 3. Copy: the same text or title from another source, the earlier trustworthy time the parent.
-    for key in ("text_key", "title_key"):
+    for key in ("text_key", "title_keys"):
         same: Dict[str, List[StoryPost]] = defaultdict(list)
         for p in posts:
-            if getattr(p, key) and p.trusted_time:
-                same[getattr(p, key)].append(p)
+            for value in (getattr(p, key) or ()) if key == "title_keys" else [getattr(p, key)]:
+                if value and p.trusted_time:
+                    same[value].append(p)
         for run in same.values():
             for a in run:
                 for b in run:

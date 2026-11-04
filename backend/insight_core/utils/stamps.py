@@ -140,18 +140,19 @@ def _reddit(user: str) -> str:
 
 def _post(pid: str, source: str, at: datetime, title: Optional[str], url: Optional[str], *,
           links: Sequence[Tuple[str, Optional[str]]] = (), texts: Optional[Dict[str, str]] = None,
-          html: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0, author: Optional[str] = None,
+          html: Optional[str] = None, text: Optional[str] = None, content_hash: Optional[str] = None, chars: int = 0,
+          author: Optional[str] = None,
           reposted_by: Sequence[str] = (), updated: bool = False, stored: Optional[datetime] = None) -> Dict[str, Any]:
     """A post as load_posts returns it, stored an hour after it was posted unless `stored` says when, with
     its parts as the parser reads them (issue 0076; `html` only on the platforms, as load_posts reads them)."""
     from insight_core.utils.post_parser import parse   # the parser's stamp reads this module
-    parts = parse(title, None, html, url)
+    parts = parse(title, text, html, url)
     return {"id": pid, "source_id": source, "t": at, "title": title, "content_hash": content_hash or "h-" + pid,
             "text_chars": chars or 400, "url": url, "html": html, "updated": updated, "author": author,
             "reposted_by": list(reposted_by), "links": list(links), "link_texts": dict(texts or {}),
             "stored_at": stored or at + timedelta(hours=1),
             "shown_title": parts.title, "reply_to": parts.reply_to, "quoted": parts.quoted,
-            "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words}
+            "quoted_words": parts.quoted_words, "poster": parts.author, "words": parts.words, "opening": parts.opening}
 
 
 def _at(hours: float, minutes: int = 0) -> datetime:
@@ -238,6 +239,14 @@ def posts() -> List[Dict[str, Any]]:
           content_hash="h-same-text", chars=120),
         p("j7", "s-gamma", datetime(2026, 5, 6, 0, 1, tzinfo=timezone.utc), "Digest once more", "https://gamma.example/research/digest",
           content_hash="h-same-text", chars=120),
+        # Copies of one bridge post whose title shown is too short to join by: their opening, as the
+        # bridge's title said it, joins them (issue 0076)
+        p("j8", "s-tg1", _at(106), "Стрим про инференсВ среду в 18:00 выходим в эфир с автором [...]", "https://t.me/sample_channel/170",
+          text="Стрим про инференс\nВ среду в 18:00 выходим в эфир с автором канала. Приходите.",
+          html="<p>Стрим про инференс<br>В среду в 18:00 выходим в эфир с автором канала. Приходите.</p>"),
+        p("j9", "s-tg2", _at(107), "Стрим про инференсВ среду в 18:00 выходим в эфир с автором [...]", "https://t.me/other_channel/280",
+          text="Стрим про инференс\nВ среду в 18:00 выходим в эфир с автором канала. Приходите, будет интересно.",
+          html="<p>Стрим про инференс<br>В среду в 18:00 выходим в эфир с автором канала. Приходите, будет интересно.</p>"),
         p("j3", "s-tg1", _at(104), "Short one", "https://t.me/sample_channel/150", content_hash="h-short", chars=119, html="<p>s</p>"),
         p("j4", "s-tg2", _at(104, 30), "Short two", "https://t.me/other_channel/250", content_hash="h-short", chars=119, html="<p>s</p>"),
         # The same title of 5+ words, styled letters as plain (NFKC), within 7 days; not 8 days on. The
