@@ -222,9 +222,17 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
 
 
 def _ends_a_line(html: str, head: str) -> bool:
-    """Whether the HTML's first line with words is `head` (whitespace aside)."""
-    first = next((line for line in _html_lines(html, _BLOCK_END_RE).splitlines() if _WORD_RE.search(line)), "")
-    return _squashed(first) == _squashed(head)
+    """Whether the HTML's text ends a line (a break, a block's or a bold run's end) right after `head`, its
+    start (whitespace aside). Only text that says the head can tell: HTML that says something else first,
+    or doesn't reach that far (a window of pictures), doesn't."""
+    want, seen = _squashed(head), ""
+    for line in _html_lines(html).splitlines():
+        seen += _squashed(line)
+        if seen == want:
+            return True
+        if not want.startswith(seen):
+            return not seen.startswith(want)   # past the head inside one line: no line end there
+    return True
 
 
 # A quote tweet whose own words are a short reaction ("no! really?!", an emoji alone) is about what it
