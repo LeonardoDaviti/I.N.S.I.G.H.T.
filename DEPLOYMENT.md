@@ -275,6 +275,44 @@ empty posts (`--source <its id>`: 245, all to read, none skipped). Run `--dry-ru
 check that its count is close to that. The 7 Hugging Face posts stored with a body keep their
 avatars: the repair reads only short bodies.
 
+## Exporting and restoring the database (issue 0079)
+
+**Export:** Sources → data → Export everything. The browser downloads one zip,
+`insight-YYYY-MM-DD-HHMM.zip` (written as it streams; nothing is kept on the server):
+a CSV per table, `schema.sql` (the migrations it was made at), `manifest.json` (version,
+migrations, each table's rows) and `README.txt`. Stored logins (the `credentials` table:
+the Substack cookie, the Telegram API id, hash and session) are an empty CSV unless
+"Include stored logins" is ticked; even then they are ciphertext that reads only with this
+server's secret key (`INSIGHT_SECRET_KEY` or the `insight_secrets` volume). Export sources
+(same tab) downloads the sources list as `sources.json`.
+
+**Restore** (into a new database: the restore refuses one with any table, and never
+replaces data). Copy the zip to the server, into the INSIGHT folder, then from that folder:
+
+```bash
+docker compose run --rm -v "$PWD/insight-2026-11-05-1200.zip:/tmp/insight-2026-11-05-1200.zip:ro" backend \
+  python insight_core/db/import_export.py /tmp/insight-2026-11-05-1200.zip --into insight_restored
+```
+
+It creates `insight_restored` on the same server, runs the export's migrations, loads every
+CSV in the order the foreign keys need (the tables' own triggers off, the plain indexes built
+after the load), checks each table's rows against the manifest, all in one transaction (a
+failure leaves the database empty), then migrates up to the running version. An export from a
+newer INSIGHT is refused: update first. To read it:
+
+```bash
+# in .env
+DB_NAME=insight_restored
+docker compose up -d
+```
+
+The old database stays as it was until you drop it. Logins left out of the export are entered
+again in Sources → Connections. On the lab's copy (41,637 posts) the zip is 243 MB, about the
+size of `pg_dump -Fc`, and the restore takes about 41 s, as `pg_restore` does.
+
+**Explored on its own:** the README in the zip says how (DuckDB, pandas, SQLite, or
+`psql -f schema.sql` into any Postgres with pgvector, then `\copy` each CSV).
+
 ## Development mode
 
 ```bash
