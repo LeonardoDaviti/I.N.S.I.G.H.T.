@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from insight_core.db import database as db
 from insight_core.db.repo_discover import DiscoverRepository
 from insight_core.db.repo_operations import SystemSettingsRepository
+from insight_core.db.repo_post_parts import catch_up_safely
 from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
@@ -84,6 +85,7 @@ class StoriesService:
         """The story job: what the queue holds, a batch a transaction (a rule change's rebuild first),
         or with `full` every post at once (the oracle). Returns a summary."""
         started = time.monotonic()
+        catch_up_safely(self.db_url)   # every post read once first (issue 0076): what the job and the pages read
         filled = self.fill_links()
         if full:
             with db.transaction(self.db_url) as cur:

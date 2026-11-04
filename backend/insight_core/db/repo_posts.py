@@ -18,6 +18,7 @@ from insight_core.utils.content_fingerprints import hash_post_content
 from insight_core.utils.post_fields import build_post_fields
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.db.repo_stories import StoriesRepository
 
 # metadata key of a body read from the article page (ingestion/full_text.py)
@@ -758,12 +759,13 @@ class PostsRepository:
         before (0058: LINKED_BEFORE_SQL; only other posts' links count, so reading this post's
         own links first changes nothing); a watched post keeps its text's hash and
         comes back when it changed meaningfully. Issue 0050: its outside links are read from what
-        was stored. In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
+        was stored. Issue 0076: it is parsed (post_parts). In one savepoint (a post saved costs at most two; see SAVE_COMMIT_BATCH): a
         failure here is logged and costs neither the post nor the batch. Returns whether the post
         came back."""
         try:
             with self._savepoint(cur, "insight_after_save"):
                 self.stories.save_post_links(cur, post_id)
+                PostPartsRepository.write(cur, [post_id])   # read once, when it is saved (issue 0076)
                 if surface and was_inserted:
                     cur.execute(
                         f"""UPDATE posts p SET surfaced_at = p.fetched_at
@@ -925,6 +927,7 @@ class PostsRepository:
                 "metadata": self._json_dumps(post.get("metadata") or {}),
             },
         )
+        PostPartsRepository.write(cur, [post_id])
 
     def merge_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> None:
         """Merge keys into a stored post's metadata (a repair's read: checked, its page tries)."""
