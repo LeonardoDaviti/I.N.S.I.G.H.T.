@@ -94,7 +94,8 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0080](0080-discover-that-reads-well.md) | Discover that reads well: tested suggestions, real names and titles, owners not platforms | spec, decided (v9.17) |
 | [0081](0081-reading-walled-and-feedless-sites.md) | Reading walled and feedless sites: more places to look, a real browser when needed, headlines when that is all | on hold (owner) |
 | [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, not merged (v9.16) |
-| [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row | 1 built, not merged; 2 measured, waits for 0076 (v9.16) |
+| [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row | 1 merged (v9.16); 2 measured, waits for 0076 |
+| [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | spec (v9.16) |
 
 ## Analysis archive
 
