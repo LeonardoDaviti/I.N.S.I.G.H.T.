@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 from psycopg import Cursor
 
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
 from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
@@ -256,14 +257,19 @@ class StoriesRepository:
                    linking: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         """The posts the job groups: every post, or those of `ids`; with `linking`, only those with a
         kept link to one of these addresses (Discover's articles, issue 0070). Each with its kept links,
-        in order, and the stored post each link is, if any."""
+        in order, and the stored post each link is, if any. Its parts (issue 0076, post_parts: a post not
+        parsed yet is parsed first): the title every page shows, the account a reply answers, the tweet it
+        quotes, the words of the pages it quotes, Reddit's poster and its words; those of its HTML only
+        on the platforms (`html_sources`)."""
+        PostPartsRepository.write_missing(cur, ids)
         cur.execute(
             """
             SELECT p.id, p.source_id, COALESCE(p.published_at, p.fetched_at), p.title, p.content_hash,
-                   length(p.content), p.normalized_url,
-                   CASE WHEN p.source_id = ANY(%(html)s::uuid[]) THEN p.content_html END,
-                   COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at
-            FROM posts p
+                   length(p.content), p.normalized_url, p.source_id = ANY(%(html)s::uuid[]),
+                   COALESCE(p.metadata ? 'page_update', false), p.author, p.reposted_by, p.created_at,
+                   pp.title, pp.reply_to, pp.quoted, pp.quoted_words, pp.author, pp.words, pp.opening,
+                   CASE WHEN p.published_at IS NULL THEN 'none' ELSE p.published_precision END
+            FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE COALESCE(p.published_at, p.fetched_at) IS NOT NULL
               AND (%(ids)s::uuid[] IS NULL OR p.id = ANY(%(ids)s::uuid[]))
               AND (%(linking)s::text[] IS NULL OR p.id IN (SELECT post_id FROM post_links
@@ -274,8 +280,11 @@ class StoriesRepository:
         )
         posts = [
             {"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content_hash": r[4],
-             "text_chars": r[5] or 0, "url": r[6], "html": r[7], "updated": r[8], "author": r[9],
-             "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {}}
+             "text_chars": r[5] or 0, "url": r[6], "updated": r[8], "author": r[9],
+             "reposted_by": r[10] or [], "stored_at": r[11], "links": [], "link_texts": {},
+             "shown_title": r[12], "reply_to": r[13], "quoted": r[14], "quoted_words": (r[15] or {}) if r[7] else {},
+             "poster": r[16] if r[7] else None, "words": (r[17] or 0) if r[7] else 0, "opening": r[18],
+             "precision": r[19]}
             for r in cur.fetchall()
         ]
         by_id = {p["id"]: p for p in posts}

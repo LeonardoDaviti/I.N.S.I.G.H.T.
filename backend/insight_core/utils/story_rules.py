@@ -77,6 +77,9 @@ class StoryPost:
     own_site: str                   # its source's publication (SourceFacts.publication): a website's voice
     t: datetime                     # published_at, else fetched_at
     title: Optional[str] = None
+    # The text's start its stored title said, when that is more than the title shown (issue 0076: a bridge's
+    # title is its post's first ~85 characters, two lines glued): copies of one post share it.
+    opening: Optional[str] = None
     content_hash: Optional[str] = None
     text_chars: int = 0             # len(content)
     words: Optional[int] = None     # words of its own (Reddit, HN): the share rule
@@ -97,6 +100,7 @@ class StoryPost:
     author_source: Optional[str] = None
     stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to (0072)
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
+    undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -129,10 +133,17 @@ class StoryPost:
         return title_key(self.title)
 
     @property
+    def title_keys(self) -> Tuple[str, ...]:
+        """What it joins by as a title (SAME_TITLE_WITHIN): its title's key, and its opening's (issue 0076)."""
+        keys_ = (self.title_key, title_key(self.opening) if self.opening else None)
+        return tuple(dict.fromkeys(k for k in keys_ if k))
+
+    @property
     def trusted_time(self) -> bool:
         """Its time can order it (issue 0064): a time of day (not a date alone, 00:00:00), not a
-        Saved page (the day you saved it), not a watched page updated since its date."""
-        return not (self.kind == "saved" or self.updated or self.date_only)
+        Saved page (the day you saved it), not a watched page updated since its date, not a post its
+        source gave no date (issue 0076: its fetch's time, or a made-up backlog time)."""
+        return not (self.kind == "saved" or self.updated or self.date_only or self.undated)
 
     @property
     def date_only(self) -> bool:
@@ -364,8 +375,8 @@ def grouping(posts: Sequence[StoryPost], *, replies: Optional[Dict[str, str]] = 
     for p in posts:
         if p.text_key:
             by_text[p.text_key].append(p)
-        if p.title_key:
-            by_title[p.title_key].append(p)
+        for key in p.title_keys:
+            by_title[key].append(p)
     chain(by_text, SAME_TEXT_WITHIN, "text", lambda key: "h:" + key)
     chain(by_title, SAME_TITLE_WITHIN, "title", lambda key: "t:" + key)
     by_url: Dict[str, List[StoryPost]] = defaultdict(list)
@@ -528,8 +539,7 @@ def keys(post: StoryPost) -> Set[str]:
     out = set()
     if post.text_key:
         out.add("h:" + post.text_key)
-    if post.title_key:
-        out.add("t:" + post.title_key)
+    out |= {"t:" + key for key in post.title_keys}
     for url in ([post.url] if post.url else []) + [target for target, stored in post.links if stored or not is_home(target)]:
         out.add("u:" + url)
         if page_key(url):
@@ -544,13 +554,13 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
     first_title: Dict[str, str] = {}
     out = {}
     for p in posts:
-        text, title = p.text_key, p.title_key
+        text, titles_ = p.text_key, p.title_keys
         copy = (text and text in first_text and first_text[text] != p.place) or \
-               (title and title in first_title and first_title[title] != p.place)
+               any(title in first_title and first_title[title] != p.place for title in titles_)
         out[p.id] = "share" if copy or p.link_post or p.reposted else "report"   # a repost is a share (0066)
         if text:
             first_text.setdefault(text, p.place)
-        if title:
+        for title in titles_:
             first_title.setdefault(title, p.place)
     return out
 

@@ -16,6 +16,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 import psycopg
 
 import main
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.services import registry
 from insight_core.tests._asgi import call
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_test_db
@@ -249,6 +250,7 @@ class FeedListingRouteTests(unittest.TestCase):
                 (source, f"https://test.invalid/mark-ix/post/{uuid.uuid4().hex}", tweet, tweet),
             )
             post_id = str(cur.fetchone()[0])
+            PostPartsRepository.write(cur, [post_id])   # as a save parses it (issue 0076)
         short = "Our new model is out today and it is better at everything."
 
         feed_title = next(item["title"] for item in self.feed(scope=f"source:{source}")["items"] if item["id"] == post_id)

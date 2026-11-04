@@ -237,7 +237,8 @@ class OneTitleEverywhereTests(unittest.TestCase):
 
         seen = {}
         self.cur.execute(f"SELECT {_ITEM_COLUMNS} FROM posts p JOIN sources s ON s.id = p.source_id "
-                         "LEFT JOIN post_reader_state rs ON rs.post_id = p.id WHERE p.id = %s", (post,))
+                         "LEFT JOIN post_reader_state rs ON rs.post_id = p.id LEFT JOIN post_parts pp ON pp.post_id = p.id "
+                         "WHERE p.id = %s", (post,))
         seen["feed"] = _item(self.cur.fetchone())["title"]
         items = [{"id": reply}, {"id": other}]
         ReaderRepository.attach_stories(self.cur, items)

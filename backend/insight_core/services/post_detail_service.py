@@ -3,7 +3,6 @@ One post for the reader: detail, reader state (opens, reading time, favourite) (
 """
 from __future__ import annotations
 
-import re
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urljoin
@@ -16,28 +15,11 @@ from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
 from insight_core.db.repo_reader import ReaderRepository, repost_of, voice_sources
 from insight_core.services.news_service import NewsService
-from insight_core.utils.content_fingerprints import strip_html
+from insight_core.db.repo_post_parts import body, shown_title
 from insight_core.utils.media import post_media
-from insight_core.utils.post_links import body_hrefs, quoted_tweet
+from insight_core.utils.post_links import body_hrefs
 from insight_core.utils.url_normalization import normalize_url
-from insight_core.utils.post_fields import (
-    hnrss_counts, link_kind, link_post_target, post_title, quote_only, reading_text, title_columns,
-)
-
-
-# A tweet's quote card as Nitter writes it (post_links.QUOTED): a rule, then a <blockquote> citing
-# the quoted tweet; and the quoted tweet's bare address in the text above it.
-QUOTE_CARD = re.compile(r"\s*(?:<hr\s*/?>\s*)?<blockquote>(?:(?!</blockquote>).)*?<cite>.*?</blockquote>", re.I | re.S)
-_EMPTY_P = re.compile(r"<p>\s*</p>\s*", re.I)
-
-
-def without_quote(content_html: Optional[str]) -> str:
-    """A reply's HTML without its quote card and the quoted tweet's bare address (issue 0070)."""
-    quoted = quoted_tweet(content_html) or ""
-    status = re.escape(quoted.rsplit("/", 1)[-1])
-    html_ = QUOTE_CARD.sub("", content_html or "", count=1)
-    html_ = re.sub(rf'<a\b[^>]*href="[^"]*/status/{status}\b[^"]*"[^>]*>[^<\s]*</a>', "", html_)
-    return _EMPTY_P.sub("", html_).strip()
+from insight_core.utils.post_fields import link_kind
 
 
 class PostDetailService:
@@ -84,9 +66,12 @@ class PostDetailService:
                       p.reposted_by,
                       -- A Telegram album's pictures (issue 0069): shown in its post's body.
                       (SELECT string_agg(a.content_html, '' ORDER BY a.published_at, length(a.url), a.url)
-                         FROM posts a WHERE a.album_of = p.id)
+                         FROM posts a WHERE a.album_of = p.id),
+                      -- Its parts (issue 0076: read once, when it was saved).
+                      pp.title, pp.text_cut, pp.text_decode_entities, pp.text_cut_leaves_break, pp.text_copy, pp.html_cut, pp.html_decode_entities, pp.html_cut_leaves_break, pp.html_copy, pp.quoted, pp.quote_only, pp.folded, pp.counts, pp.link_target
                     FROM posts p
                     JOIN sources s ON s.id = p.source_id
+                    LEFT JOIN post_parts pp ON pp.post_id = p.id
                     WHERE p.id = %s
                     """,
                     (post_id,),
@@ -96,7 +81,7 @@ class PostDetailService:
                 background = self.news.background(cur, post_id) if row else []
                 story = self.story(cur, post_id, str(row[1])) if row else None
                 internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
-                link = self.link(cur, link_post_target(row[8]), story, row[2]) if row else None
+                link = self.link(cur, row[40], story, row[2]) if row else None
 
         if not row:
             return None
@@ -106,10 +91,14 @@ class PostDetailService:
         # The text starts after a title taken from it, without a feed's own lines (hnrss's counts:
         # the byline says them), issue 0070. A thread's post with words of its own that quotes a post of its
         # thread is no card: the thread lists it (issue 0072 D4); its title is the one every place shows (D1).
-        quoted = quoted_tweet(row[8]) if story and story["thread"] and not quote_only(row[8]) else None
-        own = without_quote(row[8]) if quoted and quoted in {normalize_url(p["url"]) for p in story["posts"]} else row[8]
-        title, content, html = reading_text(row[6], row[7] if own is row[8] else strip_html(own), own)
-        title = post_title(row[6], row[7], row[8]) if own is not row[8] else title
+        quoted = row[36] if story and story["thread"] and not row[37] else None
+        if row[27] is None:   # not parsed yet: as it was stored
+            title, content, html = row[6], row[7], row[8]
+        elif quoted and quoted in {normalize_url(p["url"]) for p in story["posts"]}:
+            title, content, html = row[27], row[38]["text"], row[38]["body"]   # its quote card folded
+        else:
+            title, content, html = row[27], body(row[7], row[28:32]), body(row[8], row[32:36])
+        counts = {"points": row[39]["points"], "comments": row[39]["comments"]} if row[39] else None
         return {
             "id": str(row[0]),
             "source_id": str(row[1]),
@@ -118,7 +107,7 @@ class PostDetailService:
             "published_at": row[4].isoformat() if row[4] else None,
             "fetched_at": row[5].isoformat() if row[5] else None,
             "title": title,
-            "counts": hnrss_counts(row[7]),
+            "counts": counts,
             "content": content,
             "content_html": html + row[26] if html and row[26] else html,
             "media_urls": row[9] or [],
@@ -164,17 +153,17 @@ class PostDetailService:
         # of its own story is no card (issue 0070): it was read above, `quotes_above` says so.
         replies = {p["id"]: p for p in story["posts"] if p["parent_reason"] == "thread"}
         if replies:
-            cur.execute("SELECT id, url, content_html, content, normalized_url FROM posts WHERE id = ANY(%s::uuid[])",
+            cur.execute("SELECT p.id, p.url, p.content_html, p.content, p.normalized_url, pp.quoted, pp.folded FROM posts p "
+                        "LEFT JOIN post_parts pp ON pp.post_id = p.id WHERE p.id = ANY(%s::uuid[])",
                         ([post_id, *(p["id"] for p in story["posts"])],))
             rows = cur.fetchall()
             in_story = {row[4] for row in rows}
-            for reply_id, url, content_html, content, _ in rows:
+            for reply_id, url, content_html, content, _, quoted, folded in rows:
                 reply = replies.get(str(reply_id))
                 if reply is None:
                     continue
-                quoted = quoted_tweet(content_html)
                 reply["quotes_above"] = quoted is not None and quoted in in_story
-                reply["html"] = without_quote(content_html) if reply["quotes_above"] else content_html
+                reply["html"] = folded["html"] if reply["quotes_above"] else content_html
                 reply["internal_links"] = PostDetailService.internal_links(cur, str(reply_id), url, content_html, content)
         return story
 
@@ -191,11 +180,11 @@ class PostDetailService:
         if kind == "video" and post_url:
             return {"url": post_url, "title": None, "post_id": None, "kind": kind}
         address = normalize_url(url)
-        cur.execute(f"SELECT p.id, {title_columns()} FROM posts p WHERE p.normalized_url = %s ORDER BY p.fetched_at, p.id LIMIT 1",
+        cur.execute(f"SELECT p.id, {shown_title()} FROM posts p WHERE p.normalized_url = %s ORDER BY p.fetched_at, p.id LIMIT 1",
                     (address,))
         stored = cur.fetchone()
         origin = (story or {}).get("origin") or {}
-        title = post_title(*stored[1:]) if stored else origin.get("title") if origin.get("url") == address else None
+        title = stored[1] if stored else origin.get("title") if origin.get("url") == address else None
         return {"url": url, "title": title or None, "post_id": str(stored[0]) if stored else None, "kind": kind}
 
     @staticmethod

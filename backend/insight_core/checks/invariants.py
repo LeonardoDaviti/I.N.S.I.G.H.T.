@@ -140,7 +140,8 @@ def _classics_share(args) -> Tuple[List[str], int]:
 
     class EveryPostCited(NewsRepository):
         def citations(self, cur, **_):
-            return [{"post_id": pid, "source_id": sid, "t": now, "target": "", "stored": pid, "text": None, "html": None}
+            return [{"post_id": pid, "source_id": sid, "t": now, "target": "", "stored": pid, "text": None, "html": None,
+                     "author": None}
                     for pid, sid, _ in pairs]
 
     with psycopg.connect(db_url, options="-c default_transaction_read_only=on -c jit=off") as conn, conn.cursor() as cur:

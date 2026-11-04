@@ -48,11 +48,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from psycopg import Cursor
 
 from insight_core.db.repo_operations import SystemSettingsRepository
-from insight_core.utils.post_fields import post_title, title_columns
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.discover_rules import (ADDRESS_RULES, DISCOVER_ARTICLE_SHARE, DISCOVER_MIN_ARTICLES,
                                                DISCOVER_MIN_VOICES, ORIGIN_MIN_VOICES, Origin, discover_address,
                                                discover_article)
-from insight_core.utils.post_links import REDDIT_AUTHOR
 from insight_core.utils.story_rules import ROUNDUP_ANCHORS
 from insight_core.utils.url_normalization import TWEET_SHAPE
 
@@ -117,10 +116,9 @@ roundup AS MATERIALIZED (         -- the posts whose links have 3+ anchors (disc
                        ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1))           -- at its address)
     GROUP BY pl.post_id HAVING count(*) >= %(roundup_anchors)s
 ),
-author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it, lowercase as Python's
-    SELECT p.id, lower(substring(p.content_html FROM %(author_re)s) COLLATE "und-x-icu") AS author
-    FROM posts p WHERE p.id IN (SELECT post_id FROM linked WHERE kind = 'reddit')
-      AND strpos(p.content_html, %(author_mark)s) > 0
+author AS MATERIALIZED (          -- a Reddit post's author, as its feed writes it (post_parts, issue 0076)
+    SELECT pp.post_id AS id, pp.author FROM post_parts pp
+    WHERE pp.post_id IN (SELECT post_id FROM linked WHERE kind = 'reddit') AND pp.author IS NOT NULL
 ),
 link AS MATERIALIZED (            -- with their voices (StoryPost.voice), and whether a roundup linked it
     SELECT l.key, l.url, l.article, l.post_id,
@@ -170,7 +168,7 @@ WHERE strpos(p.content_html, '/status/') > 0 AND (%(since)s::timestamptz IS NULL
 HOME = r"^([^/]*://)?[^/]*(/[^/?#]*)?$"
 
 # The counting query's fixed parameters: with its text, the rules its stamp says (DiscoverRepository.stamp).
-_COUNT_RULES = {"author_re": REDDIT_AUTHOR.pattern, "author_mark": "submitted by", "rules": ADDRESS_RULES, "home": HOME,
+_COUNT_RULES = {"rules": ADDRESS_RULES, "home": HOME,
                 "roundup_anchors": ROUNDUP_ANCHORS, "min_voices": DISCOVER_MIN_VOICES,
                 "min_articles": DISCOVER_MIN_ARTICLES, "share": DISCOVER_ARTICLE_SHARE}
 
@@ -187,7 +185,7 @@ SELECT DISTINCT ON (voice) voice, source_id FROM (
 
 # Each story's root (0064): its outside page, else its one post with no parent and no reason.
 _ORIGINS = f"""
-SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, {title_columns()}, p.source_id,
+SELECT s.id, COALESCE(s.origin_url, p.normalized_url, p.url), s.origin_title, {shown_title()}, p.source_id,
        s.first_at,
        (SELECT array_agg(DISTINCT sp.voice) FROM story_posts sp WHERE sp.story_id = s.id)
 FROM stories s
@@ -335,16 +333,16 @@ class DiscoverRepository:
         rows = cur.fetchall()
         namers = DiscoverRepository._site_namers(
             cur, kinds, own_sites, {v for *_, voices in rows for v in voices if v.startswith("site:")})
-        return [Origin(str(story_id), url, post_title(title, content, html) if source_id else origin_title,
+        return [Origin(str(story_id), url, title if source_id else origin_title,
                        str(source_id) if source_id else None, first_at, {v: voice_source(v, namers) or "" for v in voices})
-                for story_id, url, origin_title, title, content, html, source_id, first_at, voices in rows]
+                for story_id, url, origin_title, title, source_id, first_at, voices in rows]
 
     @staticmethod
     def stored_titles(cur: Cursor, urls: Sequence[str]) -> Dict[str, str]:
         """The title every place shows (post_title) of the first post stored at each address."""
-        cur.execute(f"SELECT DISTINCT ON (p.normalized_url) p.normalized_url, {title_columns()} FROM posts p "
+        cur.execute(f"SELECT DISTINCT ON (p.normalized_url) p.normalized_url, {shown_title()} FROM posts p "
                     "WHERE p.normalized_url = ANY(%s) ORDER BY p.normalized_url, p.fetched_at, p.created_at, p.id", (list(urls),))
-        return {url: post_title(title, content, html) for url, title, content, html in cur.fetchall()}
+        return dict(cur.fetchall())
 
     @staticmethod
     def first_posts(cur: Cursor, source_ids: Iterable[str]) -> Dict[str, datetime]:

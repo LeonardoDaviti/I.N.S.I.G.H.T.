@@ -16,7 +16,7 @@ from psycopg import Cursor
 from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item, voiced
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory, Surge
-from insight_core.utils.post_fields import quote_only, title_columns
+from insight_core.db.repo_post_parts import shown_title
 from insight_core.utils.url_normalization import normalize_url
 
 LIKE_SPECIAL = re.compile(r"[\\%_]")   # what LIKE reads as more than a letter
@@ -38,11 +38,12 @@ class NewsRepository:
 
     @staticmethod
     def load_titles(cur: Cursor, since: Optional[datetime]) -> List[Dict[str, Any]]:
-        """The titles the name rule reads: every titled post posted since `since` (every one when None)."""
+        """The titles the name rule reads: every titled post posted since `since` (every one when None), each
+        as every page shows it, or its opening when its stored title said more (post_parts, issue 0076)."""
         cur.execute(
             f"""
-            SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
-            WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
+            SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
+            WHERE t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL
               AND (%(since)s::timestamptz IS NULL OR {POST_TIME} >= %(since)s)
             """,
             {"since": since},
@@ -155,9 +156,9 @@ class NewsRepository:
         entity (decoded only in Python). More than say them, never fewer."""
         cur.execute(
             f"""
-            SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
-            WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
-              AND (lower(normalize(p.title, NFKC)) LIKE ANY(%(like)s) OR p.title LIKE '%%&%%;%%')
+            SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t
+            WHERE t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL
+              AND (lower(normalize(t.title, NFKC)) LIKE ANY(%(like)s) OR t.title LIKE '%%&%%;%%')
             """,
             {"like": ["%" + "%".join(LIKE_SPECIAL.sub(r"\\\g<0>", part) for part in w.split("%")) + "%" for w in words]},
         )
@@ -165,8 +166,8 @@ class NewsRepository:
 
     @staticmethod
     def titles_of(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
-        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p WHERE p.id = ANY(%s::uuid[]) "
-                    f"AND p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL", (list(ids),))
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.opening, pp.title, p.title) AS title) t WHERE p.id = ANY(%s::uuid[]) "
+                    f"AND t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL", (list(ids),))
         return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
 
     @staticmethod
@@ -239,12 +240,12 @@ class NewsRepository:
     def citations(cur: Cursor, *, reddit: Sequence[str], saved: Sequence[str],
                   targets: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
         """Every kept link (to `targets`, when given), with the stored post it is, if any; a Reddit
-        post's HTML (its author). Not the links of the pages you saved (`saved`: the Saved source): a
+        post's author (post_parts: its footer's). Not the links of the pages you saved (`saved`: the Saved source): a
         saved page is no voice."""
         cur.execute(
             f"""
             SELECT p.id, p.source_id, {POST_TIME}, pl.target_url, pl.link_text, t.id,
-                   CASE WHEN p.source_id = ANY(%(reddit)s::uuid[]) THEN p.content_html END
+                   CASE WHEN p.source_id = ANY(%(reddit)s::uuid[]) THEN (SELECT pp.author FROM post_parts pp WHERE pp.post_id = p.id) END
             FROM post_links pl
             JOIN posts p ON p.id = pl.post_id
             LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content FROM posts tp WHERE tp.normalized_url = pl.target_url
@@ -256,14 +257,13 @@ class NewsRepository:
             {"reddit": list(reddit), "saved": list(saved), "targets": None if targets is None else list(targets)},
         )
         return [{"post_id": str(r[0]), "source_id": str(r[1]), "t": r[2], "target": r[3], "text": r[4],
-                 "stored": str(r[5]) if r[5] else None, "html": r[6]} for r in cur.fetchall()]
+                 "stored": str(r[5]) if r[5] else None, "author": r[6]} for r in cur.fetchall()]
 
     @staticmethod
     def stored_posts(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
-        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, {title_columns()} FROM posts p WHERE p.id = ANY(%s::uuid[])",
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, {shown_title()} FROM posts p WHERE p.id = ANY(%s::uuid[])",
                     (list(ids),))
-        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3], "content": r[4], "html": r[5]}
-                for r in cur.fetchall()]
+        return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
 
     @staticmethod
     def write_classics(cur: Cursor, found: Sequence[Classic], targets: Optional[Sequence[str]] = None) -> int:
@@ -314,12 +314,13 @@ class NewsRepository:
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
                    np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope,
-                   np.voice, p.content_hash
+                   np.voice, p.content_hash, pp.subject
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN post_parts pp ON pp.post_id = p.id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
             WHERE ns.first_at >= %s
               AND (EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
@@ -330,13 +331,13 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-12])
-            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash = row[-12:]
+            item = _item(row[:-13])
+            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject = row[-13:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
-                         "_quotes": quote_only(row[21]),   # issue 0072: a post that only quotes a tweet
-                         "_voiced": voiced(row, voice, content_hash)})
+                         "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
+                         "_voiced": voiced(row, voice, content_hash), "_subject": subject})
             out.append(item)
         return out
 
@@ -369,9 +370,9 @@ class NewsRepository:
         cur.execute(
             f"""
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
-                   t.id, {title_columns("t")}, r.read_at, r.later_at, {own_sql}
+                   t.id, t.title, r.read_at, r.later_at, {own_sql}
             FROM classics c
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, {shown_title("tp")} AS title FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             WHERE NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
@@ -383,14 +384,13 @@ class NewsRepository:
             [*own_params, *params, *own_params],
         )
         out: Dict[str, Dict[str, Any]] = {}
-        for (url, voices, first_at, last_at, title, citers, post_id, post_title, content, html, read_at, later_at,
-             own) in cur.fetchall():
+        for (url, voices, first_at, last_at, title, citers, post_id, post_title, read_at, later_at, own) in cur.fetchall():
             if url in out:
                 continue
             out[url] = {"url": url, "voices": int(voices), "first_at": first_at, "last_at": last_at,
                         "days": (last_at - first_at).days, "title": title, "citers": citers,
-                        "post_id": str(post_id) if post_id else None, "post_title": post_title, "content": content,
-                        "html": html, "read_at": read_at, "later_at": later_at, "own": bool(own)}
+                        "post_id": str(post_id) if post_id else None, "post_title": post_title,
+                        "read_at": read_at, "later_at": later_at, "own": bool(own)}
         return list(out.values())
 
     @staticmethod
@@ -402,10 +402,10 @@ class NewsRepository:
         """The classics a post links, at most BACKGROUND_SHOWN, most cited first."""
         cur.execute(
             f"""
-            SELECT c.target_url, c.voices, c.title, t.id, {title_columns("t")}
+            SELECT c.target_url, c.voices, c.title, t.id, t.title
             FROM post_links pl
             JOIN classics c ON c.target_url = pl.target_url
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, {shown_title("tp")} AS title FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             WHERE pl.post_id = %s AND NOT pl.boilerplate AND t.id IS DISTINCT FROM pl.post_id
               AND NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
@@ -415,7 +415,7 @@ class NewsRepository:
             (post_id, BACKGROUND_SHOWN),
         )
         return [{"url": r[0], "voices": int(r[1]), "title": r[2], "post_id": str(r[3]) if r[3] else None,
-                 "post_title": r[4], "content": r[5], "html": r[6]} for r in cur.fetchall()]
+                 "post_title": r[4]} for r in cur.fetchall()]
 
     @staticmethod
     def classic_urls(cur: Cursor) -> List[str]:

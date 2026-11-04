@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.tests._db import insert_scratch_source
 from insight_core.utils.story_rules import StoryPost
 from insight_core.utils.url_normalization import normalize_url
@@ -50,7 +51,8 @@ def insert_post(cur, source: str, url: str, *, at: Optional[datetime] = None, ti
                 normalized: Optional[str] = None, author: Optional[str] = None, links: Optional[Iterable] = None):
     """A post row, published `at` (default the database's now()); its id as the database returns
     it. `normalized` defaults to normalize_url(url), `host` to the address's host. With `links` (targets, or (target, words) pairs, in order) its
-    links are stored as read; without, the story job reads them from `html`."""
+    links are stored as read; without, the story job reads them from `html`. Parsed as a save parses it
+    (post_parts, issue 0076)."""
     cur.execute(
         """INSERT INTO posts (source_id, url, normalized_url, url_host, title, content, content_html, content_hash,
                               published_at, author, links_scanned_at)
@@ -63,4 +65,5 @@ def insert_post(cur, source: str, url: str, *, at: Optional[datetime] = None, ti
         target, text = link if isinstance(link, tuple) else (link, None)
         cur.execute("INSERT INTO post_links (post_id, target_url, target_site, position, link_text) "
                     "VALUES (%s, %s, '', %s, %s)", (post_id, target, position, text))
+    PostPartsRepository.write(cur, [str(post_id)])
     return post_id

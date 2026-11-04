@@ -44,7 +44,8 @@ from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_links import source_kind
 from insight_core.utils.story_rules import named_voices, text_key
-from insight_core.utils.post_fields import TITLE_HTML_CHARS, TITLE_TEXT_CHARS, hnrss_counts, post_title, quote_only, reading_text, title_columns
+from insight_core.db.repo_post_parts import shown_title
+from insight_core.utils.post_fields import TITLE_TEXT_CHARS
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
 FeedView = Literal["stream", "by_source"]
@@ -66,7 +67,10 @@ UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
 # A Telegram album's picture (issue 0069) is no row and no unread count: its post shows it.
-NOT_ALBUM_PIECE = "p.album_of IS NULL"
+# A post that is part of another (issue 0069: a Telegram album's piece; issue 0076: a tweet with nothing of
+# its own that quotes its own account's tweet, stored, folds into it) is no row of its own on any page.
+NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts f JOIN posts q ON q.normalized_url = f.folds_into "
+                   "WHERE f.post_id = p.id)")
 # A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
     "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
@@ -312,30 +316,31 @@ def voice_sources(voices: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-# Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
+# Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection, `pp` the post's
+# parts (issue 0076: read once, when it was saved; LEFT JOINed): its title, its lead, the tweet it only
+# quotes and hnrss's counts. A post not parsed yet reads its stored title and text.
 _ITEM_COLUMNS = f"""
-    p.id, p.title, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
+    p.id, COALESCE(pp.title, p.title), COALESCE(pp.lead, left(p.content, {EXCERPT_CHARS} * 2)), p.url, p.source_id,
     COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform,
     {SORT_KEY}, p.published_at, rs.read_at, rs.starred_at,
     length(p.content), p.metadata->>'duration_seconds', jsonb_path_query_array(p.media_urls, '$[0 to 7]'),
     rs.resume_block, rs.resume_blocks, rs.later_at, p.metadata->'page_update', p.author, p.reposted_by, s.handle_or_url,
-    left(p.content_html, {TITLE_HTML_CHARS})
+    pp.quote_only, pp.counts
 """
 
 
 def _item(row: Sequence[Any]) -> Dict[str, Any]:
     # The excerpt starts after a title taken from the text, without a feed's own lines (hnrss's
-    # counts: the row says them), issue 0070.
-    title, content, _ = reading_text(row[1], row[2], row[21])
-    excerpt = _excerpt(content)
+    # counts: the row says them), issue 0070: the post's lead (post_parts).
+    title, excerpt = row[1], _excerpt(row[2])
     platform = row[6]
     duration = row[12]
     try:
         duration_seconds = int(float(duration)) if duration not in (None, "") else None
     except ValueError:
         duration_seconds = None
-    counts = hnrss_counts(row[2])
-    content_length = len(content or "") if counts else (row[11] or 0)
+    counts = {"points": row[22]["points"], "comments": row[22]["comments"]} if row[22] else None
+    content_length = row[22]["chars"] if counts else (row[11] or 0)
     is_video = platform == "youtube"
     return {
         "id": str(row[0]),
@@ -477,10 +482,10 @@ class ReaderRepository:
             return
         cur.execute(
             f"""
-            SELECT sp.post_id, st.id, st.voices, p.id, p.title, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
+            SELECT sp.post_id, st.id, st.voices, p.id, {shown_title()}, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
-                   p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS}),
+                   p.reposted_by, p.author, s.handle_or_url, (SELECT pp.quote_only FROM post_parts pp WHERE pp.post_id = p.id),
                    COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content)
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
@@ -499,7 +504,7 @@ class ReaderRepository:
         quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet (issue 0072)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author, handle, html, address, position, voice, content_hash,
+             origin_linked_by, reposted_by, author, handle, quotes, address, position, voice, content_hash,
              text_chars) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
@@ -512,7 +517,7 @@ class ReaderRepository:
                 "source_id": str(source_id), "name": name, "platform": platform, "handle": handle, "voice": voice,
                 "content_hash": content_hash, "text_chars": text_chars, "author": author, "reposted_by": reposted_by})
             addresses.setdefault(str(lead), set()).add(address)
-            if str(post_id) != str(lead) and parent_reason and (quoted := quote_only(html)):
+            if str(post_id) != str(lead) and parent_reason and (quoted := quotes):
                 quoting[str(post_id)] = quoted
             story["thread"] |= parent_reason in ("thread", "quote")
             # The origin post first (issue 0064); before the tree is drawn, the first report.
@@ -529,7 +534,7 @@ class ReaderRepository:
             if str(post_id) != str(lead):
                 thread = parent_reason == "thread"   # a reply in a thread (issue 0066): its own words, read in order
                 story["posts"].append({
-                    "id": str(post_id), "title": post_title(title, content, html),
+                    "id": str(post_id), "title": title,
                     "text": clean_text(content) if thread else None, "url": url,
                     "source_id": str(source_id), "source_display_name": name, "platform": platform,
                     "sort_at": sort_at, "published_at": published_at, "read_at": read_at, "role": role,
@@ -561,7 +566,7 @@ class ReaderRepository:
         cur.execute(
             f"""
             SELECT * FROM (
-                SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, {title_columns()},
+                SELECT DISTINCT ON (m.story_id, p.source_id) m.story_id, p.id, {shown_title()},
                        COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), p.source_id,
                        {SORT_KEY} AS at
                 FROM story_mentions m JOIN posts p ON p.id = m.post_id JOIN sources s ON s.id = p.source_id
@@ -581,9 +586,9 @@ class ReaderRepository:
             ([story["id"] for story in stories.values()],),
         )
         roundups: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
-        for story_id, post_id, title, content, html, name, source_id, _ in cur.fetchall():
+        for story_id, post_id, title, name, source_id, _ in cur.fetchall():
             roundups.setdefault(str(story_id), []).append(
-                (str(source_id), {"id": str(post_id), "title": post_title(title, content, html), "source_display_name": name}))
+                (str(source_id), {"id": str(post_id), "title": title, "source_display_name": name}))
         for story in stories.values():
             voices = {source["id"] for source in voice_sources(story["sources"])}
             story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]
@@ -668,6 +673,7 @@ class ReaderRepository:
             JOIN posts p ON p.id = h.post_id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE {' AND '.join(where)}
             ORDER BY h.opened_at DESC, p.id DESC
             LIMIT %s
@@ -710,6 +716,7 @@ class ReaderRepository:
             FROM posts p
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE {' AND '.join(where)}
             ORDER BY {key} {order}, p.id {order}
             LIMIT %s
@@ -784,6 +791,7 @@ class ReaderRepository:
                     FROM posts p
                     JOIN sources s ON s.id = p.source_id
                     LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+                    LEFT JOIN post_parts pp ON pp.post_id = p.id
                     WHERE p.source_id = g.source_id AND {filter_sql} AND {window_sql}
                     ORDER BY {SORT_KEY} DESC, p.id DESC
                     LIMIT %s

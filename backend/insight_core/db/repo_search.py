@@ -39,7 +39,7 @@ from insight_core.db.repo_reader import (
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
 from insight_core.utils.classic_rules import cited_again
 from insight_core.utils.news_rules import NEWS_RECENT, lead
-from insight_core.utils.post_fields import post_title, quote_only, title_columns
+from insight_core.db.repo_post_parts import shown_title
 
 SearchFilter = Literal["all", "later", "starred", "news", "classics"]   # starred is Keep ("Kept")
 SearchOrder = Literal["newest", "best"]
@@ -243,6 +243,7 @@ class SearchRepository:
             JOIN posts p ON p.id = hits.id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN post_parts pp ON pp.post_id = p.id
             ORDER BY hits.rank DESC, hits.sort_at DESC, hits.id DESC
             """,
             [*params, matches, *rank_params, *page_params, limit + 1, MARK_START + MARK_END,
@@ -312,6 +313,7 @@ class SearchRepository:
             JOIN posts p ON p.id = o.post_id
             JOIN sources s ON s.id = p.source_id
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
+            LEFT JOIN post_parts pp ON pp.post_id = p.id
             WHERE np.post_id = ANY(%s::uuid[])
             ORDER BY np.post_id, {_ORDER_RANK.format(sp='o', p='p')}
             """,
@@ -327,7 +329,7 @@ class SearchRepository:
                          "score": float(score)},
                 "all": [],
             })
-            story["all"].append({**_item(row[:-11]), "role": role, "_quotes": quote_only(row[21]),
+            story["all"].append({**_item(row[:-11]), "role": role, "_quotes": row[21],
                                  "_voiced": voiced(row, voice, content_hash)})
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
         for item in items:
@@ -361,9 +363,9 @@ class SearchRepository:
         cur.execute(
             f"""
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
-                   t.id, {title_columns("t")}, r.read_at, r.later_at
+                   t.id, t.title, r.read_at, r.later_at
             FROM classics c
-            LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
+            LEFT JOIN LATERAL (SELECT tp.id, {shown_title("tp")} AS title FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             CROSS JOIN LATERAL (SELECT {CLASSIC_VECTOR} AS vector) w
@@ -379,8 +381,8 @@ class SearchRepository:
         )
         rows = cur.fetchall()
         out = []
-        for url, voices, first_at, last_at, title, citers, post_id, stored_title, content, html, read_at, later_at in rows[:query.limit]:
-            shown = post_title(stored_title, content, html) if post_id else title
+        for url, voices, first_at, last_at, title, citers, post_id, stored_title, read_at, later_at in rows[:query.limit]:
+            shown = stored_title if post_id else title
             out.append({
                 "url": url, "post_id": str(post_id) if post_id else None, "title": shown or None,
                 "voices": int(voices), "days": (last_at - first_at).days, "first_at": first_at, "last_at": last_at,

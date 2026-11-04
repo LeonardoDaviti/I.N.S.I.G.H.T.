@@ -16,8 +16,10 @@ from insight_core.db import database as db
 from insight_core.db.ensure_db import ensure_database
 from insight_core.utils.content_fingerprints import hash_post_content
 from insight_core.utils.post_fields import build_post_fields
+from insight_core.utils.story_rules import date_alone
 from insight_core.utils.json_safe import json_default
 from insight_core.db.repo_page_watch import UPDATE_KEY, PageWatchRepository
+from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.db.repo_stories import StoriesRepository
 
 # metadata key of a body read from the article page (ingestion/full_text.py)
@@ -31,6 +33,16 @@ PAGE_READ_KEY = "page_read"
 PAGE_TRIES_KEY = "page_tries"
 # A Telegram post's address (the bridge links each item to t.me): its channel's albums are folded.
 TELEGRAM_POST_PREFIX = "https://t.me/"
+
+
+def published_precision(post: Dict[str, Any]) -> str:
+    """How precise a post's date is (issue 0076, posts.published_precision): "none" (the source gave no
+    date), "date" (no time of day: as its kind read it, or stored as 00:00:00 UTC), else "exact"."""
+    date = post.get("date")
+    if not isinstance(date, datetime):
+        return "none"
+    told = post.get("date_precision")
+    return told if told in ("date", "exact") else "date" if date_alone(date) else "exact"
 
 
 def _env_commit_batch() -> int:
@@ -273,6 +285,7 @@ class PostsRepository:
         url = post['url'] # Let KeyError happen
         content = post.get("content", "")
         published_at = post.get("date", None)
+        precision = published_precision(post)
         external_id = post.get("external_id", None)
 
         # Lists -> JSON
@@ -299,6 +312,7 @@ class PostsRepository:
             "url": url,
             "external_id": external_id,
             "published_at": published_at,
+            "published_precision": precision,
             "title": title,
             "content": content,
             "content_html": content_html,
@@ -324,6 +338,7 @@ class PostsRepository:
                 url,
                 external_id,
                 published_at,
+                published_precision,
                 title,
                 content,
                 content_html,
@@ -345,6 +360,7 @@ class PostsRepository:
                 %(url)s,
                 %(external_id)s,
                 %(published_at)s,
+                %(published_precision)s,
                 %(title)s,
                 %(content)s,
                 %(content_html)s,
@@ -379,6 +395,8 @@ class PostsRepository:
                     if not other_form and row is None:
                         cur.execute(query, params)
                         row = cur.fetchone()
+                    if row is not None:
+                        PostPartsRepository.write(cur, [str(row[0])])   # read once, when it is saved (issue 0076)
             except psycopg.errors.UniqueViolation as exc:
                 # ON CONFLICT (url) already absorbs posts_url_key, so the only violation that
                 # can reach here is the uncovered index. Anything else is unexpected and must
@@ -550,6 +568,8 @@ class PostsRepository:
             with self._savepoint(cur, "insight_upsert_resolve"):
                 cur.execute(statement, resolved)
                 row = cur.fetchone()
+                if row is not None:
+                    PostPartsRepository.write(cur, [str(row[0])])
         except psycopg.errors.UniqueViolation:
             # Only the url-writing branches can land here, and only if another writer took
             # that url or external_id in the meantime. Replaying converges: the next lookup
@@ -604,6 +624,8 @@ class PostsRepository:
             assignments.append(f"external_id = COALESCE(%(external_id)s, {row}external_id)")
         assignments.extend([
             f"published_at = COALESCE(%(published_at)s, {row}published_at)",
+            f"published_precision = CASE WHEN %(published_at)s::timestamptz IS NULL THEN {row}published_precision"
+            f" ELSE %(published_precision)s END",
             f"title = COALESCE(%(title)s, {row}title)",
             f"content = CASE WHEN {keep} THEN {row}content ELSE COALESCE(%(content)s, {row}content) END",
             f"content_html = CASE WHEN {keep} THEN {row}content_html ELSE COALESCE(%(content_html)s, {row}content_html) END",
@@ -903,6 +925,8 @@ class PostsRepository:
             UPDATE posts SET
                 surfaced_at = CASE WHEN published_at IS NULL AND %(date)s::timestamptz IS NOT NULL
                                    THEN NULL ELSE surfaced_at END,
+                published_precision = CASE WHEN published_at IS NULL AND %(date)s::timestamptz IS NOT NULL
+                                           THEN %(precision)s ELSE published_precision END,
                 published_at = COALESCE(published_at, %(date)s::timestamptz),
                 content = %(content)s,
                 content_html = %(content_html)s,
@@ -917,6 +941,7 @@ class PostsRepository:
             {
                 "id": post_id,
                 "date": post.get("date"),
+                "precision": published_precision(post),
                 "content": post.get("content") or "",
                 "content_html": post.get("content_html"),
                 "content_hash": fields["content_hash"],
@@ -925,6 +950,7 @@ class PostsRepository:
                 "metadata": self._json_dumps(post.get("metadata") or {}),
             },
         )
+        PostPartsRepository.write(cur, [post_id])
 
     def merge_metadata(self, cur: Cursor, post_id: str, metadata: Dict[str, Any]) -> None:
         """Merge keys into a stored post's metadata (a repair's read: checked, its page tries)."""

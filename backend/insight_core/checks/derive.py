@@ -47,25 +47,31 @@ def squash(text: Optional[str]) -> str:
 
 def facts(row) -> Facts:
     from insight_core.checks import compat
-    pid, source_id, platform, title, content, html = row
-    window = compat.title_window()
-    shown = compat.title_function()(title, content and content[:window[0]], html and html[:window[1]])
-    reading = compat.reading_function()
-    if reading is not None:
-        _, text, _ = reading(title, content, html)
+    pid, source_id, platform, title, content, html, *stored = row
+    parts = compat.stored_parts()
+    if stored and parts:   # issue 0076: what the pages read, the post's stored parts (its stored title until parsed)
+        shown, link_target = (stored[0] if stored[0] is not None else title or ""), stored[5]
+        text = (parts[1](content, stored[1:5]) or "")[:TEXT_WINDOW]   # the window the rules read before (above)
     else:
-        text = content
+        window = compat.title_window()
+        shown = compat.title_function()(title, content and content[:window[0]], html and html[:window[1]])
+        reading = compat.reading_function()
+        if reading is not None:
+            _, text, _ = reading(title, content, html)
+        else:
+            text = content
+        link = compat.link_target_function()
+        link_target = link(html) if link else None
     text = text or ""
     head, start = squash(shown).rstrip("…. "), squash(text[: len(shown) + 40])
     footer = next((k for k, rx in FOOTER_RES.items() if rx.search(text)), None)
     card = BYLINE_RE.search(html or "")
-    link = compat.link_target_function()
     return Facts(
         id=pid, source_id=source_id, platform=platform, title=shown, text=text[:TEXT_START],
         has_words=bool(WORD_RE.search(title or "") or WORD_RE.search(content or "")),
         repeats_title=len(head) >= 12 and not shown.endswith("…") and start.startswith(head),
         footer=footer, byline=bool(card and card.group(1) in text),
-        link=link(html) if link else None,
+        link=link_target,
     )
 
 
@@ -74,14 +80,33 @@ SQL = f"""SELECT p.id::text, p.source_id::text, s.platform, p.title, left(p.cont
           WHERE abs(hashtext(p.id::text)) %% %s = %s"""
 
 
+# A version that stores each post's parts (issue 0076): its title, its text's cut points (the whole text,
+# where they cut) and its link, read as its pages read them.
+SQL_PARTS = """SELECT p.id::text, p.source_id::text, s.platform, p.title, p.content, left(p.content_html, {window}),
+                      pp.title, {text_columns}, pp.link_target
+               FROM posts p JOIN sources s ON s.id = p.source_id LEFT JOIN post_parts pp ON pp.post_id = p.id
+               WHERE abs(hashtext(p.id::text)) %% %s = %s"""
+
+
+def _sql(cur) -> str:
+    from insight_core.checks import compat
+    parts = compat.stored_parts()
+    cur.execute("SELECT to_regclass('post_parts') IS NOT NULL")
+    if not parts or not cur.fetchone()[0]:
+        return SQL
+    return SQL_PARTS.format(window=TEXT_WINDOW, text_columns=", ".join(parts[0].split(", ")[:4]))
+
+
 def _share(args) -> List[dict]:
     db_url, workers, k = args
     import psycopg
     out = []
     with psycopg.connect(db_url, options="-c default_transaction_read_only=on -c jit=off") as conn:
+        with conn.cursor() as plain:
+            sql = _sql(plain)
         with conn.cursor(name="facts") as cur:
             cur.itersize = 2000
-            cur.execute(SQL, (workers, k))
+            cur.execute(sql, (workers, k))
             for row in cur:
                 try:
                     out.append(asdict(facts(row)))
