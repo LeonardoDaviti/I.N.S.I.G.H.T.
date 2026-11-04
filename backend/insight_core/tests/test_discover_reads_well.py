@@ -183,6 +183,52 @@ class DiscoverReadsWellTests(unittest.TestCase):
         self.assertNotIn(f"help.tool-{self.mark}.example", [s["key"] for s in got["suggestions"]])
         self.assertIn(f"help.tool-{self.mark}.example", [r["key"] for r in got["references"]])
 
+    def test_a_rebuild_step_that_counts_nothing_keeps_discover_valid(self):
+        """Issue 0080 speed: each rebuild step (keys, threads, names) wrote a new run time that Discover's
+        kept counts and its list were keyed by, so every open during a rebuild counted everything again."""
+        from datetime import datetime, timedelta, timezone
+
+        from insight_core.db.repo_discover import DiscoverRepository
+        from insight_core.db.repo_stories import StoriesRepository
+
+        for n in range(3):
+            self._post(self._voice(n), self._pages("steady"))
+        service = StoriesService(db_url())
+        self._discover()
+        listed = service._discover_all()
+
+        def stamp():
+            sources = SourceFacts(self.cur)
+            return DiscoverRepository.stamp(self.cur, [sorted(sources.kind)]), StoriesRepository.discover_inputs(self.cur)
+
+        self.cur.execute("SELECT value FROM system_settings WHERE key = 'stories'")
+        kept = self.cur.fetchone()
+        self.addCleanup(self._restore_stories, kept[0] if kept else None)
+        first = datetime.now(timezone.utc)
+        service._settle(self.cur, SourceFacts(self.cur), {"computed_at": first.isoformat(), "full": False}, first,
+                        {"discover": []})   # a batch: Discover's inputs are now
+        self.conn.commit()
+        listed = service._discover_all()
+        before = stamp()
+        now = first + timedelta(minutes=1)
+        service._settle(self.cur, SourceFacts(self.cur), {"computed_at": now.isoformat(), "full": False}, now,
+                        {})   # a keys, threads or names step: no addresses to count
+        self.conn.commit()
+        self.assertEqual(stamp(), before, "a keys step: the same inputs")
+        self.assertIs(service._discover_all(), listed, "the list is kept")
+        service._settle(self.cur, SourceFacts(self.cur), {"computed_at": now.isoformat(), "full": False}, now,
+                        {"discover": []})
+        self.conn.commit()
+        self.assertNotEqual(stamp(), before, "a batch: Discover counts again")
+
+    def _restore_stories(self, value):
+        from insight_core.db.repo_operations import SystemSettingsRepository
+        with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
+            if value is None:
+                cur.execute("DELETE FROM system_settings WHERE key = 'stories'")
+            else:
+                SystemSettingsRepository.upsert(cur, "stories", value)
+
     def test_one_page_at_a_time(self):
         voices = [self._voice(n) for n in range(3)]
         for name in ("one", "two", "three"):
