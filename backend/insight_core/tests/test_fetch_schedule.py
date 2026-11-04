@@ -327,6 +327,14 @@ class BackoffDelayTests(unittest.TestCase):
     def test_dormant_sources_wait_up_to_a_week(self):
         self.assertEqual(self.band(10), (7 * D * 0.85, 7 * D))
 
+    def test_the_other_servers_trouble_waits_at_most_12h_however_many_failures(self):
+        # Issue 0086: a 5xx or a timeout is never days; the ladder below the cap is the same.
+        trouble = lambda n, r: backoff_delay(n, rand=lambda: r, their_trouble=True)  # noqa: E731
+        self.assertEqual((trouble(4, 0.0), trouble(4, 1.0)), self.band(4))
+        for n in (5, 6, 10, 11, 500):
+            with self.subTest(n=n):
+                self.assertEqual((trouble(n, 0.0), trouble(n, 1.0)), (12 * H * 0.85, 12 * H))
+
     def test_no_failures_no_wait(self):
         self.assertEqual(backoff_delay(0), timedelta(0))
         self.assertEqual(backoff_delay(-1), timedelta(0))

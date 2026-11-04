@@ -59,6 +59,11 @@ class HttpError(ValueError):
         self.timed_out = timed_out
 
     @property
+    def their_trouble(self) -> bool:
+        """The other server's trouble (issue 0086): an HTTP 5xx or no answer in time, usually over within hours."""
+        return self.timed_out or (self.status or 0) >= 500
+
+    @property
     def limiting(self) -> bool:
         """The host is limiting us (429) or not answering in time: wait, slow down, retry once."""
         return self.status == 429 or self.timed_out
