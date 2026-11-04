@@ -20,7 +20,7 @@ function replacementLabel(replacement: SourceReplacement): string {
  * The source doctor's finding on a broken source (issue 0036), in the source sheet: the
  * replacement it found, with Switch (the source keeps its name, tracks and posts) and
  * Dismiss (until the next failure streak), or that it looked and found none. A server error is no
- * move (issue 0072 D3): the site's own server is failing (issue 0086: named), and INSIGHT keeps retrying.
+ * move (issue 0072 D3): the site's own server is failing (issue 0088: named), and INSIGHT keeps retrying.
  */
 export default function ReplacementNotice({ row, now, onSwitched }: { row: SourceHealthRow; now: Date; onSwitched: () => void }) {
   const api = useApi();

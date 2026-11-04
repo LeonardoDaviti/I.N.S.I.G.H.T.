@@ -29,7 +29,7 @@ describe('ReplacementNotice', () => {
     expect(screen.queryByText('This source stopped working.')).not.toBeInTheDocument();
   });
 
-  it('names the site on a timeout too (issue 0086)', () => {
+  it('names the site on a timeout too (issue 0088)', () => {
     setup(broken({ doctor_looked_at: null, replacement: null, server_error: { status: null, site: 'example.org' } }));
     expect(screen.getByText("example.org is failing (no answer in time): its own server didn't answer, usually temporary.")).toBeInTheDocument();
   });

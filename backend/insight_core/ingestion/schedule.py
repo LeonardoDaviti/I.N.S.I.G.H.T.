@@ -30,7 +30,7 @@ BACKOFF_BASE = timedelta(minutes=env_float("INSIGHT_BACKOFF_BASE_MINUTES", 60))
 BACKOFF_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_MAX_HOURS", 24))
 BACKOFF_DORMANT_AFTER = int(env_float("INSIGHT_BACKOFF_DORMANT_AFTER", 10))
 BACKOFF_DORMANT_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_DORMANT_MAX_HOURS", 168))
-# A 5xx or a timeout is the other server's trouble (issue 0086): the same ladder, capped at 12h
+# A 5xx or a timeout is the other server's trouble (issue 0088): the same ladder, capped at 12h
 # however many failures in a row, so such a source is never dormant.
 BACKOFF_SERVER_MAX = timedelta(hours=env_float("INSIGHT_BACKOFF_SERVER_MAX_HOURS", 12))
 
@@ -251,7 +251,7 @@ def fetch_interval(stats: CadenceStats, profile: PolitenessProfile) -> tuple[tim
 def backoff_delay(consecutive_failures: int, *, rand: Callable[[], float] = random.random,
                   their_trouble: bool = False) -> timedelta:
     """min(base * 2^(n-1), cap) * U(0.85, 1.0); the cap rises to 7d for dormant sources, and is
-    12h whatever n when the error was the other server's trouble (a 5xx or a timeout, issue 0086).
+    12h whatever n when the error was the other server's trouble (a 5xx or a timeout, issue 0088).
 
     Jitter is applied to the capped delay and only downward, so the cap is a bound an
     operator can read as one, and a cohort at the cap does not wake in the same second.

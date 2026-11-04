@@ -335,7 +335,7 @@ class NeverOfferedTests(unittest.TestCase):
                          generic(), Availability(True, False), NOW)
         self.assertEqual((row["doctor_looked_at"], row["replacement"]), (None, None))
         self.assertEqual(row["server_error"], {"status": 502, "site": "feeds.example"},
-                         "the sheet says whose server is failing (issues 0072 D3, 0086)")
+                         "the sheet says whose server is failing (issues 0072 D3, 0088)")
 
     @requires_test_db
     def test_0058_rewrites_what_was_stored_before_the_check(self):

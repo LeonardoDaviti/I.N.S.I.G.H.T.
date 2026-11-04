@@ -169,7 +169,7 @@ class SourceHealthTests(unittest.TestCase):
         self.assertTrue(self.rows["erroring"]["dormant"])
 
     def test_dormant_is_what_it_waits(self):
-        # Issue 0086: 11 failures of a 5xx wait 12h: not dormant; 11 of a 404 wait 7 days: dormant.
+        # Issue 0088: 11 failures of a 5xx wait 12h: not dormant; 11 of a 404 wait 7 days: dormant.
         from insight_core.services.operations_service import _dormant
         failing = lambda wait: FetchStateRow(source_id="s", consecutive_failures=11, last_error_at=NOW,  # noqa: E731
                                              next_retry_at=NOW + wait)

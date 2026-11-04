@@ -328,7 +328,7 @@ class BackoffDelayTests(unittest.TestCase):
         self.assertEqual(self.band(10), (7 * D * 0.85, 7 * D))
 
     def test_the_other_servers_trouble_waits_at_most_12h_however_many_failures(self):
-        # Issue 0086: a 5xx or a timeout is never days; the ladder below the cap is the same.
+        # Issue 0088: a 5xx or a timeout is never days; the ladder below the cap is the same.
         trouble = lambda n, r: backoff_delay(n, rand=lambda: r, their_trouble=True)  # noqa: E731
         self.assertEqual((trouble(4, 0.0), trouble(4, 1.0)), self.band(4))
         for n in (5, 6, 10, 11, 500):

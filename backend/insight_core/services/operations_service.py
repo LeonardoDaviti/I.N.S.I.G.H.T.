@@ -282,7 +282,7 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
 
 
 def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
-    """Dormant is what it waits (issue 0086): 10 failures in a row and a wait past the 24h cap. A 5xx
+    """Dormant is what it waits (issue 0088): 10 failures in a row and a wait past the 24h cap. A 5xx
     or a timeout waits at most 12h however many failures, so it is never dormant."""
     if failures < BACKOFF_DORMANT_AFTER:
         return False
@@ -297,7 +297,7 @@ def _doctor_fields(state: Optional[FetchStateRow], address: Optional[str] = None
     error, nothing to replace, or the site answered a server error: no move, issue 0072) and the
     replacement it found ({kind: feed|page_watch, url, title, found, prefix, shared, latest};
     None: nothing found), and `server_error` {status, site} when it read a server error (issue 0072 D3;
-    `site`, issue 0086: whose server, "example.org", "" when the address has no host)."""
+    `site`, issue 0088: whose server, "example.org", "" when the address has no host)."""
     finding = (state.doctor_finding if state else None) or {}
     # A server error is no move (issue 0072 D3): the sheet says the server is failing, {status} (None: timed out).
     failing = {"status": finding.get("status"), "site": publication_of(host_of(address))} if state and state.doctor_checked_at and finding.get("server_error") else None

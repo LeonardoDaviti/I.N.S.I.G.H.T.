@@ -184,7 +184,7 @@ class IngestionRunnerDecisionTests(unittest.IsolatedAsyncioTestCase):
 
 class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_5xx_or_a_timeout_retries_within_hours_never_days(self):
-        # Issue 0086: an eleventh failure in a row waits 7 days, unless it was the other server's trouble.
+        # Issue 0088: an eleventh failure in a row waits 7 days, unless it was the other server's trouble.
         errors = {"https://gateway.test/rss": HttpError("HTTP 502 while fetching", status=502),
                   "https://slow.test/rss": HttpError("Timed out fetching", timed_out=True),
                   "https://gone.test/rss": HttpError("HTTP 404 while fetching", status=404),
