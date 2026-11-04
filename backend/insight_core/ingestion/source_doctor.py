@@ -92,7 +92,7 @@ def failure_signal(error: Optional[BaseException]) -> Optional[str]:
     does not parse as a feed), else None."""
     if isinstance(error, HttpError) and error.status in GONE_STATUSES:
         return "gone"
-    if isinstance(error, HttpError) and (error.timed_out or (error.status or 0) >= 500):
+    if isinstance(error, HttpError) and error.their_trouble:
         return "server_error"
     if isinstance(error, ET.ParseError):
         return "not_feed"

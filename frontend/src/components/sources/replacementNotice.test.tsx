@@ -23,10 +23,15 @@ function setup(row: SourceHealthRow, api: Record<string, unknown> = {}) {
 
 describe('ReplacementNotice', () => {
   it('says a server error is the server failing, retried, not a source that stopped (issue 0072 D3)', () => {
-    setup(broken({ doctor_looked_at: null, replacement: null, server_error: { status: 502 } }));
-    expect(screen.getByText('The server is failing (HTTP 502).')).toBeInTheDocument();
+    setup(broken({ doctor_looked_at: null, replacement: null, server_error: { status: 502, site: 'example.org' } }));
+    expect(screen.getByText("example.org is failing (HTTP 502): its own server didn't answer, usually temporary.")).toBeInTheDocument();
     expect(screen.getByText("The address hasn't moved; INSIGHT keeps retrying.")).toBeInTheDocument();
     expect(screen.queryByText('This source stopped working.')).not.toBeInTheDocument();
+  });
+
+  it('names the site on a timeout too (issue 0088)', () => {
+    setup(broken({ doctor_looked_at: null, replacement: null, server_error: { status: null, site: 'example.org' } }));
+    expect(screen.getByText("example.org is failing (no answer in time): its own server didn't answer, usually temporary.")).toBeInTheDocument();
   });
 
   it('offers the feed it found, by title and address', () => {

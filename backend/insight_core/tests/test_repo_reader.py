@@ -579,6 +579,20 @@ class ReaderRepositoryTests(unittest.TestCase):
         self.assertEqual(counts["by_folder"][folder], 2)
         self.assertIn("total", counts)
 
+    def test_unread_counts_give_each_sources_newest_unread_post(self):
+        # Issue 0088: the rail orders sources by it; a read post, however new, is not its newest unread.
+        source = self._source()
+        older = self._post(source, self.now - timedelta(hours=5))
+        self._post(source, self.now - timedelta(hours=2))
+        newest = self._post(source, self.now - timedelta(hours=1))
+        self.repo.set_read(self.cur, [newest], True)
+
+        counts = self.repo.unread_counts(self.cur)
+
+        self.assertEqual(datetime.fromisoformat(counts["newest_unread"][source]), self.now - timedelta(hours=2))
+        self.repo.set_read(self.cur, [older], True)
+        self.assertEqual(self.repo.unread_counts(self.cur)["by_source"][source], 1)
+
 
 class UnreadWindowFromEnvTests(unittest.TestCase):
     def _with_env(self, value):

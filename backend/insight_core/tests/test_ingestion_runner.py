@@ -183,6 +183,27 @@ class IngestionRunnerDecisionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class IngestionRunnerOutcomeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_5xx_or_a_timeout_retries_within_hours_never_days(self):
+        # Issue 0088: an eleventh failure in a row waits 7 days, unless it was the other server's trouble.
+        errors = {"https://gateway.test/rss": HttpError("HTTP 502 while fetching", status=502),
+                  "https://slow.test/rss": HttpError("Timed out fetching", timed_out=True),
+                  "https://gone.test/rss": HttpError("HTTP 404 while fetching", status=404),
+                  "https://broken.test/rss": ValueError("not a feed")}
+
+        def fail(source, limit):
+            raise errors[source["handle_or_url"]]
+
+        sources = [_source(url) for url in errors]
+        rows = {s["id"]: FetchStateRow(source_id=s["id"], last_outcome="error", consecutive_failures=10)
+                for s in sources}
+        h = _Harness(sources, [_rss_kind(fail)], rows=rows)
+        await h.run(force=True)
+        waits = {s["handle_or_url"]: h.state.rows[s["id"]].next_retry_at - NOW for s in sources}
+        self.assertEqual(waits["https://gateway.test/rss"], timedelta(hours=12))
+        self.assertEqual(waits["https://slow.test/rss"], timedelta(hours=12))
+        self.assertEqual(waits["https://gone.test/rss"], timedelta(days=7), "a 404 keeps today's ladder")
+        self.assertEqual(waits["https://broken.test/rss"], timedelta(days=7))
+
     async def test_a_raising_kind_records_an_error_with_deterministic_backoff(self):
         def boom(source, limit):
             if "bad" in source["handle_or_url"]:

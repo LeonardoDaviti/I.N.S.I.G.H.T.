@@ -286,7 +286,8 @@ class IngestionRunner:
                                                                   error=f"save: {error}")
                 rows = await self._safely(
                     "record outcomes", self.state.record_outcomes, [outcome], trigger=request.trigger,
-                    now=self.clock(), backoff=lambda n: backoff_delay(n, rand=self.rand),
+                    now=self.clock(), backoff=lambda n: backoff_delay(
+                        n, rand=self.rand, their_trouble=isinstance(f.error, HttpError) and f.error.their_trouble),
                 )
                 if f.memory is not None and outcome.status.is_success:
                     if (saved.by_source.get(source["id"]) or {}).get("failed"):

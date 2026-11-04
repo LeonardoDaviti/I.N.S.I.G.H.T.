@@ -40,6 +40,7 @@ from psycopg import Cursor
 from insight_core.db.repo_stories import source_account
 from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
+from insight_core.utils.json_safe import iso
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
 from insight_core.utils.post_links import source_kind
@@ -971,20 +972,23 @@ class ReaderRepository:
 
     def unread_counts(self, cur: Cursor) -> Dict[str, Any]:
         """{total (main digest), by_source: {id: n}, by_folder: {id: n}} of unread posts (all-time unless a window is set),
+        `newest_unread`: {id: when} each source's newest unread post, as "By source" orders its groups (issue 0088),
         and `later`: {count, minutes}, every post in Later and what reading them costs. The total and a
         track's count are rows, as those feeds show them (a story with unread posts is one, issue 0050);
         a source's count is its posts."""
         window_sql, window_params = self._window_sql()
         cur.execute(
             f"""
-            SELECT p.source_id, COUNT(*)
+            SELECT p.source_id, COUNT(*), MAX({SORT_KEY})
             FROM posts p
             WHERE {NOT_ALBUM_PIECE} AND {UNREAD_SQL} AND {window_sql}
             GROUP BY p.source_id
             """,
             window_params,
         )
-        by_source: Dict[str, int] = {str(source_id): int(n) for source_id, n in cur.fetchall()}
+        rows = cur.fetchall()
+        by_source: Dict[str, int] = {str(source_id): int(n) for source_id, n, _ in rows}
+        newest_unread: Dict[str, Optional[str]] = {str(source_id): iso(newest) for source_id, _, newest in rows}
         cur.execute(
             f"""
             SELECT sf.folder_id, COUNT(DISTINCT COALESCE(sp.story_id, p.id))
@@ -1019,5 +1023,5 @@ class ReaderRepository:
             """
         )
         later_count, later_minutes = cur.fetchone()
-        return {"total": total, "by_source": by_source, "by_folder": by_folder,
+        return {"total": total, "by_source": by_source, "newest_unread": newest_unread, "by_folder": by_folder,
                 "later": {"count": int(later_count), "minutes": int(later_minutes)}}

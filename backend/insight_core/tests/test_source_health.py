@@ -168,6 +168,15 @@ class SourceHealthTests(unittest.TestCase):
         self.assertFalse(backoff["dormant"])
         self.assertTrue(self.rows["erroring"]["dormant"])
 
+    def test_dormant_is_what_it_waits(self):
+        # Issue 0088: 11 failures of a 5xx wait 12h: not dormant; 11 of a 404 wait 7 days: dormant.
+        from insight_core.services.operations_service import _dormant
+        failing = lambda wait: FetchStateRow(source_id="s", consecutive_failures=11, last_error_at=NOW,  # noqa: E731
+                                             next_retry_at=NOW + wait)
+        self.assertFalse(_dormant(11, failing(12 * H)))
+        self.assertTrue(_dormant(11, failing(7 * 24 * H)))
+        self.assertFalse(_dormant(9, failing(7 * 24 * H)), "fewer than 10 in a row is never dormant")
+
         tube = self.rows["tube"]
         self.assertEqual(tube["decision"], "skip_unavailable")
         self.assertIsNone(tube["next_due_at"])

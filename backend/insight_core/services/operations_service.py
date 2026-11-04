@@ -18,6 +18,7 @@ from insight_core.ingestion.kinds.parsing import lost_most_images
 from insight_core.ingestion.kinds.saved import PLATFORM as SAVED_PLATFORM
 from insight_core.ingestion.schedule import (
     BACKOFF_DORMANT_AFTER,
+    BACKOFF_MAX,
     Availability,
     DecisionKind,
     FetchDecision,
@@ -27,6 +28,7 @@ from insight_core.ingestion.schedule import (
     unavailable_reason,
 )
 from insight_core.logs.core.logger_config import get_component_logger
+from insight_core.utils.addresses import host_of, publication_of
 from insight_core.utils.env import env_float
 from insight_core.utils.json_safe import iso, json_safe
 
@@ -274,20 +276,31 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         "last_error_at": iso(state.last_error_at if state else None),
         "consecutive_failures": failures,
         "next_retry_at": iso(stats.next_retry_at),
-        "dormant": failures >= BACKOFF_DORMANT_AFTER,
-        **_doctor_fields(state),
+        "dormant": _dormant(failures, state),
+        **_doctor_fields(state, source.get("handle_or_url")),
     }
 
 
-def _doctor_fields(state: Optional[FetchStateRow]) -> Dict[str, Any]:
+def _dormant(failures: int, state: Optional[FetchStateRow]) -> bool:
+    """Dormant is what it waits (issue 0088): 10 failures in a row and a wait past the 24h cap. A 5xx
+    or a timeout waits at most 12h however many failures, so it is never dormant."""
+    if failures < BACKOFF_DORMANT_AFTER:
+        return False
+    if state is None or state.next_retry_at is None or state.last_error_at is None:
+        return True
+    return state.next_retry_at - state.last_error_at > BACKOFF_MAX
+
+
+def _doctor_fields(state: Optional[FetchStateRow], address: Optional[str] = None) -> Dict[str, Any]:
     """The source doctor's finding (issue 0036): when it looked (None: it has not, in this
     failure streak, or the owner dismissed it, or the old address read again: a temporary
     error, nothing to replace, or the site answered a server error: no move, issue 0072) and the
     replacement it found ({kind: feed|page_watch, url, title, found, prefix, shared, latest};
-    None: nothing found), and `server_error` {status} when it read a server error (issue 0072 D3)."""
+    None: nothing found), and `server_error` {status, site} when it read a server error (issue 0072 D3;
+    `site`, issue 0088: whose server, "example.org", "" when the address has no host)."""
     finding = (state.doctor_finding if state else None) or {}
     # A server error is no move (issue 0072 D3): the sheet says the server is failing, {status} (None: timed out).
-    failing = {"status": finding.get("status")} if state and state.doctor_checked_at and finding.get("server_error") else None
+    failing = {"status": finding.get("status"), "site": publication_of(host_of(address))} if state and state.doctor_checked_at and finding.get("server_error") else None
     if (state is None or state.doctor_checked_at is None or finding.get("dismissed")
             or finding.get("working_again") or finding.get("server_error")):
         return {"doctor_looked_at": None, "replacement": None, "server_error": failing}

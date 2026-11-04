@@ -110,7 +110,8 @@ describe('ReaderNavRail', () => {
     const KAITCHUP = '11111111-0000-4000-8000-00000000000a';
     const CAFE = '11111111-0000-4000-8000-00000000000b';
 
-    function setupDirectory(extraRows: Parameters<typeof healthRow>[0][] = [], byExtra: Record<string, number> = {}, settings: object[] = []) {
+    function setupDirectory(extraRows: Parameters<typeof healthRow>[0][] = [], byExtra: Record<string, number> = {}, settings: object[] = [],
+      newest: Record<string, string> = {}) {
       const rows = [
         healthRow({ source_id: SOURCE, display_name: 'Simon Willison’s Weblog' }),
         healthRow({ source_id: KAITCHUP, display_name: 'The Kaitchup', kind: 'substack', platform: 'substack', in_main_digest: false, enabled: false }),
@@ -120,7 +121,7 @@ describe('ReaderNavRail', () => {
       const getSources = vi.fn().mockResolvedValue({ success: true, total: settings.length, sources: settings });
       const api = makeFakeApi({
         getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ source_id: SOURCE })])),
-        getUnreadCounts: vi.fn().mockResolvedValue({ total: 7, by_source: { [SOURCE]: 7, [CAFE]: 3, ...byExtra }, by_folder: {} }),
+        getUnreadCounts: vi.fn().mockResolvedValue({ total: 7, by_source: { [SOURCE]: 7, [CAFE]: 3, ...byExtra }, by_folder: {}, newest_unread: newest }),
         getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
         getSourcesHealth: vi.fn().mockResolvedValue(healthResponse(rows)),
         getSources,
@@ -137,6 +138,30 @@ describe('ReaderNavRail', () => {
       await within(rail).findByRole('link', { name: firstLink });
       return { rail, field: within(rail).getByRole('textbox', { name: 'Filter sources' }) };
     }
+
+    it('lists sources with unread by their newest unread post, not by how many (issue 0088)', async () => {
+      const ZETA = '11111111-0000-4000-8000-00000000000c';
+      const api = makeFakeApi({
+        getFeed: vi.fn().mockResolvedValue(feedPage([feedItem({ source_id: SOURCE })])),
+        getUnreadCounts: vi.fn().mockResolvedValue({
+          total: 13, by_folder: {}, by_source: { [SOURCE]: 9, [CAFE]: 2, [ZETA]: 2 },
+          newest_unread: { [SOURCE]: '2026-11-01T08:00:00+00:00', [CAFE]: '2026-11-03T08:00:00+00:00', [ZETA]: '2026-11-03T08:00:00+00:00' },
+        }),
+        getFolders: vi.fn().mockResolvedValue({ success: true, folders: [] }),
+        getSourcesHealth: vi.fn().mockResolvedValue(healthResponse([
+          healthRow({ source_id: SOURCE, display_name: 'Simon Willison’s Weblog' }),
+          healthRow({ source_id: ZETA, display_name: 'Zeta' }),
+          healthRow({ source_id: CAFE, display_name: 'Café Tech' }),
+        ])),
+      });
+      renderWithProviders(<Routes><Route path="/" element={<ReaderPage />} /></Routes>, { api, route: '/' });
+      const rail = await screen.findByRole('navigation', { name: 'Main feed, tracks and sources' });
+      await within(rail).findByRole('link', { name: /Zeta/ });
+      const names = within(rail).getAllByRole('link').map((link) => link.getAttribute('title'))
+        .filter((title) => title && /Café Tech|Zeta|Simon Willison/.test(title));
+      expect(names).toEqual(['Café Tech', 'Zeta', 'Simon Willison’s Weblog']);
+      expect(within(rail).getByRole('link', { name: /Simon Willison’s Weblog.*9 unread/ })).toBeInTheDocument();
+    });
 
     it('searches every source, including ones with nothing unread and outside the main digest', async () => {
       const user = userEvent.setup();
@@ -226,7 +251,8 @@ describe('ReaderNavRail', () => {
     it('expands the full list inline, all sources, still filterable', async () => {
       const user = userEvent.setup();
       const many = Array.from({ length: 13 }, (_, index) => ({ source_id: `22222222-0000-4000-8000-0000000000${String(index).padStart(2, '0')}`, display_name: `Feed ${index}` }));
-      setupDirectory(many, Object.fromEntries(many.map((row, index) => [row.source_id, 20 + index])));
+      setupDirectory(many, Object.fromEntries(many.map((row, index) => [row.source_id, 20 + index])), [],
+        Object.fromEntries(many.map((row, index) => [row.source_id, `2026-11-03T${String(index + 10)}:00:00+00:00`])));
       const { rail, field } = await railAndField(/^Feed 12/);
       expect(within(rail).getAllByRole('link', { name: /^Feed \d+/ })).toHaveLength(12);
       expect(within(rail).queryByRole('link', { name: 'The Kaitchup' })).not.toBeInTheDocument();

@@ -99,11 +99,12 @@ function RailContent({ scope, counts, search, scopeHref, onNavigate }: {
   const href = scopeHref ?? ((to: string) => `${scopePath(to)}${search}`);
   const unread = (id: string) => counts?.by_source?.[id] ?? 0;
 
-  // Most unread first, then by name. A source the directory cannot name (deleted)
-  // has no row: "Unknown source 12,847" is noise; its posts stay in the main feed.
-  const allSources = useMemo(() => [...directory.sources].sort((a, b) => (
-    (counts?.by_source?.[b.id] ?? 0) - (counts?.by_source?.[a.id] ?? 0) || a.label.localeCompare(b.label)
-  )), [directory.sources, counts]);
+  // Newest unread post first (as By source orders its groups, issue 0088), then by name. A source the
+  // directory cannot name (deleted) has no row: "Unknown source 12,847" is noise; its posts stay in the main feed.
+  const allSources = useMemo(() => {
+    const newest = (id: string) => Date.parse(counts?.newest_unread?.[id] as string) || 0;
+    return [...directory.sources].sort((a, b) => newest(b.id) - newest(a.id) || a.label.localeCompare(b.label));
+  }, [directory.sources, counts]);
   const unreadSources = allSources.filter((source) => unread(source.id) > 0);
   const shownSources = filtering
     ? allSources.filter((source) => matchesSource(source, words))
