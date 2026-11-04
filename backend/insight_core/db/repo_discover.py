@@ -61,6 +61,8 @@ LOCK_KEY = "insight.discover_addresses"
 _SEGMENTS = ("array_remove(string_to_array(lower(regexp_replace(regexp_replace({url}, '^[a-z]+://[^/]*/?', ''), "
              "'[?#].*$', '') COLLATE \"und-x-icu\"), '/'), '')")
 KEPT_KEY = "discover_counts"   # Discover's counts between story runs (system_settings, issue 0067)
+# When Discover's inputs last changed (issue 0080 speed: StoriesService._settle), else the last story run.
+DISCOVER_AT = "COALESCE(value->>'discover_at', value->>'computed_at')"
 READS_KEY = "discover_reads"   # the follow tests and page titles Discover read (system_settings, issue 0080)
 WORK_MEM = "48MB"
 
@@ -440,7 +442,7 @@ class DiscoverRepository:
         the addresses'), the last story run (links are read and classics refreshed before it) and
         `facts`, the facts of the sources with posts (a source with none links nothing). Same stamp,
         same counts."""
-        cur.execute("SELECT value->>'computed_at' FROM system_settings WHERE key = 'stories'")
+        cur.execute(f"SELECT {DISCOVER_AT} FROM system_settings WHERE key = 'stories'")
         row = cur.fetchone()
         what = json.dumps([_COUNTS, _COUNT_RULES, ADDRESS_RULES, row[0] if row else None, facts])
         return hashlib.sha1(what.encode()).hexdigest()[:16]

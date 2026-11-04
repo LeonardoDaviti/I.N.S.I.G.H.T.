@@ -215,6 +215,46 @@ From main b26874d, with main merged in twice (0083, 0075's scratch names). It is
   - Decision 1 (one name for a source) and item 8 (health): other branches.
   - Measuring the follow test's labels on the first 60, and the answer time with stored tests: both need the server, since nothing is fetched here.
 
+## Built: Discover's speed (2026-11-05, branch `issue-0080-discover-speed`)
+
+**The case:** after 0080 merged, the lab's Discover took 29.5 s on its first open after start and 32.0 s on the second, then 9 ms. v9.12 measured 239 ms cold.
+
+**The first start after 0080 rebuilds every story.**
+- 0080 changes the rules, so the incremental job rebuilds in about 74 bounded steps: every post's keys, the X threads and the names, then every post queued in batches.
+- On a copy of the lab it took 1,433-1,722 s (24-29 min) at load 12-21. Plan for about half an hour on the lab. Each step is its own transaction, and the old rows are served until a batch replaces them.
+
+**Cause:**
+- Every rebuild step wrote a new `stories.computed_at`.
+- Discover's kept counts are stamped with that value (`DiscoverRepository.stamp`). Its in-process list is keyed by the whole `stories` setting (`discover_inputs`).
+- The keys, threads and names steps carry no addresses to count, so nothing re-kept the counts. Every open during the rebuild counted every kept link again: the counts SQL, the platform query, the mirrors and the titles, 7 s at load 3 and 12-51 s at load 12.
+- The lab's two slow opens were two such full counts; 9 ms came once the rebuild was over.
+- The counting itself costs what it did, give or take: the self-link test adds 0.1 s.
+
+**Fix:**
+- `_settle` keeps `discover_at`, when what Discover counts last changed. It moves only on a batch, a full run, links read, or a step that changed boilerplate links.
+- A setting from before it keeps its last run's time as `discover_at`, so counts kept by the old code stay valid across the deploy.
+- The stamp and `discover_inputs` read `discover_at`.
+- A story run's incremental count keeps the kept platforms; the platform query (2.3 s) runs only on a full count.
+
+**Measured** (copies of the lab, Discover opened by a fresh service, as after a start):
+
+| | main | this branch |
+|---|---|---|
+| a settled copy | 0.41 / 0.35 s | 0.44 / 0.33 s |
+| after each of 4 rebuild steps (load 3) | 7.23, 7.21, 7.35, 7.30 s | 0.39, 0.38, 0.36, 0.39 s (8 steps: at most 0.74 s) |
+| a cached open, same process | 0 s | 0 s |
+
+During a whole rebuild run in its own process, the branch opened Discover 48 times, every 30 s. **None counted again.**
+- The median was 1.14 s and 30 of 48 took under 1.2 s.
+- The slow ones, up to 27 s, were single small reads stalled while the job saturated the database at load 15-21 (`discover_inputs`' three subqueries took 21 s once). Every other page's reads wait the same way then.
+- After the rebuild, an open took 0.55 s.
+
+**What Discover does during the rebuild now:** it serves the counts kept before the deploy, and the list it shows changes only as the rebuild's batches replace stories. The last step ("all") counts once in the job, not in an open.
+
+**Checks:**
+- `./run-tests.sh` (rebased on main 4bf7a2a): 1,419 OK, including a test that a step with nothing to count keeps the stamp, the inputs and the list, and that a batch moves them.
+- `scripts/realdata-check.sh insight_lab` (scratch `insight_lab_8001a/b`): **PASS**, with no case and no invariant changed.
+
 ## Not in this issue
 - Reading walled or JavaScript-only sites (0081).
 - Mark X's "same voice" (0078 channels).

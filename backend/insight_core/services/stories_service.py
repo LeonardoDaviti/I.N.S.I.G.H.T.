@@ -117,7 +117,10 @@ class StoriesService:
         step = self.step(cur, sources, previous, now, window=not totals)
         if step is None:
             return False
-        totals.update(step.pop("counts"))
+        counts = step.pop("counts")
+        totals.update(counts)
+        if counts.get("boilerplate_changed"):   # kept links became boilerplate or stopped being: Discover counts them
+            step["links_changed"] = True
         summary = {"computed_at": now.isoformat(), "full": False, "links_filled": links_filled, **totals,
                    "batches": totals["batches"], "seconds": round(time.monotonic() - (started or time.monotonic()), 2)}
         self._settle(cur, sources, summary, now, step)
@@ -140,10 +143,19 @@ class StoriesService:
     def _settle(self, cur: Any, sources: SourceFacts, summary: Dict[str, Any], now: datetime,
                 state: Dict[str, Any]) -> None:
         """The run's setting: its summary, what the stored rows are (their rules, the sources' facts,
-        News's window) and a rebuild's progress (Background work reads it)."""
+        News's window, when Discover's inputs last changed) and a rebuild's progress (Background work reads it)."""
         previous = (SystemSettingsRepository.get(cur, SETTINGS_KEY) or ({}, None))[0] or {}
-        value = {**{k: v for k, v in previous.items() if k in ("rules", "full_at", "facts", "rebuild", "news_since")},
+        value = {**{k: v for k, v in previous.items() if k in ("rules", "full_at", "facts", "rebuild", "news_since",
+                                                                "discover_at")},
                  **summary, **self.repo.counts(cur)}
+        # When what Discover counts from last changed (issue 0080 speed): a batch (its links, stories and
+        # Classics), a full run, links read. A rebuild's other steps (keys, threads, names) change none of it,
+        # so Discover's kept counts and its list stay valid through them.
+        # Settings from before discover_at keep their last run's time as it, so the counts kept by it hold.
+        value["discover_at"] = previous.get("discover_at") or previous.get("computed_at") or now.isoformat()
+        if (summary.get("full") or state.get("discover") is not None or state.get("links_changed")
+                or summary.get("links_filled")):
+            value["discover_at"] = now.isoformat()
         for key in ("rules", "full_at", "rebuild"):
             if key in state:
                 value[key] = state[key]
@@ -530,8 +542,9 @@ class StoriesService:
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
         counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules, the
         mirrors and the platforms hold, only the keys of those addresses are counted again (a source whose
-        facts change has its posts queued, so the addresses they link are a run's too). The platforms
-        the data finds (issue 0080) are found again with each count.
+        facts change has its posts queued, so the addresses they link are a run's too), by the kept
+        platforms; a full count finds the platforms the data finds again (issue 0080: 2.3 s on the lab, and a
+        story run's few links don't move them).
         {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}."""
         accounts = sources.platform_accounts()
         own_sites = {i: sources.publication(i) for i in sources.kind}
@@ -542,10 +555,9 @@ class StoriesService:
         kept = DiscoverRepository.kept(cur)
         if kept and kept["stamp"] == stamp:
             return kept
-        platforms = DiscoverRepository.platforms(cur, kinds=sources.kind, own_sites=own_sites, selves=selves)
         mirrors, scanned_to = DiscoverRepository.mirrors(cur, kept)
-        if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"]
-                and platforms == _platforms(kept)):
+        if urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"] and "platforms" in kept:
+            platforms = _platforms(kept)
             keys = DiscoverRepository.keys_of(cur, urls, platforms)
             found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, platforms=platforms, **ask)
             # An article's title changes only with the posts at it or linking it: those of the run's addresses.
@@ -554,6 +566,7 @@ class StoriesService:
             found += [s for s in kept["found"] if s["key"] not in keys]
             DiscoverRepository.name_voices(cur, found, ask["kinds"], ask["own_sites"])   # a site's namer may move
         else:
+            platforms = DiscoverRepository.platforms(cur, kinds=sources.kind, own_sites=own_sites, selves=selves)
             found, unknown = DiscoverRepository.counts(cur, mirrors=mirrors, platforms=platforms, **ask)
             if unknown:   # addresses no story run has worked out yet (the job does it after reading links)
                 DiscoverRepository.fill_addresses(cur, accounts, platforms=platforms)

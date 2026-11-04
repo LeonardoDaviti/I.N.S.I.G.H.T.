@@ -673,12 +673,13 @@ class StoriesRepository:
 
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:
-        """What Discover is computed from, in one string: the last story run (links are read before
-        it), the sources (added, removed, renamed), the hidden suggestions and what Discover read of the
-        web (issue 0080). Same string, same list."""
+        """What Discover is computed from, in one string: when a story run last changed what it counts
+        (StoriesService._settle's discover_at: links, stories, Classics), the sources (added, removed,
+        renamed), the hidden suggestions and what Discover read of the web (issue 0080). Same string, same list."""
         cur.execute(
             """
-            SELECT concat_ws('|', (SELECT value::text FROM system_settings WHERE key = 'stories'),
+            SELECT concat_ws('|', (SELECT COALESCE(value->>'discover_at', value->>'computed_at') FROM system_settings
+                                   WHERE key = 'stories'),
                              (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM sources),
                              (SELECT count(*) || ':' || COALESCE(max(hidden_at)::text, '') FROM discover_hidden),
                              (SELECT updated_at::text FROM system_settings WHERE key = 'discover_reads'))
