@@ -163,7 +163,7 @@ When an update changes what the story rules make (their stamp, worked out at sta
 sample: `utils/stamps.py`), the story job regroups every post in batches in the background, old
 stories too, while the reader shows the stories of the old rules until each batch replaces them;
 Background work says "regrouping every post by new rules, X of Y". On the lab's data that took
-~23 min and peaked at ~210 MB on a busy machine. **The first start after v9.15's migration 0059 is
+~23 min and peaked at ~210 MB on a busy machine (the lab's own first start, 2026-11-04: 1,670 s, about 28 min; plan for 25–30 min). **The first start after v9.15's migration 0059 is
 such a rebuild**, and three things change once with it: story ids (a story keeps the id of its post
 stored first), a date alone counts as that day's first timed post of its story, and News keeps the
 last 30 days even after a full run. A full rebuild at once is still there by hand:
