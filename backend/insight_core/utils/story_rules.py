@@ -97,6 +97,7 @@ class StoryPost:
     author_source: Optional[str] = None
     stored_at: Optional[datetime] = None   # when INSIGHT stored it (posts.created_at): what a story's id keeps to (0072)
     date_alone: Optional[bool] = None      # its time is a date alone; None: told by the time (`date_only`)
+    undated: bool = False                  # the source gave no date: its time is when it was fetched (0076)
 
     @property
     def other_sources(self) -> Tuple[str, ...]:
@@ -131,8 +132,9 @@ class StoryPost:
     @property
     def trusted_time(self) -> bool:
         """Its time can order it (issue 0064): a time of day (not a date alone, 00:00:00), not a
-        Saved page (the day you saved it), not a watched page updated since its date."""
-        return not (self.kind == "saved" or self.updated or self.date_only)
+        Saved page (the day you saved it), not a watched page updated since its date, not a post its
+        source gave no date (issue 0076: its fetch's time, or a made-up backlog time)."""
+        return not (self.kind == "saved" or self.updated or self.date_only or self.undated)
 
     @property
     def date_only(self) -> bool:

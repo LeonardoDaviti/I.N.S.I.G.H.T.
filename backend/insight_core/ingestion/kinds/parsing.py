@@ -52,6 +52,18 @@ def parse_datetime_value(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_TIME_OF_DAY_RE = re.compile(r"\d{1,2}:\d{2}")
+
+
+def date_precision(value: Optional[str]) -> Optional[str]:
+    """What a source's date says (issue 0076, posts.published_precision): "none" when it says no date,
+    "date" when it has no time of day ("2026-11-03"); else None: the saver tells it by its time (a date
+    alone is stored as 00:00:00 UTC)."""
+    if parse_datetime_value(value) is None:
+        return "none"
+    return None if _TIME_OF_DAY_RE.search(value or "") else "date"
+
+
 # Where a page says when it was last changed, in the order read (issue 0039).
 MODIFIED_METAS = ("dcterms.modified", "article:modified_time", "og:updated_time", "last-modified")
 JSON_LD_MODIFIED_RE = re.compile(r'"dateModified"\s*:\s*"([^"]+)"')
@@ -1277,6 +1289,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "content": strip_html(content_html),
                 "content_html": content_html,
                 "date": parse_datetime_value(child_text(item, "pubDate") or child_text(item, "updated")),
+                "date_precision": date_precision(child_text(item, "pubDate") or child_text(item, "updated")),
                 "media_urls": _extract_xml_media_urls(item, content_html),
                 "categories": _extract_xml_categories(item),
                 # <comments>: the item's discussion page (on Hacker News, the HN thread).
@@ -1298,6 +1311,7 @@ def parse_feed_posts(feed_text: str, source_url: str) -> List[Dict[str, Any]]:
                 "content": strip_html(content_html),
                 "content_html": content_html,
                 "date": parse_datetime_value(child_text(entry, "published") or child_text(entry, "updated")),
+                "date_precision": date_precision(child_text(entry, "published") or child_text(entry, "updated")),
                 "media_urls": _extract_xml_media_urls(entry, content_html),
                 "categories": _extract_xml_categories(entry),
                 "metadata": {},

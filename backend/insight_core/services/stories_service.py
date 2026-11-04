@@ -474,7 +474,11 @@ class StoriesService:
             reposters=tuple(sorted({sources.of_account.get(x_account(by)) for by in row["reposted_by"]}
                                    - {None, row["source_id"], author_source})),
             author_source=author_source if author_source != row["source_id"] else None,
-            stored_at=row.get("stored_at"), date_alone=date_alone(row["t"]),
+            # How precise its date is (issue 0076: posts.published_precision, as the source said it at
+            # ingestion; a post stored before it, told by its time as before).
+            stored_at=row.get("stored_at"),
+            date_alone=row["precision"] == "date" if row.get("precision") in ("date", "exact") else date_alone(row["t"]),
+            undated=row.get("precision") == "none",
         )
 
     def recompute_safely(self, *, full: bool = False) -> Optional[Dict[str, Any]]:
