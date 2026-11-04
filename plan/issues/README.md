@@ -97,7 +97,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row; a post page says "In News" | 1 merged (v9.16); 2 (a roundup never leads) and 3 (a post page names its News row) built, not merged |
 | [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | spec (v9.16) |
 | [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
-| [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | spec (v9.16) |
+| [0088](0088-v9.16-backoff-health-and-rail-order.md) | v9.16: a wait that fits the error (a 5xx retries within hours), health that names the site, the rail's newest unread first | built, not merged (v9.16) |
 | [0089](0089-shared-link-window-from-the-first-link.md) | A shared link's 72 hours count from the page's first-ever link: measured, not adopted (waits for the same-story labels) | measured |
 
 ## Analysis archive
