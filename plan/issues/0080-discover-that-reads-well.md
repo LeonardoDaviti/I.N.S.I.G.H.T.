@@ -83,7 +83,7 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
    - X accounts stay (owner, 0067: "sorted by impact, priority and sourced by") and are ranked by the same signals, not apart;
    - an X account's lines show its stored tweet's text, never a status address.
 
-8. **A source's health says what failed, and waits as long as the error deserves** (moved here from 0081, owner 2026-11-04; the case: a feed service answering 502 put a source into a 6-day wait):
+8. **A source's health says what failed, and waits as long as the error deserves** (moved to [0086](0086-v9.16-backoff-health-and-rail-order.md), 2026-11-04; moved here from 0081, owner 2026-11-04; the case: a feed service answering 502 put a source into a 6-day wait):
    - a 5xx is the other server's trouble, so retry within hours, never days;
    - the health text names the site, not "the server": "example.org is failing (HTTP 502): its own server didn't answer, usually temporary."
    - Files: the fetch backoff and the health text (ingestion and source health), not Discover's. This is its own slice.
