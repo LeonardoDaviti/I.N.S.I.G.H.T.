@@ -394,6 +394,24 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(part(weekly), ["mention"])
         self.assertEqual([i["id"] for i in self._mine(self.news.news_on(self.cur, "all")["items"])], [own])
 
+    def test_started_it_only_when_first(self):
+        """Issue 0082: a source whose post roots its 0050 story, in a row another post began, didn't start it."""
+        name = f"Zork{self.mark[:4]} 9"
+        page = f"https://beta-{self.mark}.test/2026/10/the-release"
+        a, b, c = (self._source(n) for n in ("Alpha", "Beta", "Gamma"))
+        first = self._post(a, site="alpha", hours_ago=10, title=f"{name} is out")
+        rooted = self._post(b, site="beta", url=page, hours_ago=9, title=f"{name} ships today")
+        self._post(c, site="gamma", hours_ago=8, title=f"{name} explained", html=self._link(page))
+        self._job()
+
+        def part(source):
+            items = [i for i in self.news.news_on(self.cur, f"source:{source}")["items"] if i["story"]["id"] == first]
+            return [i["news"]["scope_role"] for i in items]
+        self.cur.execute("SELECT parent_reason FROM story_posts WHERE post_id = %s", (rooted,))
+        self.assertEqual(self.cur.fetchall(), [(None,)], "Beta's post roots its 0050 story")
+        self.assertEqual((part(a), part(b), part(c)), (["report"], ["report"], ["report"]),
+                         "Alpha came first but roots no story; Beta roots one, after Alpha")
+
     def test_names_are_the_voices_counted(self):
         """Issue 0082: each Reddit author is a voice, named u/<author> in its subreddit, on News, the feed
         row and the post page alike: the count is the names."""

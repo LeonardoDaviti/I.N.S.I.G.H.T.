@@ -173,8 +173,8 @@ class NewsService:
         newest. Each item is its story's lead as a feed row, with `story` (who covered it, its other
         posts) and `news` {part, first_at, reports, shares, mentions, score}. On one source (issue
         0077) also the stories a roundup of it mentions, and `news.scope_role`: its part, the
-        strongest of its posts' (`SCOPE_ROLES`): origin (its post is the row's origin), report,
-        share, else mention."""
+        strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
+        the origin of its 0050 story, issue 0082), report, share, else mention."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.news_on(cur, scope)
 
@@ -208,7 +208,9 @@ class NewsService:
                 "mentions": head["_mentions"], "score": head["_score"],
             }
             if one_source:
-                origin = origins[0] if origins else None
+                # "Started it" only when first (issue 0082): the row's first post, the origin of its 0050
+                # story (the post page's first, 0072 D); a first share of an outside page is a share.
+                origin = posts[0]["id"] if posts[0]["_origin"] else None
                 item["news"]["scope_role"] = min(
                     (("origin" if p["id"] == origin else p["role"]) for p in shown),
                     key=SCOPE_ROLES.index, default="mention")
