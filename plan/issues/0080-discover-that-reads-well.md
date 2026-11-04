@@ -180,6 +180,41 @@ From main b26874d, with main merged in twice (0083, 0075's scratch names). It is
 - **An archive row follows its archive (decision 10):** `DiscoverRepository.archive_states` reads the newest archive job (running or paused), the archive checkpoint's `completed_at` (finished), and how many of the row's pages the source has stored since. The page shows "Archive running · N of M found so far" or "Archive finished · N of these pages aren't in its archive". It offers no fresh Archive… button then.
 - **0075's check:** `discover.title_address`, `discover.name_address` (decision 1, so it stays high), `discover.title_slug`, `discover.followed_host`, `discover.first_page`, `discover.untested`. The snapshot keeps each suggestion's first three titles.
 
+**On real data** (`scripts/realdata-check.sh insight_lab`, rebased on main c21bed8: **PASS**; private report `plan/research/lab/checks/issue-0080-discover-2026-11-04.md`):
+- **Cases:** 69 pass, 14 fail.
+  - Two turn to pass: the followed site's section (its expectation changed by decision 6: no suggestion, and the research source's archive row holds it, 22 stories), and "a Reddit user among your sources".
+  - None turns from pass to fail.
+- **Discover's invariants, main → this branch:**
+
+  | Invariant | main | this branch | Note |
+  |---|---|---|---|
+  | slug-made titles | 3,663 | 15 | The 15 left are link words or stored titles that spell the slug |
+  | an address as a title | 3 | 3 | Stored tweet titles; unchanged |
+  | a suggestion on a followed host | 2 | 0 | |
+  | the first page over 30 or without a reason | 1,040 | 0 | |
+  | untested on the first page | 1,070 | 30 | Nothing is fetched on this machine |
+  | an address as a name | 1,163 | 1,141 | Decision 1, not built |
+
+  Everything else is equal. Stories, News and Classics don't change.
+- **Discover:** 1,082 suggestions against 1,070.
+  - 33 are new: model-hub owners and three contributors on the magazine, a big company's site (no longer "followed" through an aggregator), its research site and its podcasts.
+  - 21 are gone: the model hub and the preprint server as whole hosts, the followed site's section, the followed lab's whole host and a followed lab's models page, 8 help and docs sites, a Mastodon server, the magazine as one host, two paper publishers, and two X accounts whose own site sources linked them.
+- **The first 30, by hand:**
+  - Each reads as a source to follow: a wire service, an AI lab's site and its accounts, an interpretability journal, model-hub owners (a fine-tuner, a lab, a chip maker, a search company, a model maker), business papers, a tech newsletter, research sites and investigative outlets.
+  - 7 are X accounts.
+  - Of their first three lines, 42 of 90 have no title yet (they read "site · section" on screen). The server's first open reads their page titles.
+  - Two titles are wrong but read as titles: a citation ("<Author> et al. 2024") and a byline. Telling those from titles is Mark X.
+- **Wrong or missed, by hand (further down):**
+  - A hub's chat page is listed as an owner (#614): a kind of page the rule can't tell from an owner.
+  - The creators' platform is still at #78. Its creators' names there differ from their channel names, so the self-link test misses them.
+- **Tests:**
+  - `./run-tests.sh`: 1,409 OK. One earlier full run had a single search-ranking failure that passed alone and in two later full runs.
+  - Frontend: node 221 and vitest 701 pass; typecheck and the build pass.
+  - The feed route is 172,839 B gzip against main's 172,801 (0.99% of the 1% budget, against 0.97%). The post route is 312,901 B against 312,843. Discover's chunk (SourcesConfig) is 132.5 kB raw against 130.3 kB.
+- **Left open:**
+  - Decision 1 (one name for a source) and item 8 (health): other branches.
+  - Measuring the follow test's labels on the first 60, and the answer time with stored tests: both need the server, since nothing is fetched here.
+
 ## Not in this issue
 - Reading walled or JavaScript-only sites (0081).
 - Mark X's "same voice" (0078 channels).
