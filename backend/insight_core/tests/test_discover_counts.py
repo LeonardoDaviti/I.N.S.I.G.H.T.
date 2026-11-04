@@ -16,7 +16,7 @@ import sys
 import unittest
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -31,7 +31,9 @@ from insight_core.services.stories_service import DISCOVER_ARTICLES_SHOWN, Stori
 from insight_core.tests._db import db_url, delete_scratch_sources, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source
 from insight_core.utils.post_links import reddit_author
-from insight_core.utils.discover_rules import discover_address, is_roundup, suggestions
+from insight_core.utils.addresses import is_tweet
+from insight_core.utils.discover_rules import (address_stamp, discover_address, find_platforms, is_roundup, is_self_link,
+                                               place_kind, platform_rows, score, suggestions)
 from insight_core.utils.story_rules import StoryPost
 from insight_core.utils.tree_rules import origin_title
 
@@ -44,21 +46,26 @@ def assert_links_as_walked(test: unittest.TestCase, got, reference) -> None:
     ones no story starts from (issue 0065) in the walk's order, and only stories' origins add any."""
     walked = {s["key"]: s for s in reference}
     test.assertEqual({s["key"]: {k: s[k] for k in LINK_FIELDS} for s in got if s["key"] in walked}, walked)
-    test.assertEqual([s["key"] for s in got if s["key"] in walked and not s["origins"]],
-                     [s["key"] for s in reference if not next(g for g in got if g["key"] == s["key"])["origins"]])
+    test.assertEqual([s["key"] for s in got if s["key"] in walked and not s["origins"] and not s.get("follow_test")],
+                     [s["key"] for s in reference if not next(g for g in got if g["key"] == s["key"])["origins"]
+                      and not next(g for g in got if g["key"] == s["key"]).get("follow_test")])
     test.assertFalse([s["key"] for s in got if s["key"] not in walked and not s["origins"]])
 
 
 def reference_discover(url: str):
     """Discover as 0050/0051 computed it: every kept link read into Python and walked; with 0067's
     roundups (discover_rules.is_roundup over each post's links and the stored post each is) and tweet
-    mirrors (TWEET_HREF in every post's HTML)."""
+    mirrors (TWEET_HREF in every post's HTML); and 0080's: the platforms the data finds, no voice for a
+    self-link or Saved's, a reference or a paper source no suggestion, its sources counted as Discover
+    names them (a Reddit source once), titles never a slug, ranked by discover_rules.score."""
+    now = datetime.now(timezone.utc)
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         sources = SourceFacts(cur)
         cur.execute(
             """
             SELECT p.id, p.source_id, pl.target_url, pl.link_text,
-                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END, t.id
+                   CASE WHEN p.source_id = ANY(%s::uuid[]) THEN p.content_html END, t.id,
+                   COALESCE(p.published_at, p.fetched_at)
             FROM post_links pl JOIN posts p ON p.id = pl.post_id
             LEFT JOIN LATERAL (SELECT tp.id FROM posts tp WHERE tp.normalized_url = pl.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
@@ -68,43 +75,70 @@ def reference_discover(url: str):
         )
         authors, post_links = {}, defaultdict(list)
         links = []
-        for post_id, source_id, target, text, content_html, stored in cur.fetchall():
+        for post_id, source_id, target, text, content_html, stored, t in cur.fetchall():
             if post_id not in authors:
                 authors[post_id] = reddit_author(content_html) if content_html else None
             post_links[str(post_id)].append((target, str(stored) if stored else None))
             links.append({"post_id": str(post_id), "source_id": str(source_id), "url": target, "text": text,
-                          "author": authors[post_id]})
+                          "author": authors[post_id], "t": t})
         hidden = StoriesRepository.hidden(cur)
         classic_urls = set(NewsRepository.classic_urls(cur))
         cur.execute("SELECT content_html FROM posts WHERE content_html IS NOT NULL")
         mirrors = {host.lower() for (html,) in cur.fetchall() for host, *_ in re.findall(TWEET_HREF, html)}
+        stored_titles = DiscoverRepository.stored_titles(cur, sorted({link["url"] for link in links}))
     roundups = {post_id for post_id, its in post_links.items()
                 if is_roundup(StoryPost(id=post_id, source_id="", kind="site", own_site="", t=datetime.min, links=its))}
-    triples, names = [], {}
-    linked_by, linking = defaultdict(set), defaultdict(dict)
-    for link in links:
+    kind = sources.kind
+    voiceless = [kind.get(link["source_id"]) == "saved" or is_self_link(link["url"], sources.selves(link["source_id"]))
+                 for link in links]
+    platforms = find_platforms(platform_rows(
+        ("site:" + sources.publication(link["source_id"]) if kind.get(link["source_id"], "site") == "site"
+         else "source:" + link["source_id"], link["url"]) for link, off in zip(links, voiceless) if not off))
+    triples, names, source_of = [], {}, {}
+    linked_by, linking, last = defaultdict(set), defaultdict(dict), defaultdict(lambda: None)
+    for link, off in zip(links, voiceless):
         p = linking[link["url"]].setdefault(link["post_id"], StoryPost(
-            id=link["post_id"], source_id=link["source_id"], kind=sources.kind.get(link["source_id"], "site"),
+            id=link["post_id"], source_id=link["source_id"], kind=kind.get(link["source_id"], "site"),
             own_site=sources.own_site(link["source_id"]), t=datetime.min, author=link["author"],
             links=post_links[link["post_id"]]))
         names.setdefault(p.voice, sources.voice_name(p.voice, link["source_id"]))
-        triples.append((p.voice, link["url"], link["post_id"] in roundups))
-        linked_by[link["url"]].add(p.voice)
+        # a Reddit author's voice is its source in "linked by N of your sources" (issue 0080)
+        source_of.setdefault(p.voice, "source:" + link["source_id"] if p.voice.startswith("reddit:") else p.voice)
+        names.setdefault(source_of[p.voice], sources.name.get(link["source_id"], ""))
+        triples.append((None if off else p.voice, link["url"], link["post_id"] in roundups))
+        if not off:
+            linked_by[link["url"]].add(p.voice)
+            key = discover_address(link["url"], platforms)[0]
+            last[key] = max(filter(None, (last[key], link["t"])))
         if link["text"]:
             p.link_texts[link["url"]] = link["text"]
     found = suggestions(triples, followed=sources.followed(), hidden=hidden,
-                        followed_accounts=sources.followed_accounts(), mirrors=mirrors)
+                        followed_accounts=sources.followed_accounts(), mirrors=mirrors, platforms=platforms)
     held = {s.key: len(s.addresses & classic_urls) for s in found}
-    found = sorted(found, key=lambda s: held[s.key] == 0)
-    return [{
-        "key": s.key, "url": "https://" + s.key, "voices": len(s.voices),
-        "voice_names": [names[v] for v in sorted(s.voices, key=lambda v: (v in s.roundups, names[v]))],
-        "article_count": len(s.articles),
-        "link_count": s.links, "classics": held[s.key],
-        "articles": [{"url": u, "title": origin_title(u, list(linking[u].values())),
-                      "linked_by": sorted(names[v] for v in linked_by[u])}
-                     for u in sorted(s.articles, key=lambda u: (-len(linked_by[u]), u))[:DISCOVER_ARTICLES_SHOWN]],
-    } for s in found]
+
+    def title(u):
+        posts = [p for p in linking[u].values() if not is_tweet(u) or p.quoted_words.get(u)]
+        return stored_titles.get(u) or origin_title(u, posts, slug=False)
+
+    out = []
+    for s in found:
+        shown = sorted((u for u in s.articles if linked_by[u]), key=lambda u: (-len(linked_by[u]), u))[:DISCOVER_ARTICLES_SHOWN]
+        if place_kind(s.key, shown) is not None:
+            continue
+        units = {}
+        for v in s.voices:
+            only = v in s.roundups
+            units[source_of[v]] = units.get(source_of[v], True) and only
+        weight = len(units) - sum(units.values()) / 2
+        days = (now - last[s.key]).total_seconds() / 86400 if last[s.key] else None
+        out.append(({
+            "key": s.key, "url": "https://" + s.key, "voices": len(units),
+            "voice_names": [names[u] for u in sorted(units, key=lambda u: (units[u], names[u]))],
+            "article_count": len(s.articles),
+            "link_count": s.links, "classics": held[s.key],
+            "articles": [{"url": u, "title": title(u), "linked_by": sorted(names[v] for v in linked_by[u])} for u in shown],
+        }, score(origins=0, classics=held[s.key], opened=0, voices=weight, days=days)))
+    return [s for s, _ in sorted(out, key=lambda pair: (-pair[1], pair[0]["key"]))]
 
 
 @requires_test_db
@@ -174,6 +208,11 @@ class DiscoverCountsTests(unittest.TestCase):
     def _discover(self):
         return StoriesService(db_url()).discover()["suggestions"]
 
+    def _rules(self):
+        """The rules the rows are written by: the data's platforms on the test database too (issue 0080)."""
+        kept = DiscoverRepository.kept(self.cur) or {}
+        return address_stamp({h: tuple(p) for h, p in (kept.get("platforms") or {}).items()})
+
     # ---- the list ---------------------------------------------------------------------------
 
     def test_the_list_is_the_python_walks_in_content_and_order(self):
@@ -184,8 +223,8 @@ class DiscoverCountsTests(unittest.TestCase):
         keys = {s["key"]: s for s in got}
         cited = keys[f"cited-{m}.example"]
         self.assertEqual(len(cited["articles"]), DISCOVER_ARTICLES_SHOWN, "the top 20 of 25")
-        self.assertIn("u/alice", cited["voice_names"], "a Reddit author is a voice, lowercase")
-        self.assertIn("u/bob", cited["voice_names"])
+        self.assertIn(f"r/sub {m}", cited["voice_names"], "a Reddit source once, its authors aside (issue 0080)")
+        self.assertFalse([n for n in cited["voice_names"] if n.startswith("u/")])
         self.assertIn(f"just-{m}.example", keys, "2 articles of 5 addresses: 40% exactly")
         self.assertIn(f"edge-{m}.example", keys, "6 of 15: 40% exactly")
         self.assertNotIn(f"under-{m}.example", keys, "2 of 6 is under 40%")
@@ -196,6 +235,7 @@ class DiscoverCountsTests(unittest.TestCase):
         self.assertNotIn(f"b-{m}.example", keys, "a site you follow")
         self.assertNotIn(f"hidden-{m}.example", keys, "a key you hid")
         self.assertEqual(got[0]["classics"] > 0, True, "a suggestion holding a classic leads")
+        self.assertTrue(all(s["score"] > 0 for s in got))
 
     def test_a_site_two_sources_share_is_named_after_its_first_link(self):
         ids = self._edges()
@@ -220,7 +260,7 @@ class DiscoverCountsTests(unittest.TestCase):
         assert_links_as_walked(self, self._discover(), reference_discover(db_url()))
         self.cur.execute("SELECT key, site, platform, article, rules FROM discover_addresses WHERE url = %s", (target,))
         self.assertEqual(self.cur.fetchone(), (f"cited-{self.mark}.example", f"cited-{self.mark}.example",
-                                               False, True, ADDRESS_RULES))
+                                               False, True, self._rules()))
 
     def test_the_story_job_fills_them_after_reading_links(self):
         self._edges()
@@ -243,7 +283,7 @@ class DiscoverCountsTests(unittest.TestCase):
         self.conn.commit()
         assert_links_as_walked(self, self._discover(), reference_discover(db_url()))
         self.cur.execute("SELECT key, rules FROM discover_addresses WHERE url = %s", (target,))
-        self.assertEqual(self.cur.fetchone(), (f"x.com/karp{self.mark}", ADDRESS_RULES))
+        self.assertEqual(self.cur.fetchone(), (f"x.com/karp{self.mark}", self._rules()))
 
     def test_an_address_no_link_points_to_is_dropped(self):
         self._edges()

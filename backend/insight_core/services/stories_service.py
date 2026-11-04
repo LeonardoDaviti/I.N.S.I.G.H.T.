@@ -37,13 +37,13 @@ from insight_core.db.repo_stories import SourceFacts, StoriesRepository
 from insight_core.services.news_service import NewsService
 from insight_core.utils import stamps
 from insight_core.utils.news_rules import news, surges
-from insight_core.utils.addresses import host_of, site_of, x_account
+from insight_core.utils.addresses import host_of, is_tweet, site_of, x_account
 from insight_core.utils.post_links import PLATFORM_KINDS
-from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, DISCOVER_PLATFORMS, Origin,
-                                              discover_address, discover_open, discover_place, origins)
+from insight_core.utils.discover_rules import (DISCOVER_MIN_ARTICLES, DISCOVER_MIN_VOICES, FIRST_PAGE, Origin,
+                                              discover_address, discover_open, discover_place, origins, place_kind, score)
 from insight_core.utils.story_rules import (LINK_POST_KINDS, SAME_TEXT_WITHIN, THREAD_WITHIN, Edge, Grouping, StoryPost,
                                             date_alone, grouping, keys, page_key, threads)
-from insight_core.utils.tree_rules import _PAGE, origin_title
+from insight_core.utils.tree_rules import _PAGE, origin_title, slug_title
 from insight_core.utils.url_normalization import normalize_url
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ CLOSURE_KEYS = ("h:", "t:", "u:", "g:")   # the keys a post joins another by (st
 KEYED_EDGES = ("text", "title", "address", "link", "quote")   # the connections a key makes (story_rules.Edge.via)
 DISCOVER_ARTICLES_SHOWN = 20
 ORIGIN_STORIES_SHOWN = 3      # the stories a suggestion started, shown on its card (issue 0065)
+UNFOLLOWABLE = ("headlines", "blocked")   # the follow test's labels that sink (issue 0080)
 
 
 class StoriesService:
@@ -501,7 +502,8 @@ class StoriesService:
         try:
             with db.transaction(self.db_url) as cur:
                 sources = SourceFacts(cur)
-                filled = DiscoverRepository.fill_addresses(cur, sources.platform_accounts())
+                filled = DiscoverRepository.fill_addresses(cur, sources.platform_accounts(),
+                                                           platforms=_platforms(DiscoverRepository.kept(cur)))
                 self._counted(cur, sources)
                 return filled
         except Exception:  # noqa: BLE001 - derived; Discover fills what is missing
@@ -516,7 +518,8 @@ class StoriesService:
             return
         try:
             with cur.connection.transaction():
-                DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), urls=None if urls == "all" else urls)
+                DiscoverRepository.fill_addresses(cur, sources.platform_accounts(), urls=None if urls == "all" else urls,
+                                                  platforms=_platforms(DiscoverRepository.kept(cur)))
                 self._counted(cur, sources, urls=None if urls == "all" else urls)
         except Exception:  # noqa: BLE001 - derived; Discover fills what is missing
             logger.exception("Stories: Discover's counts were not updated")
@@ -525,35 +528,40 @@ class StoriesService:
     def _counted(cur: Any, sources: SourceFacts, urls: Optional[List[str]] = None) -> Dict[str, Any]:
         """Discover's counts by links (issue 0062), grouped and counted in the database: the kept ones
         when what they are counted from is unchanged (issue 0067: the story job keeps them), else
-        counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules and the
-        mirrors hold, only the keys of those addresses are counted again (a source whose facts change has
-        its posts queued, so the addresses they link are a run's too).
-        {stamp, base, found (DiscoverRepository.counts, by key), mirrors, scanned_to}."""
+        counted now and kept. With `urls` (a story run's addresses, issue 0072 A), while the rules, the
+        mirrors and the platforms hold, only the keys of those addresses are counted again (a source whose
+        facts change has its posts queued, so the addresses they link are a run's too). The platforms
+        the data finds (issue 0080) are found again with each count.
+        {stamp, base, found (DiscoverRepository.counts, by key), mirrors, platforms, scanned_to}."""
         accounts = sources.platform_accounts()
-        ask = dict(kinds=sources.kind, own_sites={i: sources.publication(i) for i in sources.kind}, accounts=accounts,
-                   shown=DISCOVER_ARTICLES_SHOWN)
-        facts = sorted((i, sources.kind[i], ask["own_sites"][i], accounts.get(i, "")) for i in sources.site)
+        own_sites = {i: sources.publication(i) for i in sources.kind}
+        selves = {i: sorted(sources.selves(i)) for i in sources.kind}
+        ask = dict(kinds=sources.kind, own_sites=own_sites, accounts=accounts, shown=DISCOVER_ARTICLES_SHOWN, selves=selves)
+        facts = sorted((i, sources.kind[i], own_sites[i], accounts.get(i, ""), selves[i]) for i in sources.site)
         stamp, base = DiscoverRepository.stamp(cur, facts), DiscoverRepository.base()
         kept = DiscoverRepository.kept(cur)
         if kept and kept["stamp"] == stamp:
             return kept
+        platforms = DiscoverRepository.platforms(cur, kinds=sources.kind, own_sites=own_sites, selves=selves)
         mirrors, scanned_to = DiscoverRepository.mirrors(cur, kept)
-        if urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"]:
-            keys = DiscoverRepository.keys_of(cur, urls)
-            found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, **ask)
+        if (urls is not None and kept and kept.get("base") == base and mirrors == kept["mirrors"]
+                and platforms == _platforms(kept)):
+            keys = DiscoverRepository.keys_of(cur, urls, platforms)
+            found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, keys=keys, platforms=platforms, **ask)
             # An article's title changes only with the posts at it or linking it: those of the run's addresses.
             titled = {a[0]: a[2] for s in kept["found"] for a in s["articles"] if a[0] not in set(urls)}
             StoriesService._title_articles(cur, sources, found, titled)
             found += [s for s in kept["found"] if s["key"] not in keys]
             DiscoverRepository.name_voices(cur, found, ask["kinds"], ask["own_sites"])   # a site's namer may move
         else:
-            found, unknown = DiscoverRepository.counts(cur, mirrors=mirrors, **ask)
+            found, unknown = DiscoverRepository.counts(cur, mirrors=mirrors, platforms=platforms, **ask)
             if unknown:   # addresses no story run has worked out yet (the job does it after reading links)
-                DiscoverRepository.fill_addresses(cur, accounts)
-                found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, **ask)
+                DiscoverRepository.fill_addresses(cur, accounts, platforms=platforms)
+                found, _ = DiscoverRepository.counts(cur, mirrors=mirrors, platforms=platforms, **ask)
             StoriesService._title_articles(cur, sources, found)
         found.sort(key=lambda s: s["key"])
-        kept = {"stamp": stamp, "base": base, "found": found, "mirrors": mirrors, "scanned_to": scanned_to}
+        kept = {"stamp": stamp, "base": base, "found": found, "mirrors": mirrors, "scanned_to": scanned_to,
+                "platforms": {host: list(prefix) for host, prefix in sorted(platforms.items())}}
         DiscoverRepository.keep(cur, kept)
         return kept
 
@@ -563,8 +571,9 @@ class StoriesService:
         """Each shown article's title (issue 0070): a stored post's own, as the reader shows it, else
         by the evidence a story's outside origin is titled by (origin_title), from every post linking it,
         in time order as a story's are (issue 0071: link words written two ways as often are a tie the
-        first one wins, and the database returns rows in any order). `titled`: the titles kept, which
-        hold (an incremental run's addresses aside)."""
+        first one wins, and the database returns rows in any order); never its address's slug (issue
+        0080), and a tweet only by its own words as a post quotes them (else the line names its account).
+        `titled`: the titles kept, which hold (an incremental run's addresses aside)."""
         titled = titled or {}
         urls = sorted({url for s in found for url, _ in s["articles"] if url not in titled})
         linking: Dict[str, Dict[str, StoryPost]] = defaultdict(dict)
@@ -574,14 +583,31 @@ class StoriesService:
             for target, _ in post.links:
                 linking[target][post.id] = post
         stored = DiscoverRepository.stored_titles(cur, urls)
-        for s in found:
-            s["articles"] = [(url, voices, titled[url] if url in titled else
-                              stored.get(url) or origin_title(url, list(linking[url].values())))
-                             for url, voices in s["articles"]]
 
-    def discover(self) -> Dict[str, Any]:
-        """Sites and accounts your sources keep linking that you don't follow, each with why; the
-        ones your stories start from first (issue 0065), with the sources you follow that miss them."""
+        def title(url: str) -> Optional[str]:
+            posts = list(linking[url].values())
+            if is_tweet(url):
+                posts = [p for p in posts if p.quoted_words.get(url)]
+            return stored.get(url) or origin_title(url, posts, slug=False)
+
+        for s in found:
+            s["articles"] = [(url, voices, titled[url] if url in titled else title(url)) for url, voices in s["articles"]]
+
+    def discover(self, *, offset: int = 0, limit: Optional[int] = None, q: Optional[str] = None) -> Dict[str, Any]:
+        """Sites and accounts your sources keep linking that you don't follow, each with why, ranked
+        (issue 0080: discover_rules.score, the ones that can't be followed below the rest); the
+        references they use and the stories the sources you follow miss beside them. `offset` and
+        `limit`: the page asked for (the first holds FIRST_PAGE); `q`: only those whose words match."""
+        result = self._discover_all()
+        ranked = result["suggestions"]
+        if q:
+            words = q.casefold().split()
+            ranked = [s for s in ranked if all(w in _words(s) for w in words)]
+        end = len(ranked) if limit is None else offset + max(0, limit)
+        return {**result, "suggestions": ranked[offset:end], "total": len(ranked), "offset": offset,
+                "more": end < len(ranked)}
+
+    def _discover_all(self) -> Dict[str, Any]:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             inputs = self.repo.discover_inputs(cur)
             if self._discovered[0] == inputs and self._discovered[1] is not None:
@@ -589,34 +615,47 @@ class StoriesService:
             # Grouped and counted in the database (issue 0062): the kept links never come to Python.
             sources = SourceFacts(cur)
             counted = self._counted(cur, sources)
+            platforms = _platforms(counted)
             followed, hidden, classics = sources.followed(), self.repo.hidden(cur), set(self.news.classic_urls(cur))
             roots = DiscoverRepository.story_origins(cur, kinds=sources.kind,
                                                      own_sites={i: sources.publication(i) for i in sources.kind})
-            held = self._held(cur, sources, roots, followed)
-            started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]))
+            held = self._held(cur, sources, roots, followed, platforms)
+            started = origins(roots, followed=followed, held=held, mirrors=set(counted["mirrors"]), platforms=platforms)
             first_posts = DiscoverRepository.first_posts(cur, started.missing)
-        out, weight = [], {}
+            activity = DiscoverRepository.activity(cur, [s["key"] for s in counted["found"]], platforms)
+            reads = DiscoverRepository.reads(cur)
+        now = self.clock()
+        saved = set(sources.of_kind("saved"))
+        out, references, last, weight = [], {}, {}, {}
         for s in counted["found"]:
             if not discover_open(s["key"], site_of(s["key"]), "/" in s["key"], followed=followed, hidden=hidden,
                                  followed_accounts=sources.followed_accounts()):
                 continue   # followed or hidden (a platform's key is its account, x.com/karpathy; a site's its host)
             names = {voice: sources.voice_name(voice, source_id or "") for voice, source_id in s["voices"]}
-            roundups = set(s["roundups"])
-            weight[s["key"]] = len(names) - len(roundups) / 2
-            out.append({
+            linking = _linking(sources, ((v, i, v in s["roundups"]) for v, i in s["voices"]), s.get("sources", ()), saved)
+            weight[s["key"]] = len(linking) - sum(1 for only, _ in linking if only) / 2
+            last[s["key"]] = activity.get(s["key"], (None, 0))[0]
+            suggestion = {
                 "key": s["key"],
                 "url": "https://" + s["key"],
-                "voices": len(names),
-                # those that link it in their own posts first, then those that list it in roundups
-                "voice_names": [name for _, name in sorted((v in roundups, name) for v, name in names.items())],
+                "voices": len(linking),
+                "voice_names": [name for _, name in linking],
                 "article_count": s["article_count"],
                 "link_count": s["link_count"],
                 "classics": len(classics.intersection(s["classics"])),
                 "articles": [{"url": url, "title": title, "linked_by": sorted(names[v] for v in voices)}
                              for url, voices, title in s["articles"]],
                 "origins": 0,
-            })
+                "opened": activity.get(s["key"], (None, 0))[1],
+            }
+            kind = place_kind(s["key"], [a["url"] for a in suggestion["articles"]])
+            if kind == "reference":
+                references[s["key"]] = len(linking)
+            if kind is None:
+                out.append(suggestion)
         by_key = {s["key"]: s for s in out}
+        for key, stories in started.references.items():
+            references.setdefault(key, len({v for root in stories for v in root.voices}))
         for key, stories in started.suggest.items():
             names = {v: sources.voice_name(v, source_id) for root in stories for v, source_id in root.voices.items()}
             pages = sorted({root.url for root in stories})
@@ -626,31 +665,42 @@ class StoriesService:
                 # same bar (2+ pages, 3+ voices), unless you hid it.
                 site = key.split("/", 1)[0]
                 if (len(pages) < DISCOVER_MIN_ARTICLES or len(names) < DISCOVER_MIN_VOICES
-                        or key.lower() in hidden or site in hidden or site_of(site) in hidden):
+                        or key.lower() in hidden or site in hidden or site_of(site) in hidden
+                        or place_kind(key, pages) is not None):
                     continue
+                linking = _linking(sources, ((v, i, False) for root in stories for v, i in root.voices.items()),
+                                   [(i, False) for root in stories for i in root.reddit_sources], saved)
+                weight[key] = len(linking)
                 suggestion = by_key[key] = {
-                    "key": key, "url": "https://" + key, "voices": len(names), "voice_names": sorted(names.values()),
-                    "article_count": len(pages), "link_count": len(pages), "classics": 0,
-                    "articles": [{"url": root.url, "title": root.title,
+                    "key": key, "url": "https://" + key, "voices": len(linking), "voice_names": [n for _, n in linking],
+                    "article_count": len(pages), "link_count": len(pages), "classics": 0, "opened": 0,
+                    "articles": [{"url": root.url, "title": _shown(root),
                                   "linked_by": sorted(names[v] for v in root.voices)}
                                  for root in _first(stories, pages=True)[:DISCOVER_ARTICLES_SHOWN]],
                 }
                 out.append(suggestion)
-                weight[key] = len(names)
             suggestion["origins"] = len(stories)
             suggestion["origin_stories"] = [_story(root) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]]
-            host = key.split("/", 1)[0]
-            if site_of(host) in followed and site_of(host) not in DISCOVER_PLATFORMS:
-                # a section of a site you follow: the places of it your sources hold
-                suggestion["follows"] = sorted({p for p in held if p.split("/", 1)[0] == host} - {key})
-        # The stories you read that start there first (issue 0065), then a suggestion that holds
-        # classics (issue 0051), then most voices, one linking it only in roundups counting half
-        # (issue 0067), then all voices, articles, links, key (discover_rules.suggestions).
-        out.sort(key=lambda s: (-s["origins"], s["classics"] == 0, -weight[s["key"]], -s["voices"],
-                                -s["article_count"], -s["link_count"], s["key"]))
+            newest = max(root.first_at for root in stories)
+            last[key] = max(filter(None, (last.get(key), newest)))
+        follow, titles = reads.get("follow", {}), reads.get("titles", {})
+        for s in out:
+            days = (now - last[s["key"]]).total_seconds() / 86400 if last.get(s["key"]) else None
+            s["score"] = round(score(origins=s["origins"], classics=s["classics"], opened=s["opened"],
+                                     voices=weight[s["key"]], days=days), 3)
+            test = follow.get(s["key"])
+            if test:
+                s["follow_test"] = {"label": test["label"], "at": test["at"]}
+            for a in s["articles"]:
+                if not a["title"] and (titles.get(a["url"]) or {}).get("title"):
+                    a["title"] = titles[a["url"]]["title"]
+        # The most stories started there, classics, posts you opened, sources and the newest links first
+        # (discover_rules.score); a suggestion its follow test can't follow (headlines only, blocks
+        # readers) below every other (issue 0080).
+        out.sort(key=lambda s: ((s.get("follow_test") or {}).get("label") in UNFOLLOWABLE, -s["score"], s["key"]))
         archives = [{
             "source_id": source_id, "name": sources.name.get(source_id, ""),
-            "places": sorted({discover_place(root.url) for root in stories}),
+            "places": sorted({discover_place(root.url, platforms) for root in stories}),
             "origins": len(stories),
             "since": first_posts[source_id].isoformat() if source_id in first_posts else None,
             "older": sum(1 for root in stories if first_posts.get(source_id) and root.first_at < first_posts[source_id]),
@@ -659,26 +709,30 @@ class StoriesService:
         archives.sort(key=lambda a: (-a["origins"], a["name"].lower()))
         unnamed = sorted(({"place": place, "origins": len(stories)} for place, stories in started.unnamed.items()
                           if len(stories) >= DISCOVER_MIN_ARTICLES), key=lambda u: (-u["origins"], u["place"]))
-        result = {"success": True, "suggestions": out, "archives": archives, "unnamed": unnamed}
+        result = {"success": True, "suggestions": out, "archives": archives, "unnamed": unnamed,
+                  "references": [{"key": key, "voices": n} for key, n in sorted(references.items(), key=lambda kv: (-kv[1], kv[0]))],
+                  "first_page": FIRST_PAGE}
         self._discovered = (inputs, result)
         return result
 
     @staticmethod
-    def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str]) -> Dict[str, str]:
+    def _held(cur: Any, sources: SourceFacts, roots: List[Origin], followed: Set[str],
+              platforms: Optional[Dict[str, Tuple[str, ...]]] = None) -> Dict[str, str]:
         """The places your sources hold (discover_rules.discover_place -> a source): the platform
         accounts they follow, and on the sites you follow where stories start, the sections their
         own posts are in (the source with the most posts there)."""
+        platforms = platforms or {}
         held = {account: source_id for source_id, account in sorted(sources.platform_accounts().items())}
         hosts = set()
         for root in roots:
-            key, site, platform = discover_address(root.url)
+            key, site, platform = discover_address(root.url, platforms)
             root.own = root.stored and sources.home_site(root.source_id) == site
             if key and not platform and site in followed and not root.own:
                 hosts.add(host_of(root.url))
         posts: Counter = Counter()
         for source_id, url in DiscoverRepository.posts_on(cur, hosts):
             if site_of(host_of(url)) == sources.home_site(source_id):
-                posts[(discover_place(url), source_id)] += 1
+                posts[(discover_place(url, platforms), source_id)] += 1
         for (place, source_id), _ in sorted(posts.items(), key=lambda item: (item[1], item[0][1])):
             held[place] = source_id   # the most posts last, so it stays
         return held
@@ -751,8 +805,45 @@ def _first(stories: List[Origin], *, pages: bool = False) -> List[Origin]:
     return list(once.values())
 
 
+def _linking(sources: SourceFacts, voices: Iterable[Tuple[str, Optional[str], bool]], linkers: Iterable[Tuple[str, bool]],
+             saved: Set[str]) -> List[Tuple[bool, str]]:
+    """The sources linking a suggestion, as "linked by N of your sources" names them (issue 0080): each
+    voice once, a Reddit source once for all its posts' authors, never Saved; each (whether it links it
+    only in roundups, its name), those that link it in their own posts first (issue 0067).
+    `voices`: (voice, the source naming it, only in roundups); `linkers`: (source, only in roundups), its
+    Reddit sources read."""
+    units: Dict[str, Tuple[bool, str]] = {}
+    for voice, source_id, only in voices:
+        if voice.startswith("reddit:") or (voice.startswith("source:") and voice[7:] in saved):
+            continue
+        was = units.get(voice, (True, ""))[0]
+        units[voice] = (was and only, sources.voice_name(voice, source_id or ""))
+    for source_id, only in linkers:
+        if sources.kind.get(source_id) == "reddit":
+            was = units.get("source:" + source_id, (True, ""))[0]
+            units["source:" + source_id] = (was and only, sources.name.get(source_id, ""))
+    return sorted(units.values())
+
+
+def _shown(root: Origin) -> Optional[str]:
+    """A story origin's title as Discover shows it: never its address's slug (issue 0080)."""
+    return root.title if root.stored or root.title != slug_title(root.url) else None
+
+
 def _story(root: Origin) -> Dict[str, Any]:
-    return {"url": root.url, "title": root.title, "voices": len(root.voices), "stored": root.stored}
+    return {"url": root.url, "title": _shown(root), "voices": len(root.voices), "stored": root.stored}
+
+
+def _platforms(kept: Optional[Dict[str, Any]]) -> Dict[str, Tuple[str, ...]]:
+    """The data's platforms Discover's kept counts were keyed by (issue 0080)."""
+    return {host: tuple(prefix) for host, prefix in ((kept or {}).get("platforms") or {}).items()}
+
+
+def _words(s: Dict[str, Any]) -> str:
+    """What Discover's search box matches: the key, the sources linking it, its articles' and stories' titles."""
+    parts = [s["key"], *s["voice_names"], *(f"{a['title'] or ''} {a['url']}" for a in s["articles"]),
+             *(f"{o['title'] or ''} {o['url']}" for o in s.get("origin_stories", ()))]
+    return " ".join(parts).casefold()
 
 
 
