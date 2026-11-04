@@ -252,7 +252,7 @@ During a whole rebuild run in its own process, the branch opened Discover 48 tim
 **What Discover does during the rebuild now:** it serves the counts kept before the deploy, and the list it shows changes only as the rebuild's batches replace stories. The last step ("all") counts once in the job, not in an open.
 
 **Checks:**
-- `./run-tests.sh`: 1,410 OK, including a test that a step with nothing to count keeps the stamp, the inputs and the list, and that a batch moves them.
+- `./run-tests.sh` (rebased on main 4bf7a2a): 1,419 OK, including a test that a step with nothing to count keeps the stamp, the inputs and the list, and that a batch moves them.
 - `scripts/realdata-check.sh insight_lab` (scratch `insight_lab_8001a/b`): **PASS**, with no case and no invariant changed.
 
 ## Not in this issue
