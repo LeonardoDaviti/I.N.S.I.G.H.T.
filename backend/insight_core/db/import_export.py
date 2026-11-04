@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Restore INSIGHT's own export (issue 0079) into a new or empty database.
 
-    DATABASE_URL=postgresql://…/insight_restored python insight_core/db/import_export.py insight-….zip
+    python insight_core/db/import_export.py insight-….zip --into insight_restored
+
+DATABASE_URL names the server (and the database, without --into).
 
 The export (services/export_service.py, Settings → Data) is a zip: one CSV per table, written
 by `COPY … TO STDOUT (FORMAT csv, HEADER)`; schema.sql, the migrations it was made at;
@@ -175,19 +177,27 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
 
 
 def main(argv: List[str]) -> int:
-    if len(argv) != 1:
-        print("usage: DATABASE_URL=… python insight_core/db/import_export.py <insight-….zip>", file=sys.stderr)
-        return 2
+    """<zip> [--into NAME]: restore into DATABASE_URL, or into the database NAME on its server."""
+    args = list(argv)
+    into = None
+    if "--into" in args:
+        at = args.index("--into")
+        into = args[at + 1] if at + 1 < len(args) else ""
+        del args[at:at + 2]
     url = os.getenv("DATABASE_URL")
-    if not url:
-        print("DATABASE_URL is not set: name the new database to restore into", file=sys.stderr)
+    if len(args) != 1 or into == "" or not url:
+        print("usage: python insight_core/db/import_export.py <insight-….zip> [--into <new database>]\n"
+              "  DATABASE_URL names the server, and the database unless --into", file=sys.stderr)
         return 2
+    if into:
+        url = make_conninfo(url, dbname=into)
+        os.environ["DATABASE_URL"] = url     # migrate.main() below reads it
     try:
-        loaded = restore(argv[0], url)
+        loaded = restore(args[0], url)
     except ValueError as exc:
         print(f"Not restored: {exc}", file=sys.stderr)
         return 1
-    print(f"Restored {len(loaded)} tables, {sum(loaded.values())} rows; migrating up to this version")
+    print(f"Restored {len(loaded)} tables, {sum(loaded.values())} rows; migrating up to this version", flush=True)
     from insight_core.db import migrate
     migrate.main()
     return 0
