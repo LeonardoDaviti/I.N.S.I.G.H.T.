@@ -31,7 +31,7 @@ export default function ReplacementNotice({ row, now, onSwitched }: { row: Sourc
   const { replacement, doctor_looked_at: lookedAt, server_error: failing } = row;
   if (failing) {
     return (
-      <Notice tone="warning" title={`${failing.site || 'This site'} is failing (${failing.status ? `HTTP ${failing.status}` : 'no answer in time'}): its own server didn't answer, usually temporary.`}
+      <Notice tone="warning" title={`${failing.site} is failing (${failing.status ? `HTTP ${failing.status}` : 'no answer in time'}): its own server didn't answer, usually temporary.`}
         message="The address hasn't moved; INSIGHT keeps retrying." />
     );
   }
