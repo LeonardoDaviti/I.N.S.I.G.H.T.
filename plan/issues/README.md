@@ -96,6 +96,7 @@ say "not deployed". v9.6 to v9.13 (0049 on) are on `main` only.
 | [0082](0082-v9.16-labels-that-match.md) | v9.16 first slice: a story's count names what it counts; "Started it" only when it was first | built, not merged (v9.16) |
 | [0083](0083-v9.16-news-names-and-leads.md) | v9.16 News: a name said inside a joined word joins its burst; a roundup never leads a row | 1 merged (v9.16); 2 measured, waits for 0076 |
 | [0084](0084-substack-cookie-per-publication-and-linked-past-posts.md) | Substack: the cookie only where you pay (bug); a source's own older posts its posts link | spec (v9.16) |
+| [0085](0085-discussions-hn-and-reddit.md) | Discussions: Hacker News and Reddit comments on the post page, one design, no login | spec (v9.17) |
 
 ## Analysis archive
 

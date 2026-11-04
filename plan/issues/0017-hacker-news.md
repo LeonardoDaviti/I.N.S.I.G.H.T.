@@ -1,6 +1,6 @@
 # 0017 — Hacker News: the article and its discussion
 
-Status: **first version built** 2026-10-27 (reading through hnrss.org), not deployed; **the kind and the comments are future** (owner, 2026-10-27).
+Status: **first version built** 2026-10-27 (reading through hnrss.org), not deployed; **the kind and the comments are future** (owner, 2026-10-27). **Comments: moved to 0085** (one design for HN and Reddit, no login: Algolia for HN, the thread's comments RSS for Reddit; owner 2026-11-04).
 
 ## What the owner wants
 - **Both the article and the HN discussion.** The discussion is kept for the future analysis version.
