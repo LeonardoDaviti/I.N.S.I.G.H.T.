@@ -122,6 +122,40 @@ class DatesTests(unittest.TestCase):
         self.assertFalse(StoryPost(id="a", source_id="s", kind="site", own_site="a.test", t=at, undated=True).trusted_time)
 
 
+# The parsers' read-time rules (post_fields, post_links, the parser itself): only the parser and its
+# writer call them; the checks import them on purpose (checks/compat.py: not a page).
+READ_TIME = {"post_title", "display_title", "reading_text", "body_after_title", "without_quote_marks",
+             "body_without_feed_lines", "quote_only", "link_post_target", "hnrss_counts", "title_columns",
+             "reaction_title", "REPLY_TO_RE", "quoted_tweet", "quoted_words", "reddit_author", "REDDIT_AUTHOR", "QUOTED"}
+PARSERS = ("insight_core.utils.post_fields", "insight_core.utils.post_links", "insight_core.utils.post_parser")
+WRITERS = {"db/repo_post_parts.py"}
+
+
+class ImportGuardTests(unittest.TestCase):
+    """Issue 0076: a post is read once, when it is saved. No page parses it again: the services, the
+    repositories and the API import none of the read-time rules (the parser's writer aside)."""
+
+    def test_pages_do_not_import_the_parsers(self):
+        import ast
+        root = BACKEND_DIR / "insight_core"
+        files = [*sorted((root / "services").rglob("*.py")), *sorted((root / "db").rglob("*.py")),
+                 *sorted((root / "adapters").rglob("*.py")), BACKEND_DIR / "main.py"]
+        found = []
+        for path in files:
+            rel = str(path.relative_to(root)) if root in path.parents else path.name
+            if rel in WRITERS:
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module in PARSERS:
+                    names = {a.name for a in node.names}
+                    if node.module.endswith("post_parser") or names & READ_TIME or "*" in names:
+                        found.append(f"{rel}:{node.lineno} {node.module} {sorted(names & READ_TIME) or sorted(names)}")
+                elif isinstance(node, ast.Import) and any(a.name in PARSERS for a in node.names):
+                    found.append(f"{rel}:{node.lineno} import {[a.name for a in node.names]}")
+        self.assertEqual(found, [], "a page reads post_parts (db/repo_post_parts.py), never the parsers")
+        self.assertTrue(len(files) > 30, "the pages were found")
+
+
 def _db_url():
     return os.getenv("DATABASE_URL") or os.getenv("TEST_DATABASE_URL")
 
