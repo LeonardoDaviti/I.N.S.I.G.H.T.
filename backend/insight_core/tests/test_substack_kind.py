@@ -1,9 +1,10 @@
 """The substack kind (Mark IX §10): paid posts read with the owner's substack.sid cookie.
 
-No network: FakeHttp answers the archive and posts API. The JSON shapes follow what
-kaitchup.substack.com answered on 2026-10-10: the archive list has empty body_html; a paid
+No network: FakeHttp answers the archive and posts API. The JSON shapes follow what a real
+publication answered on 2026-10-10: the archive list has empty body_html; a paid
 post fetched without access returns a truncated body_html (270 of 1367 words) with HTTP 200,
 the same as with a bogus cookie, so an expired cookie can only be seen in the body.
+The subscriptions API's shape is assumed (issue 0084), see paid_publication_hosts.
 """
 from __future__ import annotations
 
@@ -22,10 +23,24 @@ from insight_core.ingestion.kinds.substack import (
     EXPIRED_REASON,
     SUBSTACK_HOST_KEY,
     SubstackKind,
+    paid_publication_hosts,
 )
 from insight_core.tests._kind_fakes import FakeHttp
 
-BASE = "https://kaitchup.substack.com"
+BASE = "https://example.substack.com"
+SUBSCRIPTIONS = "https://substack.com/api/v1/subscriptions?tvOnly=false"
+
+
+def _subscriptions(*entries: tuple) -> dict:
+    """(publication id, subdomain, custom_domain, membership_state) -> the assumed answer."""
+    return {
+        "subscriptions": [{"publication_id": pid, "membership_state": state} for pid, _, _, state in entries],
+        "publications": [{"id": pid, "subdomain": sub, "custom_domain": custom} for pid, sub, custom, _ in entries],
+    }
+
+
+PAYS_HERE = _subscriptions((1, "example", None, "subscribed"), (2, "other", None, "free_signup"))
+PAYS_ELSEWHERE = _subscriptions((1, "example", None, "free_signup"), (2, "other", None, "subscribed"))
 
 
 def _src(handle: str = f"{BASE}/", **settings) -> dict:
@@ -67,7 +82,7 @@ class SubstackResolutionTests(unittest.TestCase):
     def test_substack_hosts_and_configured_custom_domains_resolve_to_substack(self):
         registry = self._registry()
         self.assertEqual(registry.resolve(_src()).name, "substack")
-        self.assertEqual(registry.resolve(_src("https://kaitchup.substack.com/feed")).name, "substack")
+        self.assertEqual(registry.resolve(_src(f"{BASE}/feed")).name, "substack")
         self.assertEqual(registry.resolve(_src("https://www.example-news.com/", substack=True)).name, "substack")
         self.assertEqual(registry.resolve(_src("https://www.other-news.com/")).name, "generic_rss")
 
@@ -104,6 +119,7 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_paid_post_with_a_cookie_is_stored_in_full_and_sends_the_cookie(self):
         http = self._http({
+            SUBSCRIPTIONS: PAYS_HERE,
             _archive_url(0, 1): [_item("paid", "only_paid", 1000)],
             _post_url("paid"): _post("paid", "only_paid", 1000),
         })
@@ -123,6 +139,7 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_truncated_paid_post_with_a_cookie_means_the_session_expired(self):
         http = self._http({
+            SUBSCRIPTIONS: PAYS_HERE,
             _archive_url(0, 1): [_item("paid", "only_paid", 1367)],
             _post_url("paid"): _post("paid", "only_paid", 1367, body_words=270),
         })
@@ -142,11 +159,73 @@ class SubstackFetchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_founding_only_posts_never_expire_the_session(self):
         http = self._http({
+            SUBSCRIPTIONS: PAYS_HERE,
             _archive_url(0, 1): [_item("founders", "founding", 1000)],
             _post_url("founders"): _post("founders", "founding", 1000, body_words=100),
         })
         posts = await SubstackKind(http, sid="s3cret").fetch_latest(_src(), 1)
         self.assertTrue(posts[0]["metadata"]["paywalled"])
+
+    # Issue 0084: the cookie only where you pay ------------------------------------------
+
+    def _teaser(self, extra=None) -> FakeHttp:
+        return self._http({
+            _archive_url(0, 2): [_item("free"), _item("paid", "only_paid", 1367)],
+            _post_url("free"): _post("free"),
+            _post_url("paid"): _post("paid", "only_paid", 1367, body_words=270),
+            **(extra or {}),
+        })
+
+    async def test_a_publication_you_dont_pay_for_is_read_without_the_cookie_never_an_error(self):
+        for answer in (PAYS_ELSEWHERE, _subscriptions((2, "other", None, "subscribed"))):
+            with self.subTest(answer=answer):
+                http = self._teaser({SUBSCRIPTIONS: answer})
+                posts = await SubstackKind(http, sid="s3cret").fetch_latest(_src(), 2)
+                self.assertEqual([p["metadata"]["paywalled"] for p in posts], [False, True])
+                self.assertEqual(len(posts[1]["content"].split()), 270)
+                self.assertNotIn("Cookie", http.headers_for(_post_url("paid")))
+                self.assertNotIn("Cookie", http.headers_for(_archive_url(0, 2)))
+                self.assertEqual(http.headers_for(SUBSCRIPTIONS)["Cookie"], "substack.sid=s3cret")
+
+    async def test_a_custom_domain_you_pay_for_is_read_in_full(self):
+        base = "https://www.example-news.com"
+        answer = {"subscriptions": [{"membership_state": "subscribed",
+                                     "publication": {"subdomain": "examplenews", "custom_domain": "example-news.com"}}]}
+        http = self._http({
+            SUBSCRIPTIONS: answer,
+            f"{base}/api/v1/archive?sort=new&offset=0&limit=1": [_item("paid", "only_paid", 1000)],
+            f"{base}/api/v1/posts/paid": _post("paid", "only_paid", 1000, body_words=100),
+        })
+        with self.assertRaises(KindUnavailable):
+            await SubstackKind(http, sid="s3cret").fetch_latest(_src(f"{base}/", substack=True), 1)
+        self.assertEqual(http.headers_for(f"{base}/api/v1/posts/paid")["Cookie"], "substack.sid=s3cret")
+
+    async def test_a_401_on_the_subscriptions_api_expires_paid_publications_only(self):
+        rejected = {SUBSCRIPTIONS: ValueError(f"HTTP 401 while fetching {SUBSCRIPTIONS}")}
+        with self.assertRaises(KindUnavailable) as caught:
+            await SubstackKind(self._teaser(rejected), sid="s3cret").fetch_latest(_src(), 2)
+        self.assertEqual(caught.exception.reason, EXPIRED_REASON)
+        self.assertNotIn("s3cret", str(caught.exception))
+        free = self._http({**rejected, _archive_url(0, 1): [_item("free")], _post_url("free"): _post("free")})
+        posts = await SubstackKind(free, sid="s3cret").fetch_latest(_src(), 1)
+        self.assertFalse(posts[0]["metadata"]["paywalled"])
+        self.assertNotIn("Cookie", free.headers_for(_post_url("free")))
+
+    async def test_when_the_answer_cant_be_read_the_cookie_is_sent_and_a_teaser_is_no_error(self):
+        for answer in ({"unexpected": True}, {"subscriptions": []}, ValueError("HTTP 500"), "<html>"):
+            with self.subTest(answer=answer):
+                http = self._teaser({SUBSCRIPTIONS: answer})
+                posts = await SubstackKind(http, sid="s3cret").fetch_latest(_src(), 2)
+                self.assertTrue(posts[1]["metadata"]["paywalled"])
+                self.assertEqual(http.headers_for(_post_url("paid"))["Cookie"], "substack.sid=s3cret")
+
+    async def test_the_subscriptions_api_is_asked_once_per_run(self):
+        http = self._teaser({SUBSCRIPTIONS: PAYS_ELSEWHERE})
+        kind = SubstackKind(http, sid="s3cret")
+        await kind.fetch_latest(_src(), 2)
+        await kind.fetch_latest(_src(), 2)
+        await kind.read_post(_src(), f"{BASE}/p/paid")
+        self.assertEqual(http.requests.count(SUBSCRIPTIONS), 1)
 
     async def test_the_archive_api_failing_falls_back_to_the_rss_feed(self):
         feed = (
@@ -194,6 +273,29 @@ class SubstackArchiveTests(unittest.IsolatedAsyncioTestCase):
         resumed = [page async for page in kind.archive_pages(_src(), 30, pages[0].checkpoint, rate)]
         self.assertEqual([len(p.posts) for p in resumed], [8])
         self.assertEqual(resumed[0].checkpoint["collected_posts"], 20)
+
+
+class PaidPublicationHostsTests(unittest.TestCase):
+    def test_missing_fields_mean_not_paid_and_both_shapes_are_read(self):
+        answer = {
+            "subscriptions": [
+                {"publication_id": 1, "membership_state": "subscribed"},
+                {"publication_id": 2},                                    # no state: not paid
+                {"publication_id": 3, "membership_state": "free_signup"},
+                {"membership_state": "founding", "publication": {"subdomain": "Founded",
+                                                                  "custom_domain": "https://www.founded.example.com/"}},
+                {"publication_id": 9, "membership_state": "subscribed"},  # unknown publication
+                "garbage",
+            ],
+            "publications": [{"id": 1, "subdomain": "example"}, {"id": 2, "subdomain": "nostate"},
+                             {"id": 3, "subdomain": "free"}, {"subdomain": "no-id"}],
+        }
+        found = paid_publication_hosts(answer)
+        self.assertEqual(found.paid_hosts, {"example.substack.com", "founded.substack.com", "founded.example.com"})
+        self.assertEqual(found.paid_count, 2)
+        for unreadable in (None, [], {"subscriptions": None}, {"subscriptions": "x"}):
+            self.assertIsNone(paid_publication_hosts(unreadable))
+        self.assertEqual(paid_publication_hosts({"subscriptions": [{}, {}]}).paid_count, 0)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ from insight_core.ingestion.credentials import (
     SecretKeyMissing,
     StoredCredentials,
 )
-from insight_core.ingestion.kinds.substack import EXPIRED_REASON, MISSING_NOTICE, SubstackKind
+from insight_core.ingestion.kinds.substack import EXPIRED_REASON, MISSING_NOTICE, PREVIEW_NOTICE, SubstackKind
 from insight_core.ingestion.kinds.telegram_session import (
     TelegramLoginError,
     TelegramPasswordNeeded,
@@ -43,11 +43,13 @@ from insight_core.services.credentials_service import (
     LoginFailed,
     normalise_value,
 )
-from insight_core.services.operations_service import _credential_notice
+from insight_core.services.operations_service import _credential_notice, _kind_reading_notice
 from insight_core.tests._db import db_url, requires_db, requires_test_db
 from insight_core.tests._kind_fakes import FakeHttp
 
-BASE = "https://kaitchup.substack.com"
+BASE = "https://example.substack.com"
+SUBSCRIPTIONS = "https://substack.com/api/v1/subscriptions?tvOnly=false"
+PAYS_HERE = {"subscriptions": [{"membership_state": "subscribed", "publication": {"subdomain": "example"}}]}
 SID = "s%3AsecretCookieValue.abcdefWXYZ"
 HASH = "0123456789abcdef0123456789abcdef"
 
@@ -158,7 +160,8 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
 
     def _http(self, words=1000, extra=None):
         archive = f"{BASE}/api/v1/archive?sort=new&offset=0&limit=12"
-        return FakeHttp({archive: json.dumps([{"slug": "free", "audience": "everyone"}, self._post("paid", 0)]),
+        return FakeHttp({SUBSCRIPTIONS: json.dumps(PAYS_HERE),
+                         archive: json.dumps([{"slug": "free", "audience": "everyone"}, self._post("paid", 0)]),
                          f"{BASE}/api/v1/posts/paid": json.dumps(self._post("paid", words)), **(extra or {})})
 
     async def test_the_cookie_is_read_at_request_time(self):
@@ -176,7 +179,7 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         http = self._http()
         ok, message = await SubstackKind(http, sid=SID).check_session({"handle_or_url": f"{BASE}/"})
         self.assertTrue(ok)
-        self.assertIn("Paid one", message)
+        self.assertEqual(message, "Signed in · full text on 1 publication you pay for · “Paid one” reads in full")
         self.assertEqual(http.headers_for(f"{BASE}/api/v1/posts/paid")["Cookie"], f"substack.sid={SID}")
 
     async def test_a_teaser_means_expired(self):
@@ -185,14 +188,25 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message, EXPIRED_REASON)
 
     async def test_without_a_source_the_subscriptions_api_answers(self):
-        url = "https://substack.com/api/v1/subscriptions?tvOnly=false"
+        url = SUBSCRIPTIONS
         ok, message = await SubstackKind(FakeHttp({url: json.dumps({"subscriptions": [{}, {}]})}),
                                          sid=SID).check_session(None)
         self.assertTrue(ok)
-        self.assertEqual(message, "Signed in to Substack")
+        self.assertEqual(message, "Signed in · no publication you pay for found")
+        two = {"subscriptions": [{"membership_state": "subscribed", "publication": {"subdomain": name}}
+                                 for name in ("one", "two")]}
+        ok, message = await SubstackKind(FakeHttp({url: json.dumps(two)}), sid=SID).check_session(None)
+        self.assertEqual((ok, message), (True, "Signed in · full text on 2 publications you pay for"))
         ok, message = await SubstackKind(FakeHttp({url: ValueError(f"HTTP 403 while fetching {url}")}),
                                          sid=SID).check_session(None)
         self.assertEqual((ok, message), (False, EXPIRED_REASON))
+
+    async def test_a_source_you_dont_pay_for_is_not_read_by_the_check(self):
+        elsewhere = {"subscriptions": [{"membership_state": "subscribed", "publication": {"subdomain": "other"}}]}
+        http = self._http(words=100, extra={SUBSCRIPTIONS: json.dumps(elsewhere)})
+        ok, message = await SubstackKind(http, sid=SID).check_session({"handle_or_url": f"{BASE}/"})
+        self.assertEqual((ok, message), (True, "Signed in · full text on 1 publication you pay for"))
+        self.assertNotIn(f"{BASE}/api/v1/posts/paid", http.requests)
 
     async def test_no_cookie_and_errors_never_leak_it(self):
         self.assertEqual(await SubstackKind(FakeHttp(), sid="").check_session(None), (False, "No Substack session set"))
@@ -200,11 +214,23 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         ok, message = await SubstackKind(FakeHttp({url: RuntimeError(f"boom {SID}")}), sid=SID).check_session(None)
         self.assertFalse(ok)
         self.assertNotIn(SID, message)
+        self.assertTrue(message.startswith("Could not check the Substack session"), message)
 
     def test_the_health_row_carries_the_kinds_notice(self):
         self.assertEqual(_credential_notice(SubstackKind(FakeHttp(), sid="")), MISSING_NOTICE)
         self.assertIsNone(_credential_notice(SubstackKind(FakeHttp(), sid=SID)))
         self.assertIsNone(_credential_notice(object()))
+
+    def test_the_health_row_says_paid_posts_are_previews_where_you_dont_pay(self):
+        # Issue 0084: paid_preview (the schedule view) is the newest only_paid post's paywalled.
+        kind = SubstackKind(FakeHttp(), sid=SID)
+        self.assertEqual(_kind_reading_notice(kind, {"paid_preview": True}), PREVIEW_NOTICE)
+        self.assertEqual(PREVIEW_NOTICE, "Paid posts: preview only (no subscription)")
+        self.assertIsNone(_kind_reading_notice(kind, {"paid_preview": False}))
+        self.assertIsNone(_kind_reading_notice(kind, {}))
+        self.assertIsNone(_kind_reading_notice(SubstackKind(FakeHttp(), sid=""), {"paid_preview": True}),
+                          "without a cookie the credential notice says it")
+        self.assertIsNone(_kind_reading_notice(object(), {"paid_preview": True}))
 
 
 def _string_session() -> str:

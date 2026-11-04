@@ -249,6 +249,19 @@ class FetchStateRepositoryTests(unittest.TestCase):
         self.assertEqual([read["kept_images"] for read in row["page_reads"]], list(range(PAGE_READS_IN_HEALTH)))
         self.assertEqual(self.repo.load_schedule_view(self.cur, source_ids=[insert_scratch_source(self.cur)])[0]["page_reads"], [])
 
+    def test_schedule_view_says_whether_the_newest_paid_post_is_a_teaser(self):
+        # Issue 0084: paid_preview is metadata.paywalled of the newest only_paid post.
+        for i, (audience, paywalled) in enumerate([("everyone", False), ("only_paid", True), ("only_paid", False)]):
+            self.cur.execute(
+                "INSERT INTO posts (source_id, url, fetched_at, metadata) VALUES (%s, %s, %s, %s::jsonb)",
+                (self.source, f"https://test.invalid/mark-ix/paid/{self.source}/{i}", NOW - i * H,
+                 json.dumps({"audience": audience, "paywalled": paywalled})),
+            )
+        (row,) = self.repo.load_schedule_view(self.cur, source_ids=[self.source])
+        self.assertIs(row["paid_preview"], True)
+        bare = insert_scratch_source(self.cur)
+        self.assertIsNone(self.repo.load_schedule_view(self.cur, source_ids=[bare])[0]["paid_preview"])
+
     def test_schedule_view_can_be_scoped_and_merges_platform_defaults(self):
         other = insert_scratch_source(self.cur)
         view = self.repo.load_schedule_view(self.cur, source_ids=[self.source])

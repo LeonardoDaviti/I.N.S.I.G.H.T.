@@ -130,6 +130,17 @@ def _credential_notice(kind: Any) -> Optional[str]:
         return None
 
 
+def _kind_reading_notice(kind: Any, source: Dict[str, Any]) -> Optional[str]:
+    """What a kind says about how this source's posts are read (Substack: paid posts as previews)."""
+    notice = getattr(kind, "reading_notice", None)
+    if not callable(notice):
+        return None
+    try:
+        return notice(source)
+    except Exception:  # noqa: BLE001 - a notice never breaks the health table
+        return None
+
+
 # A source's page reads (repo_fetch_state.PAGE_READS_IN_HEALTH newest) that lost most of their
 # images, or opened with a very short block, before its row says so: conservative, so one
 # odd page never warns, and a source whose dropped images were related cards (NVIDIA) never
@@ -245,7 +256,8 @@ def health_row(source: Dict[str, Any], kind: Any, availability: Availability, no
         # without a session: teasers only) says so here; None otherwise.
         "credential_notice": _credential_notice(kind),
         # How its newest page-read posts were read (page watch, full text): None, or a note.
-        "reading_notice": reading_notice(source.get("page_reads")),
+        "reading_notice": ". ".join(filter(None, [reading_notice(source.get("page_reads")),
+                                                  _kind_reading_notice(kind, source)])) or None,
         # Watch for changes (issue 0039): whether its kind can re-read its pages, and whether it does.
         "watchable": bool(getattr(kind, "watches", False)),
         "watch_changes": bool(getattr(kind, "watches", False) and settings.get("watch_changes")),

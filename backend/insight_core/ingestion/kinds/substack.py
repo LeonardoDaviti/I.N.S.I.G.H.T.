@@ -4,12 +4,22 @@ The public RSS feed truncates paid posts. The publication's JSON API does not wh
 request carries a subscriber's session cookie (substack.sid): /api/v1/archive lists posts
 newest first (body_html empty), /api/v1/posts/<slug> returns the body the account can read.
 
+The cookie is sent only to the publications the owner pays for (issue 0084): Substack's
+subscriptions API (SUBSCRIPTIONS_URL) is asked once per fetch run (kept SUBSCRIPTIONS_TTL_S in
+memory) and paid_publication_hosts reads it defensively. A publication you pay for is read as
+before; any other is read without the cookie, its paid posts stored as their teaser
+(metadata.paywalled=true), never an error. When the subscriptions answer can't be read, or
+names no publication as paid, the cookie is sent everywhere and a teaser is stored, never an
+error (we can't tell whom you pay). A 401/403 there means the session expired: a publication
+with a truncated paid post is UNAVAILABLE, free ones are read without the cookie.
+
 The cookie is read through the credential seam (ingestion/credentials.py): the value saved
 in Sources → Connections (never the environment). It is read at request time, so a new cookie
 applies on the next fetch without a restart. Without one the public (truncated) body is
 stored with metadata.paywalled=true.
-With it, a rejected cookie (401/403) or an only_paid post that still comes back truncated
-(Substack answers 200 with the teaser for a stale cookie) means the session expired: the
+For a publication you pay for, a rejected cookie (401/403) or an only_paid post that still
+comes back truncated (Substack answers 200 with the teaser for a stale cookie) means the
+session expired: the
 source is UNAVAILABLE (never backoff) until the owner updates the cookie. The cookie is
 never logged or put in an error message.
 
@@ -18,11 +28,14 @@ post requests within a source are spaced by the profile's page delay.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
+import time
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, FrozenSet, List, Optional, Union
 
 from insight_core.ingestion.credentials import CredentialProvider, MappingCredentials
 from insight_core.ingestion.http import KindHttp
@@ -48,6 +61,19 @@ MISSING_NOTICE = "Paid posts arrive as teasers. Add your Substack session in Sou
 # Without tvOnly Substack answers 400 (seen 2026-10-27); its list can be empty when signed in.
 SUBSCRIPTIONS_URL = "https://substack.com/api/v1/subscriptions?tvOnly=false"
 PAID_AUDIENCES = frozenset({"only_paid", "founding"})
+PREVIEW_NOTICE = "Paid posts: preview only (no subscription)"
+# One fetch run asks the subscriptions API once: its answer is kept this long in memory.
+SUBSCRIPTIONS_TTL_S = 600
+# A subscription is paid when its membership_state (or type/plan) is one of these, or a paid
+# flag is true. Anything else, or the field missing, is "not paid".
+PAID_STATES = frozenset({"subscribed", "paid", "founding", "comp", "gift"})
+PAID_FLAGS = ("paid", "is_paid", "isPaid", "is_paid_subscriber", "is_founding")
+
+# How a source is read (_access):
+FULL = "full"          # you pay for it: cookie sent, a truncated paid post means expired
+PREVIEW = "preview"    # you don't (or no cookie): no cookie, paid posts stored as their teaser
+EXPIRED = "expired"    # the subscriptions API said 401/403: no cookie, a truncated paid post means expired
+UNKNOWN = "unknown"    # can't tell whom you pay: cookie sent, a teaser is stored, never an error
 # A paid body with fewer words than this share of the post's wordcount is the teaser.
 TRUNCATED_RATIO = 0.6
 
@@ -75,6 +101,65 @@ def _text(value: Any) -> str:
     return html.unescape(str(value or "")).strip()
 
 
+def _bare_host(value: Any) -> str:
+    """"https://www.example.com/x" or "www.example.com" -> "example.com"."""
+    text = str(value or "").strip().lower()
+    host = host_of(text if "://" in text else f"https://{text}")
+    return host[4:] if host.startswith("www.") else host
+
+
+@dataclass(frozen=True)
+class Subscriptions:
+    paid_hosts: FrozenSet[str]   # bare hosts of the publications you pay for
+    paid_count: int              # how many publications that is
+
+
+def _is_paid(entry: Dict[str, Any]) -> bool:
+    for key in ("membership_state", "type", "subscription_type", "plan"):
+        if str(entry.get(key) or "").lower() in PAID_STATES:
+            return True
+    return any(entry.get(flag) is True for flag in PAID_FLAGS)
+
+
+def _publication_hosts(publication: Dict[str, Any]) -> FrozenSet[str]:
+    hosts = set()
+    subdomain = str(publication.get("subdomain") or "").strip().lower()
+    if subdomain:
+        hosts.add(f"{subdomain}.substack.com")
+    for key in ("custom_domain", "base_url"):
+        if publication.get(key):
+            hosts.add(_bare_host(publication[key]))
+    return frozenset(host for host in hosts if host)
+
+
+def paid_publication_hosts(data: Any) -> Optional[Subscriptions]:
+    """The publications you pay for, from SUBSCRIPTIONS_URL's answer; None when unreadable.
+
+    Assumed (not verified against Substack, so read defensively): a dict whose "subscriptions"
+    is a list of entries, each with a paid state (membership_state "subscribed"/"founding"/...,
+    or a true paid flag) and its publication either embedded ("publication": {subdomain,
+    custom_domain}) or by "publication_id" into a top-level "publications" list. An entry
+    without a paid state, or whose publication can't be found, is not paid.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("subscriptions"), list):
+        return None
+    by_id = {str(pub["id"]): pub for pub in data.get("publications") or []
+             if isinstance(pub, dict) and pub.get("id") is not None}
+    hosts: set = set()
+    count = 0
+    for entry in data["subscriptions"]:
+        if not isinstance(entry, dict) or not _is_paid(entry):
+            continue
+        publication = entry.get("publication")
+        if not isinstance(publication, dict):
+            publication = by_id.get(str(entry.get("publication_id")), {})
+        found = _publication_hosts(publication) or _publication_hosts(entry)
+        if found and not found & hosts:
+            count += 1
+        hosts |= found
+    return Subscriptions(frozenset(hosts), count)
+
+
 class SubstackKind(BaseKind):
     name = "substack"
     available_basis = "unknown"   # /api/v1/archive pages carry no total
@@ -86,6 +171,7 @@ class SubstackKind(BaseKind):
         if sid is not None:
             credentials = MappingCredentials({("substack", "sid"): sid})
         self.credentials = credentials
+        self._subscriptions_cache: Optional[tuple] = None   # (cookie hash, monotonic time, answer)
 
     @property
     def _sid(self) -> str:
@@ -101,6 +187,43 @@ class SubstackKind(BaseKind):
     def credential_notice(self) -> Optional[str]:
         """Why paid posts would come back as teasers (the health table's notice), or None."""
         return None if self._sid else MISSING_NOTICE
+
+    def reading_notice(self, source: Source) -> Optional[str]:
+        """The health row's note for a publication read without the cookie (its newest paid post
+        was stored as a teaser, `paid_preview` of the schedule view), or None."""
+        return PREVIEW_NOTICE if self._sid and source.get("paid_preview") else None
+
+    async def _subscriptions(self, *, fresh: bool = False) -> Union[Subscriptions, str, None]:
+        """The publications you pay for (kept SUBSCRIPTIONS_TTL_S per cookie), EXPIRED on a
+        401/403, None when the answer can't be read (not kept; `fresh` raises a request error)."""
+        key = hashlib.sha256(self._sid.encode()).hexdigest()
+        cached = self._subscriptions_cache
+        if (not fresh and cached is not None and cached[0] == key
+                and time.monotonic() - cached[1] < SUBSCRIPTIONS_TTL_S):
+            return cached[2]
+        try:
+            answer: Union[Subscriptions, str, None] = paid_publication_hosts(
+                await self._get_json(SUBSCRIPTIONS_URL, cookie=True))
+        except KindUnavailable:
+            answer = EXPIRED
+        except Exception:  # noqa: BLE001 - unreadable: send the cookie, never an error
+            if fresh:      # the connection test reports it
+                raise
+            return None
+        if answer is not None:
+            self._subscriptions_cache = (key, time.monotonic(), answer)
+        return answer
+
+    async def _access(self, source: Source) -> str:
+        """How this source is read: FULL, PREVIEW, EXPIRED or UNKNOWN (see the constants)."""
+        if not self._sid:
+            return PREVIEW
+        subscriptions = await self._subscriptions()
+        if subscriptions == EXPIRED:
+            return EXPIRED
+        if not isinstance(subscriptions, Subscriptions) or not subscriptions.paid_hosts:
+            return UNKNOWN
+        return FULL if _bare_host(publication_base(source)) in subscriptions.paid_hosts else PREVIEW
 
     def matches(self, source: Source) -> bool:
         if (source.get("settings") or {}).get("substack") is True:
@@ -123,29 +246,32 @@ class SubstackKind(BaseKind):
 
     async def fetch_latest(self, source: Source, limit: int) -> List[Dict[str, Any]]:
         base = publication_base(source)
+        access = await self._access(source)
         try:
-            items = await self._archive_items(base, 0, limit)
+            items = await self._archive_items(base, 0, limit, access)
         except KindUnavailable:
             raise
         except Exception:
             items = await self._rss_items(base, limit)
-        return await self._full_posts(source, base, items, self.profile.page_delay_s)
+        return await self._full_posts(source, base, items, self.profile.page_delay_s, access)
 
     async def inspect(self, source: Source) -> Inspection:
-        items = await self._archive_items(publication_base(source), 0, ARCHIVE_PAGE_SIZE)
+        access = await self._access(source)
+        items = await self._archive_items(publication_base(source), 0, ARCHIVE_PAGE_SIZE, access)
         return Inspection(available_posts=None, page_size=ARCHIVE_PAGE_SIZE, first_post_date=None,
-                          raw={"paid_cookie": bool(self._sid), "sampled_posts": len(items)})
+                          raw={"paid_cookie": access in (FULL, UNKNOWN), "sampled_posts": len(items)})
 
     async def archive_pages(self, source: Source, target: int, checkpoint: Optional[dict], rate: RateLimit):
         base = publication_base(source)
+        access = await self._access(source)
         collected, pages_fetched = resume_counts(checkpoint)
         offset = int((checkpoint or {}).get("offset") or 0)
         while collected < target:
             batch = min(ARCHIVE_PAGE_SIZE, target - collected)
-            items = await self._archive_page(base, offset, batch)
+            items = await self._archive_page(base, offset, batch, access)
             if not items:
                 break
-            posts = await self._full_posts(source, base, items, rate.page_delay_s)
+            posts = await self._full_posts(source, base, items, rate.page_delay_s, access)
             pages_fetched += 1
             collected += len(posts)
             offset += len(items)
@@ -159,29 +285,32 @@ class SubstackKind(BaseKind):
                 break
 
     async def check_session(self, source: Optional[Source] = None) -> tuple[bool, str]:
-        """The connection test: is the cookie set and does it still read paid posts?
+        """The connection test: is the cookie set and signed in, and what does it read in full?
 
-        With a source, the newest only_paid post of its archive is read: a full body is ok,
-        a teaser or a 401/403 is "expired". Without a source, or when its latest page has no
-        paid post, substack.com's subscriptions API says whether the cookie is signed in.
-        The message never contains the cookie.
+        substack.com's subscriptions API says whether the cookie is signed in and how many
+        publications you pay for ("Signed in · full text on 1 publication you pay for"). With a
+        source you pay for, the newest only_paid post of its archive is read too: a teaser or a
+        401/403 is "expired". The message never contains the cookie.
         """
         sid = self._sid
         if not sid:
             return False, "No Substack session set"
         try:
-            if source is not None:
+            subscriptions = await self._subscriptions(fresh=True)
+            if not isinstance(subscriptions, Subscriptions):
+                return False, EXPIRED_REASON
+            count = subscriptions.paid_count
+            message = ("Signed in · no publication you pay for found" if not count else
+                       f"Signed in · full text on {count} publication{'' if count == 1 else 's'} you pay for")
+            if source is not None and await self._access(source) == FULL:
                 base = publication_base(source)
-                items = await self._archive_page(base, 0, ARCHIVE_PAGE_SIZE)
+                items = await self._archive_page(base, 0, ARCHIVE_PAGE_SIZE, FULL)
                 paid = next((item for item in items if item.get("audience") == "only_paid"), None)
                 if paid is not None:
-                    detail = await self._get_json(f"{base}/api/v1/posts/{paid['slug']}")
-                    post = self._to_post(source, base, {**paid, **(detail if isinstance(detail, dict) else {})})
-                    return True, f"Full text readable: “{post['title'] or paid['slug']}”"
-            data = await self._get_json(SUBSCRIPTIONS_URL)
-            if isinstance(data, dict) and data.get("subscriptions") is not None:
-                return True, "Signed in to Substack"
-            return False, EXPIRED_REASON
+                    detail = await self._get_json(f"{base}/api/v1/posts/{paid['slug']}", cookie=True)
+                    post = self._to_post(source, base, {**paid, **(detail if isinstance(detail, dict) else {})}, FULL)
+                    message += f" · “{post['title'] or paid['slug']}” reads in full"
+            return True, message
         except KindUnavailable as exc:
             return False, exc.reason
         except Exception as exc:  # noqa: BLE001 - reported, never raised to the route
@@ -195,8 +324,9 @@ class SubstackKind(BaseKind):
         if not slug:
             return None
         base = publication_base(source)
-        detail = await self._get_json(f"{base}/api/v1/posts/{slug}")
-        return self._to_post(source, base, detail) if isinstance(detail, dict) else None
+        access = await self._access(source)
+        detail = await self._get_json(f"{base}/api/v1/posts/{slug}", cookie=access in (FULL, UNKNOWN))
+        return self._to_post(source, base, detail, access) if isinstance(detail, dict) else None
 
     # ------------------------------------------------------------------ requests
 
@@ -204,27 +334,28 @@ class SubstackKind(BaseKind):
         sid = self._sid
         return {"Cookie": f"substack.sid={sid}"} if sid else {}
 
-    async def _get_json(self, url: str) -> Any:
+    async def _get_json(self, url: str, *, cookie: bool) -> Any:
+        headers = self._headers() if cookie else {}
         try:
-            body, _ = await self.http.get_text(url, headers=self._headers())
+            body, _ = await self.http.get_text(url, headers=headers)
         except ValueError as exc:
-            if self._sid and _AUTH_ERROR_RE.match(str(exc)):
+            if headers and _AUTH_ERROR_RE.match(str(exc)):
                 raise KindUnavailable(EXPIRED_REASON) from None
             raise
         return json.loads(body)
 
-    async def _archive_page(self, base: str, offset: int, limit: int) -> List[Dict[str, Any]]:
+    async def _archive_page(self, base: str, offset: int, limit: int, access: str) -> List[Dict[str, Any]]:
         query = urllib.parse.urlencode({"sort": "new", "offset": offset, "limit": limit})
-        data = await self._get_json(f"{base}/api/v1/archive?{query}")
+        data = await self._get_json(f"{base}/api/v1/archive?{query}", cookie=access in (FULL, UNKNOWN))
         if not isinstance(data, list):
             raise ValueError(f"Unexpected Substack archive response from {base}")
         return [item for item in data if isinstance(item, dict) and item.get("slug")]
 
-    async def _archive_items(self, base: str, offset: int, limit: int) -> List[Dict[str, Any]]:
+    async def _archive_items(self, base: str, offset: int, limit: int, access: str) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         while len(items) < limit:
             batch = min(ARCHIVE_PAGE_SIZE, limit - len(items))
-            page = await self._archive_page(base, offset + len(items), batch)
+            page = await self._archive_page(base, offset + len(items), batch, access)
             items.extend(page)
             if len(page) < batch:
                 break
@@ -239,7 +370,7 @@ class SubstackKind(BaseKind):
         return items
 
     async def _full_posts(self, source: Source, base: str, items: List[Dict[str, Any]],
-                          delay: float) -> List[Dict[str, Any]]:
+                          delay: float, access: str) -> List[Dict[str, Any]]:
         posts: List[Dict[str, Any]] = []
         for index, item in enumerate(items):
             if index:
@@ -247,27 +378,28 @@ class SubstackKind(BaseKind):
             detail: Optional[Dict[str, Any]] = None
             if item.get("slug"):
                 try:
-                    detail = await self._get_json(f"{base}/api/v1/posts/{item['slug']}")
+                    detail = await self._get_json(f"{base}/api/v1/posts/{item['slug']}",
+                                                  cookie=access in (FULL, UNKNOWN))
                 except KindUnavailable:
                     raise
                 except Exception:
                     detail = None
             if isinstance(detail, dict):
-                posts.append(self._to_post(source, base, {**item, **detail}))
+                posts.append(self._to_post(source, base, {**item, **detail}, access))
             elif "_rss" in item:
                 posts.append(self._from_rss(source, item["_rss"]))
             else:
-                posts.append(self._to_post(source, base, item))
+                posts.append(self._to_post(source, base, item, access))
         return posts
 
     # ------------------------------------------------------------------ shaping
 
-    def _to_post(self, source: Source, base: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _to_post(self, source: Source, base: str, data: Dict[str, Any], access: str) -> Dict[str, Any]:
         audience = str(data.get("audience") or "everyone")
         body_html = str(data.get("body_html") or "")
         content = parsing.strip_html(body_html) or _text(data.get("truncated_body_text"))
         paywalled = audience in PAID_AUDIENCES and self._is_truncated(content, data.get("wordcount"))
-        if paywalled and self._sid and audience == "only_paid":
+        if paywalled and audience == "only_paid" and access in (FULL, EXPIRED):
             raise KindUnavailable(EXPIRED_REASON)
 
         cover = data.get("cover_image")
