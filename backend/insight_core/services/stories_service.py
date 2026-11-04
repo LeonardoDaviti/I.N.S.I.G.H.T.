@@ -117,7 +117,10 @@ class StoriesService:
         step = self.step(cur, sources, previous, now, window=not totals)
         if step is None:
             return False
-        totals.update(step.pop("counts"))
+        counts = step.pop("counts")
+        totals.update(counts)
+        if counts.get("boilerplate_changed"):   # kept links became boilerplate or stopped being: Discover counts them
+            step["links_changed"] = True
         summary = {"computed_at": now.isoformat(), "full": False, "links_filled": links_filled, **totals,
                    "batches": totals["batches"], "seconds": round(time.monotonic() - (started or time.monotonic()), 2)}
         self._settle(cur, sources, summary, now, step)
@@ -148,7 +151,10 @@ class StoriesService:
         # When what Discover counts from last changed (issue 0080 speed): a batch (its links, stories and
         # Classics), a full run, links read. A rebuild's other steps (keys, threads, names) change none of it,
         # so Discover's kept counts and its list stay valid through them.
-        if summary.get("full") or state.get("discover") is not None or summary.get("links_filled"):
+        # Settings from before discover_at keep their last run's time as it, so the counts kept by it hold.
+        value["discover_at"] = previous.get("discover_at") or previous.get("computed_at") or now.isoformat()
+        if (summary.get("full") or state.get("discover") is not None or state.get("links_changed")
+                or summary.get("links_filled")):
             value["discover_at"] = now.isoformat()
         for key in ("rules", "full_at", "rebuild"):
             if key in state:
