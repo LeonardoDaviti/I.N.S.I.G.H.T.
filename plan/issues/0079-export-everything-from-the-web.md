@@ -1,6 +1,6 @@
 # 0079 — Export everything from the web: one click for a full database dump
 
-Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled. Secrets and access decided by the owner the same day (below).
+Status: **spec, decided** (owner, 2026-11-04): built after 0080 merges. Secrets, access and the format were decided the same day (below).
 
 ## The owner's words
 "Please add button to export whole database as we are doing with data pgdump on the web as well, because I don't like to everytime go in server and dump everything, single click should be enough."
@@ -39,6 +39,37 @@ Status: **idea, filed for the future** (owner, 2026-11-04). Not scheduled. Secre
 4. **Size:**
    - measure the dump of the lab and of a fresh server copy, with and without bodies' HTML;
    - a slow link needs a resumable download, or a size shown first.
+
+## The format (owner, 2026-11-04: "B approach is better for us")
+INSIGHT writes its own export, with no `pg_dump`: the image gets no Postgres client and nothing is downloaded.
+
+**One zip, streamed to the browser** (`insight-YYYY-MM-DD-HHMM.zip`), holding:
+- **one CSV per table** (`posts.csv`, `sources.csv`, …), written by Postgres's `COPY … TO STDOUT (FORMAT csv, HEADER)`, read in batches. Text stays text; a vector column is its text form.
+- **`schema.sql`:** the migrations in order (the exact schema the data belongs to).
+- **`manifest.json`:** the INSIGHT version and commit, the last migration, the time, and each table's row count. Whether logins are included.
+- **`README.txt`:** how to restore it into INSIGHT, and how to explore it alone.
+
+**Restored into INSIGHT** (a new or empty database):
+- `python insight_core/db/import_export.py <zip>`;
+- it checks the manifest;
+- it runs the migrations up to the export's level, then loads each CSV with `COPY … FROM STDIN`, in the order the foreign keys need;
+- then the normal migrations bring it up to the running version.
+
+**Explored on its own, with no INSIGHT:**
+- the CSVs open in any tool:
+  - DuckDB (`SELECT * FROM 'posts.csv'`);
+  - pandas;
+  - SQLite (`.import`);
+  - a spreadsheet for small tables;
+- or `psql -f schema.sql` into any Postgres (with the pgvector extension), then `\copy` each CSV.
+- The README lists both.
+
+**Logins:** the credential tables are written as empty CSVs unless "Include stored logins" is checked; the manifest says which.
+
+**Measure before adopting:**
+- the zip's size and time on the lab (41,637 posts), against `pg_dump -Fc`;
+- the API's memory while it streams;
+- a restore of the lab export into a scratch database that equals the original, table by table (row counts and a checksum per table).
 
 ## Not in this issue
 - Scheduled backups (the owner decided against them).
