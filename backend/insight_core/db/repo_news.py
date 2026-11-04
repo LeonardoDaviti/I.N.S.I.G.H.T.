@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from psycopg import Cursor
 
-from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item
+from insight_core.db.repo_reader import _ITEM_COLUMNS, FeedScope, _item, voiced
 from insight_core.utils.classic_rules import BACKGROUND_SHOWN, Citation, Classic
 from insight_core.utils.news_rules import NewsStory, Surge
 from insight_core.utils.post_fields import quote_only, title_columns
@@ -313,7 +313,8 @@ class NewsRepository:
         cur.execute(
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
-                   np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope
+                   np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope,
+                   np.voice, p.content_hash
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
@@ -329,12 +330,13 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-10])
-            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope = row[-10:]
+            item = _item(row[:-12])
+            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash = row[-12:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
-                         "_quotes": quote_only(row[21])})   # issue 0072: a post that only quotes a tweet
+                         "_quotes": quote_only(row[21]),   # issue 0072: a post that only quotes a tweet
+                         "_voiced": voiced(row, voice, content_hash)})
             out.append(item)
         return out
 

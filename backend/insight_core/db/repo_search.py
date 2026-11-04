@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from psycopg import Cursor
@@ -33,7 +34,7 @@ from psycopg import Cursor
 from insight_core.db.repo_news import NewsRepository, _scope_sql as news_scope_sql
 from insight_core.db.repo_reader import (
     _ITEM_COLUMNS, _ORDER_RANK, MAX_FEED_LIMIT, NOT_ALBUM_PIECE, SORT_KEY, FeedCursor, FeedScope, ReaderRepository,
-    _item, _on,
+    _item, _on, story_voices, voiced,
 )
 from insight_core.utils.content_fingerprints import WHITESPACE_RE, decode_entities
 from insight_core.utils.classic_rules import cited_again
@@ -304,7 +305,7 @@ class SearchRepository:
         cur.execute(
             f"""
             SELECT {_ITEM_COLUMNS}, np.post_id, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions,
-                   ns.score, o.role
+                   ns.score, o.role, o.voice, p.content_hash
             FROM news_posts np
             JOIN news_stories ns ON ns.id = np.news_id
             JOIN news_posts o ON o.news_id = np.news_id
@@ -318,7 +319,7 @@ class SearchRepository:
         )
         stories: Dict[str, Dict[str, Any]] = {}
         for row in cur.fetchall():
-            shown, news_id, first_at, voices, reports, shares, mentions, score, role = row[-9:]
+            shown, news_id, first_at, voices, reports, shares, mentions, score, role, voice, content_hash = row[-11:]
             story = stories.setdefault(str(shown), {
                 "story": {"id": str(news_id), "voices": int(voices), "sources": [], "posts": []},
                 "news": {"part": "recent" if first_at >= now - NEWS_RECENT else "earlier", "first_at": first_at,
@@ -326,7 +327,9 @@ class SearchRepository:
                          "score": float(score)},
                 "all": [],
             })
-            story["all"].append({**_item(row[:-9]), "role": role, "_quotes": quote_only(row[21])})
+            story["all"].append({**_item(row[:-11]), "role": role, "_quotes": quote_only(row[21]),
+                                 "_voiced": voiced(row, voice, content_hash)})
+        followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
         for item in items:
             found = stories.get(item["id"])
             item["story"], item["news"] = (found["story"], found["news"]) if found else (None, None)
@@ -334,9 +337,8 @@ class SearchRepository:
                 continue
             posts = found.pop("all")
             first_report = lead([(p["id"], p["role"]) for p in posts])
-            for post in sorted(posts, key=lambda p: p["id"] != first_report):   # stable: time order after
-                if not any(s["id"] == post["source_id"] for s in found["story"]["sources"]):
-                    found["story"]["sources"].append({"id": post["source_id"], "name": post["source_display_name"]})
+            covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
+            found["story"]["sources"] = story_voices([p["_voiced"] for p in covered], followed)   # as News (0082)
             found["story"]["posts"] = NewsRepository.lines(posts, item["id"])
 
     def _classics(self, cur: Cursor, query: SearchQuery, *, now: datetime

@@ -37,7 +37,7 @@ from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.addresses import account_key, site_of
 from insight_core.utils.post_links import extract_links, is_home, source_kind
 from insight_core.utils.discover_rules import suggestions
-from insight_core.utils.story_rules import StoryPost, count_voices, group, roles
+from insight_core.utils.story_rules import StoryPost, count_voices, group, named_voices, roles
 from insight_core.utils.url_normalization import normalize_url
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
@@ -183,6 +183,47 @@ class RolesTests(unittest.TestCase):
                  post("f", "s3", hours=5, title="What I think of it")]
         self.assertEqual(roles(posts), {"a": "report", "b": "share", "c": "share", "d": "share", "e": "report",
                                         "f": "report"})
+
+
+class NamedVoicesTests(unittest.TestCase):
+    """Issue 0082: a story's names are the voices its count counts, one each."""
+
+    NAMES = {"r1": "r/sub", "s1": "Blog One", "s2": "Blog One Feed", "s3": "Blog Three", "tg1": "Channel A",
+             "tg2": "Channel B", "x1": "Account A", "x2": "Account B", "sv": "Saved"}
+
+    def _named(self, posts, others=None):
+        others = others or {}
+        shaped = [{"source_id": p.source_id, "name": self.NAMES[p.source_id], "kind": p.kind, "voice": p.voice,
+                   "text_key": p.text_key, "others": [{"id": s, "name": self.NAMES[s]} for s in others.get(p.id, ())]}
+                  for p in posts]
+        return named_voices(shaped)
+
+    def test_each_voice_once_as_counted(self):
+        posts = [post("a", "r1", kind="reddit", author="alice"),
+                 post("b", "r1", kind="reddit", author="bob", hours=1),
+                 post("c", "r1", kind="reddit", author="alice", hours=2),               # alice again: one voice
+                 post("d", "s1", site="one.test", hours=3),
+                 post("e", "s2", site="one.test", hours=4),                             # the publication's other feed
+                 post("f", "tg1", kind="telegram", hours=5, text_hash="h", chars=200),
+                 post("g", "tg2", kind="telegram", hours=6, text_hash="h", chars=200),           # a forward of f's text
+                 post("h", "sv", kind="saved", hours=7)]                                # a page you saved: no voice
+        named = self._named(posts)
+        self.assertEqual([(v["id"], v["name"], v.get("place")) for v in named],
+                         [("r1", "u/alice", "r/sub"), ("r1", "u/bob", "r/sub"), ("s1", "Blog One", None),
+                          ("tg1", "Channel A", None)])
+        self.assertEqual([[s["id"] for s in v["with"]] for v in named], [[], [], ["s2"], ["tg2"]])
+        self.assertEqual(len(named), count_voices(posts), "the count is the names")
+
+    def test_a_followed_author_of_a_reposted_tweet_is_a_voice(self):
+        repost = post("a", "x2", kind="x", author="accounta", reposted=True, author_source="x1")
+        named = self._named([repost], {"a": ["x1"]})
+        self.assertEqual([v["name"] for v in named], ["Account B", "Account A"])
+        self.assertEqual(len(named), count_voices([repost]))
+        # The author's own tweet in the story too: one voice, its tweet's source.
+        own = post("b", "x1", kind="x", author="accounta", hours=-1)
+        named = self._named([own, repost], {"a": ["x1"]})
+        self.assertEqual([(v["name"], v["with"]) for v in named], [("Account A", []), ("Account B", [])])
+        self.assertEqual(len(named), count_voices([own, repost]))
 
 
 # ---- Discover ---------------------------------------------------------------------------------
@@ -386,7 +427,9 @@ class StoryJobTests(unittest.TestCase):
         self._launch()
         [row] = self._feed()
         self.assertEqual(row["id"], self.lab)
-        self.assertEqual([s["name"] for s in row["story"]["sources"]], ["Anthropic", "A channel", "Simon Willison"])
+        # One name a voice (issue 0082): the channel's copy is the lab's voice, named once with it.
+        self.assertEqual([(s["name"], [w["name"] for w in s["with"]]) for s in row["story"]["sources"]],
+                         [("Anthropic", ["A channel"]), ("Simon Willison", [])])
         self.assertEqual([(p["id"], p["role"]) for p in row["story"]["posts"]], [(self.copy, "share"), (self.take, "report")])
         source_view = self.reader.list_posts(self.cur, FeedQuery(scope=FeedScope("source", self.channel)), now=self.now)[0]
         self.assertEqual([i["id"] for i in source_view], [self.copy], "a source's own view shows every post")

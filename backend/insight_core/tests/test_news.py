@@ -394,6 +394,29 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(part(weekly), ["mention"])
         self.assertEqual([i["id"] for i in self._mine(self.news.news_on(self.cur, "all")["items"])], [own])
 
+    def test_names_are_the_voices_counted(self):
+        """Issue 0082: each Reddit author is a voice, named u/<author> in its subreddit, on News, the feed
+        row and the post page alike: the count is the names."""
+        from insight_core.db.repo_reader import ReaderRepository
+        from insight_core.services.post_detail_service import PostDetailService
+        page = f"https://blog-{self.mark}.test/2026/10/the-release"
+        blog = self._source("Blog One")
+        sub = insert_source(self.cur, "r/sub", platform="reddit", in_main_digest=True, followed_days=60)
+        own = self._post(blog, site="blog", url=page, hours_ago=10, title="We released the thing")
+        for user, hours in (("alice", 9), ("bob", 8), ("alice", 7)):
+            self._post(sub, site="reddit", hours_ago=hours, title=f"The thing, by {user}",
+                       html=f'submitted by <a href="https://www.reddit.com/user/{user}"> /u/{user} </a> {self._link(page)}')
+        self._job()
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["id"] == own]
+        names = [(s["name"], s.get("place")) for s in item["story"]["sources"]]
+        self.assertEqual(names, [("Blog One", None), ("u/alice", "r/sub"), ("u/bob", "r/sub")])
+        self.assertEqual(item["story"]["voices"], 3)
+        row = {"id": own}
+        ReaderRepository.attach_stories(self.cur, [row])
+        self.assertEqual(([(s["name"], s.get("place")) for s in row["story"]["sources"]], row["story"]["voices"]), (names, 3))
+        story = PostDetailService.story(self.cur, own, blog)
+        self.assertEqual([(s["name"], s.get("place")) for s in story["sources"]], names)
+
     def test_a_track_shows_stories_with_one_of_its_posts_scored_over_every_source(self):
         self._week()
         other = self._source("Delta")

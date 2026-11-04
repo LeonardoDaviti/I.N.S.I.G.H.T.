@@ -161,13 +161,16 @@ export interface Classic {
   read_at: string | null; later_at: string | null;
 }
 export interface ClassicsResponse { success: true; classics: Classic[]; }
+export interface StoryVoice { id: string; name: string; place?: string | null; with?: { id: string; name: string }[]; }
 /** One story, many sources (issue 0050). `sources` in the order they covered it. */
 export interface FeedStory {
   id: string;
   voices: number;
   /** Its origin post (issue 0064; before the tree is drawn, its first report, else its first share); null when the origin is a page outside INSIGHT. */
   first?: string | null;
-  sources: { id: string; name: string }[];
+  /** Its voices named, one a voice (issue 0082: `voices` is these and "+N"): a Reddit author `u/name` with
+   *  `place` its subreddit, a publication's copies once; `with` the voice's other sources (a copy's, a reposter's). */
+  sources: StoryVoice[];
   posts: StoryPost[];
   /** The origin when it is a page outside INSIGHT 2+ of the story's posts link (issue 0064). */
   origin?: StoryOrigin | null;

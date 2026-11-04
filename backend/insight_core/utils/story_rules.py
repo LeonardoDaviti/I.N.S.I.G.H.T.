@@ -34,7 +34,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from insight_core.utils import titles
 from insight_core.utils.addresses import bare, host_of, is_tweet, site_of
@@ -122,7 +122,7 @@ class StoryPost:
 
     @property
     def text_key(self) -> Optional[str]:
-        return self.content_hash if self.content_hash and self.text_chars >= SAME_TEXT_MIN_CHARS else None
+        return text_key(self.content_hash, self.text_chars)
 
     @property
     def title_key(self) -> Optional[str]:
@@ -555,25 +555,67 @@ def roles(posts: Sequence[StoryPost]) -> Dict[str, str]:
     return out
 
 
-def count_voices(posts: Sequence[StoryPost]) -> int:
-    """How many voices a story has: posts of one voice, and copies of one text, are one. A source
-    that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
-    with its posts in the story, if it has some. A page you saved is no voice (issue 0070)."""
+def text_key(content_hash: Optional[str], chars: int) -> Optional[str]:
+    """What copies of one text share: its hash, when it is long enough to tell (SAME_TEXT_MIN_CHARS)."""
+    return content_hash if content_hash and chars >= SAME_TEXT_MIN_CHARS else None
+
+
+def voice_groups(items: Iterable[Tuple[Any, Optional[str], str]]) -> List[List[Any]]:
+    """The voices among `items` ((key, text key, voice) each: a post, or a source that wrote or
+    reposted the tweet a post holds, issue 0068): items of one voice, and copies of one text, are one
+    voice. Each voice is its items' keys in the order given, the voices in the order of their first."""
     uf = _UnionFind()
-    keys: Dict[str, str] = {}
-    posts = [p for p in posts if p.kind != "saved"]
-    nodes = [(p.id, (("text:" + p.text_key) if p.text_key else None, "voice:" + p.voice)) for p in posts]
-    nodes += [(f"{p.id}>{s}", (None, "voice:" + reposter_voice(s))) for p in posts for s in p.other_sources]
-    for node, node_keys in nodes:
+    keys: Dict[str, Any] = {}
+    order = []
+    for node, text, voice in items:
+        order.append(node)
         uf.find(node)
-        for key in node_keys:
+        for key in (("text:" + text) if text else None, "voice:" + voice):
             if key is None:
                 continue
             if key in keys:
                 uf.union(node, keys[key])
             else:
                 keys[key] = node
-    return len({uf.find(node) for node, _ in nodes})
+    groups: Dict[Any, List[Any]] = {}
+    for node in order:
+        groups.setdefault(uf.find(node), []).append(node)
+    return list(groups.values())
+
+
+def count_voices(posts: Sequence[StoryPost]) -> int:
+    """How many voices a story has: posts of one voice, and copies of one text, are one. A source
+    that reposted a tweet, or wrote the tweet another source holds, is a voice (issue 0068): one
+    with its posts in the story, if it has some. A page you saved is no voice (issue 0070)."""
+    posts = [p for p in posts if p.kind != "saved"]
+    return len(voice_groups([*((p.id, p.text_key, p.voice) for p in posts),
+                             *((f"{p.id}>{s}", None, reposter_voice(s)) for p in posts for s in p.other_sources)]))
+
+
+def named_voices(posts: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A story's voices as you know them (issue 0082), the ones count_voices counts, one item each, so
+    a count reads as its names and "+N". `posts` in the order to name them, each {source_id, name (its
+    source's), kind, voice (StoryPost.voice), text_key, others: [{id, name}] (its other_sources)}; a
+    page you saved is none. Each voice is {id, name, place, with}: named by its first post's source,
+    a Reddit author as u/<author> with `place` its subreddit, a publication's copies once; `with` the
+    voice's other sources (a copy's, a reposter's), each once."""
+    items = []
+    for i, p in enumerate(posts):
+        if p["kind"] == "saved":
+            continue
+        items.append(((i, -1), p["text_key"], p["voice"]))
+        items += [((i, j), None, reposter_voice(s["id"])) for j, s in enumerate(p["others"])]
+    out = []
+    for group in voice_groups(items):
+        sources = [{"id": posts[i]["source_id"], "name": posts[i]["name"]} if j < 0 else posts[i]["others"][j]
+                   for i, j in group]
+        (i, j), first = group[0], dict(sources[0])
+        if j < 0 and posts[i]["voice"].startswith("reddit:"):
+            first.update(name="u/" + posts[i]["voice"].split(":", 1)[1], place=posts[i]["name"])
+        seen = {first["id"]}
+        first["with"] = [s for s in sources if not (s["id"] in seen or seen.add(s["id"]))]
+        out.append(first)
+    return out
 
 
 def reposter_voice(source_id: str) -> str:
@@ -591,5 +633,5 @@ def source_site(hosts: Iterable[Tuple[str, int]], of: Callable[[str], str] = sit
 
 
 __all__ = ["StoryPost", "Story", "Edge", "Grouping", "group", "grouping", "story_times", "keys", "page_key", "threads", "date_alone",
-           "address_origins", "page_aliases", "roles", "count_voices", "reposter_voice", "source_site", "title_key",
+           "address_origins", "page_aliases", "roles", "count_voices", "voice_groups", "named_voices", "text_key", "reposter_voice", "source_site", "title_key",
            "anchors"]
