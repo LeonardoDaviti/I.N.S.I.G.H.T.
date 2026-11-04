@@ -125,18 +125,20 @@ def _title_from(title: Optional[str], shown_title: str) -> str:
 
 
 def _opening(title: Optional[str], content: Optional[str], shown_title: str) -> Optional[str]:
-    """The text's start as long as its stored title, when that title is the text's start (a bridge's: the
-    post's first characters, its lines glued) and says more than the title shown; spaced as the text is."""
-    stored = TRAILING_ELLIPSIS_RE.sub("", REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip()))).strip()
+    """What the stored title says when it says more than the title shown (a bridge's title is the post's
+    first characters, its lines glued; Nitter's the whole tweet), without Nitter's "RT by"/"R to" and the
+    bridge's cut: spaced as the text is when it is the text's start, else as stored."""
+    stored = clean_text(TRAILING_ELLIPSIS_RE.sub("", REPLY_TO_RE.sub("", REPOST_BY_RE.sub("", (title or "").strip()))))
     want, text = _squashed(stored), clean_text(content)
-    if not want or len(want) <= len(_squashed(shown_title.rstrip("…"))) or not _squashed(text).startswith(want):
+    if not want or len(want) <= len(_squashed(shown_title.rstrip("…"))):
         return None
-    count = 0
-    for i, ch in enumerate(text):
-        count += not ch.isspace()
-        if count == len(want):
-            return text[:i + 1]
-    return None
+    if _squashed(text).startswith(want):
+        count = 0
+        for i, ch in enumerate(text):
+            count += not ch.isspace()
+            if count == len(want):
+                return text[:i + 1]
+    return stored
 
 
 def parse(title: Optional[str], content: Optional[str], html: Optional[str], url: Optional[str] = None) -> Parts:
