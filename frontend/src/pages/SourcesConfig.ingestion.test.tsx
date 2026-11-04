@@ -99,10 +99,10 @@ function setup({
 }
 
 describe('Sources → ingestion tab', () => {
-  it('is the last tab; Run due sources runs a cycle and shows its report', async () => {
+  it('comes before data; Run due sources runs a cycle and shows its report', async () => {
     const { api } = setup();
     expect(await screen.findByRole('tab', { name: 'ingestion' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'discover', 'connections', 'ingestion']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'discover', 'connections', 'ingestion', 'data']);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Run due sources' }));
     await waitFor(() => expect(api.runIngestionCycle).toHaveBeenCalledWith(expect.objectContaining({ force: false })));

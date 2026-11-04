@@ -68,10 +68,10 @@ const rowIds = (root: HTMLElement = document.body) =>
 const rowOf = (id: string, nth = 0) => document.querySelectorAll<HTMLElement>(`li[data-source-id="${id}"]`)[nth];
 
 describe('SourcesConfig', () => {
-  it('is one flat list by default: sources, suggested, connections and ingestion tabs, no expert labels, one line per source', async () => {
+  it('is one flat list by default: sources, suggested, connections, ingestion and data tabs, no expert labels, one line per source', async () => {
     setup();
     await screen.findByText('Road to VR');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'discover', 'connections', 'ingestion']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['sources', 'discover', 'connections', 'ingestion', 'data']);
     expect(screen.getByRole('tab', { name: 'sources' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/expert/i)).not.toBeInTheDocument();
     expect(screen.queryAllByRole('heading', { level: 2 })).toHaveLength(0);

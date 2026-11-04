@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import asyncio
+import itertools
 import re
 import threading
 import uuid
@@ -12,13 +13,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import anyio
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from starlette.concurrency import iterate_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from insight_core.db import database
@@ -1286,6 +1289,58 @@ async def telegram_login_password(request: TelegramLoginPasswordRequest):
 @error_detail("cancel the Telegram sign-in")
 async def telegram_login_cancel():
     return services().credentials.login_cancel()
+
+
+# ============= DATA (export everything, issue 0079) =============
+
+@app.get("/api/export")
+@error_detail("read the database's size")
+def export_info():
+    """Before the click: the database's size and the zip's estimated size and time."""
+    return services().export.info()
+
+
+async def _closing(chunks, generator):
+    """Stream a sync generator and close it however the response ends: a download the browser
+    stops cancels the response, and the export's connection and snapshot must end with it.
+    (The cancelled wait lets the piece being read finish first, so the close never races it.)"""
+    try:
+        async for chunk in iterate_in_threadpool(chunks):
+            yield chunk
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(generator.close)
+
+
+@app.get("/api/export/everything")
+@error_detail("start the export")
+def export_everything(logins: bool = False, token: Optional[str] = None):
+    """The whole database as one zip, streamed as it is written (services/export_service.py).
+    The first piece is read here, so a database that can't be read is an error, not a broken file."""
+    service = services().export
+    name = service.file_name()
+    pieces = service.stream(include_logins=logins, token=token, name=name)
+    first = next(pieces)
+    return StreamingResponse(_closing(itertools.chain([first], pieces), pieces), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                      "Cache-Control": "no-store"})
+
+
+@app.get("/api/export/progress/{token}")
+def export_progress(token: str):
+    """How far the export started with this token got: bytes written, done, or why it stopped."""
+    state = services().export.progress(token)
+    if state is None:
+        raise LookupError("No export with that token.")
+    return state
+
+
+@app.get("/api/export/sources.json")
+@error_detail("export the sources")
+def export_sources_json():
+    """The sources in the shape sources.json imports (scripts/sync_sources_json.py json-to-db)."""
+    return JSONResponse(services().source_config_sync.sources_document(),
+                        headers={"Content-Disposition": 'attachment; filename="sources.json"'})
 
 
 def _ping_database() -> None:
