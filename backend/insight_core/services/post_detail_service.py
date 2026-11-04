@@ -82,6 +82,7 @@ class PostDetailService:
                 story = self.story(cur, post_id, str(row[1])) if row else None
                 internal = self.internal_links(cur, post_id, row[2], row[8], row[7]) if row else {}
                 link = self.link(cur, row[40], story, row[2]) if row else None
+                news = self.news.row_of(cur, post_id, str(row[1])) if row else None
 
         if not row:
             return None
@@ -134,6 +135,8 @@ class PostDetailService:
             "internal_links": internal,
             # A link post's page (issue 0072): {url, title, post_id}, read when the post has no words of its own.
             "link": link,
+            # Its News row (issue 0083): {id, title, voices, lead_id, scope}, the page says "In News".
+            "news": news,
         }
 
     @staticmethod

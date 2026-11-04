@@ -177,12 +177,12 @@ class NewsService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.news_on(cur, scope)
 
-    def news_on(self, cur: Any, scope: str | None = None) -> Dict[str, Any]:
-        """`news` on the caller's cursor."""
+    def news_on(self, cur: Any, scope: str | None = None, news_id: Optional[str] = None) -> Dict[str, Any]:
+        """`news` on the caller's cursor; `news_id`: that row only."""
         feed_scope = FeedScope.parse(scope)
         one_source = feed_scope.kind == "source"
         now = self.clock()
-        rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS))
+        rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS), news_id)
         followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
@@ -192,8 +192,10 @@ class NewsService:
             shown = [p for p in posts if p["_in_scope"]]
             # The lead is the origin (issue 0064): a post its 0050 story's tree starts from.
             origins = [p["id"] for p in posts if p["_origin"]]
-            lead_id = lead([(p["id"], p["role"]) for p in shown], origins) or lead([(p["id"], p["role"]) for p in posts], origins)
-            first_report = lead([(p["id"], p["role"]) for p in posts], origins)
+            roundups = [p["id"] for p in posts if p["_roundup"]]   # without an origin, never the lead (issue 0083)
+            lead_id = (lead([(p["id"], p["role"]) for p in shown], origins, roundups)
+                       or lead([(p["id"], p["role"]) for p in posts], origins, roundups))
+            first_report = lead([(p["id"], p["role"]) for p in posts], origins, roundups)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
@@ -219,6 +221,21 @@ class NewsService:
         items.sort(key=lambda i: (PARTS.index(i["news"]["part"]), -i["news"]["score"],
                                   -i["news"]["first_at"].timestamp(), i["id"]))
         return {"success": True, "items": items, "next_cursor": None}
+
+    def row_of(self, cur: Any, post_id: str, source_id: str) -> Optional[Dict[str, Any]]:
+        """The News row a post is in (issue 0083: its page says it), as the Main feed's News shows it,
+        else as its source's (a source outside the Main feed): {id, title, voices, lead_id, scope};
+        None when it is in no row of the last NEWS_DAYS."""
+        cur.execute("SELECT np.news_id FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id "
+                    "WHERE np.post_id = %s AND ns.first_at >= %s", (post_id, self.clock() - timedelta(days=NEWS_DAYS)))
+        found = cur.fetchone()
+        if not found:
+            return None
+        for scope in ("all", f"source:{source_id}"):
+            for item in self.news_on(cur, scope, str(found[0]))["items"]:
+                return {"id": item["story"]["id"], "title": item["title"], "voices": item["story"]["voices"],
+                        "lead_id": item["id"], "scope": scope}
+        return None
 
     # ---- Classics -----------------------------------------------------------------------
 

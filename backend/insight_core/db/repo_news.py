@@ -297,11 +297,13 @@ class NewsRepository:
     # ---- reading News -----------------------------------------------------------------
 
     @staticmethod
-    def news_posts(cur: Cursor, scope: FeedScope, since: datetime) -> List[Dict[str, Any]]:
+    def news_posts(cur: Cursor, scope: FeedScope, since: datetime, news_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Every post of the News stories begun since `since` that have a post in `scope`, as feed
         items, with its story's numbers and its role. Each story's posts first posted first. On one
-        source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions)."""
+        source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions).
+        `news_id`: that story's only (a post page's row, issue 0083)."""
         scope_sql, params = _scope_sql(scope)
+        one = "AND ns.id = %s" if news_id else ""
         mentioned, mention_params = "", []
         if scope.kind == "source":
             mentioned = f"""
@@ -314,7 +316,8 @@ class NewsRepository:
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
                    np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope,
-                   np.voice, p.content_hash, pp.subject
+                   np.voice, p.content_hash, pp.subject,
+                   EXISTS (SELECT 1 FROM story_mentions m WHERE m.post_id = p.id) AS roundup
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
@@ -322,22 +325,23 @@ class NewsRepository:
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN post_parts pp ON pp.post_id = p.id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
-            WHERE ns.first_at >= %s
+            WHERE ns.first_at >= %s {one}
               AND (EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
                            WHERE o.news_id = ns.id AND {scope_sql}){mentioned})
             ORDER BY ns.id, np.position NULLS LAST, COALESCE(p.published_at, p.fetched_at), p.id
             """,
-            [*params, since, *params, *mention_params],
+            [*params, since, *([news_id] if news_id else []), *params, *mention_params],
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-13])
-            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject = row[-13:]
+            item = _item(row[:-14])
+            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject, roundup = row[-14:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
                          "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
-                         "_voiced": voiced(row, voice, content_hash), "_subject": subject})
+                         "_voiced": voiced(row, voice, content_hash), "_subject": subject,
+                         "_roundup": bool(roundup)})   # issue 0083: without an origin, a roundup gives way
             out.append(item)
         return out
 
