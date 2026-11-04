@@ -197,6 +197,8 @@ class NewsService:
             # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
             sources = story_voices([p["_voiced"] for p in covered], followed)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
+            # A lead whose own words are a short reaction reads what it quotes (post_parts.subject, issue 0076).
+            item["title"] = head["_subject"] or item["title"]
             item["story"] = {"id": head["_news"], "voices": head["_voices"], "sources": sources,
                              "posts": NewsRepository.lines(posts, lead_id)}
             item["news"] = {

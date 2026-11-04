@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .addresses import tweet_author
 from .content_fingerprints import clean_text, strip_html
 from .post_fields import (REPLY_TO_RE, TITLE_HTML_CHARS, TITLE_TEXT_CHARS, display_title, hnrss_counts, link_kind,
-                          link_post_target, post_title, quote_only, reading_text)
+                          link_post_target, post_title, quote_only, reaction_title, reading_text)
 from .post_links import quoted_tweet, quoted_words, reddit_author
 from .post_parts import Body, shown
 
@@ -95,6 +95,8 @@ class Parts:
     html: Body = field(default_factory=Body)   # ... and its HTML
     quoted: Optional[str] = None        # the tweet it quotes (normalized)
     quote_only: Optional[str] = None    # ... when it has nothing of its own
+    folds_into: Optional[str] = None    # ... and it is its own account's: no row of its own (issue 0076)
+    subject: Optional[str] = None       # a short reaction's quoted words, "<Name>: <title>": News's lead title
     folded: Optional[Dict[str, Any]] = None   # a quote's post without the card (the post page, a thread's reply)
     counts: Optional[Dict[str, int]] = None   # hnrss's points and comments, with the shown text's length
     link_target: Optional[str] = None   # the page a link post shares
@@ -138,23 +140,20 @@ def parse(title: Optional[str], content: Optional[str], html: Optional[str], url
     target = link_post_target(html)
     reply = REPLY_TO_RE.match(title or "")
     title_from = _title_from(title, shown_title)
+    account = tweet_author(url)
+    folds = only if only and account and (tweet_author(only) or "").lower() == account.lower() else None
     warnings = ["title from the first line"] if title_from == "first line" else []
     if title_from == "first line" and html and "\n" not in (text_head or "") and post_title(title, content, None) != shown_title:
         warnings.append("line breaks recovered from HTML")
     return Parts(
         title=shown_title, title_from=title_from, lead=clean_text(row_text)[:LEAD_CHARS],
         text=body_of(content, text), html=body_of(html, body),
-        quoted=quoted, quote_only=only, folded=folded,
+        quoted=quoted, quote_only=only, folds_into=folds, subject=reaction_title(html_head), folded=folded,
         counts={**counts, "chars": len(row_text or "")} if counts else None,
         link_target=target, link_kind=link_kind(target) if target else None,
         reply_to=reply.group(1) if reply else None, author=reddit_author(html),
         words=len(_TAGS.sub("", html or "").split()), quoted_words=quoted_words(html), warnings=warnings,
     )
-
-
-def quoted_title(words: str) -> str:
-    """A quoted page's words as a title (tree_rules.origin_title), as the reader titles a post's text."""
-    return display_title(None, words)
 
 
 @lru_cache(maxsize=1)
@@ -165,4 +164,4 @@ def parse_stamp() -> str:
     return stamps.fingerprint([asdict(parse(*post)) for post in stamps.PARSED])
 
 
-__all__ = ["Body", "Parts", "parse", "parse_stamp", "shown", "body_of", "without_quote", "quoted_title", "LEAD_CHARS"]
+__all__ = ["Body", "Parts", "parse", "parse_stamp", "shown", "body_of", "without_quote", "LEAD_CHARS"]

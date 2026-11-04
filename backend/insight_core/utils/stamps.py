@@ -324,7 +324,8 @@ _FOOTER = ('<p>Weights are out</p> submitted by <a href="https://www.reddit.com/
            '<span><a href="https://files.example/models/seven">[link]</a></span> '
            '<span><a href="https://www.reddit.com/r/samplesub/comments/abc123/x/">[comments]</a></span>')
 # (title, content, html, url): a site's post, a bridge's glued and cut lines, a placeholder, a reply,
-# a quote of a tweet (and one with nothing of its own), Reddit's footer, hnrss's counts, codes in plain text.
+# a quote of a tweet (one with nothing of its own, of its own account; one a short reaction), Reddit's
+# footer, hnrss's counts, codes in plain text.
 PARSED: Tuple[Tuple[Optional[str], Optional[str], Optional[str], Optional[str]], ...] = (
     ("Lab Model Seven arrives with a longer context", "It arrives today.", "<p>It arrives today.</p>",
      "https://blog.alpha.example/2026/03/lab-model-seven-arrives"),
@@ -337,6 +338,8 @@ PARSED: Tuple[Tuple[Optional[str], Optional[str], Optional[str], Optional[str]],
      "https://nitter.local/writer_x/status/1900000000000000101#m", _CARD, "https://nitter.local/fan_z/status/1900000000000000150#m"),
     ("R to @writer_x: x.com/writer_x/status…", "x.com/writer_x/status… Writer X (@writer_x) Thread on evaluation methods",
      _CARD.replace("<p>Same here ", "<p>"), "https://nitter.local/writer_x/status/1900000000000000103#m"),
+    ("no! really?!", "no! really?! x.com/writer_x/status… Writer X (@writer_x) Thread on evaluation methods",
+     _CARD.replace("Same here ", "no! really?! "), "https://nitter.local/fan_z/status/1900000000000000151#m"),
     ("Lab Model Seven weights", "Weights are out submitted by /u/sample_user [link] [comments]", _FOOTER,
      "https://reddit.com/r/samplesub/comments/abc123/lab_model_seven_weights"),
     ("Show HN: A tiny database in one file", "Article URL: https://db.example/projects/tiny Comments URL: "

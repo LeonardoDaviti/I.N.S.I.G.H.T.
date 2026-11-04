@@ -314,7 +314,7 @@ class NewsRepository:
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
                    np.role, sp.post_id IS NOT NULL AND sp.parent_reason IS NULL AS origin, ({scope_sql}) AS in_scope,
-                   np.voice, p.content_hash
+                   np.voice, p.content_hash, pp.subject
             FROM news_stories ns
             JOIN news_posts np ON np.news_id = ns.id
             JOIN posts p ON p.id = np.post_id
@@ -331,13 +331,13 @@ class NewsRepository:
         )
         out = []
         for row in cur.fetchall():
-            item = _item(row[:-12])
-            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash = row[-12:]
+            item = _item(row[:-13])
+            sid, first_at, voices, reports, shares, mentions, score, role, origin, in_scope, voice, content_hash, subject = row[-13:]
             item.update({"_news": str(sid), "_first_at": first_at, "_voices": int(voices), "_reports": int(reports),
                          "_shares": int(shares), "_mentions": int(mentions), "_score": float(score), "role": role,
                          "_in_scope": bool(in_scope), "_origin": bool(origin),
                          "_quotes": row[21],   # issue 0072: a post that only quotes a tweet (post_parts)
-                         "_voiced": voiced(row, voice, content_hash)})
+                         "_voiced": voiced(row, voice, content_hash), "_subject": subject})
             out.append(item)
         return out
 

@@ -191,6 +191,10 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     if not (first and (_squashed(first).startswith(_squashed(cut)) or _squashed(cut).startswith(_squashed(first)))):
         lines_html = None   # the HTML opens on something else: the text says it
     glued = _glued_first_line(cut, content, whole=cut == stored) if cut and not placeholder and not lines_html else None
+    # Issue 0076: a whole title ends where the body's first line did only if its HTML ends a line there too
+    # (the bridge glued two lines); "145GB" against the text's "145 GB" is one word written two ways.
+    if glued and cut == stored and html and not _ends_a_line(html, glued):
+        glued = None
     text = (lines_html or (_html_lines(html) if html and placeholder and _PREVIEW_SITE_RE.search(html) else content)) if from_body else stored
     raws, after_blank, blank = [], set(), False   # a line that opens a paragraph (issue 0072)
     for raw in (text or "").splitlines():
@@ -215,6 +219,40 @@ def display_title(title: str | None, content: str | None, html: str | None = Non
     # A tweet's words after its quote card's byline are the quoted tweet's (without_quote_marks).
     quoted = [w for raw in (content or "").splitlines()[1:] if (w := clean_text(raw))] if _QUOTE_CARD_RE.search(html or "") else []
     return _titled(line, after, run_on, quoted)
+
+
+def _ends_a_line(html: str, head: str) -> bool:
+    """Whether the HTML's first line with words is `head` (whitespace aside)."""
+    first = next((line for line in _html_lines(html, _BLOCK_END_RE).splitlines() if _WORD_RE.search(line)), "")
+    return _squashed(first) == _squashed(head)
+
+
+# A quote tweet whose own words are a short reaction ("no! really?!", an emoji alone) is about what it
+# quotes (issue 0076, the v9.15 reader review): News leads its row by the quoted tweet's title, said by
+# its author (post_parts.subject); its row and its page keep its own words ("the rows are right").
+# Measured on the lab (2026-11-04): of the quote tweets with words of their own, those of 4 words or
+# fewer read as reactions to the quote ("repent, you meat proxies", "Bourbaki strikes again"); at 5 and
+# more most say something of their own. Neither number is tuned past that read.
+REACTION_MAX_WORDS = 4
+REACTION_MAX_CHARS = 30
+_QUOTED_TEXT_RE = re.compile(r'<blockquote>\s*<b>[^<]*</b>(.*?)<footer>', re.I | re.S)
+
+
+def reaction_title(html: str | None) -> str | None:
+    """"<Name>: <the quoted tweet's title>" for a quote tweet whose own words are a short reaction, else None."""
+    card = _QUOTE_CARD_RE.search(html or "")
+    if not card:
+        return None
+    own = _quoted_address_re(card.group(2)).sub("", html[:card.start()])
+    if re.search(r"<(?:img|video)\b", own, re.I):
+        return None
+    own = clean_text(_TAG_RE.sub(" ", own))
+    quoted = _QUOTED_TEXT_RE.search(html, card.start())
+    if not own or len(own) > REACTION_MAX_CHARS or len(_WORD_RE.findall(own)) > REACTION_MAX_WORDS or not quoted:
+        return None   # nothing of its own is a quote only (quote_only), read by the quoted words already
+    title = display_title(None, _html_lines(quoted.group(1)))
+    name = html_lib.unescape(card.group(1)).rsplit("(@", 1)[0].strip()
+    return f"{name}: {title}" if title and name else title or None
 
 
 def _titled(line: str, rest: List[str], run_on: bool, words_after: List[str]) -> str:

@@ -58,7 +58,7 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(parts.link_target, pf.link_post_target(html))
 
     def test_a_quote_footer_reply_and_counts(self):
-        quote, only, reddit, hn = (parse(*stamps.PARSED[i]) for i in (4, 5, 6, 7))
+        quote, only, reddit, hn = (parse(*stamps.PARSED[i]) for i in (4, 5, 7, 8))
         self.assertEqual(quote.quoted, "https://x.com/writer_x/status/1900000000000000101")
         self.assertIsNone(quote.quote_only)
         self.assertEqual(quote.folded["html"], without_quote(stamps.PARSED[4][2]))
@@ -66,6 +66,29 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(only.reply_to, "writer_x")
         self.assertEqual((reddit.author, reddit.link_target, reddit.link_kind), ("sample_user", "https://files.example/models/seven", "page"))
         self.assertEqual(hn.counts, {"points": 120, "comments": 45, "chars": 0})
+
+    def test_a_short_reaction_to_a_quote_leads_news_by_what_it_quotes(self):
+        reaction = parse(*stamps.PARSED[6])
+        self.assertEqual(reaction.subject, "Writer X: Thread on evaluation methods")
+        self.assertEqual(reaction.title, "no! really?!", "its row keeps its own words")
+        self.assertIsNone(parse(*stamps.PARSED[0]).subject, "no quote")
+        words = '<p>Five whole words of mine <a href="https://nitter.local/writer_x/status/1900000000000000101#m">x</a></p>'
+        self.assertIsNone(parse("Five whole words of mine", "Five whole words of mine",
+                                words + stamps._CARD.split("</p>", 1)[1]).subject, "five words are its own")
+
+    def test_a_quote_of_its_own_account_with_nothing_of_its_own_folds(self):
+        self.assertEqual(parse(*stamps.PARSED[5]).folds_into, "https://x.com/writer_x/status/1900000000000000101")
+        self.assertIsNone(parse(*stamps.PARSED[4]).folds_into, "words of its own")
+        other = stamps.PARSED[5][:3] + ("https://nitter.local/fan_z/status/1900000000000000152#m",)
+        self.assertIsNone(parse(*other).folds_into, "another account's tweet")
+
+    def test_a_whole_title_is_cut_where_the_html_ends_a_line_only(self):
+        title = "Lab downloaded 145GB models from us without asking"
+        text = "Lab downloaded 145 GB of models from us without asking, the logs say."
+        self.assertEqual(pf.post_title(title, text, f"<p>{text}</p>"), title, "a number written two ways ends no line")
+        glued = "Лимиты выросли за $500Изменения уже действуют."
+        self.assertEqual(pf.post_title(glued, "Лимиты выросли за $500 Изменения уже действуют.",
+                                       "<p>Лимиты выросли за $500<br>Изменения уже действуют.</p>"), "Лимиты выросли за $500")
 
     def test_where_the_title_came_from(self):
         self.assertEqual(parse(*stamps.PARSED[0]).title_from, "feed field")
@@ -75,6 +98,28 @@ class ParserTests(unittest.TestCase):
 
     def test_the_stamp_is_the_parsers_output(self):
         self.assertRegex(parse_stamp(), r"^[0-9a-f]{12}$")
+
+
+class DatesTests(unittest.TestCase):
+    def test_a_date_says_what_it_knows(self):
+        from datetime import datetime, timezone
+        from insight_core.db.repo_posts import published_precision
+        from insight_core.ingestion.kinds.parsing import date_precision
+        self.assertEqual(date_precision("2026-11-03"), "date")
+        self.assertIsNone(date_precision("Mon, 03 Nov 2026 14:05:00 +0000"), "a time of day: the saver tells it")
+        self.assertEqual(date_precision(None), "none")
+        noon, midnight = datetime(2026, 11, 3, 12, tzinfo=timezone.utc), datetime(2026, 11, 3, tzinfo=timezone.utc)
+        self.assertEqual(published_precision({"date": noon}), "exact")
+        self.assertEqual(published_precision({"date": midnight}), "date", "stored as 00:00:00 UTC, as before")
+        self.assertEqual(published_precision({"date": noon, "date_precision": "date"}), "date")
+        self.assertEqual(published_precision({}), "none")
+
+    def test_an_undated_post_orders_nothing(self):
+        from datetime import datetime, timezone
+        from insight_core.utils.story_rules import StoryPost
+        at = datetime(2026, 11, 3, 12, tzinfo=timezone.utc)
+        self.assertTrue(StoryPost(id="a", source_id="s", kind="site", own_site="a.test", t=at).trusted_time)
+        self.assertFalse(StoryPost(id="a", source_id="s", kind="site", own_site="a.test", t=at, undated=True).trusted_time)
 
 
 def _db_url():

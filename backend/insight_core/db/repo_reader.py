@@ -67,7 +67,10 @@ UNREAD_SQL = (
     "NOT EXISTS (SELECT 1 FROM post_reader_state r WHERE r.post_id = p.id AND r.read_at IS NOT NULL)"
 )
 # A Telegram album's picture (issue 0069) is no row and no unread count: its post shows it.
-NOT_ALBUM_PIECE = "p.album_of IS NULL"
+# A post that is part of another (issue 0069: a Telegram album's piece; issue 0076: a tweet with nothing of
+# its own that quotes its own account's tweet, stored, folds into it) is no row of its own on any page.
+NOT_ALBUM_PIECE = ("p.album_of IS NULL AND NOT EXISTS (SELECT 1 FROM post_parts f JOIN posts q ON q.normalized_url = f.folds_into "
+                   "WHERE f.post_id = p.id)")
 # A post's length in minutes: the reading estimate, or a video's duration.
 MINUTES_SQL = (
     "CASE WHEN s.platform = 'youtube' THEN CASE WHEN p.metadata->>'duration_seconds' ~ '^[0-9]+([.][0-9]+)?$'"
