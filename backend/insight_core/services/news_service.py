@@ -131,8 +131,10 @@ class NewsService:
 
     @staticmethod
     def names_of(post: StoryPost) -> Set[str]:
-        """The names in a post's title, as the name rule reads them (none for arXiv's)."""
-        return names(post.title) if post.title and post.kind not in NAME_SKIP_KINDS else set()
+        """The names in a post's title, as the name rule reads them (none for arXiv's): its opening when its
+        stored title said more than the title shown (issue 0076: a bridge's glued second line), as load_titles."""
+        said = post.opening or post.title
+        return names(said) if said and post.kind not in NAME_SKIP_KINDS else set()
 
     @staticmethod
     def _titled(sources: SourceFacts, rows: Iterable[Dict[str, Any]]) -> List[StoryPost]:
