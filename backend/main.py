@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import anyio
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from starlette.concurrency import iterate_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from insight_core.db import database
@@ -1298,6 +1300,18 @@ def export_info():
     return services().export.info()
 
 
+async def _closing(chunks, generator):
+    """Stream a sync generator and close it however the response ends: a download the browser
+    stops cancels the response, and the export's connection and snapshot must end with it.
+    (The cancelled wait lets the piece being read finish first, so the close never races it.)"""
+    try:
+        async for chunk in iterate_in_threadpool(chunks):
+            yield chunk
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(generator.close)
+
+
 @app.get("/api/export/everything")
 @error_detail("start the export")
 def export_everything(logins: bool = False, token: Optional[str] = None):
@@ -1307,7 +1321,7 @@ def export_everything(logins: bool = False, token: Optional[str] = None):
     name = service.file_name()
     pieces = service.stream(include_logins=logins, token=token, name=name)
     first = next(pieces)
-    return StreamingResponse(itertools.chain([first], pieces), media_type="application/zip",
+    return StreamingResponse(_closing(itertools.chain([first], pieces), pieces), media_type="application/zip",
                              headers={"Content-Disposition": f'attachment; filename="{name}"',
                                       "Cache-Control": "no-store"})
 

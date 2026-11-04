@@ -39,9 +39,10 @@ LOGIN_TABLES = ("credentials",)
 LOGINS_INCLUDE = ("the Substack session cookie and the Telegram API id, hash and sign-in session, "
                   "encrypted: they work after a restore only with this server's secret key")
 # The estimate before the click, from the tables' stored size (heap and TOAST, no indexes).
-# Measured 2026-11-04 (issue 0079's Built section): the lab's zip is 0.27 of it, written at ~22 MB/s.
-SIZE_RATIO = 0.27
-TABLE_BYTES_PER_SECOND = 22e6
+# Measured 2026-11-05 on two lab copies (issue 0079's Built section): the zip is 0.44-0.46 of
+# it, written at ~20 MB of it a second.
+SIZE_RATIO = 0.45
+TABLE_BYTES_PER_SECOND = 20e6
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 KEPT_PROGRESS = 20
 
@@ -54,15 +55,15 @@ Stored logins: {logins}.
 
 Restore it into INSIGHT (a new database: a restore never replaces data)
 -----------------------------------------------------------------------
-On the server, from the INSIGHT folder:
+Copy the zip to the server, into the INSIGHT folder, then from that folder:
 
-  docker compose run --rm -v "$PWD/{name}:/tmp/{name}:ro" \\
-    -e DATABASE_URL=postgresql://insight:insight@postgres:5432/insight_restored \\
-    backend python insight_core/db/import_export.py /tmp/{name}
+  docker compose run --rm -v "$PWD/{name}:/tmp/{name}:ro" backend \
+    python insight_core/db/import_export.py /tmp/{name} --into insight_restored
 
-It creates the database, runs the export's migrations, loads every CSV in the order the
-foreign keys need, then migrates up to the running version. Point DB_NAME in .env at
-insight_restored and restart to read it (DEPLOYMENT.md, "Restoring an export").
+It creates the database insight_restored, runs the export's migrations, loads every CSV in
+the order the foreign keys need, then migrates up to the running version. To read it, set
+DB_NAME=insight_restored in .env and run docker compose up -d (DEPLOYMENT.md, "Restoring an
+export").
 
 Explore it on its own
 ---------------------
@@ -127,7 +128,7 @@ class ExportService:
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             tables = tables_in_load_order(cur)
             cur.execute("SELECT pg_database_size(current_database()), "
-                        "coalesce(sum(pg_table_size(format('%%I', t)::regclass)), 0) FROM unnest(%s::text[]) t",
+                        "coalesce(sum(pg_table_size(format('%%I', t)::regclass)), 0)::bigint FROM unnest(%s::text[]) t",
                         (tables,))
             database_bytes, table_bytes = cur.fetchone()
         return {

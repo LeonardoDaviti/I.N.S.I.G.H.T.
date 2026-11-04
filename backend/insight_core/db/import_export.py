@@ -154,6 +154,15 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 cur.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(map(sql.Identifier, order))))
             for table in order:
                 cur.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(sql.Identifier(table)))
+            # Indexes no constraint owns are built once after the load, as pg_restore does: the
+            # lab's posts load in 53 s with the search index kept up row by row.
+            cur.execute("""SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i
+                             JOIN pg_class c ON c.oid = i.indexrelid
+                            WHERE c.relnamespace = current_schema()::regnamespace
+                              AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid)""")
+            indexes = cur.fetchall()
+            for index, _definition in indexes:
+                cur.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier(index)))
             for table in order:
                 if table not in expected:
                     continue
@@ -168,7 +177,12 @@ def restore(archive_path: str | Path, url: str) -> Dict[str, Any]:
                 if loaded[table] != expected[table]["rows"]:
                     raise ValueError(f"{file}: {loaded[table]} rows loaded, the manifest says {expected[table]['rows']}")
                 print(f"  {table}: {loaded[table]} rows, {time.monotonic() - started:.1f} s", flush=True)
-            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")   # the deferred foreign keys, checked before the triggers return
+            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")   # the deferred foreign keys, checked before the indexes and triggers
+            started = time.monotonic()
+            cur.execute("SET LOCAL maintenance_work_mem = '256MB'")
+            for _index, definition in indexes:
+                cur.execute(definition)
+            print(f"  {len(indexes)} indexes built, {time.monotonic() - started:.1f} s", flush=True)
             for table in order:
                 cur.execute(sql.SQL("ALTER TABLE {} ENABLE TRIGGER USER").format(sql.Identifier(table)))
             for sequence, value in manifest.get("sequences", {}).items():
