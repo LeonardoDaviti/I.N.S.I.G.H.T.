@@ -599,6 +599,12 @@ class StoriesService:
         references they use and the stories the sources you follow miss beside them. `offset` and
         `limit`: the page asked for (the first holds FIRST_PAGE); `q`: only those whose words match."""
         result = self._discover_all()
+        if result["archives"]:   # each archive row follows its source's archive, read now (it runs on its own)
+            with db.connection(self.db_url) as conn, conn.cursor() as cur:
+                states = DiscoverRepository.archive_states(cur, {a["source_id"]: a["pages"] for a in result["archives"]})
+            result = {**result, "archives": [{**{k: v for k, v in a.items() if k != "pages"},
+                                              "archive": states.get(a["source_id"], {"state": None, "found": 0})}
+                                             for a in result["archives"]]}
         ranked = result["suggestions"]
         if q:
             words = q.casefold().split()
@@ -705,6 +711,7 @@ class StoriesService:
             "since": first_posts[source_id].isoformat() if source_id in first_posts else None,
             "older": sum(1 for root in stories if first_posts.get(source_id) and root.first_at < first_posts[source_id]),
             "origin_stories": [_story(root) for root in _first(stories)[:ORIGIN_STORIES_SHOWN]],
+            "pages": sorted({root.url for root in stories}),
         } for source_id, stories in started.missing.items() if len(stories) >= DISCOVER_MIN_ARTICLES]
         archives.sort(key=lambda a: (-a["origins"], a["name"].lower()))
         unnamed = sorted(({"place": place, "origins": len(stories)} for place, stories in started.unnamed.items()

@@ -207,6 +207,32 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertEqual(len(missing["origin_stories"]), 3)
         self.assertFalse([k for k in self._keys(result) if k.startswith(site)], "not a second source")
 
+    def test_a_missing_row_follows_its_sources_archive(self):
+        """Issue 0080: an archive started from Discover shows there, running, then finished."""
+        m = self.mark
+        site = f"archived-{m}.example"
+        feed = self._source(f"Archived {m}", f"https://{site}/feed.xml")
+        self._post(feed, f"https://{site}/index/recent")
+        voices = self._voices(3)
+        pages = [f"https://{site}/index/older-{n}" for n in range(3)]
+        for page in pages:
+            self._cite(voices, page)
+
+        def row():
+            return next(a for a in self._discover()["archives"] if a["source_id"] == feed)
+
+        self.assertEqual(row()["archive"], {"state": None, "found": 0})
+        self.assertNotIn("pages", row(), "the pages stay in the service")
+        self.cur.execute("INSERT INTO job_runs (job_type, status, trigger, source_id, payload) "
+                         "VALUES ('archive_source', 'running', 'manual', %s, '{\"pages_fetched\": 4}')", (feed,))
+        self._post(feed, pages[0])   # the archive stored one of them; the story job hasn't run yet
+        self.assertEqual(row()["archive"], {"state": "running", "found": 1, "pages_fetched": 4})
+        self.cur.execute("UPDATE job_runs SET status = 'success' WHERE source_id = %s", (feed,))
+        self.cur.execute("UPDATE sources SET settings = settings || '{\"archive\": {\"checkpoint\": {\"completed_at\": \"2026-11-04\"}}}' "
+                         "WHERE id = %s", (feed,))
+        self.assertEqual(row()["archive"]["state"], "finished")
+        self.cur.execute("DELETE FROM job_runs WHERE source_id = %s", (feed,))
+
     def test_tweets_in_any_form_and_reposts_suggest_an_account(self):
         m = self.mark
         author = f"Auth{m}"
