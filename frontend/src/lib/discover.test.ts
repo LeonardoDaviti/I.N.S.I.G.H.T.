@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { missingReason, originReason } from './discover.ts';
+import { FOLLOW_LABELS, UNFOLLOWABLE, archiveLine, missingReason, originReason, untitledLine } from './discover.ts';
 import type { MissingOrigins, SuggestedSource } from '../services/api';
 
 const NOW = new Date('2026-10-31T12:00:00Z');
@@ -31,4 +31,24 @@ test('a followed source missing its origins says how many are older than its fir
     "37 of your stories started at openai.com/index pages it doesn't hold, all from before its first post (Oct 23)");
   assert.equal(missingReason({ ...MISSING, name: 'Anthropic research', places: ['anthropic.com/research'], origins: 6, older: 0 }, NOW),
     "6 of your stories started at anthropic.com/research pages it doesn't hold");
+});
+
+test('an untitled line names its site and section, a tweet its account, never the address (issue 0080)', () => {
+  assert.equal(untitledLine('https://www.example.com/blog/a-long-slug-here'), 'example.com · blog');
+  assert.equal(untitledLine('https://example.com/2026/10/a-story'), 'example.com', 'a date is no section');
+  assert.equal(untitledLine('https://example.com/ru-RU/index/a-story'), 'example.com · index', 'a language before it');
+  assert.equal(untitledLine('https://example.com/a-page'), 'example.com', 'the root: the site alone');
+  assert.equal(untitledLine('https://x.com/SomeOne/status/2111872584338018562'), 'a post by @SomeOne');
+});
+
+test('a missing row follows its archive (issue 0080)', () => {
+  assert.equal(archiveLine(MISSING), null, 'no archive yet');
+  assert.equal(archiveLine({ ...MISSING, archive: { state: 'running', found: 3 } }), 'Archive running · 3 of 37 found so far');
+  assert.equal(archiveLine({ ...MISSING, archive: { state: 'finished', found: 3 } }), "Archive finished · 34 of these pages aren't in its archive");
+  assert.equal(archiveLine({ ...MISSING, archive: { state: 'finished', found: 37 } }), 'Archive finished');
+});
+
+test('the follow test labels, and the two that sink', () => {
+  assert.deepEqual(Object.values(FOLLOW_LABELS), ['Feed found', 'Page watching', 'Headlines only', 'Blocks readers']);
+  assert.deepEqual([...UNFOLLOWABLE], ['headlines', 'blocked']);
 });
