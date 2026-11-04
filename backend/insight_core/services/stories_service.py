@@ -455,7 +455,9 @@ class StoriesService:
         author_source = sources.of_account.get(x_account(row["author"])) if kind == "x" and row["author"] else None
         return StoryPost(
             id=row["id"], source_id=row["source_id"], kind=kind, own_site=sources.publication(row["source_id"]),
-            t=row["t"], title=row["title"], content_hash=row["content_hash"], text_chars=row["text_chars"],
+            # Issue 0076: one post for everyone, the title every page shows (its stored one until parsed).
+            t=row["t"], title=row["title"] if row["shown_title"] is None else row["shown_title"],
+            content_hash=row["content_hash"], text_chars=row["text_chars"],
             words=row["words"] if kind in LINK_POST_KINDS else None,
             author=row["poster"] if kind == "reddit" else row["author"],
             url=row["url"], links=row["links"],

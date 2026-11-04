@@ -38,11 +38,12 @@ class NewsRepository:
 
     @staticmethod
     def load_titles(cur: Cursor, since: Optional[datetime]) -> List[Dict[str, Any]]:
-        """The titles the name rule reads: every titled post posted since `since` (every one when None)."""
+        """The titles the name rule reads: every titled post posted since `since` (every one when None), each
+        as every page shows it (post_parts, issue 0076)."""
         cur.execute(
             f"""
-            SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
-            WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
+            SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.title, p.title) AS title) t
+            WHERE t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL
               AND (%(since)s::timestamptz IS NULL OR {POST_TIME} >= %(since)s)
             """,
             {"since": since},
@@ -155,9 +156,9 @@ class NewsRepository:
         entity (decoded only in Python). More than say them, never fewer."""
         cur.execute(
             f"""
-            SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p
-            WHERE p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL
-              AND (lower(normalize(p.title, NFKC)) LIKE ANY(%(like)s) OR p.title LIKE '%%&%%;%%')
+            SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.title, p.title) AS title) t
+            WHERE t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL
+              AND (lower(normalize(t.title, NFKC)) LIKE ANY(%(like)s) OR t.title LIKE '%%&%%;%%')
             """,
             {"like": ["%" + "%".join(LIKE_SPECIAL.sub(r"\\\g<0>", part) for part in w.split("%")) + "%" for w in words]},
         )
@@ -165,8 +166,8 @@ class NewsRepository:
 
     @staticmethod
     def titles_of(cur: Cursor, ids: Sequence[str]) -> List[Dict[str, Any]]:
-        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, p.title FROM posts p WHERE p.id = ANY(%s::uuid[]) "
-                    f"AND p.title IS NOT NULL AND p.title <> '' AND {POST_TIME} IS NOT NULL", (list(ids),))
+        cur.execute(f"SELECT p.id, p.source_id, {POST_TIME}, t.title FROM posts p LEFT JOIN post_parts pp ON pp.post_id = p.id CROSS JOIN LATERAL (SELECT COALESCE(pp.title, p.title) AS title) t WHERE p.id = ANY(%s::uuid[]) "
+                    f"AND t.title IS NOT NULL AND t.title <> '' AND {POST_TIME} IS NOT NULL", (list(ids),))
         return [{"id": str(r[0]), "source_id": str(r[1]), "t": r[2], "title": r[3]} for r in cur.fetchall()]
 
     @staticmethod
