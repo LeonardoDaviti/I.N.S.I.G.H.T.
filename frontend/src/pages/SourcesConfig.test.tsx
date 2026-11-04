@@ -1064,13 +1064,54 @@ describe('SourcesConfig deep links', () => {
     const missing = screen.getByRole('region', { name: 'Sources you follow that miss where your stories start' });
     expect(within(missing).getByText('OpenAI News')).toBeInTheDocument();
     expect(within(missing).getByText(/37 of your stories started at openai.com\/index pages it doesn't hold, 36 from before its first post/)).toBeInTheDocument();
-    expect(within(missing).getByRole('link', { name: 'openai.com/index/gpt-6-astra' })).toHaveAttribute('href', 'https://openai.com/index/gpt-6-astra');
+    expect(within(missing).getByRole('link', { name: 'openai.com · index' })).toHaveAttribute('href', 'https://openai.com/index/gpt-6-astra');
     expect(within(missing).getByRole('link', { name: 'Archive…' })).toHaveAttribute('href', '/settings/sources?tab=ingestion&sub=archive&source=s-openai');
     expect(within(missing).queryByRole('button', { name: 'Follow…' })).toBeNull();
     expect(screen.getByText('Stories also start at pages that name no account to follow: youtube.com/watch (9).')).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Follow…' })[0]);
     await waitFor(() => expect(findFeed).toHaveBeenCalledWith('https://anthropic.com/news'));
+  });
+
+  it('Discover shows a page at a time, its follow tests, its references, untitled lines by site, and an archive under way (issue 0080)', async () => {
+    const base = {
+      url: 'https://feeds.example', voices: 3, article_count: 2, link_count: 2, classics: 0, origins: 0,
+      voice_names: ['Voice A'],
+      articles: [{ url: 'https://feeds.example/blog/a-long-slug-here', title: null, linked_by: ['Voice A'] },
+                 { url: 'https://x.com/SomeOne/status/2111872584338018562', title: null, linked_by: ['Voice A'] }],
+    };
+    const firstPage = {
+      success: true, total: 3, more: true,
+      suggestions: [
+        { ...base, key: 'feeds.example', follow_test: { label: 'feed', at: '2026-11-01T00:00:00Z' } },
+        { ...base, key: 'walled.example', url: 'https://walled.example', follow_test: { label: 'blocked', at: '2026-11-01T00:00:00Z' } },
+      ],
+      references: [{ key: 'help.tool.example', voices: 7 }],
+      archives: [{
+        source_id: 's-a', name: 'Lab News', places: ['lab.example/index'], origins: 37, since: null, older: 0, origin_stories: [],
+        archive: { state: 'running', found: 3 },
+      }],
+    };
+    const getSuggestedSources = vi.fn()
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce({ success: true, total: 3, more: false, suggestions: [{ ...base, key: 'later.example', url: 'https://later.example' }] });
+    setup('/settings/sources?tab=discover', { getSuggestedSources });
+    expect(await screen.findByText('Feed found')).toBeInTheDocument();
+    expect(screen.getByText('Blocks readers: listed below the ones you can follow')).toBeInTheDocument();
+    expect(screen.getByText('References your sources use: help.tool.example (7).')).toBeInTheDocument();
+    const missing = screen.getByRole('region', { name: 'Sources you follow that miss where your stories start' });
+    expect(within(missing).getByText('Archive running · 3 of 37 found so far')).toBeInTheDocument();
+    expect(within(missing).queryByRole('link', { name: 'Archive…' })).toBeNull();
+    expect(within(missing).getByRole('link', { name: 'See the archive' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: /linked by 3 of your sources/ })[0]);
+    expect(screen.getByRole('link', { name: 'feeds.example · blog' })).toHaveAttribute('href', 'https://feeds.example/blog/a-long-slug-here');
+    expect(screen.getByRole('link', { name: 'a post by @SomeOne' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'More (1)' }));
+    expect(await screen.findByText('later.example')).toBeInTheDocument();
+    expect(getSuggestedSources).toHaveBeenLastCalledWith('?offset=2&q=', expect.anything());
+    expect(screen.queryByRole('button', { name: /More/ })).toBeNull();
   });
 
   it('an unknown track shows the list with a quiet note', async () => {

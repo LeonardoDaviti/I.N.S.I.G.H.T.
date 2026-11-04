@@ -40,6 +40,7 @@ from insight_core.services.operations_service import (
     sources_failing,
 )
 from insight_core.services.registry import services
+from insight_core.services import discover_reads
 from insight_core.services.stories_service import in_own_process
 
 # Configure logging
@@ -895,15 +896,23 @@ async def hide_classic(request: ClassicHideRequest):
 
 @app.get("/api/sources/suggested")
 @error_detail("load the suggested sources")
-async def get_suggested_sources():
+async def get_suggested_sources(offset: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=200),
+                                q: Optional[str] = Query(None, max_length=300)):
     """Discover (issue 0050): the sites and accounts 3+ of your sources link in article-like
-    pages, that you don't follow. Each {key, url, voices, voice_names, article_count,
-    link_count, articles [{url, title, linked_by}], origins, origin_stories [{url, title, voices,
-    stored}], follows?}, the most stories started there first (issue 0065), then most voices;
-    archives [{source_id, name, places, origins, since, older, origin_stories}]: followed sources
-    whose own pages started stories they don't hold; unnamed [{place, origins}]. Nothing is
-    fetched: following one goes through the feed finder."""
-    return await asyncio.to_thread(services().stories.discover)
+    pages, that you don't follow, one page of them (issue 0080: `offset`, `limit`, the first 30;
+    `q`: those whose words match). Each {key, url, voices (the sources linking it), voice_names,
+    article_count, link_count, articles [{url, title, linked_by}], classics, origins, opened, score,
+    origin_stories [{url, title, voices, stored}], follow_test? {label: feed | page | headlines |
+    blocked, at}}, ranked by the stories started there, classics, opens, sources and recency, the
+    ones that can't be followed last; total, more; archives [{source_id, name, places, origins, since,
+    older, origin_stories}]: followed sources whose own pages started stories they don't hold
+    (sections of a site you follow too); unnamed [{place, origins}]; references [{key, voices}]: help
+    and docs sites your sources link. Opening the first page tests its suggestions and reads its
+    untitled articles' titles in the background, at most once in 30 days (services/discover_reads.py)."""
+    page = await asyncio.to_thread(services().stories.discover, offset=offset, limit=limit, q=q)
+    if offset == 0 and not q:
+        discover_reads.start(services().stories, FEED_FINDER_HTTP, services().source_fetch.kinds)
+    return page
 
 
 @app.post("/api/sources/suggested/hide")

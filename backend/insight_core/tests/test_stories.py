@@ -536,16 +536,16 @@ class DiscoverServiceTests(unittest.TestCase):
         self.assertEqual((found["voices"], found["article_count"], found["link_count"]), (3, 2, 2))
         self.assertEqual(found["articles"][0]["title"], "The story 0", "words 3 voices agree on")
         self.assertEqual(len(found["articles"][0]["linked_by"]), 3)
-        self.assertIs(service.discover(), service.discover(), "kept while nothing it reads changed")
+        self.assertIs(service._discover_all(), service._discover_all(), "kept while nothing it reads changed")
         service.hide(self.site)
         self.assertFalse([s for s in service.discover()["suggestions"] if s["key"] == self.site])
 
     def test_the_kept_list_follows_its_inputs(self):
         service = StoriesService(db_url())
-        first = service.discover()
+        first = service._discover_all()
         with psycopg.connect(db_url()) as conn, conn.cursor() as cur:
             insert_scratch_source(cur)   # a source added: the list is computed again
-        self.assertIsNot(service.discover(), first)
+        self.assertIsNot(service._discover_all(), first)
 
 
 def _write_pid(path: str) -> None:

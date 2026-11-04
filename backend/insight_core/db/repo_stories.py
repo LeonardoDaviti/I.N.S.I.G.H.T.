@@ -17,7 +17,7 @@ from psycopg import Cursor
 from insight_core.utils.addresses import PLATFORM_SITES, account_key, host_of, publication_of, site_of, x_account
 from insight_core.db.repo_post_parts import PostPartsRepository
 from insight_core.utils.post_links import PLATFORM_KINDS, PostLink, extract_links, is_article, source_kind
-from insight_core.utils.discover_rules import DISCOVER_PLATFORMS
+from insight_core.utils.discover_rules import DISCOVER_PLATFORMS, NOT_SELF, SELF_MIN
 from insight_core.utils.story_rules import (HOME_SITE_SHARE, NOT_PUBLISHERS, SIGNATURE_MIN_POSTS, SIGNATURE_SHARE, Edge, Story,
                                             source_site)
 from insight_core.utils.tree_rules import _PAGE
@@ -122,8 +122,24 @@ class SourceFacts:
         return ""
 
     def followed(self) -> Set[str]:
-        """The sites you follow: each source's own site, and the site of its address."""
-        return {s for s in (*self.site.values(), *self.handle_site.values()) if s}
+        """The sites you follow: each source's own site, and the site of its address. A source that
+        isn't the publisher of its posts' addresses (NOT_PUBLISHERS: Hacker News, Saved) follows no
+        site by them (issue 0080: an aggregator's most linked site was "followed")."""
+        own = (s for i, s in self.site.items() if self.kind.get(i) not in NOT_PUBLISHERS)
+        return {s for s in (*own, *self.handle_site.values()) if s}
+
+    def selves(self, source_id: str) -> Set[str]:
+        """A source's own names (issue 0080), as an address names it on a platform: its account's
+        (t.me/<name>, x.com/<name>), and its publication's first word that names it
+        (<name>.substack.com, <name>.net). Its links to pages under one are self-links."""
+        names = set()
+        account = self.account.get(source_id) or ""
+        if "/" in account:
+            names.add(account.rsplit("/", 1)[1].lstrip("@~"))
+        if self.kind.get(source_id) == "site":
+            labels = self.publication(source_id).split(".")[:-1]
+            names.add(next((label for label in labels if label not in NOT_SELF), ""))
+        return {n for n in names if len(n) >= SELF_MIN and n not in NOT_SELF}
 
     def followed_accounts(self) -> Set[str]:
         """The platform accounts you follow (source_account): on a platform, only these are followed."""
@@ -658,12 +674,14 @@ class StoriesRepository:
     @staticmethod
     def discover_inputs(cur: Cursor) -> str:
         """What Discover is computed from, in one string: the last story run (links are read before
-        it), the sources (added, removed, renamed) and the hidden suggestions. Same string, same list."""
+        it), the sources (added, removed, renamed), the hidden suggestions and what Discover read of the
+        web (issue 0080). Same string, same list."""
         cur.execute(
             """
             SELECT concat_ws('|', (SELECT value::text FROM system_settings WHERE key = 'stories'),
                              (SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM sources),
-                             (SELECT count(*) || ':' || COALESCE(max(hidden_at)::text, '') FROM discover_hidden))
+                             (SELECT count(*) || ':' || COALESCE(max(hidden_at)::text, '') FROM discover_hidden),
+                             (SELECT updated_at::text FROM system_settings WHERE key = 'discover_reads'))
             """
         )
         return cur.fetchone()[0]

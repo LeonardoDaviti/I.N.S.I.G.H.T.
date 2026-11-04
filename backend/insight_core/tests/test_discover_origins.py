@@ -66,20 +66,35 @@ class OriginsTests(unittest.TestCase):
                          {"s-openai": ["https://openai.com/index/gpt-6"], "s-sama": ["https://x.com/sama/status/2111872584338018562"]})
         self.assertEqual({k: len(v) for k, v in found.unnamed.items()}, {"youtube.com/watch": 1})
 
-    def test_a_site_you_follow_is_suggested_for_the_section_most_of_its_stories_start_in(self):
+    def test_a_site_you_follow_is_never_suggested_its_other_sections_are_missed_by_its_source(self):
+        """Issue 0080 (decision 6): a section of a followed site none of your sources holds is no suggestion."""
         held = {"anthropic.com/research": "s-research"}
         news = [root(f"https://anthropic.com/news/model-{n}") for n in range(14)]
         other = [root("https://anthropic.com/engineering/a-b"), root("https://anthropic.com/claude-guide")]
         found = origins(news + other, followed={"anthropic.com"}, held=held)
-        self.assertEqual({k: len(v) for k, v in found.suggest.items()}, {"anthropic.com/news": 14})
+        self.assertFalse(found.suggest)
+        self.assertEqual({k: len(v) for k, v in found.missing.items()}, {"s-research": 16})
         self.assertEqual(discover_place("https://anthropic.com/news/model-1"), "anthropic.com/news")
         self.assertEqual(discover_place("https://anthropic.com/claude-guide"), "anthropic.com", "the root: the host alone")
         self.assertEqual(discover_place("https://simonwillison.net/2026/Oct/23/x"), "simonwillison.net", "a date is no section")
 
-    def test_a_followed_site_with_no_main_section_is_one_site_suggestion(self):
-        roots = [root(f"https://huggingface.co/{org}/model-{n}") for org in ("Qwen", "unsloth", "deepseek-ai") for n in range(3)]
-        found = origins(roots, followed={"huggingface.co"}, held={"huggingface.co/blog": "s-hf"})
-        self.assertEqual({k: len(v) for k, v in found.suggest.items()}, {"huggingface.co": 9})
+    def test_a_followed_site_with_no_main_section_is_not_suggested_whole(self):
+        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("OrgOne", "org-two", "org3") for n in range(3)]
+        found = origins(roots, followed={"hub.example"}, held={"hub.example/blog": "s-hub"})
+        self.assertFalse(found.suggest, "issue 0080: the whole followed host was suggested")
+        self.assertEqual({k: len(v) for k, v in found.missing.items()}, {"s-hub": 9})
+
+    def test_on_a_platform_the_data_finds_the_owners_are_suggested(self):
+        roots = [root(f"https://hub.example/{org}/model-{n}") for org in ("OrgOne", "org-two", "org3") for n in range(3)]
+        found = origins(roots, followed={"hub.example"}, held={"hub.example/blog": "s-hub"}, platforms={"hub.example": ()})
+        self.assertEqual({k: len(v) for k, v in found.suggest.items()},
+                         {"hub.example/orgone": 3, "hub.example/org-two": 3, "hub.example/org3": 3})
+
+    def test_a_reference_page_is_only_listed(self):
+        roots = [root("https://help.tool.example/articles/1-how"), root("https://tool.example/docs/setup")]
+        found = origins(roots, followed=set(), held={})
+        self.assertFalse(found.suggest)
+        self.assertEqual(sorted(found.references), ["help.tool.example", "tool.example"])
 
 
 @requires_test_db
@@ -171,13 +186,9 @@ class DiscoverOriginsTests(unittest.TestCase):
         for n in range(3):
             self._cite(voices, f"https://{site}/news/model-{n}")
         result = self._discover()
-        [news] = [s for s in result["suggestions"] if s["key"] == f"{site}/news"]
-        self.assertEqual((news["url"], news["origins"], news["follows"], news["voices"]),
-                         (f"https://{site}/news", 3, [f"{site}/research"], 3))
-        self.assertNotIn(site, self._keys(result), "the site itself stays followed")
-        self.assertFalse([a for a in result["archives"] if a["source_id"] == research], "it holds nothing it misses")
-        StoriesService(db_url()).hide(f"{site}/news")
-        self.assertNotIn(f"{site}/news", self._keys(self._discover()), "not interested hides the section")
+        self.assertFalse([k for k in self._keys(result) if k.startswith(site)], "issue 0080: a site you follow is never suggested")
+        [missing] = [a for a in result["archives"] if a["source_id"] == research]
+        self.assertEqual((missing["places"], missing["origins"]), ([f"{site}/news"], 3), "missing from a source you follow")
 
     def test_a_followed_source_whose_own_pages_start_stories_it_does_not_hold(self):
         m = self.mark
@@ -195,6 +206,32 @@ class DiscoverOriginsTests(unittest.TestCase):
         self.assertEqual(missing["since"], (NOW - timedelta(days=1)).isoformat())
         self.assertEqual(len(missing["origin_stories"]), 3)
         self.assertFalse([k for k in self._keys(result) if k.startswith(site)], "not a second source")
+
+    def test_a_missing_row_follows_its_sources_archive(self):
+        """Issue 0080: an archive started from Discover shows there, running, then finished."""
+        m = self.mark
+        site = f"archived-{m}.example"
+        feed = self._source(f"Archived {m}", f"https://{site}/feed.xml")
+        self._post(feed, f"https://{site}/index/recent")
+        voices = self._voices(3)
+        pages = [f"https://{site}/index/older-{n}" for n in range(3)]
+        for page in pages:
+            self._cite(voices, page)
+
+        def row():
+            return next(a for a in self._discover()["archives"] if a["source_id"] == feed)
+
+        self.assertEqual(row()["archive"], {"state": None, "found": 0})
+        self.assertNotIn("pages", row(), "the pages stay in the service")
+        self.cur.execute("INSERT INTO job_runs (job_type, status, trigger, source_id, payload) "
+                         "VALUES ('archive_source', 'running', 'manual', %s, '{\"pages_fetched\": 4}')", (feed,))
+        self._post(feed, pages[0])   # the archive stored one of them; the story job hasn't run yet
+        self.assertEqual(row()["archive"], {"state": "running", "found": 1, "pages_fetched": 4})
+        self.cur.execute("UPDATE job_runs SET status = 'success' WHERE source_id = %s", (feed,))
+        self.cur.execute("UPDATE sources SET settings = settings || '{\"archive\": {\"checkpoint\": {\"completed_at\": \"2026-11-04\"}}}' "
+                         "WHERE id = %s", (feed,))
+        self.assertEqual(row()["archive"]["state"], "finished")
+        self.cur.execute("DELETE FROM job_runs WHERE source_id = %s", (feed,))
 
     def test_tweets_in_any_form_and_reposts_suggest_an_account(self):
         m = self.mark

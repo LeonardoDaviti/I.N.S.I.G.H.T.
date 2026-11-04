@@ -763,17 +763,23 @@ export interface FoundFeed {
   holds?: number;
 }
 
+/** Discover's follow test (issue 0080): what following it would give, read once in 30 days. */
+export type FollowLabel = 'feed' | 'page' | 'headlines' | 'blocked';
+
 /** Discover (issue 0050): a site or account 3+ of your sources link in article-like pages, not followed. */
 export interface SuggestedSource {
   /** A site (`openai.com`) or an account on a platform (`x.com/karpathy`). */
   key: string;
   url: string;
+  /** The sources linking it (issue 0080: a Reddit source once, never Saved). */
   voices: number;
   voice_names: string[];
   article_count: number;
   link_count: number;
-  /** The most linked of its articles (up to 20): the link's own words when it had some. */
+  /** The most linked of its articles (up to 20): its own title, else none (the line names its site, issue 0080). */
   articles: { url: string; title: string | null; linked_by: string[] }[];
+  /** Its follow test, on the first page (issue 0080). */
+  follow_test?: { label: FollowLabel; at: string };
   /** How many of its pages are classics (issue 0051): a suggestion that holds some comes first. */
   classics?: number;
   /** How many of your stories start there (issue 0065): Discover's first reason and its first order. */
@@ -796,10 +802,17 @@ export interface MissingOrigins {
   since: string | null;
   older: number;
   origin_stories: OriginStory[];
+  /** Its archive as stored (issue 0080): running, paused or finished, and how many of these pages it has stored since. */
+  archive?: { state: 'running' | 'paused' | 'finished' | null; found: number; pages_fetched?: number };
 }
 export interface SuggestedSourcesResponse {
   success: true;
+  /** One page of them (issue 0080: 30 at a time, the rest behind More). */
   suggestions: SuggestedSource[];
+  total?: number;
+  more?: boolean;
+  /** Help and docs sites your sources link: references, never suggestions (issue 0080). */
+  references?: { key: string; voices: number }[];
   archives?: MissingOrigins[];
   /** Pages that start stories but name no account to follow (`youtube.com/watch`). */
   unnamed?: { place: string; origins: number }[];
@@ -1034,7 +1047,9 @@ export function createApi() {
     /** Source anatomy (issue 0054): every source, how it is read and what it gives. Fetches nothing. */
     getSourceAnatomy: () => request<SourceAnatomyResponse>('/api/sources/anatomy'),
     /** Discover (issue 0050): what your sources keep linking that you don't follow. Fetches nothing. */
-    getSuggestedSources: () => request<SuggestedSourcesResponse>('/api/sources/suggested'),
+    /** One page (issue 0080): `page` is its query, `?offset=30&q=…` (Discover builds it, out of the reader's chunk). */
+    getSuggestedSources: (page = '', signal?: AbortSignal) =>
+      request<SuggestedSourcesResponse>(`/api/sources/suggested${page}`, { signal }),
     /** Not interested: the suggestion is never shown again. */
     hideSuggestedSource: (key: string) =>
       request<Envelope>('/api/sources/suggested/hide', { method: 'POST', body: { key } }),

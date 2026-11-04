@@ -93,6 +93,11 @@ Discover tests nothing, so it can't tell "follow this" from "you'll only ever ge
    - Reddit authors inflate "linked by N of your sources": count followed sources there, as 0067's wording says;
    - the Saved source counts as a source on 5 suggestions: it never does.
 
+10. **An archive row follows its archive** (owner 2026-11-04: "When I started archive from discover, why do I still see it in Discover?"). A row of "a source you follow whose own pages start stories it doesn't hold" stays until the archive has stored those pages and the story job has run, and it said nothing about the archive:
+    - the row carries the source's archive as it is stored: running, paused or finished, and how many of the row's pages it has stored since;
+    - while running: "Archive running · N of M found so far"; finished with pages still missing: "Archive finished · N of these pages aren't in its archive" (0084 B can fetch them later);
+    - a source whose archive is running or finished gets no fresh "Archive…" button.
+
 ## Invariants added to 0075's check (each on every suggestion of the copy)
 - No source name, voice name or article title is an address.
 - No article title is its address's slug in title case.
@@ -142,6 +147,73 @@ What the numbers change in the decisions above. Where they differ, **this sectio
    - The first 30 hold 7–8 X accounts.
    - Origins and classics carry it; recency is nearly flat and opens are sparse.
    - 7 of the server's first-page sites refuse plain readers, so the follow test's labels decide their place (they sink).
+
+## Built: Discover (2026-11-04, branch `issue-0080-discover`)
+
+From main b26874d, with main merged in twice (0083, 0075's scratch names). It is not merged or deployed and adds no migration. Nothing was fetched or downloaded. The code ran mounted on the local `insight-backend:lab-b26874d` image, and the frontend used the main checkout's `node_modules`. Every test of the follow test and the page titles uses recorded answers. Decision 1 ("one name for a source") and item 8 (health) are **not** in this slice. They touch News and ingestion, which other branches hold.
+
+- **Platforms (Measured 3):** `discover_rules.find_platforms`, the measured rule:
+  - 50+ owners, or 15+ with none holding over 20% of the pages, and 2+ owners each linked by 2+ voices.
+  - The owner moves down past one segment that 70% of the pages share. A language segment is skipped (`/ru/companies/<owner>`). It never steps down twice: on the lab copy that turned a government site's `/government/publications/<doc>` into 16 "owners", so it was fixed.
+  - It is computed in SQL with every count (`DiscoverRepository.platforms`). A row of `discover_addresses` is written by the platforms it was keyed by (`address_stamp`), so a host that becomes a platform refills.
+  - On the lab it finds exactly the measured five hosts beyond the listed ones: a model hub, two social servers, a contributors' magazine and a store. Their owners are the suggestions.
+  - A source's link to its own page (one of its names, `SourceFacts.selves`, in the first three segments) is no voice.
+  - A host whose shown pages hold paper ids (a preprint's yymm.nnnnn, a DOI) is a paper source. It is never a suggestion, and its papers stay in stories and Classics.
+  - `DISCOVER_PLATFORMS` stays for video and Telegram.
+- **References (Measured 4):** a `help.`/`support.`/`docs.`/`developer.` host, or a `/docs`, `/help` or `/support` path on 60% of the shown pages (`place_kind`). These go to `references` and show on the page as a quiet line. Government sites stay suggestions.
+- **Followed sites (Measured 5, decision 6):**
+  - `SourceFacts.followed()` no longer counts a NOT_PUBLISHERS source's most-linked site. On the lab, the large company site that the aggregator made "followed" is suggested again, at #22.
+  - In `origins()`, a followed site's pages outside the places your sources hold are never a suggestion. They are added to the stories the site's source misses (its archive row).
+- **Titles (decision 2, Measured 2):**
+  - A line is titled by the stored post's title, else link words that read as a title (`origin_title(..., slug=False)`), else the page's own title read once (below).
+  - Otherwise the screen shows "site · section" (`untitledLine`), never the address and never a slug made into a title.
+  - An X line uses only the tweet's own words, else "a post by @account".
+- **The reads (decisions 2 and 4):** `services/discover_reads.py`.
+  - Opening the first page starts one background read of what that page lacks. Each suggestion gets a follow test through `where_linked.follow` (the feed finder, then page watching), labelled feed / page / headlines / blocked (401 or 403 on every request). Each untitled article that isn't a tweet gets its page title read (`page_watch.page_title`).
+  - Each answer is stored with its date in system_settings `discover_reads`, failures too, and is never re-read within 30 days.
+  - Each host has one follow test at a time, and title reads are spaced by `HostLimiter`. `INSIGHT_DISCOVER_READS=0` turns the reads off.
+  - Suggestions labelled Headlines only or Blocks readers sink below the rest.
+- **Ranking and size (decision 7, Measured 6, item 9):**
+  - The score is `discover_rules.score`. A roundup-only voice weighs half in its "sources" term, as 0067 has it.
+  - `discover(offset, limit, q)` and `GET /api/sources/suggested?offset&limit&q` carry one page (30), and the page shows "More (N)".
+  - "Linked by N of your sources" counts each voice once and a Reddit source once (its authors count only toward the 3-voice bar). Saved is never a voice.
+- **An archive row follows its archive (decision 10):** `DiscoverRepository.archive_states` reads the newest archive job (running or paused), the archive checkpoint's `completed_at` (finished), and how many of the row's pages the source has stored since. The page shows "Archive running · N of M found so far" or "Archive finished · N of these pages aren't in its archive". It offers no fresh Archive… button then.
+- **0075's check:** `discover.title_address`, `discover.name_address` (decision 1, so it stays high), `discover.title_slug`, `discover.followed_host`, `discover.first_page`, `discover.untested`. The snapshot keeps each suggestion's first three titles.
+
+**On real data** (`scripts/realdata-check.sh insight_lab`, rebased on main c21bed8: **PASS**; private report `plan/research/lab/checks/issue-0080-discover-2026-11-04.md`):
+- **Cases:** 69 pass, 14 fail.
+  - Two turn to pass: the followed site's section (its expectation changed by decision 6: no suggestion, and the research source's archive row holds it, 22 stories), and "a Reddit user among your sources".
+  - None turns from pass to fail.
+- **Discover's invariants, main → this branch:**
+
+  | Invariant | main | this branch | Note |
+  |---|---|---|---|
+  | slug-made titles | 3,663 | 15 | The 15 left are link words or stored titles that spell the slug |
+  | an address as a title | 3 | 3 | Stored tweet titles; unchanged |
+  | a suggestion on a followed host | 2 | 0 | |
+  | the first page over 30 or without a reason | 1,040 | 0 | |
+  | untested on the first page | 1,070 | 30 | Nothing is fetched on this machine |
+  | an address as a name | 1,163 | 1,141 | Decision 1, not built |
+
+  Everything else is equal. Stories, News and Classics don't change.
+- **Discover:** 1,082 suggestions against 1,070.
+  - 33 are new: model-hub owners and three contributors on the magazine, a big company's site (no longer "followed" through an aggregator), its research site and its podcasts.
+  - 21 are gone: the model hub and the preprint server as whole hosts, the followed site's section, the followed lab's whole host and a followed lab's models page, 8 help and docs sites, a Mastodon server, the magazine as one host, two paper publishers, and two X accounts whose own site sources linked them.
+- **The first 30, by hand:**
+  - Each reads as a source to follow: a wire service, an AI lab's site and its accounts, an interpretability journal, model-hub owners (a fine-tuner, a lab, a chip maker, a search company, a model maker), business papers, a tech newsletter, research sites and investigative outlets.
+  - 7 are X accounts.
+  - Of their first three lines, 42 of 90 have no title yet (they read "site · section" on screen). The server's first open reads their page titles.
+  - Two titles are wrong but read as titles: a citation ("<Author> et al. 2024") and a byline. Telling those from titles is Mark X.
+- **Wrong or missed, by hand (further down):**
+  - A hub's chat page is listed as an owner (#614): a kind of page the rule can't tell from an owner.
+  - The creators' platform is still at #78. Its creators' names there differ from their channel names, so the self-link test misses them.
+- **Tests:**
+  - `./run-tests.sh`: 1,409 OK. One earlier full run had a single search-ranking failure that passed alone and in two later full runs.
+  - Frontend: node 221 and vitest 701 pass; typecheck and the build pass.
+  - The feed route is 172,839 B gzip against main's 172,801 (0.99% of the 1% budget, against 0.97%). The post route is 312,901 B against 312,843. Discover's chunk (SourcesConfig) is 132.5 kB raw against 130.3 kB.
+- **Left open:**
+  - Decision 1 (one name for a source) and item 8 (health): other branches.
+  - Measuring the follow test's labels on the first 60, and the answer time with stored tests: both need the server, since nothing is fetched here.
 
 ## Not in this issue
 - Reading walled or JavaScript-only sites (0081).

@@ -196,7 +196,17 @@ def _slug_words(url: str) -> Tuple[str, ...]:
     return tuple(w for w in _SLUG.split(_SLUG_ID.sub("", re.sub(r"\.[a-z]{2,5}$", "", slug, flags=re.I))) if w)
 
 
-def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
+def slug_title(url: str) -> Optional[str]:
+    """An address's slug made readable (origin_title's step 5), when it holds SLUG_MIN_WORDS words of
+    letters: "Ai jobs white collar unemployment". Discover never shows one (issue 0080)."""
+    words = _slug_words(url)
+    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
+        text = " ".join(words)
+        return text[0].upper() + text[1:]
+    return None
+
+
+def origin_title(url: str, posts: Sequence[StoryPost], *, slug: bool = True) -> Optional[str]:
     """An outside page's title (issue 0068), from evidence, nothing fetched: a story's outside origin,
     and Discover's articles (issue 0070). `posts`: those linking it. A page that is stored is no
     outside origin: it is the root, with its own title. Measured on the lab (30 roots checked by
@@ -213,7 +223,9 @@ def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
        its own (StoryPost.link_post, a share) and no other kept link is titled for it (issue 0070);
     5. else the slug made readable, when it holds SLUG_MIN_WORDS words of letters;
     6. else one voice's link words that read as a title;
-    7. else None: the reader shows the address."""
+    7. else None: the reader shows the address.
+    Without `slug` (Discover's lines, issue 0080), step 5 is skipped: a title rebuilt from the address
+    is never shown."""
     from insight_core.utils.story_rules import count_voices   # story_rules imports this module
 
     quoted = Counter(display_title(None, p.quoted_words[url]) for p in posts if p.quoted_words.get(url))
@@ -232,17 +244,16 @@ def origin_title(url: str, posts: Sequence[StoryPost]) -> Optional[str]:
     by_use = sorted(said, key=lambda key: (-count_voices(said[key]), -len(said[key]), key))
     agreed = [key for key in by_use if count_voices(said[key]) >= 2 and titled_link_text(form[key])]
     words = _slug_words(url)
-    slug = _TOKENS.findall(" ".join(words).casefold())
-    confirmed = [key for key in by_use if len(slug) >= 2 and _TOKENS.findall(key) == slug]
+    tokens = _TOKENS.findall(" ".join(words).casefold())
+    confirmed = [key for key in by_use if len(tokens) >= 2 and _TOKENS.findall(key) == tokens]
     if agreed or confirmed:
         return form[(agreed or confirmed)[0]]
     if shared:
         return min(shared, key=lambda text: (-shared[text], text))
-    if sum(1 for w in words if re.fullmatch(r"[^\W\d_]+", w)) >= SLUG_MIN_WORDS:
-        text = " ".join(words)
-        return text[0].upper() + text[1:]
+    if slug and (made := slug_title(url)):
+        return made
     titled = [key for key in by_use if titled_link_text(form[key])]
     return form[titled[0]] if titled else None
 
 
-__all__ = ["Tree", "tree", "origin_title", "PARENT_REASONS"]
+__all__ = ["Tree", "tree", "origin_title", "slug_title", "PARENT_REASONS"]
