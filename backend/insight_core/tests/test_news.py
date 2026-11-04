@@ -26,7 +26,7 @@ from insight_core.services.stories_service import StoriesService
 from insight_core.tests._db import db_url, delete_scratch_sources, insert_scratch_source, requires_db, requires_test_db
 from insight_core.tests._stories import insert_post, insert_source, story_post
 from insight_core.utils.classic_rules import Citation, classics
-from insight_core.utils.news_rules import lead, names, news, score, surges, tally
+from insight_core.utils.news_rules import lead, names, news, phrases, score, surges, tally
 from insight_core.utils.post_links import is_reference
 from insight_core.utils.story_rules import StoryPost, group
 from insight_core.utils.url_normalization import normalize_url
@@ -122,6 +122,16 @@ class NameTests(unittest.TestCase):
         more = posts + [post("s4-9", "s4", hours=6, title="VR Glasses for everyone")]
         self.assertEqual(sorted(s.name for s in surges(more, followed("s1", "s2", "s3", "s4"))),
                          ["meta vr glasses", "vr glasses"], "a longer name covering fewer posts keeps both")
+
+    def test_a_name_said_inside_a_joined_word_is_in_its_burst(self):
+        # Issue 0083: a repo's name ("org/Model-V4.1-Flash-1017") says "flash 1017"; it was one word.
+        posts = self.burst("Model V4.1 Flash 1017 is out", sources=("s1", "s2", "s3"), hours=(0, 5, 30))
+        posts.append(post("slug", "s4", hours=6, title="org/Model-V4.1-Flash-1017 · Weights"))
+        self.assertIn("flash 1017", phrases("org/Model-V4.1-Flash-1017 · Weights"))
+        self.assertNotIn("flash 1017", names("org/Model-V4.1-Flash-1017 · Weights"), "what names it is unchanged")
+        found = {s.name: s.posts for s in surges(posts, followed("s1", "s2", "s3", "s4"))}
+        self.assertIn("v4.1 flash 1017", found)
+        self.assertTrue(all("slug" in ids for ids in found.values()), found)
 
     def test_arxiv_titles_are_left_out(self):
         self.assertEqual(surges(self.burst(kind="arxiv"), followed("s1", "s2", "s3")), [])

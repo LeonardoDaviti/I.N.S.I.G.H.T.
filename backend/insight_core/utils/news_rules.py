@@ -19,7 +19,8 @@ place**: tuning on the server is a one-line change.
   name is judged again: a later burst of 3+ voices new to it surges too, when it holds more voices
   than the 30 days before (a series a few voices keep saying doesn't). A shorter name whose posts
   a longer one covers is dropped. Titles are compared as plain letters (NFKC) and with a word glued
-  to the next line's capital in another script split. arXiv titles are left out.
+  to the next line's capital in another script split; a word joined by hyphens or dots says its
+  parts' names too (issue 0083). arXiv titles are left out.
 """
 from __future__ import annotations
 
@@ -116,9 +117,13 @@ def names(title: Optional[str]) -> Set[str]:
 
 
 def phrases(title: Optional[str]) -> Set[str]:
-    """Every run of 1 to 3 words of a title, lowercase: where a name is said, in any case."""
+    """Every run of 1 to 3 words of a title, lowercase: where a name is said, in any case. A word
+    its separators join ("Model-V4.1-Flash-1017", a repo's name) is read as its parts too, so it
+    says "flash 1017" (issue 0083)."""
     words = _lower(_words(title))
-    return {" ".join(words[i:i + n]) for n in range(1, NAME_MAX_WORDS + 1) for i in range(len(words) - n + 1)}
+    parts = " ".join(words).split()
+    return {" ".join(run[i:i + n]) for run in (words, parts)
+            for n in range(1, NAME_MAX_WORDS + 1) for i in range(len(run) - n + 1)}
 
 
 @dataclass
