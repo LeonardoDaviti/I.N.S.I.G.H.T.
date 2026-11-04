@@ -202,7 +202,7 @@ class GuardTests(unittest.TestCase):
         for name in ("insight", "insight_lab", "insight_server_copy", "insight_preview", "insight_lab_copy"):
             with self.assertRaises(SystemExit, msg=name):
                 scratch_only(f"postgresql://u:p@h:5432/{name}")
-        for name in ("insight_lab_check_a", "insight_lab_check_b", "insight_lab_0075a", "insight_run_1_test"):
+        for name in ("insight_lab_check_a", "insight_lab_check_b", "insight_lab_check_4242_a", "insight_lab_0075a", "insight_run_1_test"):
             scratch_only(f"postgresql://u:p@h:5432/{name}")
 
     def test_rows_compared_by_table_and_story_ids_by_their_posts(self):

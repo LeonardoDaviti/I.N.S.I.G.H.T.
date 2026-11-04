@@ -18,7 +18,7 @@
 #   --keep             keep the scratch copies
 #
 # Env: CASES (plan/research/lab/cases.json), OUT (plan/research/lab/checks), SCRATCH_A / SCRATCH_B (the
-# scratch copies' names: <db>_check_a / <db>_check_b), PG (postgresql://insight:insight@postgres:5432),
+# scratch copies' names: <db>_check_<pid>_a / _b, one pair per run), PG (postgresql://insight:insight@postgres:5432),
 # NETWORK (insight_insight-network).
 #
 # Each version's code runs over its own scratch copy (one pg_restore of the dump, then a file copy of it), in a
@@ -51,11 +51,12 @@ NETWORK="${NETWORK:-insight_insight-network}"
 MAIN_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
 CASES="${CASES:-$MAIN_ROOT/plan/research/lab/cases.json}"
 OUT="${OUT:-$MAIN_ROOT/plan/research/lab/checks}"
-SCRATCH_A="${SCRATCH_A:-${DB}_check_a}"
-SCRATCH_B="${SCRATCH_B:-${DB}_check_b}"
+# Each run has its own copies (its process id), so runs at the same time never share or drop each other's.
+SCRATCH_A="${SCRATCH_A:-${DB}_check_$$_a}"
+SCRATCH_B="${SCRATCH_B:-${DB}_check_$$_b}"
 for name in "$SCRATCH_A" "$SCRATCH_B"; do
-  if [[ ! "$name" =~ _(check_[ab]|[0-9]{4}[ab]|test)$ ]] || [ "$name" = "$DB" ]; then
-    echo "refusing scratch name $name: it must end in _check_a/_check_b, _<nnnn>a/b or _test" >&2; exit 2
+  if [[ ! "$name" =~ _(check_[ab]|check_[0-9]+_[ab]|[0-9]{4}[ab]|test)$ ]] || [ "$name" = "$DB" ]; then
+    echo "refusing scratch name $name: it must end in _check_a/_check_b, _check_<pid>_a/b, _<nnnn>a/b or _test" >&2; exit 2
   fi
 done
 if [ -z "$IMAGE" ]; then

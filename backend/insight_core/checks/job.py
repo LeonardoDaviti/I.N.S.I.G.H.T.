@@ -20,14 +20,14 @@ from insight_core.checks.session import copy_now, open_copy
 
 PROTECTED = {"insight", "insight_lab", "insight_server_copy", "insight_preview", "postgres"}
 # A scratch copy's name says so: …_test, …_check_a/_b (realdata-check.sh), …_<issue>a/b (an issue's own copies).
-SCRATCH_RE = re.compile(r".+(?:_test|_check_[ab]|_\d{4}[ab])$")
+SCRATCH_RE = re.compile(r".+(?:_test|_check_[ab]|_check_\d+_[ab]|_\d{4}[ab])$")
 
 
 def scratch_only(db_url: str) -> None:
     """Refuse a database whose name doesn't say it's a scratch copy."""
     name = db_url.rsplit("/", 1)[-1].split("?", 1)[0]
     if name in PROTECTED or not SCRATCH_RE.fullmatch(name):
-        raise SystemExit(f"refusing to write {name!r}: not a scratch copy (…_test, …_check_a/b, …_<nnnn>a/b)")
+        raise SystemExit(f"refusing to write {name!r}: not a scratch copy (…_test, …_check_a/b, …_check_<pid>_a/b, …_<nnnn>a/b)")
 
 
 def run_full(db_url: str, now: datetime) -> Dict[str, Any]:
