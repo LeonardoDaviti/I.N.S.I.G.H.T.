@@ -19,16 +19,16 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 from insight_core.db import database as db
 from insight_core.db.repo_news import NewsRepository
-from insight_core.db.repo_reader import FeedScope, ReaderRepository
+from insight_core.db.repo_reader import FeedScope, ReaderRepository, story_voices
 from insight_core.db.repo_stories import SourceFacts
 from insight_core.utils.classic_rules import Citation, cited_again, classic_order, classics
 from insight_core.utils.news_rules import (NAME_MIN_POSTS, NAME_SKIP_KINDS, NEWS_DAYS, NEWS_KEEP, NEWS_RECENT, SCOPE_ROLES,
                                           Surge, lead, longest, name_surges, names, news, phrases)
-from insight_core.utils.addresses import x_account
 from insight_core.utils.post_fields import post_title
 from insight_core.utils.post_links import reddit_author
 from insight_core.utils.story_rules import Story, StoryPost
@@ -173,8 +173,8 @@ class NewsService:
         newest. Each item is its story's lead as a feed row, with `story` (who covered it, its other
         posts) and `news` {part, first_at, reports, shares, mentions, score}. On one source (issue
         0077) also the stories a roundup of it mentions, and `news.scope_role`: its part, the
-        strongest of its posts' (`SCOPE_ROLES`): origin (its post is the row's origin), report,
-        share, else mention."""
+        strongest of its posts' (`SCOPE_ROLES`): origin (its post began the row: the row's first, and
+        the origin of its 0050 story, issue 0082), report, share, else mention."""
         with db.connection(self.db_url) as conn, conn.cursor() as cur:
             return self.news_on(cur, scope)
 
@@ -184,7 +184,7 @@ class NewsService:
         one_source = feed_scope.kind == "source"
         now = self.clock()
         rows = self.repo.news_posts(cur, feed_scope, now - timedelta(days=NEWS_DAYS))
-        followed = ReaderRepository.followed_accounts(cur) if any(row["repost"] for row in rows) else {}
+        followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
         by_story: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
             by_story[row["_news"]].append(row)
@@ -197,15 +197,8 @@ class NewsService:
             first_report = lead([(p["id"], p["role"]) for p in posts], origins)
             head = next(p for p in posts if p["id"] == lead_id)
             covered = sorted(posts, key=lambda p: p["id"] != first_report)   # stable: time order after
-            sources: List[Dict[str, str]] = []
-            # Every voice the count holds is named (issue 0069): your sources that wrote or reposted a
-            # tweet a post holds are voices too, as on the feed row (issue 0068).
-            for p in covered:
-                accounts = [p["repost"]["author"] or "", *p["repost"]["by"]] if p["repost"] else []
-                held = [followed[x_account(a)] for a in accounts if x_account(a) in followed]
-                for source in [{"id": p["source_id"], "name": p["source_display_name"]}, *held]:
-                    if not any(s["id"] == source["id"] for s in sources):
-                        sources.append(source)
+            # Every voice the count holds is named, once (issues 0069, 0082), the first reporter first.
+            sources = story_voices([p["_voiced"] for p in covered], followed)
             item = {k: v for k, v in head.items() if not k.startswith("_") and k != "role"}
             item["story"] = {"id": head["_news"], "voices": head["_voices"], "sources": sources,
                              "posts": NewsRepository.lines(posts, lead_id)}
@@ -215,7 +208,9 @@ class NewsService:
                 "mentions": head["_mentions"], "score": head["_score"],
             }
             if one_source:
-                origin = origins[0] if origins else None
+                # "Started it" only when first (issue 0082): the row's first post, the origin of its 0050
+                # story (the post page's first, 0072 D); a first share of an outside page is a share.
+                origin = posts[0]["id"] if posts[0]["_origin"] else None
                 item["news"]["scope_role"] = min(
                     (("origin" if p["id"] == origin else p["role"]) for p in shown),
                     key=SCOPE_ROLES.index, default="mention")

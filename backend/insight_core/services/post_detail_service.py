@@ -14,7 +14,7 @@ from insight_core.db import database as db
 
 from insight_core.logs.core.logger_config import get_component_logger
 from insight_core.db.repo_interactions import PostInteractionsRepository
-from insight_core.db.repo_reader import ReaderRepository, repost_of
+from insight_core.db.repo_reader import ReaderRepository, repost_of, voice_sources
 from insight_core.services.news_service import NewsService
 from insight_core.utils.content_fingerprints import strip_html
 from insight_core.utils.media import post_media
@@ -156,7 +156,7 @@ class PostDetailService:
         item: Dict[str, Any] = {"id": str(post_id)}
         ReaderRepository.attach_stories(cur, [item])
         story = item.get("story")
-        others = story and source_id and any(source["id"] != source_id for source in story["sources"])
+        others = story and source_id and any(source["id"] != source_id for source in voice_sources(story["sources"]))
         if not story or not (story["voices"] >= 2 or story["thread"] or others):
             return None
         # A thread's replies read as the post does (issue 0068): each its stored HTML and the

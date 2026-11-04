@@ -104,10 +104,13 @@ export function originHref(origin: StoryOrigin): string {
 /** The names a folded story's row shows before "+N" (issue 0050), and a News row (issue 0051). */
 const NAMES_SHOWN = 2;
 
-/** "Anthropic, Simon Willison, +1": a story's sources in the order they covered it, two named; "+N" makes
- *  them the story's voices (issue 0069: copies of one text are one voice). */
+/** "Anthropic, Simon Willison, +1": a story's voices in the order they covered it, two named; "+N" the
+ *  voices not named (issues 0069, 0082). A Reddit author reads "u/a in r/x", one subreddit named once:
+ *  "u/a, u/b in r/x". */
 export function coveredNames(story: Pick<FeedStory, 'sources' | 'voices'>): string {
-  const named = story.sources.slice(0, NAMES_SHOWN).map((source) => sourceLabel(source.name));
+  const shown = story.sources.slice(0, NAMES_SHOWN);
+  const named = shown.map((voice, i) => voice.place && shown[i + 1]?.place !== voice.place
+    ? `${voice.name} in ${sourceLabel(voice.place)}` : sourceLabel(voice.name));
   const more = Math.max(story.voices, named.length) - named.length;
   return `${named.join(', ')}${more > 0 ? `, +${more}` : ''}`;
 }

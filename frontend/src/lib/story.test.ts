@@ -21,6 +21,15 @@ test('coveredBy names two sources, then counts the rest', () => {
   assert.equal(coveredBy({ ...story(['steipete']), voices: 2 }), 'covered by 2 · steipete, +1');
 });
 
+test('the names are the voices counted: a Reddit author in its subreddit, a copy once (issue 0082)', () => {
+  const voices = [
+    { id: 'r', name: 'u/alice', place: 'r/sub' }, { id: 'r', name: 'u/bob', place: 'r/sub' },
+    { id: 'b', name: 'Blog One', with: [{ id: 'b2', name: 'Blog One Feed' }] },
+  ];
+  assert.equal(coveredBy({ id: 's', voices: 3, posts: [], sources: voices }), 'covered by 3 · u/alice, u/bob in r/sub, +1');
+  assert.equal(coveredBy({ id: 's', voices: 2, posts: [], sources: voices.slice(1) }), 'covered by 2 · u/bob in r/sub, Blog One');
+});
+
 test('suggestionReason says how many of your sources link it, who, and how many articles', () => {
   assert.equal(suggestionReason({
     key: 'metr.org', url: 'https://metr.org', voices: 1, article_count: 1, link_count: 1, voice_names: ['Simon Willison'], articles: [],

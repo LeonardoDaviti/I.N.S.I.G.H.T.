@@ -261,17 +261,17 @@ def _story_empty(run: Run):
 
 
 def _label_story_voices(run: Run):
-    """A row's count ("covered by N", story.voices) names fewer sources than it counts (story.sources):
-    the label and the list beside it disagree."""
-    out = [sid for sid, st in run.stories.items() if st["voices"] > len(st.get("sources") or [])]
+    """A row's count ("covered by N", story.voices, 2+) isn't its names (story.sources, one a voice, issue
+    0082): the label and the list beside it disagree. One voice shows no count ("also shared by")."""
+    out = [sid for sid, st in run.stories.items() if st["voices"] >= 2 and st["voices"] != len(st.get("sources") or [])]
     return out, len(run.stories)
 
 
 def _label_news_voices(run: Run):
-    """A News row's count (its story's voices) names fewer sources than it counts."""
+    """A News row's count (its story's voices) isn't its names (issue 0082)."""
     from insight_core.services.news_service import NewsService
     answer = plain(NewsService(run.db_url, clock=lambda: run.now).news_on(run.cur))
-    out = [i["story"]["id"] for i in answer["items"] if i["story"]["voices"] > len(i["story"].get("sources") or [])]
+    out = [i["story"]["id"] for i in answer["items"] if i["story"]["voices"] != len(i["story"].get("sources") or [])]
     return out, len(answer["items"])
 
 
@@ -300,8 +300,8 @@ INVARIANTS: List[Invariant] = [
     Invariant("date.after_fetch", "dates", "published more than a day after it was fetched", _date_after_fetch),
     Invariant("date.date_only_first", "dates", "a date-only post marked first over a timed post of its day", _date_only_first),
     Invariant("story.empty", "stories", "a story with no posts", _story_empty),
-    Invariant("label.story_voices", "labels", "a row's count names fewer sources than it counts", _label_story_voices),
-    Invariant("label.news_voices", "labels", "a News row's count names fewer sources than it counts", _label_news_voices),
+    Invariant("label.story_voices", "labels", "a row's count isn't its names (one a voice)", _label_story_voices),
+    Invariant("label.news_voices", "labels", "a News row's count isn't its names (one a voice)", _label_news_voices),
 ]
 
 

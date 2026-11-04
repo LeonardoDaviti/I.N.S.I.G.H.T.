@@ -33,7 +33,7 @@ import uuid
 from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
 from psycopg import Cursor
 
@@ -42,6 +42,8 @@ from insight_core.utils.content_fingerprints import clean_text
 from insight_core.utils.env import env_int
 from insight_core.utils.media import feed_thumb
 from insight_core.utils.addresses import x_account
+from insight_core.utils.post_links import source_kind
+from insight_core.utils.story_rules import named_voices, text_key
 from insight_core.utils.post_fields import TITLE_HTML_CHARS, TITLE_TEXT_CHARS, hnrss_counts, post_title, quote_only, reading_text, title_columns
 
 FeedFilter = Literal["all", "unread", "later", "starred", "updated", "history"]   # starred is Keep ("Kept")
@@ -271,6 +273,45 @@ def repost_of(platform: str | None, handle: str | None, author: str | None,
     return {"by": [a for a in reposted_by or () if a.lower() != own], "author": author}
 
 
+def story_voices(posts: Sequence[Dict[str, Any]], followed: Callable[[], Dict[str, Dict[str, str]]]) -> List[Dict[str, Any]]:
+    """A story's voices, named (story_rules.named_voices, issue 0082: the count's names), from its
+    posts as the reader reads them, in the order to name them: each {source_id, name, platform,
+    handle, voice (story_posts.voice), content_hash, text_chars, author, reposted_by}. Who else of
+    yours wrote or reposted a tweet is read as the story job reads it (StoriesService._story_post);
+    `followed` (followed_accounts) is asked only when a post may hold one. A story of one voice has no
+    count ("also shared by", 0072): its names are that voice's sources (voice_sources)."""
+    shaped = []
+    for p in posts:
+        kind = source_kind(p["platform"], p["handle"])
+        others: List[Dict[str, str]] = []
+        if p["reposted_by"] or (kind == "x" and p["author"]):
+            accounts = followed()
+            author = accounts.get(x_account(p["author"])) if kind == "x" and p["author"] else None
+            others = [author] if author and author["id"] != p["source_id"] else []
+            by = {s["id"]: s for s in (accounts.get(x_account(a)) for a in p["reposted_by"] or ()) if s}
+            others += [by[i] for i in sorted(set(by) - {p["source_id"], author and author["id"]})]
+        shaped.append({"source_id": p["source_id"], "name": p["name"], "kind": kind, "others": others,
+                       "voice": p["voice"] or "source:" + p["source_id"],
+                       "text_key": text_key(p["content_hash"], p["text_chars"] or 0)})
+    voices = named_voices(shaped)
+    return voice_sources(voices) if len(voices) == 1 else voices
+
+
+def voiced(row: Sequence[Any], voice: Optional[str], content_hash: Optional[str]) -> Dict[str, Any]:
+    """An item row's post (_ITEM_COLUMNS) as story_voices reads it, with its voice and content hash."""
+    return {"source_id": str(row[4]), "name": row[5], "platform": row[6], "handle": row[20], "voice": voice,
+            "content_hash": content_hash, "text_chars": row[11], "author": row[18], "reposted_by": row[19]}
+
+
+def voice_sources(voices: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every source of a story's voices (story_voices), each once: who said it, copied or reposted it."""
+    out: List[Dict[str, Any]] = []
+    for s in (s for v in voices for s in ({"id": v["id"], "name": v.get("place") or v["name"]}, *v.get("with", ()))):
+        if all(o["id"] != s["id"] for o in out):
+            out.append(s)
+    return out
+
+
 # Item columns, in the order _item() reads them. `rs` is the LEFT JOINed projection.
 _ITEM_COLUMNS = f"""
     p.id, p.title, left(p.content, {TITLE_TEXT_CHARS}), p.url, p.source_id,
@@ -414,8 +455,8 @@ class ReaderRepository:
     def attach_stories(cur: Cursor, items: List[Dict[str, Any]]) -> None:
         """Give each item that leads a story its `story` (else None): {id, voices, first (its origin
         post, issue 0064; before the tree is drawn its first report, else its first share: issue
-        0055; None when another post of the story came before it, issue 0072 D), sources: [{id, name}]
-        in the order they covered it, posts: the story's other posts, in the story's order}. The post
+        0055; None when another post of the story came before it, issue 0072 D), sources: its voices
+        named, in the order they covered it (story_voices, issue 0082: {id, name, place, with}), posts: the story's other posts, in the story's order}. The post
         page (0055) asks it too.
 
         The tree (issue 0064): each post has `parent_id` (a post of the story) and `parent_reason`
@@ -440,7 +481,7 @@ class ReaderRepository:
                    COALESCE(NULLIF(btrim(s.settings->>'display_name'), ''), s.handle_or_url), s.platform, {SORT_KEY}, p.published_at,
                    r.read_at, o.role, o.parent_id, o.parent_reason, st.origin_url, st.origin_title, st.origin_linked_by,
                    p.reposted_by, p.author, s.handle_or_url, left(p.content_html, {TITLE_HTML_CHARS}),
-                   COALESCE(p.normalized_url, p.url), o.position
+                   COALESCE(p.normalized_url, p.url), o.position, o.voice, p.content_hash, length(p.content)
             FROM story_posts sp
             JOIN stories st ON st.id = sp.story_id
             JOIN story_posts o ON o.story_id = sp.story_id
@@ -453,12 +494,13 @@ class ReaderRepository:
             ([item["id"] for item in items],),
         )
         stories: Dict[str, Dict[str, Any]] = {}
-        reposts: Dict[str, List[Tuple[Optional[str], List[str]]]] = {}   # lead -> (a tweet's author, its reposters)
+        voiced: Dict[str, List[Dict[str, Any]]] = {}   # lead -> its story's posts, as story_voices reads them
         addresses: Dict[str, set] = {}   # lead -> its story's posts' addresses
         quoting: Dict[str, str] = {}   # a post that only quotes a tweet -> that tweet (issue 0072)
         for (lead, story_id, voices, post_id, title, content, url, source_id, name, platform, sort_at,
              published_at, read_at, role, parent_id, parent_reason, origin_url, origin_title,
-             origin_linked_by, reposted_by, author, handle, html, address, position) in cur.fetchall():
+             origin_linked_by, reposted_by, author, handle, html, address, position, voice, content_hash,
+             text_chars) in cur.fetchall():
             story = stories.setdefault(str(lead), {
                 "id": str(story_id), "voices": int(voices), "first": None, "_first_rank": None, "sources": [],
                 "posts": [], "parent_id": None, "parent_reason": None, "thread": False,
@@ -466,8 +508,9 @@ class ReaderRepository:
                           if origin_url else None,
                 "reposted_by": None, "roundups": [],
             })
-            if reposted_by:
-                reposts.setdefault(str(lead), []).append((author, reposted_by))
+            voiced.setdefault(str(lead), []).append({
+                "source_id": str(source_id), "name": name, "platform": platform, "handle": handle, "voice": voice,
+                "content_hash": content_hash, "text_chars": text_chars, "author": author, "reposted_by": reposted_by})
             addresses.setdefault(str(lead), set()).add(address)
             if str(post_id) != str(lead) and parent_reason and (quoted := quote_only(html)):
                 quoting[str(post_id)] = quoted
@@ -508,15 +551,11 @@ class ReaderRepository:
             if story["_first_position"]:
                 story["first"] = None
             del story["_first_rank"], story["_first_position"]
-        if reposts:   # your sources that wrote or reposted a tweet of the story are its voices (issue 0068)
-            followed = ReaderRepository.followed_accounts(cur)
-            for lead, found in reposts.items():
-                sources = stories[lead]["sources"] if lead in stories else []
-                for author, by in found:
-                    for account in (author or "", *by):
-                        source = followed.get(x_account(account))
-                        if source and source["id"] not in {s["id"] for s in sources}:
-                            sources.append(source)
+        # Named as counted (issue 0082): one name a voice, your sources that wrote or reposted a tweet
+        # of the story among them (issue 0068).
+        followed = lru_cache(maxsize=1)(lambda: ReaderRepository.followed_accounts(cur))
+        for lead, story in stories.items():
+            story["sources"] = story_voices(voiced[lead], followed)
         # Each source's roundup that is most about the story (issue 0069): the one that links the story's
         # pages earliest in it (post_links.position), then the first; none of a source in the story.
         cur.execute(
@@ -546,7 +585,7 @@ class ReaderRepository:
             roundups.setdefault(str(story_id), []).append(
                 (str(source_id), {"id": str(post_id), "title": post_title(title, content, html), "source_display_name": name}))
         for story in stories.values():
-            voices = {source["id"] for source in story["sources"]}
+            voices = {source["id"] for source in voice_sources(story["sources"])}
             story["roundups"] = [r for source_id, r in roundups.get(story["id"], []) if source_id not in voices]
         for item in items:
             item["story"] = stories.get(item["id"])
