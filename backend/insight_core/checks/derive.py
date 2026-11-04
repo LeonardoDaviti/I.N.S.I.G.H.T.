@@ -50,7 +50,8 @@ def facts(row) -> Facts:
     pid, source_id, platform, title, content, html, *stored = row
     parts = compat.stored_parts()
     if stored and parts:   # issue 0076: what the pages read, the post's stored parts (its stored title until parsed)
-        shown, text, link_target = (stored[0] if stored[0] is not None else title or ""), parts[1](content, stored[1:5]), stored[5]
+        shown, link_target = (stored[0] if stored[0] is not None else title or ""), stored[5]
+        text = (parts[1](content, stored[1:5]) or "")[:TEXT_WINDOW]   # the window the rules read before (above)
     else:
         window = compat.title_window()
         shown = compat.title_function()(title, content and content[:window[0]], html and html[:window[1]])
