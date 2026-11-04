@@ -62,6 +62,14 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(lead([("a", "share"), ("b", "share")]), "a")
         self.assertIsNone(lead([]))
 
+    def test_a_roundup_leads_no_row_with_a_report_but_an_origin_always_leads(self):
+        posts = [("digest", "report"), ("a", "share"), ("b", "report")]
+        self.assertEqual(lead(posts, roundups=["digest"]), "b", "issue 0083: the weekly digest is passed over")
+        self.assertEqual(lead(posts, origins=["digest"], roundups=["digest"]), "digest", "its origin leads")
+        self.assertEqual(lead([("digest", "report"), ("a", "share")], roundups=["digest"]), "a",
+                         "a vendor's roundup gives way to the share of the release's page")
+        self.assertEqual(lead([("r1", "report"), ("r2", "report")], roundups=["r1", "r2"]), "r1")
+
 
 # ---- names in titles --------------------------------------------------------------------------
 
@@ -403,6 +411,41 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(part(b), ["share"], "a copy of Alpha's title")
         self.assertEqual(part(weekly), ["mention"])
         self.assertEqual([i["id"] for i in self._mine(self.news.news_on(self.cur, "all")["items"])], [own])
+
+    def test_a_roundup_leads_no_row_with_a_report(self):
+        """Issue 0083: a row with no origin (an outside page) is led by its first report the stories
+        list as no roundup, not by a weekly digest that came first."""
+        page = f"https://outside-{self.mark}.test/2026/10/the-release"
+        weekly, a, b = (self._source(n) for n in ("Weekly", "Alpha", "Beta"))
+        others = [f"https://else-{self.mark}.test/2026/10/story-{n}" for n in (1, 2)]
+        digest = self._post(weekly, site="weekly", hours_ago=10, title="This week",
+                            html=self._link(page) + self._link(others[0]) + self._link(others[1]))
+        report = self._post(a, site="alpha", hours_ago=9, title="They shipped the thing everyone waited for", html=self._link(page))
+        self._post(b, site="beta", hours_ago=8, title="The thing is out, and it is fast", html=self._link(page))
+        for s, n, h in ((self._source("Gamma"), "gamma", 7), (self._source("Delta"), "delta", 6)):   # the story it also lists
+            self._post(s, site=n, hours_ago=h, title=f"Another story, by {n}", html=self._link(others[0]))
+        self._job()
+        self.cur.execute("SELECT count(*) FROM story_mentions WHERE post_id = %s", (digest,))
+        self.assertGreater(self.cur.fetchone()[0], 0, "the stories list the digest as a roundup")
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["story"]["id"] == digest]
+        self.assertEqual(item["id"], report)
+
+    def test_a_post_page_names_its_news_row(self):
+        """Issue 0083: the post page says the News row a post is in, as the Main feed's News shows it,
+        else as its own source's (a source outside the Main feed); nothing for a post in none."""
+        self._week()
+        row = self.news.row_of(self.cur, self.fresh[1], self.b)
+        [item] = [i for i in self.news.news_on(self.cur, "all")["items"] if i["id"] == self.fresh[0]]
+        self.assertEqual(row, {"id": self.fresh[0], "title": item["title"], "voices": 3, "lead_id": self.fresh[0], "scope": "all"})
+        lone = self._post(self.a, site="alpha", hours_ago=2, title="Nothing to see")
+        self.assertIsNone(self.news.row_of(self.cur, lone, self.a))
+
+        name = f"Quux{self.mark[:4]} 7"
+        outside = [self._source(n, main=False) for n in ("Delta", "Epsilon", "Zeta")]
+        posts = [self._post(s, site=n, hours_ago=h, title=f"{name} is out") for s, n, h in
+                 zip(outside, ("delta", "epsilon", "zeta"), (6, 5, 4))]
+        self._job()
+        self.assertEqual(self.news.row_of(self.cur, posts[2], outside[2])["scope"], f"source:{outside[2]}")
 
     def test_started_it_only_when_first(self):
         """Issue 0082: a source whose post roots its 0050 story, in a row another post began, didn't start it."""

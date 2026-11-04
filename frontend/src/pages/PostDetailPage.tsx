@@ -1335,6 +1335,15 @@ function PostArticle({ postId, detail, api, fixture, current, readOn, divider, o
 
       <PostImageList images={moreImages} postId={postId} />
 
+      {/* ---- In News (issue 0083): the News row it is in, its title and voices, linking that News ---- */}
+      {post.news ? (
+        <p data-news className="mt-8 min-w-0 text-[0.8125rem] leading-5 text-fg-3 [overflow-wrap:anywhere]">
+          In News:{' '}
+          <TextLink to={`${scopePath(post.news.scope)}?view=news`} className="text-fg-2">{post.news.title}</TextLink>
+          {` · ${plural(post.news.voices, 'source')}`}
+        </p>
+      ) : null}
+
       {/* ---- Background (issue 0051): the classics this post builds on, at most 2, quiet ---- */}
       {post.background?.length ? (
         <div data-background className="mt-8 flex flex-col gap-1 text-[0.8125rem] leading-5 text-fg-3">
