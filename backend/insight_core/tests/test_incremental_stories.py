@@ -210,18 +210,34 @@ class IncrementalJobTests(unittest.TestCase):
         self.assertEqual(self.cur.fetchone(), (None, None), "the stored page is the root now")
         self.assert_same_as_full()
 
-    def test_a_story_leaves_news_when_its_window_passes(self):
+    def test_a_story_past_its_window_keeps_its_news_row(self):
+        """Issue 0077: nothing is deleted. Past the 30 days the job writes, the row stays as it was,
+        in the incremental job and a full run alike; a later change to its story leaves it too."""
         page = self._page("news")
         a = self._post(self._source("A"), links=[page])
         self._post(self._source("B"), links=[page])
         self._incremental()
-        self.cur.execute("SELECT news_id FROM news_posts WHERE post_id = %s", (a,))
-        self.assertIsNotNone(self.cur.fetchone(), "in News")
+        self.cur.execute("SELECT news_id::text FROM news_posts WHERE post_id = %s", (a,))
+        held = self.cur.fetchone()
+        self.assertIsNotNone(held, "in News")
+        news = held[0]
+        self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (news,))
+        row = self.cur.fetchone()
         self.now += timedelta(days=31)
-        self._incremental()
-        self.cur.execute("SELECT news_id FROM news_posts WHERE post_id = %s", (a,))
-        self.assertIsNone(self.cur.fetchone(), "out of the 30 days News keeps")
+        self.assertEqual(self._incremental().get("news_removed", 0), 0)
+        self.cur.execute("SELECT news_id::text FROM news_posts WHERE post_id = %s", (a,))
+        self.assertEqual(self.cur.fetchone(), (news,), "kept past the 30 days News writes")
+        self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (news,))
+        self.assertEqual(self.cur.fetchone(), row, "as it was")
         self.assertIsNotNone(self._story(a), "still a story")
+        self.assert_same_as_full()
+        late = self._post(self._source("C"), hours_ago=24 * 31 - 1, links=[page])   # joins the old story
+        self._incremental()
+        self.assertEqual(self._story(late), self._story(a))
+        self.cur.execute("SELECT news_id FROM news_posts WHERE post_id = %s", (late,))
+        self.assertIsNone(self.cur.fetchone(), "the row before the window is not rewritten")
+        self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (news,))
+        self.assertEqual(self.cur.fetchone(), row)
         self.assert_same_as_full()
 
     def test_a_story_keeps_its_id_when_an_earlier_post_joins(self):

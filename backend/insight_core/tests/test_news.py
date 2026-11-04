@@ -325,10 +325,74 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual(item["story"]["voices"], 2)
         self.assertEqual([s["name"] for s in item["story"]["sources"]], ["steipete", "badlogicgames"])
 
-    def test_a_story_older_than_a_week_is_not_news(self):
+    def test_news_shows_30_days(self):
+        """Issue 0077: News reads 30 days; "recent" is still the last 48 hours."""
         self._week()
-        self.now += timedelta(days=8)
+        self.now += timedelta(days=20)
+        items = self._mine(self.news.news_on(self.cur, "all")["items"])
+        self.assertEqual([(i["id"], i["news"]["part"]) for i in items], [(self.fresh[0], "earlier"), (self.older[0], "earlier")])
+        self.assertNotIn("scope_role", items[0]["news"], "only on one source")
+        self.now += timedelta(days=11)
         self.assertEqual(self._mine(self.news.news_on(self.cur, "all")["items"]), [])
+
+    def _rows(self, ids):
+        self.cur.execute("SELECT id::text FROM news_stories WHERE id = ANY(%s::uuid[])", (list(ids),))
+        return {r[0] for r in self.cur.fetchall()}
+
+    def test_a_row_before_the_window_is_kept(self):
+        """Issue 0077: nothing is deleted. A run past a row's 30 days leaves it as it is, its posts in
+        it; a second run changes nothing."""
+        self._week()
+        self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (self.fresh[0],))
+        before = self.cur.fetchone()
+        self.now += timedelta(days=40)
+        run = self._job()
+        self.assertEqual(run["news_removed"], 0)
+        self.assertEqual(self._rows([self.fresh[0], self.older[0]]), {self.fresh[0], self.older[0]})
+        self.cur.execute("SELECT * FROM news_stories WHERE id = %s", (self.fresh[0],))
+        self.assertEqual(self.cur.fetchone(), before, "as it was")
+        self.cur.execute("SELECT count(*) FROM news_posts WHERE news_id = %s", (self.fresh[0],))
+        self.assertEqual(self.cur.fetchone()[0], 3)
+        self.assertEqual(self._job()["news_changed"], 0)
+
+    def test_a_row_inside_the_window_it_no_longer_finds_goes_counted(self):
+        self._week()
+        self.cur.execute("UPDATE posts SET content_html = NULL WHERE id = %s", (self.older[1],))
+        self.cur.execute("DELETE FROM post_links WHERE post_id = %s", (self.older[1],))
+        run = self._job()
+        self.assertEqual(self._rows([self.older[0]]), set(), "one voice is no News")
+        self.assertGreaterEqual(run["news_removed"], 1)
+
+    def test_a_row_before_the_window_with_no_post_left_goes_counted(self):
+        self._week()
+        lone = self._post(self.a, site="alpha", hours_ago=24 * 60, title="Long ago")
+        self.cur.execute("INSERT INTO news_stories (id, first_at, voices, reports, shares, mentions, score) "
+                         "VALUES (%s, %s, 2, 2, 0, 0, 2)", (lone, self.now - timedelta(days=60)))
+        run = self._job()
+        self.assertEqual(self._rows([lone, self.fresh[0]]), {self.fresh[0]})
+        self.assertGreaterEqual(run["news_removed"], 1)
+
+    def test_one_source_says_its_part(self):
+        """Issue 0077: on one source each row says the source's part, the strongest of its posts:
+        origin (its post started the row), report, share, else mention (its roundup lists the story)."""
+        page = f"https://press-{self.mark}.test/2026/10/the-press-release"
+        press, a, b, weekly = (self._source(n) for n in ("Press", "Alpha", "Beta", "Weekly"))
+        own = self._post(press, site="press", url=page, hours_ago=10, title="We ship the thing")
+        self._post(a, site="alpha", hours_ago=9, title="They shipped the thing everyone waited for all year long", html=self._link(page))
+        self._post(b, site="beta", hours_ago=8, title="They shipped the thing everyone waited for all year long", html=self._link(page))
+        others = [f"https://else-{self.mark}.test/2026/10/story-{n}" for n in (1, 2)]
+        self._post(weekly, site="weekly", hours_ago=7, title="This week",
+                   html=self._link(others[0]) + self._link(page) + self._link(others[1]))
+        self._job()
+
+        def part(source):
+            items = [i for i in self.news.news_on(self.cur, f"source:{source}")["items"] if i["story"]["id"] == own]
+            return [i["news"]["scope_role"] for i in items]
+        self.assertEqual(part(press), ["origin"])
+        self.assertEqual(part(a), ["report"])
+        self.assertEqual(part(b), ["share"], "a copy of Alpha's title")
+        self.assertEqual(part(weekly), ["mention"])
+        self.assertEqual([i["id"] for i in self._mine(self.news.news_on(self.cur, "all")["items"])], [own])
 
     def test_a_track_shows_stories_with_one_of_its_posts_scored_over_every_source(self):
         self._week()
@@ -436,6 +500,18 @@ class NewsJobTests(unittest.TestCase):
         self.assertEqual([c["url"] for c in self._mine_classics(f"folder:{self._folder(self.z)}")],
                          [normalize_url(self.recent)])
         self.assertEqual(self._mine_classics(f"folder:{self._folder(self._source('Nobody'))}"), [])
+
+    def test_one_source_says_its_part_in_a_classic(self):
+        """Issue 0077: on one source a classic is its own post (origin) or a page it cites (report)."""
+        self._classics()
+        essays = self._source("Essays")
+        self._post(essays, site="essays", url=self.essay, title="Machines of Loving Grace", hours_ago=24 * 600)
+        self._job()
+        self.assertEqual([(c["url"], c["scope_role"]) for c in self._mine_classics(f"source:{essays}")],
+                         [(normalize_url(self.essay), "origin")])
+        self.assertEqual([(c["url"], c["scope_role"]) for c in self._mine_classics(f"source:{self.y}")],
+                         [(normalize_url(self.recent), "report"), (normalize_url(self.essay), "report")])
+        self.assertNotIn("scope_role", self._mine_classics()[0])
 
 
 @requires_test_db

@@ -865,11 +865,12 @@ async def save_page(request: SavePageRequest):
 @app.get("/api/news")
 @error_detail("load News")
 async def get_news(scope: str = "all"):
-    """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 7
-    days, with a post from the scope's sources (all | folder:<uuid>; the score counts every
-    source). A FeedPage (no next page): each item is a story's lead with its `story` and `news`
-    {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions, score},
-    recent first, then by score, then the newest."""
+    """News (issue 0051): the stories 2+ of your voices covered whose first post is in the last 30
+    days, with a post from the scope's sources (all | folder:<uuid> | source:<uuid>; the score
+    counts every source). A FeedPage (no next page): each item is a story's lead with its `story`
+    and `news` {part: recent (the last 48 hours) | earlier, first_at, reports, shares, mentions,
+    score}, recent first, then by score, then the newest. On one source (issue 0077) also the
+    stories its roundups mention, and `news.scope_role`: origin | report | share | mention."""
     return await asyncio.to_thread(services().news.news, scope)
 
 
@@ -879,7 +880,8 @@ async def get_classics(scope: str = "all"):
     """Classics (issue 0051): pages 2+ of your voices linked 30+ days apart, a source of the scope
     among them, that you did not hide. Cited again this week first, then most voices, then cited
     longest. {classics: [{url, post_id, title, voices, days, first_at, last_at, cited_again,
-    citers [{name, at}], read_at, later_at}]}. Nothing is fetched: an outside page is read
+    citers [{name, at}], read_at, later_at}]}; on one source also its own pages, each with
+    `scope_role`: origin (its own post) | report (it cites it), issue 0077. Nothing is fetched: an outside page is read
     through Save any page (POST /api/saved), on click."""
     return await asyncio.to_thread(services().news.classics, scope)
 

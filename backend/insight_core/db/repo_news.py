@@ -57,10 +57,14 @@ class NewsRepository:
     # ---- the job: News ----------------------------------------------------------------
 
     @staticmethod
-    def write_news(cur: Cursor, stories: Sequence[NewsStory], *, post_ids: Optional[Sequence[str]] = None) -> int:
-        """Make the stored News of `post_ids` (every post when None) exactly `stories`, theirs: the News
-        stories holding them before and now, and their rows. Returns how many rows changed."""
-        changed = 0
+    def write_news(cur: Cursor, stories: Sequence[NewsStory], *, since: datetime,
+                   post_ids: Optional[Sequence[str]] = None) -> Tuple[int, int]:
+        """Write `stories`, the News of the window begun at `since`, for `post_ids` (every post when
+        None): the News stories holding them before and now, and their rows. Nothing before the window
+        is deleted (issue 0077): inside it a row the run no longer finds goes; a row begun before it
+        stays as it is, unless no post of it is left (they all moved to rows of the window). Returns
+        (rows changed, News rows removed)."""
+        changed = removed = 0
         want = {s.id: (s.first_at, s.voices, s.reports, s.shares, s.mentions, round(s.score, 2)) for s in stories}
         want_posts = {p.id: (s.id, s.roles[p.id], p.voice, s.names.get(p.id), position)
                       for s in stories for position, p in enumerate(s.posts)}
@@ -74,10 +78,10 @@ class NewsRepository:
             {"ids": scope, "want": list(want)},
         )
         have = {str(r[0]): (r[1], r[2], r[3], r[4], r[5], round(float(r[6]), 2)) for r in cur.fetchall()}
-        gone = [sid for sid in have if sid not in want]
+        gone = [sid for sid, row in have.items() if sid not in want and row[0] >= since]
         if gone:
             cur.execute("DELETE FROM news_stories WHERE id = ANY(%s::uuid[])", (gone,))
-            changed += cur.rowcount
+            removed += cur.rowcount
         rows = [(sid, *row) for sid, row in want.items() if have.get(sid) != row]
         if rows:
             cur.executemany(
@@ -91,9 +95,15 @@ class NewsRepository:
                 rows,
             )
             changed += len(rows)
-        cur.execute("SELECT post_id, news_id, role, voice, name, position FROM news_posts "
-                    "WHERE %(ids)s::uuid[] IS NULL OR post_id = ANY(%(ids)s::uuid[])", {"ids": scope})
-        have_posts = {str(r[0]): (str(r[1]), r[2], r[3], r[4], r[5]) for r in cur.fetchall()}
+        # The run's posts: those it places, and those of the rows it made or of its window; a post of a
+        # row begun before the window, placed nowhere now, stays in that row.
+        cur.execute("SELECT np.post_id, np.news_id, np.role, np.voice, np.name, np.position, "
+                    "ns.first_at >= %(since)s OR np.news_id = ANY(%(want)s::uuid[]) "
+                    "FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id "
+                    "WHERE %(ids)s::uuid[] IS NULL OR np.post_id = ANY(%(ids)s::uuid[])",
+                    {"ids": scope, "since": since, "want": list(want)})
+        have_posts = {str(r[0]): (str(r[1]), r[2], r[3], r[4], r[5]) for r in cur.fetchall()
+                      if r[6] or str(r[0]) in want_posts}
         drop = [pid for pid in have_posts if pid not in want_posts]
         if drop:
             cur.execute("DELETE FROM news_posts WHERE post_id = ANY(%s::uuid[])", (drop,))
@@ -109,7 +119,12 @@ class NewsRepository:
                 rows,
             )
             changed += len(rows)
-        return changed
+        kept = [sid for sid in have if sid not in want and sid not in gone]
+        if kept:   # a row before the window with no post left: its story is no more
+            cur.execute("DELETE FROM news_stories ns WHERE ns.id = ANY(%s::uuid[]) "
+                        "AND NOT EXISTS (SELECT 1 FROM news_posts np WHERE np.news_id = ns.id)", (kept,))
+            removed += cur.rowcount
+        return changed + removed, removed
 
     @staticmethod
     def stored_surges(cur: Cursor) -> List[Surge]:
@@ -173,13 +188,6 @@ class NewsRepository:
             {"since": since, "until": until, "ids": None if ids is None else list(ids)},
         )
         return [str(r[0]) for r in cur.fetchall()]
-
-    @staticmethod
-    def news_before(cur: Cursor, since: datetime) -> Set[str]:
-        """The posts of the stored News stories begun before `since` (they leave News)."""
-        cur.execute("SELECT np.post_id FROM news_posts np JOIN news_stories ns ON ns.id = np.news_id WHERE ns.first_at < %s",
-                    (since,))
-        return {str(r[0]) for r in cur.fetchall()}
 
     @staticmethod
     def named(cur: Cursor, phrases: Sequence[str], at_least: int) -> Set[str]:
@@ -291,8 +299,17 @@ class NewsRepository:
     @staticmethod
     def news_posts(cur: Cursor, scope: FeedScope, since: datetime) -> List[Dict[str, Any]]:
         """Every post of the News stories begun since `since` that have a post in `scope`, as feed
-        items, with its story's numbers and its role. Each story's posts first posted first."""
+        items, with its story's numbers and its role. Each story's posts first posted first. On one
+        source (issue 0077) also the stories a roundup of it mentions (0050's story_mentions)."""
         scope_sql, params = _scope_sql(scope)
+        mentioned, mention_params = "", []
+        if scope.kind == "source":
+            mentioned = f"""
+              OR EXISTS (SELECT 1 FROM news_posts o JOIN story_posts osp ON osp.post_id = o.post_id
+                         JOIN story_mentions m ON m.story_id = osp.story_id
+                         JOIN posts mp ON mp.id = m.post_id JOIN sources s ON s.id = mp.source_id
+                         WHERE o.news_id = ns.id AND {scope_sql})"""
+            mention_params = params
         cur.execute(
             f"""
             SELECT {_ITEM_COLUMNS}, ns.id, ns.first_at, ns.voices, ns.reports, ns.shares, ns.mentions, ns.score,
@@ -304,11 +321,11 @@ class NewsRepository:
             LEFT JOIN post_reader_state rs ON rs.post_id = p.id
             LEFT JOIN story_posts sp ON sp.post_id = p.id
             WHERE ns.first_at >= %s
-              AND EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
-                          WHERE o.news_id = ns.id AND {scope_sql})
+              AND (EXISTS (SELECT 1 FROM news_posts o JOIN posts op ON op.id = o.post_id JOIN sources s ON s.id = op.source_id
+                           WHERE o.news_id = ns.id AND {scope_sql}){mentioned})
             ORDER BY ns.id, np.position NULLS LAST, COALESCE(p.published_at, p.fetched_at), p.id
             """,
-            [*params, since, *params],
+            [*params, since, *params, *mention_params],
         )
         out = []
         for row in cur.fetchall():
@@ -340,32 +357,38 @@ class NewsRepository:
     @staticmethod
     def classics(cur: Cursor, scope: FeedScope) -> List[Dict[str, Any]]:
         """The classics you did not hide that a source in `scope` cited, with the stored post each
-        is now (a page you saved since counts as that post: read, in Later)."""
+        is now (a page you saved since counts as that post: read, in Later). On one source (issue
+        0077) also those that are a post of its own (`own`)."""
         scope_sql, params = _scope_sql(scope)
+        own_sql, own_params = "FALSE", []
+        if scope.kind == "source":
+            own_sql = "EXISTS (SELECT 1 FROM posts op WHERE op.normalized_url = c.target_url AND op.source_id = %s)"
+            own_params = [scope.id]
         cur.execute(
             f"""
             SELECT c.target_url, c.voices, c.first_at, c.last_at, c.title, c.citers,
-                   t.id, {title_columns("t")}, r.read_at, r.later_at
+                   t.id, {title_columns("t")}, r.read_at, r.later_at, {own_sql}
             FROM classics c
             LEFT JOIN LATERAL (SELECT tp.id, tp.title, tp.content, tp.content_html FROM posts tp WHERE tp.normalized_url = c.target_url
                                ORDER BY tp.fetched_at, tp.created_at, tp.id LIMIT 1) t ON TRUE
             LEFT JOIN post_reader_state r ON r.post_id = t.id
             WHERE NOT EXISTS (SELECT 1 FROM classic_hidden h WHERE h.target_url = c.target_url)
-              AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.citers) ci
-                          CROSS JOIN LATERAL jsonb_array_elements_text(ci->'source_ids') x(sid)
-                          JOIN sources s ON s.id = x.sid::uuid
-                          WHERE {scope_sql})
+              AND (EXISTS (SELECT 1 FROM jsonb_array_elements(c.citers) ci
+                           CROSS JOIN LATERAL jsonb_array_elements_text(ci->'source_ids') x(sid)
+                           JOIN sources s ON s.id = x.sid::uuid
+                           WHERE {scope_sql}) OR {own_sql})
             """,
-            params,
+            [*own_params, *params, *own_params],
         )
         out: Dict[str, Dict[str, Any]] = {}
-        for url, voices, first_at, last_at, title, citers, post_id, post_title, content, html, read_at, later_at in cur.fetchall():
+        for (url, voices, first_at, last_at, title, citers, post_id, post_title, content, html, read_at, later_at,
+             own) in cur.fetchall():
             if url in out:
                 continue
             out[url] = {"url": url, "voices": int(voices), "first_at": first_at, "last_at": last_at,
                         "days": (last_at - first_at).days, "title": title, "citers": citers,
                         "post_id": str(post_id) if post_id else None, "post_title": post_title, "content": content,
-                        "html": html, "read_at": read_at, "later_at": later_at}
+                        "html": html, "read_at": read_at, "later_at": later_at, "own": bool(own)}
         return list(out.values())
 
     @staticmethod
