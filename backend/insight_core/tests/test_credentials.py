@@ -214,6 +214,7 @@ class SubstackSeamTests(unittest.IsolatedAsyncioTestCase):
         ok, message = await SubstackKind(FakeHttp({url: RuntimeError(f"boom {SID}")}), sid=SID).check_session(None)
         self.assertFalse(ok)
         self.assertNotIn(SID, message)
+        self.assertTrue(message.startswith("Could not check the Substack session"), message)
 
     def test_the_health_row_carries_the_kinds_notice(self):
         self.assertEqual(_credential_notice(SubstackKind(FakeHttp(), sid="")), MISSING_NOTICE)

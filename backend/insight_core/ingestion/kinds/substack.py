@@ -195,7 +195,7 @@ class SubstackKind(BaseKind):
 
     async def _subscriptions(self, *, fresh: bool = False) -> Union[Subscriptions, str, None]:
         """The publications you pay for (kept SUBSCRIPTIONS_TTL_S per cookie), EXPIRED on a
-        401/403, None when the answer can't be read (not kept)."""
+        401/403, None when the answer can't be read (not kept; `fresh` raises a request error)."""
         key = hashlib.sha256(self._sid.encode()).hexdigest()
         cached = self._subscriptions_cache
         if (not fresh and cached is not None and cached[0] == key
@@ -207,6 +207,8 @@ class SubstackKind(BaseKind):
         except KindUnavailable:
             answer = EXPIRED
         except Exception:  # noqa: BLE001 - unreadable: send the cookie, never an error
+            if fresh:      # the connection test reports it
+                raise
             return None
         if answer is not None:
             self._subscriptions_cache = (key, time.monotonic(), answer)
